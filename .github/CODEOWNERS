@@ -1,0 +1,12 @@
+# CODEOWNERS - Default code owners for the repository
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default reviewers for all files
+* @NVIDIA-NeMo/anonymizer-reviewers
+
+# Critical files require maintainers
+pyproject.toml @NVIDIA-NeMo/anonymizer-maintainers
+uv.lock @NVIDIA-NeMo/anonymizer-maintainers
+SECURITY.md @NVIDIA-NeMo/anonymizer-maintainers
+LICENSE @NVIDIA-NeMo/anonymizer-maintainers
+.github/ @NVIDIA-NeMo/anonymizer-maintainers
