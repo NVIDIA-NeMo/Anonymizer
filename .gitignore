@@ -1,0 +1,114 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+coverage.json
+.pytest_cache/
+report.xml
+
+# mkdocs documentation
+/site
+docs/_build/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# uv
+.venv/
+.uv/
+uv.lock.bak
+
+# Environments
+.env
+.env.*
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Ruff
+.ruff_cache/
+
+# mypy
+.mypy_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.history/
+
+# Build artifacts
+*.whl
+*.tar.gz
+*.zip
+
+# Auto-generated version files
+**/_version.py
+
+# Local scratch space
+.scratch/
+temp/
+
+# Logs
+logs/
+*.log
+*.log.jsonl
+
+# AI agent local files
+AGENTS.local.md
+CLAUDE.local.md
+.claude/settings.local.json
+ai/tmp/
+
+# TLS certs and keys (if any)
+*.crt
+*.key
+*.pem
+*.enc
+*.csr

@@ -2,7 +2,10 @@
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Default reviewers for all files
-* @NVIDIA-NeMo/anonymizer-reviewers
+* @NVIDIA-NeMo/anonymizer-maintainers
+
+src/ @NVIDIA-NeMo/anonymizer-reviewers
+tests/ @NVIDIA-NeMo/anonymizer-reviewers
 
 # Critical files require maintainers
 pyproject.toml @NVIDIA-NeMo/anonymizer-maintainers
