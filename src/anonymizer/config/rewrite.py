@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# This file is forward looking, and will support future rewrite mode.
 
 from __future__ import annotations
 
@@ -46,6 +47,30 @@ SENSITIVITY_WEIGHTS: dict[str, float] = {
     "medium": 0.6,
     "low": 0.3,
 }
+
+DEFAULT_PROTECT_TEXT = (
+    "Direct identifiers, quasi-identifier combinations, and latent inferences that could enable re-identification"
+)
+DEFAULT_PRESERVE_TEXT = "General utility, content quality, and semantic meaning of the original text"
+
+
+class PrivacyGoal(BaseModel):
+    """Structured privacy and utility goal for rewrite mode."""
+
+    protect: str = Field(min_length=10, max_length=1000)
+    preserve: str = Field(min_length=10, max_length=1000)
+
+    @field_validator("protect", "preserve")
+    @classmethod
+    def validate_min_words(cls, value: str) -> str:
+        cleaned = value.strip()
+        if len(cleaned.split()) < 3:
+            raise ValueError("privacy goal sections must contain at least 3 words")
+        return cleaned
+
+    def to_prompt_string(self) -> str:
+        """Serialize goal into prompt-ready text."""
+        return f"PROTECT: {self.protect}\nPRESERVE: {self.preserve}"
 
 
 class RewriteParams(BaseModel):
