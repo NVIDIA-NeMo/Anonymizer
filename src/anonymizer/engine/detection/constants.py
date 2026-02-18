@@ -31,7 +31,7 @@ COL_AUGMENTED_ENTITIES = "_augmented_entities"
 # Step 4: merge_and_build_candidates
 COL_MERGED_ENTITIES = "_merged_entities"
 COL_MERGED_TAGGED_TEXT = "_merged_tagged_text"
-COL_VALIDATION_CANDIDATES = "validation_candidates"
+COL_VALIDATION_CANDIDATES = "_validation_candidates"
 
 # Step 5: LLM validation
 COL_VALIDATED_ENTITIES = "_validated_entities"

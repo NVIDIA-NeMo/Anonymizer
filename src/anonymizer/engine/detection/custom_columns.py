@@ -83,6 +83,37 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
+    side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON],
+)
+def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
+    """Apply validation decisions to detector entities before augmentation."""
+    text = str(row.get(COL_TEXT, ""))
+    seed_spans = _from_dicts(entities=row.get(COL_SEED_ENTITIES, []))
+    validated_seed = apply_validation_decisions(
+        entities=seed_spans,
+        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
+    )
+    row[COL_SEED_ENTITIES] = [entity.as_dict() for entity in validated_seed]
+    row[COL_SEED_ENTITIES_JSON] = json.dumps(row[COL_SEED_ENTITIES])
+    row[COL_INITIAL_TAGGED_TEXT] = build_tagged_text(text=text, entities=validated_seed)
+    return row
+
+
+@custom_column_generator(
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES],
+    side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
+)
+def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
+    """Build validation prompt inputs from detector entities only."""
+    text = str(row.get(COL_TEXT, ""))
+    seed_spans = _from_dicts(entities=row.get(COL_SEED_ENTITIES, []))
+    row[COL_MERGED_TAGGED_TEXT] = build_tagged_text(text=text, entities=seed_spans)
+    row[COL_VALIDATION_CANDIDATES] = build_validation_candidates(text=text, entities=seed_spans)
+    return row
+
+
+@custom_column_generator(
     required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
     side_effect_columns=[COL_TAGGED_TEXT, COL_ENTITIES_BY_VALUE],
 )

@@ -35,9 +35,11 @@ from anonymizer.engine.detection.constants import (
     _jinja,
 )
 from anonymizer.engine.detection.custom_columns import (
+    apply_validation_to_seed_entities,
     apply_validation_and_finalize,
     merge_and_build_candidates,
     parse_detected_entities,
+    prepare_validation_inputs,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import get_model_alias
@@ -179,6 +181,20 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES,
                     generator_function=parse_detected_entities,
                 ),
+                CustomColumnConfig(
+                    name=COL_VALIDATION_CANDIDATES,
+                    generator_function=prepare_validation_inputs,
+                ),
+                LLMStructuredColumnConfig(
+                    name=COL_VALIDATED_ENTITIES,
+                    prompt=_get_validation_prompt(data_summary=data_summary, labels=labels),
+                    model_alias=validator_alias,
+                    output_format=ValidationDecisions,
+                ),
+                CustomColumnConfig(
+                    name=COL_SEED_ENTITIES_JSON,
+                    generator_function=apply_validation_to_seed_entities,
+                ),
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
                     prompt=_get_augment_prompt(data_summary=data_summary, labels=labels),
@@ -188,12 +204,6 @@ class EntityDetectionWorkflow:
                 CustomColumnConfig(
                     name=COL_MERGED_ENTITIES,
                     generator_function=merge_and_build_candidates,
-                ),
-                LLMStructuredColumnConfig(
-                    name=COL_VALIDATED_ENTITIES,
-                    prompt=_get_validation_prompt(data_summary=data_summary, labels=labels),
-                    model_alias=validator_alias,
-                    output_format=ValidationDecisions,
                 ),
                 CustomColumnConfig(
                     name=COL_DETECTED_ENTITIES,
