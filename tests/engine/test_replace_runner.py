@@ -14,9 +14,9 @@ from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.config.replace_strategies import HashReplace, LLMReplace, RedactReplace
 from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_TEXT
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.transformation.llm_replace_workflow import LlmReplaceResult
-from anonymizer.engine.transformation.replace_runner import ReplaceRunner
-from anonymizer.engine.transformation.strategies import apply_replacement_map
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
+from anonymizer.engine.replace.replace_runner import ReplaceRunner
+from anonymizer.engine.replace.strategies import apply_replacement_map
 
 
 def test_local_replace_runner_uses_strategy_directly(

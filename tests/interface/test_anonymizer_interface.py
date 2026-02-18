@@ -15,7 +15,7 @@ from anonymizer.config.rewrite import RewriteParams
 from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.transformation.replace_runner import ReplaceRunner
+from anonymizer.engine.replace.replace_runner import ReplaceRunner
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 
 

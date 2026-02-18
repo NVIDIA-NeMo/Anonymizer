@@ -18,8 +18,8 @@ from anonymizer.config.replace_strategies import (
     ReplaceStrategy,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.transformation.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.transformation.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
 
 
 class ReplaceRunner:

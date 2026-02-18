@@ -18,8 +18,8 @@ from anonymizer.config.replace_strategies import LLMReplace
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.transformation.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.transformation.replace_runner import ReplaceRunner
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.replace_runner import ReplaceRunner
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 if TYPE_CHECKING:
