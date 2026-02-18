@@ -18,6 +18,12 @@ dev = [
     "pytest-cov>=7.0,<8",
     "ruff>=0.12.3,<1",
 ]
+notebooks = [
+    "datasets>=4.0.0,<5",
+    "ipykernel>=6.29.0,<7",
+    "jupyter>=1.0.0,<2",
+    "pillow>=12.0.0,<13",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -26,8 +32,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/anonymizer"]
 
+[tool.uv]
+package = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+omit = []
 
 [tool.ruff]
 line-length = 120
@@ -36,15 +48,23 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = [
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort (import sorting)
-    "PIE", # flake8-pie (misc lints)
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort (import sorting)
+    "ICN",   # flake8-import-conventions
+    "PIE",   # flake8-pie (misc lints)
+    "TID",   # flake8-tidy-imports (ban relative imports)
+    "UP006", # List[A] -> list[A]
+    "UP007", # Union[A, B] -> A | B
+    "UP045", # Optional[A] -> A | None
 ]
 ignore = []
 
 [tool.ruff.lint.isort]
 known-first-party = ["anonymizer"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
 
 [tool.ruff.format]
 quote-style = "double"

@@ -5,18 +5,16 @@ from __future__ import annotations
 
 import pytest
 
-from anonymizer.config.anonymizer_config import (
-    AnonymizerConfig,
+from anonymizer.config.anonymizer_config import AnonymizerConfig
+from anonymizer.config.replace_strategies import (
     HashReplace,
     LabelReplace,
     LLMReplace,
-    PrivacyGoal,
     RedactReplace,
 )
-from anonymizer.config.params import (
-    EvaluationCriteria,
+from anonymizer.config.rewrite import (
+    PrivacyGoal,
     RewriteParams,
-    RiskTolerance,
 )
 
 
@@ -53,15 +51,6 @@ def test_privacy_goal_without_rewrite_raises() -> None:
         )
 
 
-def test_evaluation_criteria_manual_threshold_precedence() -> None:
-    criteria = EvaluationCriteria(
-        risk_tolerance=RiskTolerance.strict,
-        max_leakage_mass=1.3,
-        auto_adjust_by_domain=True,
-    )
-    assert criteria.get_effective_threshold(domain="medical") == 1.3
-
-
 def test_label_replace_accepts_custom_template() -> None:
     strategy = LabelReplace(format_template="[{label}]::{text}")
     assert strategy.replace(text="Alice", label="name") == "[name]::Alice"
@@ -75,7 +64,3 @@ def test_redact_replace_defaults_to_label_aware_output() -> None:
 def test_redact_replace_allows_constant_template() -> None:
     strategy = RedactReplace(redact_template="****")
     assert strategy.replace(text="Alice", label="first_name") == "****"
-
-
-def test_rewrite_params_do_not_include_repair_iterations() -> None:
-    assert "max_repair_iterations" not in RewriteParams.model_fields

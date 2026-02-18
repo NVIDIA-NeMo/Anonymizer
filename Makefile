@@ -5,6 +5,7 @@ help:
 	@echo ""
 	@echo "  install                - Install project dependencies with uv"
 	@echo "  install-dev            - Install project with dev dependencies"
+	@echo "  install-dev-notebooks  - Install dev + notebook dependencies"
 	@echo "  install-pre-commit     - Install pre-commit hooks (run once after cloning)"
 	@echo ""
 	@echo "  test                   - Run all unit tests"
@@ -31,40 +32,57 @@ install-dev:
 	uv sync --group dev
 	@echo "Done!"
 
+install-dev-notebooks:
+	@echo "Installing project with dev + notebook dependencies..."
+	uv sync --group dev --group notebooks
+	@echo "Done!"
+
 install-pre-commit:
 	@echo "Installing pre-commit hooks..."
 	uv run pre-commit install
 	@echo "Done! Hooks will run on git commit."
 
 test:
-	uv run pytest -v
+	@echo "Running unit tests..."
+	uv run --group dev pytest
 
 coverage:
-	uv run pytest -v --cov=anonymizer --cov-report=term-missing --cov-report=html
+	@echo "Running tests with coverage analysis..."
+	uv run --group dev pytest --cov=anonymizer --cov-report=term-missing --cov-report=html
+	@echo "Coverage report generated in htmlcov/index.html"
 
 format:
+	@echo "Formatting code with ruff..."
 	uv run ruff format .
 
 format-check:
+	@echo "Checking code formatting with ruff..."
 	uv run ruff format --check .
 
 lint:
+	@echo "Linting code with ruff..."
 	uv run ruff check .
 
 lint-fix:
+	@echo "Fixing linting issues with ruff..."
 	uv run ruff check --fix .
 
 check-all: format-check lint
 
 check-all-fix: format lint-fix
 
-clean:
-	rm -rf htmlcov .coverage .coverage.* .pytest_cache
+clean-pycache:
+	@echo "Cleaning Python cache files..."
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+clean: clean-pycache
+	@echo "Cleaning coverage reports and test cache..."
+	rm -rf htmlcov .coverage .coverage.* .pytest_cache
 
 clean-merged-branches:
 	@echo "Cleaning merged local branches..."
 	git checkout main && git fetch --prune && git branch --merged | grep -v '^\*\|main' | xargs -n 1 git branch -d || true
 	@echo "Done!"
 
-.PHONY: help install install-dev install-pre-commit test coverage format format-check lint lint-fix check-all check-all-fix clean clean-merged-branches
+.PHONY: help install install-dev install-dev-notebooks install-pre-commit test coverage format format-check lint lint-fix check-all check-all-fix clean clean-pycache clean-merged-branches

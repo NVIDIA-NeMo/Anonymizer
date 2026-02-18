@@ -35,3 +35,18 @@ def test_detect_missing_records_returns_missing_ids() -> None:
 
     assert len(failed_records) == 1
     assert failed_records[0].step == "replace-workflow"
+
+
+def test_detect_missing_records_for_preview_subset_has_no_false_failures() -> None:
+    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
+    full_input_df = adapter._attach_record_ids(pd.DataFrame({"text": ["a", "b", "c"]}))
+    preview_input_df = full_input_df.iloc[:1].copy()
+    preview_output_df = preview_input_df.copy()
+
+    failed_records = adapter._detect_missing_records(
+        workflow_name="detect-workflow",
+        input_df=preview_input_df,
+        output_df=preview_output_df,
+    )
+
+    assert len(failed_records) == 0
