@@ -62,5 +62,5 @@ def test_redact_replace_defaults_to_label_aware_output() -> None:
 
 
 def test_redact_replace_allows_constant_template() -> None:
-    strategy = RedactReplace(redact_template="****")
+    strategy = RedactReplace(format_template="****")
     assert strategy.replace(text="Alice", label="first_name") == "****"

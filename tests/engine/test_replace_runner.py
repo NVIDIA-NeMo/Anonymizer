@@ -37,7 +37,7 @@ def test_local_replace_runner_uses_strategy_directly(
     assert "[REDACTED_FIRST_NAME]" in output_df["replaced_text"].iloc[0]
 
 
-def test_local_replace_runner_with_custom_redact_template(
+def test_local_replace_runner_with_custom_format_template(
     stub_dataframe_with_entities: pd.DataFrame,
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
@@ -45,7 +45,7 @@ def test_local_replace_runner_with_custom_redact_template(
     runner = ReplaceRunner()
     output_df, failures = runner.run(
         stub_dataframe_with_entities,
-        replace_strategy=RedactReplace(redact_template="***"),
+        replace_strategy=RedactReplace(format_template="***"),
         model_configs=stub_model_configs,
         model_providers=None,
         selected_models=stub_replace_model_selection,

@@ -39,12 +39,12 @@ class RedactReplace(BaseModel):
     """Replace each entity with a configurable redaction template."""
 
     kind: Literal["redact"] = "redact"
-    redact_template: str = "[REDACTED_{label}]"
+    format_template: str = "[REDACTED_{label}]"
     normalize_label: bool = True
 
-    @field_validator("redact_template")
+    @field_validator("format_template")
     @classmethod
-    def validate_redact_template(cls, value: str) -> str:
+    def validate_format_template(cls, value: str) -> str:
         _validate_template(
             value=value,
             required_fields=set(),
@@ -55,7 +55,7 @@ class RedactReplace(BaseModel):
     def replace(self, text: str, label: str) -> str:
         normalized_label = _format_label_for_redaction(label) if self.normalize_label else label
         return _render_template(
-            template=self.redact_template,
+            template=self.format_template,
             text=text,
             label=normalized_label,
         )
