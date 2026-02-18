@@ -14,10 +14,6 @@ from anonymizer.interface.display import (
 )
 from anonymizer.interface.results import PreviewResult
 
-# ---------------------------------------------------------------------------
-# _render_highlighted_text
-# ---------------------------------------------------------------------------
-
 
 def test_highlighted_text_wraps_entity_in_styled_span() -> None:
     entities = [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
@@ -70,11 +66,6 @@ def test_highlighted_text_consistent_color_per_label() -> None:
     assert border_colors[0] == border_colors[1]
 
 
-# ---------------------------------------------------------------------------
-# _build_replaced_entities — position tracking in replaced text
-# ---------------------------------------------------------------------------
-
-
 def test_replaced_entities_tracks_shifted_positions() -> None:
     original_entities = [
         {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
@@ -102,11 +93,6 @@ def test_replaced_entities_empty_map_uses_original_values() -> None:
     assert result[0]["value"] == "Alice"
 
 
-# ---------------------------------------------------------------------------
-# _normalize_replacement_map
-# ---------------------------------------------------------------------------
-
-
 def test_normalize_replacement_map_from_dict() -> None:
     raw = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
     result = _normalize_replacement_map(raw)
@@ -126,11 +112,6 @@ def test_normalize_replacement_map_invalid_json_returns_empty() -> None:
 
 def test_normalize_replacement_map_non_dict_returns_empty() -> None:
     assert _normalize_replacement_map([1, 2, 3]) == []
-
-
-# ---------------------------------------------------------------------------
-# render_record_html — full integration
-# ---------------------------------------------------------------------------
 
 
 def test_render_record_html_contains_all_sections() -> None:
@@ -170,11 +151,6 @@ def test_render_record_html_without_replacement_map() -> None:
     )
     result = render_record_html(row)
     assert "No replacement map available" in result
-
-
-# ---------------------------------------------------------------------------
-# PreviewResult.display_record
-# ---------------------------------------------------------------------------
 
 
 def test_display_record_cycles_on_repeated_calls() -> None:

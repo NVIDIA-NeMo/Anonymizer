@@ -18,10 +18,6 @@ from anonymizer.engine.detection.postprocess import (
     resolve_overlaps,
 )
 
-# ---------------------------------------------------------------------------
-# parse_raw_entities
-# ---------------------------------------------------------------------------
-
 
 def test_parse_raw_entities_parses_valid_spans() -> None:
     text = "Call me at (555) 123-4567"
@@ -34,22 +30,12 @@ def test_parse_raw_entities_parses_valid_spans() -> None:
     assert entities[0].label == "phone_number"
 
 
-# ---------------------------------------------------------------------------
-# resolve_overlaps
-# ---------------------------------------------------------------------------
-
-
 def test_overlap_resolution_prefers_longer_span() -> None:
     short = EntitySpan("a", "John", "first_name", 0, 4, 1.0, "detector")
     long = EntitySpan("b", "John Doe", "full_name", 0, 8, 1.0, "detector")
     resolved = resolve_overlaps([short, long])
     assert len(resolved) == 1
     assert resolved[0].value == "John Doe"
-
-
-# ---------------------------------------------------------------------------
-# apply_validation_decisions  (keep / reclass / drop)
-# ---------------------------------------------------------------------------
 
 
 def test_apply_validation_decisions_drops_entities() -> None:
@@ -120,11 +106,6 @@ def test_apply_validation_decisions_last_decision_wins_for_duplicate_ids() -> No
     assert len(validated) == 1
 
 
-# ---------------------------------------------------------------------------
-# apply_augmented_entities
-# ---------------------------------------------------------------------------
-
-
 def test_apply_augmented_entities_adds_occurrences() -> None:
     text = "Alice met Bob. Bob called Alice."
     merged = apply_augmented_entities(
@@ -146,11 +127,6 @@ def test_apply_augmented_entities_avoids_substring_matches() -> None:
     assert len(merged) == 1
     assert merged[0].value == "Ann"
     assert merged[0].start_position == 15
-
-
-# ---------------------------------------------------------------------------
-# Name splitting
-# ---------------------------------------------------------------------------
 
 
 def test_augmented_splits_full_name_into_parts() -> None:
@@ -217,11 +193,6 @@ def test_name_split_does_not_duplicate_existing_entities() -> None:
     assert smiths[0].label == "last_name"
 
 
-# ---------------------------------------------------------------------------
-# build_tagged_text
-# ---------------------------------------------------------------------------
-
-
 def test_build_tagged_text_renders_xml_style_tags() -> None:
     text = "Alice Smith"
     entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
@@ -235,11 +206,6 @@ def test_build_tagged_text_avoids_xml_when_input_has_xml() -> None:
     tagged = build_tagged_text(text=text, entities=entities)
     assert "<first_name>Alice</first_name>" not in tagged
     assert "[[Alice|first_name]]" in tagged
-
-
-# ---------------------------------------------------------------------------
-# parse_raw_entities — edge cases
-# ---------------------------------------------------------------------------
 
 
 def test_parse_raw_entities_returns_empty_on_malformed_json() -> None:
@@ -374,11 +340,6 @@ def test_parse_raw_entities_resolves_overlapping_spans() -> None:
     assert result[0].value == "John Doe"
 
 
-# ---------------------------------------------------------------------------
-# resolve_overlaps — more edge cases
-# ---------------------------------------------------------------------------
-
-
 def test_resolve_overlaps_keeps_non_overlapping_spans() -> None:
     a = EntitySpan("a", "Alice", "first_name", 0, 5, 1.0, "detector")
     b = EntitySpan("b", "Acme", "organization", 15, 19, 1.0, "detector")
@@ -405,11 +366,6 @@ def test_resolve_overlaps_nested_span_keeps_outer() -> None:
 
 def test_resolve_overlaps_empty_input() -> None:
     assert resolve_overlaps([]) == []
-
-
-# ---------------------------------------------------------------------------
-# apply_validation_decisions — string and corrupt inputs
-# ---------------------------------------------------------------------------
 
 
 def test_validation_decisions_from_json_string() -> None:
@@ -449,11 +405,6 @@ def test_validation_decisions_skips_non_dict_decision_items() -> None:
         validation_output={"decisions": ["not a dict", {"id": "id1", "decision": "keep"}]},
     )
     assert len(result) == 1
-
-
-# ---------------------------------------------------------------------------
-# apply_augmented_entities — string and corrupt inputs
-# ---------------------------------------------------------------------------
 
 
 def test_augmented_entities_from_json_string() -> None:
@@ -509,11 +460,6 @@ def test_augmented_entities_case_insensitive_occurrence_finding() -> None:
         augmented_output={"entities": [{"value": "alice", "label": "first_name"}]},
     )
     assert len(result) == 1
-
-
-# ---------------------------------------------------------------------------
-# build_tagged_text — more edge cases
-# ---------------------------------------------------------------------------
 
 
 def test_build_tagged_text_empty_entities_returns_text() -> None:
@@ -576,11 +522,6 @@ def test_build_tagged_text_uses_sentinel_notation_when_others_conflict() -> None
     assert "[[Alice|first_name]]" not in tagged
 
 
-# ---------------------------------------------------------------------------
-# build_validation_candidates — context windows
-# ---------------------------------------------------------------------------
-
-
 def test_validation_candidates_include_context_window() -> None:
     text = "Dr. Alice Smith is a cardiologist at Regional Medical Center."
     entities = [EntitySpan("e1", "Alice Smith", "full_name", 4, 15, 1.0, "detector")]
@@ -604,22 +545,12 @@ def test_validation_candidates_clip_at_text_end() -> None:
     assert candidates[0]["context_after"] == ""
 
 
-# ---------------------------------------------------------------------------
-# get_tag_notation
-# ---------------------------------------------------------------------------
-
-
 def test_get_tag_notation_returns_xml_for_plain_text() -> None:
     assert get_tag_notation("Hello world") == "xml"
 
 
 def test_get_tag_notation_avoids_xml_for_html_text() -> None:
     assert get_tag_notation("<p>Hello <b>world</b></p>") != "xml"
-
-
-# ---------------------------------------------------------------------------
-# group_entities_by_value
-# ---------------------------------------------------------------------------
 
 
 def test_group_entities_by_value_groups_labels() -> None:
@@ -645,11 +576,6 @@ def test_group_entities_by_value_sorts_by_value() -> None:
 
 def test_group_entities_by_value_empty() -> None:
     assert group_entities_by_value(entities=[]) == []
-
-
-# ---------------------------------------------------------------------------
-# expand_entity_occurrences — propagate to all positions
-# ---------------------------------------------------------------------------
 
 
 def test_expand_finds_all_occurrences_of_detected_entity() -> None:

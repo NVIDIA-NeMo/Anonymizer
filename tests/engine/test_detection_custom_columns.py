@@ -26,10 +26,6 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
 )
 
-# ---------------------------------------------------------------------------
-# _from_dicts — reconstitution from parquet round-trip dicts
-# ---------------------------------------------------------------------------
-
 
 def test_from_dicts_handles_empty_list() -> None:
     assert _from_dicts([]) == []
@@ -42,11 +38,6 @@ def test_from_dicts_defaults_missing_keys() -> None:
     assert spans[0].start_position == 0
     assert spans[0].score == 0.0
     assert spans[0].source == "detector"
-
-
-# ---------------------------------------------------------------------------
-# parse_detected_entities — raw GLiNER JSON → seed entities
-# ---------------------------------------------------------------------------
 
 
 def _raw(entities: list[dict[str, Any]]) -> str:

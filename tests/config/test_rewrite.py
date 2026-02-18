@@ -11,10 +11,6 @@ from anonymizer.config.rewrite import (
     RiskTolerance,
 )
 
-# ---------------------------------------------------------------------------
-# PrivacyGoal validation
-# ---------------------------------------------------------------------------
-
 
 def test_privacy_goal_valid() -> None:
     goal = PrivacyGoal(
@@ -51,11 +47,6 @@ def test_privacy_goal_to_prompt_string() -> None:
     prompt = goal.to_prompt_string()
     assert "PROTECT:" in prompt
     assert "PRESERVE:" in prompt
-
-
-# ---------------------------------------------------------------------------
-# EvaluationCriteria — effective threshold
-# ---------------------------------------------------------------------------
 
 
 def test_effective_threshold_uses_manual_when_set() -> None:
@@ -108,11 +99,6 @@ def test_effective_threshold_auto_adjust_ignored_without_domain() -> None:
 def test_effective_threshold_manual_overrides_auto_adjust() -> None:
     criteria = EvaluationCriteria(max_leakage_mass=0.8, auto_adjust_by_domain=True)
     assert criteria.get_effective_threshold(domain="medical") == 0.8
-
-
-# ---------------------------------------------------------------------------
-# EvaluationCriteria — sensitivity_weights validation
-# ---------------------------------------------------------------------------
 
 
 def test_sensitivity_weights_defaults() -> None:
