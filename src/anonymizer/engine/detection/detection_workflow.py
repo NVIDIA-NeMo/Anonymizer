@@ -43,7 +43,7 @@ from anonymizer.engine.detection.custom_columns import (
     prepare_validation_inputs,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import get_model_alias
+from anonymizer.engine.ndd.model_loader import resolve_model_alias
 
 
 class ValidationChoice(str, Enum):
@@ -152,20 +152,23 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
         )
 
-        detection_alias = self._resolve_alias(
+        detection_alias = resolve_model_alias(
             "entity_detection",
             "entity_detector",
-            fallback=selected_models.entity_detector,
+            selected_models,
+            self._config_dir,
         )
-        validator_alias = self._resolve_alias(
+        validator_alias = resolve_model_alias(
             "entity_detection",
             "entity_validator",
-            fallback=selected_models.entity_validator,
+            selected_models,
+            self._config_dir,
         )
-        augmenter_alias = self._resolve_alias(
+        augmenter_alias = resolve_model_alias(
             "entity_detection",
             "entity_augmenter",
-            fallback=selected_models.entity_augmenter,
+            selected_models,
+            self._config_dir,
         )
 
         detection_result = self._adapter.run_workflow(
@@ -239,10 +242,11 @@ class EntityDetectionWorkflow:
             labels=labels,
             gliner_detection_threshold=gliner_detection_threshold,
         )
-        latent_alias = self._resolve_alias(
+        latent_alias = resolve_model_alias(
             "entity_detection",
             "latent_detector",
-            fallback=selected_models.latent_detector,
+            selected_models,
+            self._config_dir,
         )
         latent_result = self._adapter.run_workflow(
             dataframe,
@@ -343,14 +347,6 @@ class EntityDetectionWorkflow:
             config.inference_parameters.extra_body["flat_ner"] = False
             break
         return resolved
-
-    def _resolve_alias(self, workflow_name: str, role: str, fallback: str) -> str:
-        if self._config_dir is None:
-            return fallback
-        try:
-            return get_model_alias(workflow_name=workflow_name, role=role, config_dir=self._config_dir)
-        except (FileNotFoundError, ValueError):
-            return fallback
 
 
 def _merge_labels(entity_labels: list[str] | None) -> list[str]:

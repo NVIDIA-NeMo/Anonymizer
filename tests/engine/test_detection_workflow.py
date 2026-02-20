@@ -26,6 +26,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _merge_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
+from anonymizer.engine.ndd.model_loader import resolve_model_alias
 
 
 def test_run_with_latent_detection_calls_second_workflow(
@@ -303,16 +304,16 @@ def test_inject_detector_params_no_matching_alias_leaves_configs_unchanged(
     assert all(config.inference_parameters.extra_body is None for config in updated)
 
 
-def test_resolve_alias_returns_fallback_when_config_dir_none() -> None:
-    workflow = EntityDetectionWorkflow(adapter=Mock(), config_dir=None)
-    resolved = workflow._resolve_alias("entity_detection", "entity_detector", fallback="fallback-model")
+def test_resolve_model_alias_returns_fallback_when_config_dir_none() -> None:
+    selection = DetectionModelSelection(entity_detector="fallback-model")
+    resolved = resolve_model_alias("entity_detection", "entity_detector", selection, config_dir=None)
     assert resolved == "fallback-model"
 
 
-def test_resolve_alias_returns_fallback_on_lookup_error(tmp_path: Path) -> None:
-    workflow = EntityDetectionWorkflow(adapter=Mock(), config_dir=tmp_path)
-    with patch("anonymizer.engine.detection.detection_workflow.get_model_alias", side_effect=FileNotFoundError):
-        resolved = workflow._resolve_alias("entity_detection", "entity_detector", fallback="fallback-model")
+def test_resolve_model_alias_returns_fallback_on_lookup_error(tmp_path: Path) -> None:
+    selection = DetectionModelSelection(entity_detector="fallback-model")
+    with patch("anonymizer.engine.ndd.model_loader.get_model_alias", side_effect=FileNotFoundError):
+        resolved = resolve_model_alias("entity_detection", "entity_detector", selection, config_dir=tmp_path)
     assert resolved == "fallback-model"
 
 

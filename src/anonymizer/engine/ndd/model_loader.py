@@ -44,6 +44,26 @@ def get_model_alias(workflow_name: str, role: str, config_dir: Path = DEFAULT_CO
     return selected_models[role]
 
 
+def resolve_model_alias(
+    workflow_name: str,
+    role: str,
+    selection_model: object,
+    config_dir: Path | None,
+) -> str:
+    """Resolve model alias from YAML or fallback to selection_model's role field.
+
+    Role must match the field name on selection_model (e.g. entity_detector,
+    replacement_generator). YAML keys must use the same names.
+    """
+    fallback = getattr(selection_model, role)
+    if config_dir is None:
+        return fallback
+    try:
+        return get_model_alias(workflow_name=workflow_name, role=role, config_dir=config_dir)
+    except (FileNotFoundError, ValueError):
+        return fallback
+
+
 def _load_yaml_dict(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")

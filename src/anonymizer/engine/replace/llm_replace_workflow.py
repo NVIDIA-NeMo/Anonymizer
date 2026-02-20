@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import get_model_alias
+from anonymizer.engine.ndd.model_loader import resolve_model_alias
 
 
 class EntityReplacement(BaseModel):
@@ -52,10 +52,11 @@ class LlmReplaceWorkflow:
         entities_column: str = "_entities_by_value",
         preview_num_records: int | None = None,
     ) -> LlmReplaceResult:
-        replace_alias = self._resolve_alias(
-            workflow_name="replace_workflow",
-            role="replacer",
-            fallback=selected_models.replacement_generator,
+        replace_alias = resolve_model_alias(
+            "replace_workflow",
+            "replacement_generator",
+            selected_models,
+            self._config_dir,
         )
 
         working_df = dataframe.copy()
@@ -90,14 +91,6 @@ class LlmReplaceWorkflow:
         output_df = run_result.dataframe.copy()
         output_df.attrs = {**run_result.dataframe.attrs, **dataframe.attrs}
         return LlmReplaceResult(dataframe=output_df, failed_records=run_result.failed_records)
-
-    def _resolve_alias(self, workflow_name: str, role: str, fallback: str) -> str:
-        if self._config_dir is None:
-            return fallback
-        try:
-            return get_model_alias(workflow_name=workflow_name, role=role, config_dir=self._config_dir)
-        except (FileNotFoundError, ValueError):
-            return fallback
 
 
 def _normalize_entities_by_value(raw: Any) -> list[dict[str, Any]]:
