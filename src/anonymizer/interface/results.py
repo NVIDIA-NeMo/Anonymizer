@@ -19,6 +19,16 @@ class AnonymizerResult:
     trace_dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
 
+    def __repr__(self) -> str:
+        return (
+            "AnonymizerResult("
+            f"rows={len(self.dataframe)}, "
+            f"columns={len(self.dataframe.columns)}, "
+            f"trace_columns={len(self.trace_dataframe.columns)}, "
+            f"failed_records={len(self.failed_records)}"
+            ")"
+        )
+
 
 @dataclass
 class PreviewResult:
@@ -29,6 +39,17 @@ class PreviewResult:
     failed_records: list[FailedRecord]
     preview_num_records: int
     _display_cycle_index: int = field(default=0, init=False, repr=False)
+
+    def __repr__(self) -> str:
+        return (
+            "PreviewResult("
+            f"rows={len(self.dataframe)}, "
+            f"columns={len(self.dataframe.columns)}, "
+            f"trace_columns={len(self.trace_dataframe.columns)}, "
+            f"failed_records={len(self.failed_records)}, "
+            f"preview_num_records={self.preview_num_records}"
+            ")"
+        )
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.
