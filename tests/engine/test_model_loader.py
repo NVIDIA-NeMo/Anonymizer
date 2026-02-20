@@ -18,4 +18,4 @@ def test_load_workflow_config_contains_selected_models() -> None:
 def test_get_model_alias_reads_workflow_mapping() -> None:
     config_dir = Path(__file__).resolve().parents[2] / "src" / "anonymizer" / "config" / "model_configs"
     alias = get_model_alias(workflow_name="entity_detection", role="entity_validator", config_dir=config_dir)
-    assert alias == "build-gpt-oss-120b"
+    assert alias == "gpt-oss-120b"
