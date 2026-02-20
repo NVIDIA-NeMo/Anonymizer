@@ -49,7 +49,7 @@ providers:
   - name: nvidia-pii
     endpoint: https://gliner-xx5zzfj46.brevlab.com/v1
     provider_type: openai
-    api_key: NVIDIA_PII_API_KEY
+    api_key: NIM_API_KEY
 """
 
 MODEL_CONFIGS_YAML = """
