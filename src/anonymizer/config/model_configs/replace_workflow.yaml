@@ -1,2 +1,2 @@
 selected_models:
-  replacer: gpt-oss-120b
+  replacement_generator: gpt-oss-120b
