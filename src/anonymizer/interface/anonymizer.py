@@ -130,9 +130,10 @@ class Anonymizer:
             # LLM replacement path emits replacement maps used to produce replaced_text.
             pass
 
+        renamed_trace = _rename_output_columns(replaced_df)
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(replaced_df),
-            trace_dataframe=replaced_df,
+            dataframe=_build_user_dataframe(renamed_trace),
+            trace_dataframe=renamed_trace,
             failed_records=[*detection_result.failed_records, *replace_failures],
         )
 
@@ -151,29 +152,30 @@ def _resolve_model_providers(
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
 
+def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename internal column names to user-facing names based on the original text column."""
+    original_text_column = str(df.attrs.get("original_text_column", "text"))
+    rename_map: dict[str, str] = {}
+    if COL_TEXT in df.columns:
+        rename_map[COL_TEXT] = original_text_column
+    if COL_REPLACED_TEXT in df.columns:
+        rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
+    if COL_TAGGED_TEXT in df.columns:
+        rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
+    if not rename_map:
+        return df
+    renamed = df.rename(columns=rename_map)
+    renamed.attrs = dict(df.attrs)
+    return renamed
+
+
 def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Filter trace dataframe to only user-facing columns (already renamed)."""
+    original_text_column = str(trace_dataframe.attrs.get("original_text_column", "text"))
+    user_visible = {original_text_column, f"{original_text_column}_replaced", f"{original_text_column}_tagged"}
     user_columns = [
-        column
-        for column in trace_dataframe.columns
-        if not column.startswith("_") or column in {COL_TEXT, COL_REPLACED_TEXT}
+        column for column in trace_dataframe.columns if not column.startswith("_") or column in user_visible
     ]
     user_dataframe = trace_dataframe[user_columns].copy()
     user_dataframe.attrs = dict(trace_dataframe.attrs)
-    return _restore_output_column_names(user_dataframe)
-
-
-def _restore_output_column_names(user_dataframe: pd.DataFrame) -> pd.DataFrame:
-    original_text_column = str(user_dataframe.attrs.get("original_text_column", "text"))
-    rename_map: dict[str, str] = {}
-    if COL_TEXT in user_dataframe.columns:
-        rename_map[COL_TEXT] = original_text_column
-    if COL_REPLACED_TEXT in user_dataframe.columns:
-        rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
-    if COL_TAGGED_TEXT in user_dataframe.columns:
-        rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
-    if not rename_map:
-        return user_dataframe
-
-    renamed_dataframe = user_dataframe.rename(columns=rename_map)
-    renamed_dataframe.attrs = dict(user_dataframe.attrs)
-    return renamed_dataframe
+    return user_dataframe

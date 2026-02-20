@@ -9,8 +9,6 @@ from typing import Any
 
 import pandas as pd
 
-from anonymizer.engine.detection.constants import COL_REPLACED_TEXT, COL_TEXT
-
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
     "#dcfce7",  # green
@@ -47,7 +45,7 @@ def _color_for_label(label: str) -> tuple[str, str]:
     return ENTITY_COLORS[idx], LABEL_BORDER_COLORS[idx]
 
 
-def render_record_html(row: pd.Series, record_index: int | None = None) -> str:
+def render_record_html(row: pd.Series, record_index: int | None = None, original_text_column: str | None = None) -> str:
     """Render a single anonymizer result record as self-contained HTML.
 
     Returns an HTML string with three sections:
@@ -55,8 +53,9 @@ def render_record_html(row: pd.Series, record_index: int | None = None) -> str:
     2. Replaced text with entity highlights
     3. Replacement map table
     """
-    text = str(row.get(COL_TEXT, row.get("text", "")))
-    replaced_text = str(row.get(COL_REPLACED_TEXT, row.get("replaced_text", "")))
+    text_col = original_text_column or "text"
+    text = str(row.get(text_col, ""))
+    replaced_text = str(row.get(f"{text_col}_replaced", ""))
     entities = _normalize_entity_list(row.get("_detected_entities", []))
     replacement_map = _normalize_replacement_map(row.get("_replacement_map", {}))
 

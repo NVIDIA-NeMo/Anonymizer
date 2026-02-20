@@ -118,7 +118,7 @@ def test_render_record_html_contains_all_sections() -> None:
     row = pd.Series(
         {
             "text": "Alice works at Acme",
-            "replaced_text": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION]",
+            "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION]",
             "_detected_entities": [
                 {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
                 {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
@@ -144,7 +144,7 @@ def test_render_record_html_without_replacement_map() -> None:
     row = pd.Series(
         {
             "text": "Alice works here",
-            "replaced_text": "Alice works here",
+            "text_replaced": "Alice works here",
             "_detected_entities": [],
             "_replacement_map": {},
         }
@@ -153,16 +153,21 @@ def test_render_record_html_without_replacement_map() -> None:
     assert "No replacement map available" in result
 
 
-def test_display_record_cycles_on_repeated_calls() -> None:
+def _make_preview(rows: int = 2) -> PreviewResult:
     df = pd.DataFrame(
         {
-            "text": ["Alice", "Bob"],
-            "replaced_text": ["[R]", "[R]"],
-            "_detected_entities": [[], []],
-            "_replacement_map": [{}, {}],
+            "text": ["Alice", "Bob"][:rows],
+            "text_replaced": ["[R]", "[R]"][:rows],
+            "_detected_entities": [[] for _ in range(rows)],
+            "_replacement_map": [{} for _ in range(rows)],
         }
     )
-    preview = PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=2)
+    df.attrs["original_text_column"] = "text"
+    return PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=rows)
+
+
+def test_display_record_cycles_on_repeated_calls() -> None:
+    preview = _make_preview(rows=2)
     assert preview._display_cycle_index == 0
     preview.display_record()
     assert preview._display_cycle_index == 1
@@ -171,28 +176,12 @@ def test_display_record_cycles_on_repeated_calls() -> None:
 
 
 def test_display_record_explicit_index_does_not_advance_cycle() -> None:
-    df = pd.DataFrame(
-        {
-            "text": ["Alice", "Bob"],
-            "replaced_text": ["[R]", "[R]"],
-            "_detected_entities": [[], []],
-            "_replacement_map": [{}, {}],
-        }
-    )
-    preview = PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=2)
+    preview = _make_preview(rows=2)
     preview.display_record(index=1)
     assert preview._display_cycle_index == 0
 
 
 def test_display_record_out_of_bounds_raises() -> None:
-    df = pd.DataFrame(
-        {
-            "text": ["Alice"],
-            "replaced_text": ["[R]"],
-            "_detected_entities": [[]],
-            "_replacement_map": [{}],
-        }
-    )
-    preview = PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=1)
+    preview = _make_preview(rows=1)
     with pytest.raises(IndexError, match="out of bounds"):
         preview.display_record(index=5)
