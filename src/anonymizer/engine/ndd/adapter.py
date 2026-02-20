@@ -109,16 +109,10 @@ class NddAdapter:
             return self._data_designer
 
         resolved_providers = self._load_model_providers(model_providers)
-        artifact_path = getattr(self._data_designer, "artifact_path", None) or getattr(
-            self._data_designer, "_artifact_path"
-        )
-        secret_resolver = getattr(self._data_designer, "secret_resolver", None) or getattr(
-            self._data_designer, "_secret_resolver"
-        )
         return DataDesigner(
-            artifact_path=artifact_path,
+            artifact_path=self._data_designer._artifact_path,
             model_providers=resolved_providers,
-            secret_resolver=secret_resolver,
+            secret_resolver=self._data_designer.secret_resolver,
         )
 
     def _load_model_providers(
