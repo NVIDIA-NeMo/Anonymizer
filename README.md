@@ -82,7 +82,7 @@ anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 from anonymizer.config.replace_strategies import RedactReplace, LabelReplace, HashReplace, LLMReplace
 
 # Constant redaction
-AnonymizerConfig(replace=RedactReplace(redact_template="****"))
+AnonymizerConfig(replace=RedactReplace(format_template="****"))
 
 # Deterministic hash with short digest
 AnonymizerConfig(replace=HashReplace(algorithm="sha256", digest_length=8))
