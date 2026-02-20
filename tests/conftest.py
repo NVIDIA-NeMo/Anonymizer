@@ -16,7 +16,7 @@ from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_TEX
 @pytest.fixture
 def stub_detector_model_configs() -> list[ModelConfig]:
     """Model configs with the GLiNER PII detector alias."""
-    return [ModelConfig(alias="gliner-pii-detector", model="stg/nvidia/nemotron-pii")]
+    return [ModelConfig(alias="gliner-pii-detector", model="nvidia/nemotron-pii")]
 
 
 @pytest.fixture
