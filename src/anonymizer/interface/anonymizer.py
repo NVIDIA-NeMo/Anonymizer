@@ -14,7 +14,6 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
 )
-from anonymizer.config.replace_strategies import LLMReplace
 from anonymizer.engine.detection.constants import COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
