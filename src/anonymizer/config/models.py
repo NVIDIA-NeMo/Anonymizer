@@ -10,21 +10,21 @@ class DetectionModelSelection(BaseModel):
     """Role-level model aliases for entity detection."""
 
     entity_detector: str = Field(default="gliner-pii-detector")
-    entity_validator: str = Field(default="build-gpt-oss-120b")
-    entity_augmenter: str = Field(default="build-gpt-oss-120b")
+    entity_validator: str = Field(default="gpt-oss-120b")
+    entity_augmenter: str = Field(default="gpt-oss-120b")
     latent_detector: str = Field(default="nemotron-30b-thinking")
 
 
 class ReplaceModelSelection(BaseModel):
     """Role-level model aliases for replacement workflows."""
 
-    replacement_generator: str = Field(default="build-gpt-oss-120b")
+    replacement_generator: str = Field(default="gpt-oss-120b")
 
 
 class RewriteModelSelection(BaseModel):
     """Role-level model aliases for rewrite workflows."""
 
-    rewriter: str = Field(default="build-gpt-oss-120b")
+    rewriter: str = Field(default="gpt-oss-120b")
     evaluator: str = Field(default="nemotron-30b-thinking")
 
 

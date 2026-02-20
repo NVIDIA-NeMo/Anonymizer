@@ -1,7 +1,7 @@
 model_configs:
   - alias: gliner-pii-detector
-    model: stg/nvidia/nemotron-pii
-    provider: nvidiabuild
+    model: nvidia/nemotron-pii
+    provider: nvidia
     inference_parameters:
       max_parallel_requests: 16
       temperature: 0.0
@@ -9,9 +9,9 @@ model_configs:
       max_tokens: 1024
       timeout: 120
 
-  - alias: build-gpt-oss-120b
+  - alias: gpt-oss-120b
     model: nvdev/openai/gpt-oss-120b
-    provider: nvidiabuild
+    provider: nvidia
     inference_parameters:
       max_parallel_requests: 16
       max_tokens: 16384
@@ -21,7 +21,7 @@ model_configs:
 
   - alias: nemotron-30b-thinking
     model: nvidia/nemotron-3-nano-30b-a3b
-    provider: nvidiabuild
+    provider: nvidia
     inference_parameters:
       max_parallel_requests: 16
       max_tokens: 8192
