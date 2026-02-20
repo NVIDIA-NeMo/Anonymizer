@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from anonymizer.config.anonymizer_config import AnonymizerInput, InputSourceType
+from anonymizer.config.anonymizer_config import AnonymizerInput
 from anonymizer.engine.detection.constants import COL_TEXT
 from anonymizer.interface.errors import InvalidInputError
 
@@ -42,10 +42,9 @@ def _load_dataframe(input_data: pd.DataFrame | AnonymizerInput) -> pd.DataFrame:
     if isinstance(input_data, pd.DataFrame):
         return input_data.copy()
     source = Path(str(input_data.source))
-    if input_data.source_type == InputSourceType.parquet:
-        return pd.read_parquet(source)
-    if input_data.source_type == InputSourceType.csv:
+    suffix = source.suffix.lower()
+    if suffix == ".csv":
         return pd.read_csv(source)
-    if input_data.source_type == InputSourceType.json:
-        return pd.read_json(source)
-    raise InvalidInputError(f"Unsupported input source_type: {input_data.source_type}")
+    if suffix == ".parquet":
+        return pd.read_parquet(source)
+    raise InvalidInputError(f"Unsupported input format: {suffix}. Use .csv or .parquet.")

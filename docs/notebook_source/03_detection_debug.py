@@ -34,7 +34,6 @@ import pandas as pd
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
-    InputSourceType,
 )
 from anonymizer.config.replace_strategies import RedactReplace
 from anonymizer.interface.anonymizer import Anonymizer
@@ -105,7 +104,6 @@ result = anonymizer.preview(
     config=config,
     data=AnonymizerInput(
         source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),
-        source_type=InputSourceType.csv,
         text_column="bio",
     ),
     num_records=3,

@@ -27,7 +27,7 @@ from pathlib import Path
 
 NOTEBOOK_DIR = Path(__file__).resolve().parent
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, InputSourceType
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import HashReplace, LabelReplace, RedactReplace
 from anonymizer.interface.anonymizer import Anonymizer
 
@@ -93,7 +93,6 @@ anonymizer = Anonymizer(model_providers=providers_path)
 # %%
 input_data = AnonymizerInput(
     source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),
-    source_type=InputSourceType.csv,
     text_column="bio",
 )
 

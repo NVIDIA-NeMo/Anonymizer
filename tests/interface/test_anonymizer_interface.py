@@ -9,11 +9,7 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import (
-    AnonymizerConfig,
-    AnonymizerInput,
-    InputSourceType,
-)
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import RedactReplace
 from anonymizer.config.rewrite import RewriteParams
 from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
@@ -156,11 +152,7 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
 
     result = anonymizer.run(
         config=stub_anonymizer_config,
-        data=AnonymizerInput(
-            source=str(input_csv),
-            source_type=InputSourceType.csv,
-            text_column="bio",
-        ),
+        data=AnonymizerInput(source=str(input_csv), text_column="bio"),
     )
 
     assert "bio" in result.dataframe.columns
@@ -183,9 +175,5 @@ def test_run_with_colliding_internal_text_column_raises(
     with pytest.raises(InvalidInputError, match="reserved internal column"):
         anonymizer.run(
             config=stub_anonymizer_config,
-            data=AnonymizerInput(
-                source=str(input_csv),
-                source_type=InputSourceType.csv,
-                text_column="bio",
-            ),
+            data=AnonymizerInput(source=str(input_csv), text_column="bio"),
         )

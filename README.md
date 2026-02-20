@@ -36,7 +36,7 @@ export NIM_API_KEY="your-nvidia-api-key"
 ### 3. Anonymize text
 
 ```python
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, InputSourceType
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import RedactReplace
 from anonymizer.interface.anonymizer import Anonymizer
 
@@ -47,18 +47,14 @@ config = AnonymizerConfig(replace=RedactReplace())
 
 preview = anonymizer.preview(
     config=config,
-    data=AnonymizerInput(
-        source="data.csv",
-        source_type=InputSourceType.csv,
-        text_column="text",
-    ),
+    data=AnonymizerInput(source="data.csv", text_column="text"),
     num_records=3,
 )
 
 # Visualize with entity highlights and replacement map
 preview.display_record()
 
-# User-facing columns only
+# Most important columns only
 preview.dataframe
 
 # Full pipeline trace, including internal underscore-prefixed columns

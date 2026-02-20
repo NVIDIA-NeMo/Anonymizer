@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -19,20 +18,13 @@ from anonymizer.config.rewrite import (
 )
 
 
-class InputSourceType(str, Enum):
-    """Supported input source types."""
-
-    parquet = "parquet"
-    csv = "csv"
-    json = "json"
-    dataframe = "dataframe"
-
-
 class AnonymizerInput(BaseModel):
-    """Input source definition for the anonymizer pipeline."""
+    """Input source definition for the anonymizer pipeline.
+
+    Format is inferred from file extension (.csv or .parquet).
+    """
 
     source: str | Path
-    source_type: InputSourceType = InputSourceType.parquet
     text_column: str = Field(default="text", min_length=1)
     id_column: str | None = None
 
