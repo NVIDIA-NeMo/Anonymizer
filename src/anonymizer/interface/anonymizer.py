@@ -126,10 +126,6 @@ class Anonymizer:
             preview_num_records=preview_num_records,
         )
 
-        if isinstance(config.replace, LLMReplace):
-            # LLM replacement path emits replacement maps used to produce replaced_text.
-            pass
-
         renamed_trace = _rename_output_columns(replaced_df)
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace),
@@ -172,7 +168,11 @@ def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
 def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
     """Filter trace dataframe to only user-facing columns (already renamed)."""
     original_text_column = str(trace_dataframe.attrs.get("original_text_column", "text"))
-    user_visible = {original_text_column, f"{original_text_column}_replaced", f"{original_text_column}_tagged"}
+    user_visible = {
+        original_text_column,
+        f"{original_text_column}_replaced",
+        f"{original_text_column}_with_spans",
+    }
     user_columns = [
         column for column in trace_dataframe.columns if not column.startswith("_") or column in user_visible
     ]
