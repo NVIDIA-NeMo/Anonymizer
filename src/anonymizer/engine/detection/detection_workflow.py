@@ -29,6 +29,7 @@ from anonymizer.engine.detection.constants import (
     COL_SEED_ENTITIES_JSON,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
+    COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     DEFAULT_ENTITY_LABELS,
@@ -174,7 +175,7 @@ class EntityDetectionWorkflow:
             columns=[
                 LLMTextColumnConfig(
                     name=COL_RAW_DETECTED,
-                    prompt="{{text}}",
+                    prompt=_jinja(COL_TEXT),
                     model_alias=detection_alias,
                 ),
                 CustomColumnConfig(

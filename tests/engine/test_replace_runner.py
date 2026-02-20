@@ -12,7 +12,7 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.config.replace_strategies import HashReplace, LLMReplace, RedactReplace
-from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_TEXT
+from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.replace.replace_runner import ReplaceRunner
@@ -33,8 +33,8 @@ def test_local_replace_runner_uses_strategy_directly(
         selected_models=stub_replace_model_selection,
     )
     assert failures == []
-    assert "replaced_text" in output_df.columns
-    assert "[REDACTED_FIRST_NAME]" in output_df["replaced_text"].iloc[0]
+    assert COL_REPLACED_TEXT in output_df.columns
+    assert "[REDACTED_FIRST_NAME]" in output_df[COL_REPLACED_TEXT].iloc[0]
 
 
 def test_local_replace_runner_with_custom_format_template(
@@ -51,7 +51,7 @@ def test_local_replace_runner_with_custom_format_template(
         selected_models=stub_replace_model_selection,
     )
     assert failures == []
-    assert output_df["replaced_text"].iloc[0] == "*** works at ***"
+    assert output_df[COL_REPLACED_TEXT].iloc[0] == "*** works at ***"
 
 
 def test_llm_replace_runner_applies_generated_map(
@@ -86,7 +86,7 @@ def test_llm_replace_runner_applies_generated_map(
         selected_models=stub_replace_model_selection,
     )
     assert llm_workflow.generate_map_only.call_count == 1
-    assert output_df["replaced_text"].iloc[0] == "Maya works at NovaCorp"
+    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
     assert len(failures) == 1
 
 
@@ -116,7 +116,7 @@ def test_apply_replacement_map_handles_string_map() -> None:
         }
     )
     output_df = apply_replacement_map(dataframe)
-    assert output_df["replaced_text"].iloc[0] == "abc Elena xyz"
+    assert output_df[COL_REPLACED_TEXT].iloc[0] == "abc Elena xyz"
 
 
 def test_apply_replacement_map_handles_numpy_array_entities() -> None:
@@ -143,7 +143,7 @@ def test_apply_replacement_map_handles_numpy_array_entities() -> None:
         }
     )
     output_df = apply_replacement_map(dataframe)
-    assert output_df["replaced_text"].iloc[0] == "Maya works at NovaCorp"
+    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
 
 
 def test_hash_replace_strategy_executes(
@@ -167,4 +167,4 @@ def test_hash_replace_strategy_executes(
         selected_models=stub_replace_model_selection,
     )
     assert failures == []
-    assert output_df["replaced_text"].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"
+    assert output_df[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"

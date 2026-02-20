@@ -9,14 +9,19 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    InputSourceType,
+)
 from anonymizer.config.replace_strategies import RedactReplace
 from anonymizer.config.rewrite import RewriteParams
-from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_TEXT
+from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplaceRunner
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
+from anonymizer.interface.errors import InvalidInputError
 
 
 def _make_anonymizer(
@@ -30,7 +35,7 @@ def _make_anonymizer(
     )
     replace_runner = Mock(spec=ReplaceRunner)
     replace_runner.run.return_value = replace_return or (
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], "replaced_text": ["[REDACTED] works at [REDACTED]"]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}),
         [],
     )
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
@@ -45,10 +50,10 @@ def test_run_merges_failed_records_from_both_stages(stub_anonymizer_config: Anon
         dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_DETECTED_ENTITIES: [[]]}),
         failed_records=detection_failures,
     )
-    replace_return = (pd.DataFrame({COL_TEXT: ["Alice"], "replaced_text": ["Alice"]}), replace_failures)
+    replace_return = (pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["Alice"]}), replace_failures)
 
     anonymizer, _, _ = _make_anonymizer(detection_return=detection_result, replace_return=replace_return)
-    result = anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({COL_TEXT: ["Alice"]}))
+    result = anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({"text": ["Alice"]}))
 
     assert len(result.failed_records) == 2
     assert result.failed_records[0].step == "detection"
@@ -58,14 +63,14 @@ def test_run_merges_failed_records_from_both_stages(stub_anonymizer_config: Anon
 def test_run_enables_latent_detection_when_rewrite_configured() -> None:
     config = AnonymizerConfig(replace=RedactReplace(), rewrite=RewriteParams())
     anonymizer, detection_wf, _ = _make_anonymizer()
-    anonymizer.run(config=config, data=pd.DataFrame({COL_TEXT: ["Alice"]}))
+    anonymizer.run(config=config, data=pd.DataFrame({"text": ["Alice"]}))
 
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
 
 
 def test_run_disables_latent_detection_without_rewrite(stub_anonymizer_config: AnonymizerConfig) -> None:
     anonymizer, detection_wf, _ = _make_anonymizer()
-    anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({COL_TEXT: ["Alice"]}))
+    anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({"text": ["Alice"]}))
 
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is False
 
@@ -76,3 +81,111 @@ def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="providers"):
         _resolve_model_providers(yaml_path)
+
+
+def test_run_exposes_trace_dataframe_and_filters_internal_columns(
+    stub_anonymizer_config: AnonymizerConfig,
+) -> None:
+    replace_return = (
+        pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_REPLACED_TEXT: ["[REDACTED]"],
+                COL_TAGGED_TEXT: ["<first_name>Alice</first_name>"],
+                "_detected_entities": [[{"value": "Alice", "label": "first_name"}]],
+                "_replacement_map": [{"replacements": []}],
+            }
+        ),
+        [],
+    )
+    anonymizer, _, _ = _make_anonymizer(replace_return=replace_return)
+
+    result = anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({"text": ["Alice"]}))
+
+    assert "_detected_entities" in result.trace_dataframe.columns
+    assert "_replacement_map" in result.trace_dataframe.columns
+    assert "_detected_entities" not in result.dataframe.columns
+    assert "_replacement_map" not in result.dataframe.columns
+    assert set(result.dataframe.columns) == {"text", "text_replaced", "text_with_spans"}
+
+
+def test_preview_exposes_trace_dataframe_for_display(
+    stub_anonymizer_config: AnonymizerConfig,
+) -> None:
+    replace_return = (
+        pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_REPLACED_TEXT: ["[REDACTED]"],
+                "_detected_entities": [[{"value": "Alice", "label": "first_name"}]],
+                "_replacement_map": [{"replacements": []}],
+            }
+        ),
+        [],
+    )
+    anonymizer, _, _ = _make_anonymizer(replace_return=replace_return)
+
+    preview = anonymizer.preview(
+        config=stub_anonymizer_config,
+        data=pd.DataFrame({"text": ["Alice"]}),
+        num_records=1,
+    )
+
+    assert "_detected_entities" in preview.trace_dataframe.columns
+    assert "_detected_entities" not in preview.dataframe.columns
+
+
+def test_run_restores_original_text_column_names_for_user_dataframe(
+    stub_anonymizer_config: AnonymizerConfig,
+    tmp_path: Path,
+) -> None:
+    replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice bio text"],
+            COL_REPLACED_TEXT: ["[REDACTED] bio text"],
+            COL_TAGGED_TEXT: ["<first_name>Alice</first_name> bio text"],
+            "_detected_entities": [[{"value": "Alice", "label": "first_name"}]],
+        }
+    )
+    replace_df.attrs["original_text_column"] = "bio"
+    replace_return = (replace_df, [])
+    anonymizer, _, _ = _make_anonymizer(replace_return=replace_return)
+
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame({"bio": ["Alice bio text"]}).to_csv(input_csv, index=False)
+
+    result = anonymizer.run(
+        config=stub_anonymizer_config,
+        data=AnonymizerInput(
+            source=str(input_csv),
+            source_type=InputSourceType.csv,
+            text_column="bio",
+        ),
+    )
+
+    assert "bio" in result.dataframe.columns
+    assert "bio_replaced" in result.dataframe.columns
+    assert "bio_with_spans" in result.dataframe.columns
+    assert "text" not in result.dataframe.columns
+    assert "replaced_text" not in result.dataframe.columns
+    assert result.dataframe["bio"].iloc[0] == "Alice bio text"
+    assert result.dataframe["bio_replaced"].iloc[0] == "[REDACTED] bio text"
+
+
+def test_run_with_colliding_internal_text_column_raises(
+    stub_anonymizer_config: AnonymizerConfig,
+    tmp_path: Path,
+) -> None:
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame({COL_TEXT: ["internal"], "bio": ["Alice bio text"]}).to_csv(input_csv, index=False)
+    anonymizer, _, _ = _make_anonymizer()
+
+    with pytest.raises(InvalidInputError, match="reserved internal column"):
+        anonymizer.run(
+            config=stub_anonymizer_config,
+            data=AnonymizerInput(
+                source=str(input_csv),
+                source_type=InputSourceType.csv,
+                text_column="bio",
+            ),
+        )

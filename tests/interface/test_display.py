@@ -162,7 +162,7 @@ def test_display_record_cycles_on_repeated_calls() -> None:
             "_replacement_map": [{}, {}],
         }
     )
-    preview = PreviewResult(dataframe=df, failed_records=[], preview_num_records=2)
+    preview = PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=2)
     assert preview._display_cycle_index == 0
     preview.display_record()
     assert preview._display_cycle_index == 1
@@ -179,7 +179,7 @@ def test_display_record_explicit_index_does_not_advance_cycle() -> None:
             "_replacement_map": [{}, {}],
         }
     )
-    preview = PreviewResult(dataframe=df, failed_records=[], preview_num_records=2)
+    preview = PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=2)
     preview.display_record(index=1)
     assert preview._display_cycle_index == 0
 
@@ -193,6 +193,6 @@ def test_display_record_out_of_bounds_raises() -> None:
             "_replacement_map": [{}],
         }
     )
-    preview = PreviewResult(dataframe=df, failed_records=[], preview_num_records=1)
+    preview = PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=1)
     with pytest.raises(IndexError, match="out of bounds"):
         preview.display_record(index=5)

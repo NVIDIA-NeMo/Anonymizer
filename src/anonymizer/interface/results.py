@@ -16,6 +16,7 @@ class AnonymizerResult:
     """Result returned by full anonymization runs."""
 
     dataframe: pd.DataFrame
+    trace_dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
 
 
@@ -24,6 +25,7 @@ class PreviewResult:
     """Result returned by preview runs."""
 
     dataframe: pd.DataFrame
+    trace_dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
     preview_num_records: int
     _display_cycle_index: int = field(default=0, init=False, repr=False)
@@ -35,10 +37,10 @@ class PreviewResult:
             index: Row index to display. If None, cycles through records on repeated calls.
         """
         i = index if index is not None else self._display_cycle_index
-        if i < 0 or i >= len(self.dataframe):
-            raise IndexError(f"Record index {i} is out of bounds for {len(self.dataframe)} records.")
+        if i < 0 or i >= len(self.trace_dataframe):
+            raise IndexError(f"Record index {i} is out of bounds for {len(self.trace_dataframe)} records.")
 
-        row = self.dataframe.iloc[i]
+        row = self.trace_dataframe.iloc[i]
         html_str = render_record_html(row, record_index=i)
 
         try:
@@ -49,4 +51,4 @@ class PreviewResult:
             print(html_str)
 
         if index is None:
-            self._display_cycle_index = (self._display_cycle_index + 1) % len(self.dataframe)
+            self._display_cycle_index = (self._display_cycle_index + 1) % len(self.trace_dataframe)

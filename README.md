@@ -57,6 +57,12 @@ preview = anonymizer.preview(
 
 # Visualize with entity highlights and replacement map
 preview.display_record()
+
+# User-facing columns only
+preview.dataframe
+
+# Full pipeline trace, including internal underscore-prefixed columns
+preview.trace_dataframe
 ```
 
 For custom model endpoints, pass a providers YAML:
@@ -71,7 +77,7 @@ anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 
 | Strategy | Output for `"Alice"` (first_name) | Configurable |
 |----------|----------------------------------|-------------|
-| **RedactReplace** | `[REDACTED_FIRST_NAME]` | `redact_template` |
+| **RedactReplace** | `[REDACTED_FIRST_NAME]` | `format_template` |
 | **LabelReplace** | `<Alice, first_name>` | `format_template` |
 | **HashReplace** | `<HASH_FIRST_NAME_3bc51062973c>` | `format_template`, `algorithm`, `digest_length` |
 | **LLMReplace** | `Maya` | `instructions` |
@@ -80,7 +86,7 @@ anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 from anonymizer.config.replace_strategies import RedactReplace, LabelReplace, HashReplace, LLMReplace
 
 # Constant redaction
-AnonymizerConfig(replace=RedactReplace(redact_template="***"))
+AnonymizerConfig(replace=RedactReplace(redact_template="****"))
 
 # Deterministic hash with short digest
 AnonymizerConfig(replace=HashReplace(algorithm="sha256", digest_length=8))

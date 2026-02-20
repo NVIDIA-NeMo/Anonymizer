@@ -14,7 +14,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 # Input
-COL_TEXT = "text"
+COL_TEXT = "__nemo_anonymizer_text_input__"
 
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"
@@ -40,6 +40,7 @@ COL_VALIDATED_ENTITIES = "_validated_entities"
 COL_DETECTED_ENTITIES = "_detected_entities"
 COL_TAGGED_TEXT = "tagged_text"
 COL_ENTITIES_BY_VALUE = "_entities_by_value"
+COL_REPLACED_TEXT = "__nemo_anonymizer_text_output__"
 
 # Latent detection (optional second workflow)
 COL_LATENT_ENTITIES = "_latent_entities"

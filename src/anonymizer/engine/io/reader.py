@@ -8,20 +8,34 @@ from pathlib import Path
 import pandas as pd
 
 from anonymizer.config.anonymizer_config import AnonymizerInput, InputSourceType
+from anonymizer.engine.detection.constants import COL_TEXT
 from anonymizer.interface.errors import InvalidInputError
 
 
 def read_input(input_data: pd.DataFrame | AnonymizerInput) -> pd.DataFrame:
-    """Load input into a normalized dataframe with canonical `text` column."""
+    """Load input into a normalized dataframe with canonical internal text column."""
     dataframe = _load_dataframe(input_data=input_data)
-    if "text" not in dataframe.columns and isinstance(input_data, AnonymizerInput):
-        if input_data.text_column not in dataframe.columns:
-            raise InvalidInputError(f"Input text column '{input_data.text_column}' not found.")
-        dataframe = dataframe.rename(columns={input_data.text_column: "text"})
-        dataframe.attrs["original_text_column"] = input_data.text_column
+    if isinstance(input_data, AnonymizerInput):
+        selected_text_column = input_data.text_column
+        if selected_text_column not in dataframe.columns:
+            raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
+        _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
+        dataframe = dataframe.rename(columns={selected_text_column: COL_TEXT})
+        dataframe.attrs["original_text_column"] = selected_text_column
     elif "text" in dataframe.columns:
+        _validate_internal_column_collision(dataframe, selected_text_column="text")
+        dataframe = dataframe.rename(columns={"text": COL_TEXT})
         dataframe.attrs["original_text_column"] = "text"
     return dataframe
+
+
+def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_text_column: str) -> None:
+    if COL_TEXT not in dataframe.columns or selected_text_column == COL_TEXT:
+        return
+    raise InvalidInputError(
+        f"Input contains reserved internal column {COL_TEXT!r} while text_column={selected_text_column!r}. "
+        f"Either set text_column={COL_TEXT!r} or remove/rename {COL_TEXT!r} from input."
+    )
 
 
 def _load_dataframe(input_data: pd.DataFrame | AnonymizerInput) -> pd.DataFrame:

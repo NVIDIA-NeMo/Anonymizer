@@ -15,6 +15,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerInput,
 )
 from anonymizer.config.replace_strategies import LLMReplace
+from anonymizer.engine.detection.constants import COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
@@ -86,6 +87,7 @@ class Anonymizer:
         )
         return PreviewResult(
             dataframe=result.dataframe,
+            trace_dataframe=result.trace_dataframe,
             failed_records=result.failed_records,
             preview_num_records=num_records,
         )
@@ -129,7 +131,8 @@ class Anonymizer:
             pass
 
         return AnonymizerResult(
-            dataframe=replaced_df,
+            dataframe=_build_user_dataframe(replaced_df),
+            trace_dataframe=replaced_df,
             failed_records=[*detection_result.failed_records, *replace_failures],
         )
 
@@ -146,3 +149,31 @@ def _resolve_model_providers(
     if not isinstance(raw_providers, list):
         raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
+
+
+def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
+    user_columns = [
+        column
+        for column in trace_dataframe.columns
+        if not column.startswith("_") or column in {COL_TEXT, COL_REPLACED_TEXT}
+    ]
+    user_dataframe = trace_dataframe[user_columns].copy()
+    user_dataframe.attrs = dict(trace_dataframe.attrs)
+    return _restore_output_column_names(user_dataframe)
+
+
+def _restore_output_column_names(user_dataframe: pd.DataFrame) -> pd.DataFrame:
+    original_text_column = str(user_dataframe.attrs.get("original_text_column", "text"))
+    rename_map: dict[str, str] = {}
+    if COL_TEXT in user_dataframe.columns:
+        rename_map[COL_TEXT] = original_text_column
+    if COL_REPLACED_TEXT in user_dataframe.columns:
+        rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
+    if COL_TAGGED_TEXT in user_dataframe.columns:
+        rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
+    if not rename_map:
+        return user_dataframe
+
+    renamed_dataframe = user_dataframe.rename(columns=rename_map)
+    renamed_dataframe.attrs = dict(user_dataframe.attrs)
+    return renamed_dataframe

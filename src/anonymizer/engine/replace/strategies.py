@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from anonymizer.config.replace_strategies import LocalReplaceStrategy
+from anonymizer.engine.detection.constants import COL_REPLACED_TEXT, COL_TEXT
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ def apply_local_replace_strategy(
     dataframe: pd.DataFrame,
     *,
     strategy: LocalReplaceStrategy,
-    text_column: str = "text",
+    text_column: str = COL_TEXT,
     entities_column: str = "_detected_entities",
 ) -> pd.DataFrame:
     """Apply deterministic local replace strategy on detected entities."""
@@ -36,7 +37,7 @@ def apply_local_replace_strategy(
         ),
         axis=1,
     )
-    output_df["replaced_text"] = output_df.apply(
+    output_df[COL_REPLACED_TEXT] = output_df.apply(
         lambda row: _apply_replacement_map_to_text(
             text=str(row.get(text_column, "")),
             entities=row.get(entities_column, []),
@@ -50,13 +51,13 @@ def apply_local_replace_strategy(
 def apply_replacement_map(
     dataframe: pd.DataFrame,
     *,
-    text_column: str = "text",
+    text_column: str = COL_TEXT,
     entities_column: str = "_detected_entities",
     replacement_map_column: str = "_replacement_map",
 ) -> pd.DataFrame:
     """Apply pre-generated replacement map to text."""
     output_df = dataframe.copy()
-    output_df["replaced_text"] = output_df.apply(
+    output_df[COL_REPLACED_TEXT] = output_df.apply(
         lambda row: _apply_replacement_map_to_text(
             text=str(row.get(text_column, "")),
             entities=row.get(entities_column, []),

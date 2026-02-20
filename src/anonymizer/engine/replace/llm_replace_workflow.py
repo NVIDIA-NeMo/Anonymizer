@@ -87,7 +87,9 @@ class LlmReplaceWorkflow:
             workflow_name="replace-map-generation",
             preview_num_records=preview_num_records,
         )
-        return LlmReplaceResult(dataframe=run_result.dataframe, failed_records=run_result.failed_records)
+        output_df = run_result.dataframe.copy()
+        output_df.attrs = {**run_result.dataframe.attrs, **dataframe.attrs}
+        return LlmReplaceResult(dataframe=output_df, failed_records=run_result.failed_records)
 
     def _resolve_alias(self, workflow_name: str, role: str, fallback: str) -> str:
         if self._config_dir is None:
