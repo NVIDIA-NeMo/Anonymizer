@@ -58,10 +58,10 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
     for idx, raw_entity in enumerate(raw_entities):
         if not isinstance(raw_entity, dict):
             continue
-        value = str(raw_entity.get("value", "")).strip()
-        label = str(raw_entity.get("suggested_label", "")).strip()
-        start = _coerce_int(raw_entity.get("start_position"))
-        end = _coerce_int(raw_entity.get("end_position"))
+        value = str(raw_entity.get("text", "")).strip()
+        label = str(raw_entity.get("label", "")).strip()
+        start = _coerce_int(raw_entity.get("start"))
+        end = _coerce_int(raw_entity.get("end"))
         score = _coerce_float(raw_entity.get("score"), default=0.0)
         if not value or not label:
             continue
