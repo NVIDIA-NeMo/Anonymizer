@@ -21,10 +21,7 @@ from anonymizer.engine.detection.postprocess import (
 
 def test_parse_raw_entities_parses_valid_spans() -> None:
     text = "Call me at (555) 123-4567"
-    raw = (
-        '{"entities":[{"value":"(555) 123-4567","suggested_label":"phone_number",'
-        '"start_position":11,"end_position":25,"score":0.9}]}'
-    )
+    raw = '{"entities":[{"text":"(555) 123-4567","label":"phone_number","start":11,"end":25,"score":0.9}]}'
     entities = parse_raw_entities(raw_response=raw, text=text)
     assert len(entities) == 1
     assert entities[0].label == "phone_number"
@@ -217,7 +214,7 @@ def test_parse_raw_entities_returns_empty_when_entities_not_a_list() -> None:
 
 
 def test_parse_raw_entities_drops_non_dict_items() -> None:
-    raw = json.dumps({"entities": ["string_item", 42, None, {"value": "x", "suggested_label": "email"}]})
+    raw = json.dumps({"entities": ["string_item", 42, None, {"text": "x", "label": "email"}]})
     result = parse_raw_entities(raw_response=raw, text="has x in it")
     assert len(result) == 0  # "x" has no valid position
 
@@ -226,7 +223,7 @@ def test_parse_raw_entities_drops_entities_with_empty_value() -> None:
     raw = json.dumps(
         {
             "entities": [
-                {"value": "", "suggested_label": "email", "start_position": 0, "end_position": 5, "score": 0.9},
+                {"text": "", "label": "email", "start": 0, "end": 5, "score": 0.9},
             ]
         }
     )
@@ -237,7 +234,7 @@ def test_parse_raw_entities_drops_entities_with_empty_label() -> None:
     raw = json.dumps(
         {
             "entities": [
-                {"value": "hello", "suggested_label": "", "start_position": 0, "end_position": 5, "score": 0.9},
+                {"text": "hello", "label": "", "start": 0, "end": 5, "score": 0.9},
             ]
         }
     )
@@ -248,7 +245,7 @@ def test_parse_raw_entities_drops_negative_start() -> None:
     raw = json.dumps(
         {
             "entities": [
-                {"value": "hello", "suggested_label": "email", "start_position": -1, "end_position": 5, "score": 0.9},
+                {"text": "hello", "label": "email", "start": -1, "end": 5, "score": 0.9},
             ]
         }
     )
@@ -259,7 +256,7 @@ def test_parse_raw_entities_drops_end_equal_to_start() -> None:
     raw = json.dumps(
         {
             "entities": [
-                {"value": "hello", "suggested_label": "email", "start_position": 3, "end_position": 3, "score": 0.9},
+                {"text": "hello", "label": "email", "start": 3, "end": 3, "score": 0.9},
             ]
         }
     )
@@ -270,7 +267,7 @@ def test_parse_raw_entities_drops_end_beyond_text() -> None:
     raw = json.dumps(
         {
             "entities": [
-                {"value": "hello", "suggested_label": "email", "start_position": 0, "end_position": 999, "score": 0.9},
+                {"text": "hello", "label": "email", "start": 0, "end": 999, "score": 0.9},
             ]
         }
     )
@@ -282,10 +279,10 @@ def test_parse_raw_entities_handles_non_numeric_positions() -> None:
         {
             "entities": [
                 {
-                    "value": "hello",
-                    "suggested_label": "email",
-                    "start_position": "abc",
-                    "end_position": 5,
+                    "text": "hello",
+                    "label": "email",
+                    "start": "abc",
+                    "end": 5,
                     "score": 0.9,
                 },
             ]
@@ -300,10 +297,10 @@ def test_parse_raw_entities_handles_non_numeric_score() -> None:
         {
             "entities": [
                 {
-                    "value": "Alice",
-                    "suggested_label": "first_name",
-                    "start_position": 0,
-                    "end_position": 5,
+                    "text": "Alice",
+                    "label": "first_name",
+                    "start": 0,
+                    "end": 5,
                     "score": "bad",
                 },
             ]
@@ -319,17 +316,17 @@ def test_parse_raw_entities_resolves_overlapping_spans() -> None:
         {
             "entities": [
                 {
-                    "value": "John",
-                    "suggested_label": "first_name",
-                    "start_position": 0,
-                    "end_position": 4,
+                    "text": "John",
+                    "label": "first_name",
+                    "start": 0,
+                    "end": 4,
                     "score": 0.8,
                 },
                 {
-                    "value": "John Doe",
-                    "suggested_label": "full_name",
-                    "start_position": 0,
-                    "end_position": 8,
+                    "text": "John Doe",
+                    "label": "full_name",
+                    "start": 0,
+                    "end": 8,
                     "score": 0.9,
                 },
             ]

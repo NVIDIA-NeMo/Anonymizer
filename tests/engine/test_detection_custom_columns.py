@@ -49,10 +49,10 @@ def test_parse_produces_valid_tagged_text_and_notation() -> None:
     raw = _raw(
         [
             {
-                "value": "(555) 123-4567",
-                "suggested_label": "phone_number",
-                "start_position": 5,
-                "end_position": 19,
+                "text": "(555) 123-4567",
+                "label": "phone_number",
+                "start": 5,
+                "end": 19,
                 "score": 0.95,
             },
         ]
