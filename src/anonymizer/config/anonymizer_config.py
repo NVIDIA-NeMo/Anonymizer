@@ -37,7 +37,7 @@ class AnonymizerConfig(BaseModel):
     locale: str = Field(default="en_US", min_length=2)
     data_summary: str | None = None
     selected_models: ModelSelection = Field(default_factory=ModelSelection)
-    gliner_detection_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    gliner_detection_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
 
     # Replace configuration
     replace: ReplaceStrategy
