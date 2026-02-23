@@ -8,11 +8,15 @@ from typing import Any
 
 from data_designer.config.utils.io_helpers import load_config_file
 
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config" / "model_configs"
+DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config" / "default_model_configs"
 
 
 def load_models_config(config_dir: Path = DEFAULT_CONFIG_DIR) -> dict[str, Any]:
-    """Load model definitions from models.yaml."""
+    """Load raw model definitions from models.yaml.
+
+    Returns the unparsed YAML dict; callers pass this to DD's
+    ``load_model_configs()`` for deserialization into ``ModelConfig`` objects.
+    """
     models_file = config_dir / "models.yaml"
     return _load_yaml_dict(models_file)
 
@@ -28,10 +32,16 @@ def load_workflow_selections(workflow_name: str, config_dir: Path = DEFAULT_CONF
 
 
 def load_workflow_config(workflow_name: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> dict[str, Any]:
-    """Load merged workflow config with model definitions and role selections."""
+    """Load merged workflow config with model definitions and role selections.
+
+    Returns a raw dict combining models.yaml and the workflow's role mappings.
+    Downstream code passes this to DD's ``load_model_configs()`` for parsing.
+    """
     models_config = load_models_config(config_dir=config_dir)
+    selections = load_workflow_selections(workflow_name=workflow_name, config_dir=config_dir)
+    _validate_alias_references(models_config, selections, workflow_name)
     merged = dict(models_config)
-    merged["selected_models"] = load_workflow_selections(workflow_name=workflow_name, config_dir=config_dir)
+    merged["selected_models"] = selections
     return merged
 
 
@@ -62,6 +72,24 @@ def resolve_model_alias(
         return get_model_alias(workflow_name=workflow_name, role=role, config_dir=config_dir)
     except (FileNotFoundError, ValueError):
         return fallback
+
+
+def _validate_alias_references(
+    models_config: dict[str, Any],
+    selections: dict[str, str],
+    workflow_name: str,
+) -> None:
+    """Validate that workflow role selections reference aliases defined in models.yaml.
+
+    TODO: Move this into an Anonymizer.validate_config() step (similar to DD's
+    DataDesigner.validate()) so mismatches are caught at config-build time.
+    """
+    known_aliases = {m["alias"] for m in models_config.get("model_configs", [])}
+    unknown = set(selections.values()) - known_aliases
+    if unknown:
+        raise ValueError(
+            f"Workflow '{workflow_name}' references unknown model aliases: {unknown}. Known aliases: {known_aliases}"
+        )
 
 
 def _load_yaml_dict(path: Path) -> dict[str, Any]:

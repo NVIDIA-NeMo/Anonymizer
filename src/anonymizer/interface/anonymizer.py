@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from data_designer.config.models import ModelConfig
 
 
-DEFAULT_MODEL_CONFIGS_PATH = Path(__file__).resolve().parents[1] / "config" / "model_configs" / "models.yaml"
+DEFAULT_MODEL_CONFIGS_PATH = Path(__file__).resolve().parents[1] / "config" / "default_model_configs" / "models.yaml"
 
 
 class Anonymizer:
