@@ -88,8 +88,6 @@ class LLMReplace(BaseModel):
     """Marker config for LLM-backed replacement workflow execution."""
 
     kind: Literal["llm"] = "llm"
-    model_alias: str = Field(default="text")
-    workflow_id: str = Field(default="replace")
     instructions: str | None = None
 
 
