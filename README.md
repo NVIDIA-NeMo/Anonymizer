@@ -88,7 +88,7 @@ AnonymizerConfig(replace=RedactReplace(format_template="****"))
 AnonymizerConfig(replace=HashReplace(algorithm="sha256", digest_length=8))
 
 # LLM-generated contextual replacements
-AnonymizerConfig(replace=LLMReplace(), data_summary="Describe your data...")
+AnonymizerConfig(replace=LLMReplace())
 ```
 
 ---

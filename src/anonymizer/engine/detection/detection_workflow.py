@@ -12,9 +12,8 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
-from anonymizer.config.rewrite import PrivacyGoal
-
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,

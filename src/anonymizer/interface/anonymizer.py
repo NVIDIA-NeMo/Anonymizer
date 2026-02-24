@@ -65,7 +65,9 @@ class Anonymizer:
         )
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
-        self._replace_runner = replace_runner or ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=self._adapter))
+        self._replace_runner = replace_runner or ReplacementWorkflow(
+            llm_workflow=LlmReplaceWorkflow(adapter=self._adapter)
+        )
 
     def run(
         self,
