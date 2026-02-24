@@ -12,12 +12,25 @@ import pytest
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import RedactReplace
 from anonymizer.config.rewrite import RewriteParams
-from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_REPLACED_TEXT,
+    COL_REPLACEMENT_MAP,
+    COL_TAGGED_TEXT,
+    COL_TEXT,
+)
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplaceRunner
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidInputError
+
+
+@pytest.fixture
+def stub_input(tmp_path: Path) -> AnonymizerInput:
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice"]}).to_csv(csv_path, index=False)
+    return AnonymizerInput(source=str(csv_path))
 
 
 def _make_anonymizer(
@@ -38,7 +51,10 @@ def _make_anonymizer(
     return anonymizer, detection_workflow, replace_runner
 
 
-def test_run_merges_failed_records_from_both_stages(stub_anonymizer_config: AnonymizerConfig) -> None:
+def test_run_merges_failed_records_from_both_stages(
+    stub_anonymizer_config: AnonymizerConfig,
+    stub_input: AnonymizerInput,
+) -> None:
     detection_failures = [FailedRecord(record_id="r1", step="detection", reason="timeout")]
     replace_failures = [FailedRecord(record_id="r2", step="replace", reason="parse error")]
 
@@ -49,24 +65,27 @@ def test_run_merges_failed_records_from_both_stages(stub_anonymizer_config: Anon
     replace_return = (pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["Alice"]}), replace_failures)
 
     anonymizer, _, _ = _make_anonymizer(detection_return=detection_result, replace_return=replace_return)
-    result = anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({"text": ["Alice"]}))
+    result = anonymizer.run(config=stub_anonymizer_config, data=stub_input)
 
     assert len(result.failed_records) == 2
     assert result.failed_records[0].step == "detection"
     assert result.failed_records[1].step == "replace"
 
 
-def test_run_enables_latent_detection_when_rewrite_configured() -> None:
+def test_run_enables_latent_detection_when_rewrite_configured(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(replace=RedactReplace(), rewrite=RewriteParams())
     anonymizer, detection_wf, _ = _make_anonymizer()
-    anonymizer.run(config=config, data=pd.DataFrame({"text": ["Alice"]}))
+    anonymizer.run(config=config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
 
 
-def test_run_disables_latent_detection_without_rewrite(stub_anonymizer_config: AnonymizerConfig) -> None:
+def test_run_disables_latent_detection_without_rewrite(
+    stub_anonymizer_config: AnonymizerConfig,
+    stub_input: AnonymizerInput,
+) -> None:
     anonymizer, detection_wf, _ = _make_anonymizer()
-    anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({"text": ["Alice"]}))
+    anonymizer.run(config=stub_anonymizer_config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is False
 
@@ -81,6 +100,7 @@ def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
 
 def test_run_exposes_trace_dataframe_and_filters_internal_columns(
     stub_anonymizer_config: AnonymizerConfig,
+    stub_input: AnonymizerInput,
 ) -> None:
     replace_return = (
         pd.DataFrame(
@@ -88,33 +108,34 @@ def test_run_exposes_trace_dataframe_and_filters_internal_columns(
                 COL_TEXT: ["Alice"],
                 COL_REPLACED_TEXT: ["[REDACTED]"],
                 COL_TAGGED_TEXT: ["<first_name>Alice</first_name>"],
-                "_detected_entities": [[{"value": "Alice", "label": "first_name"}]],
-                "_replacement_map": [{"replacements": []}],
+                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_REPLACEMENT_MAP: [{"replacements": []}],
             }
         ),
         [],
     )
     anonymizer, _, _ = _make_anonymizer(replace_return=replace_return)
 
-    result = anonymizer.run(config=stub_anonymizer_config, data=pd.DataFrame({"text": ["Alice"]}))
+    result = anonymizer.run(config=stub_anonymizer_config, data=stub_input)
 
-    assert "_detected_entities" in result.trace_dataframe.columns
-    assert "_replacement_map" in result.trace_dataframe.columns
-    assert "_detected_entities" not in result.dataframe.columns
-    assert "_replacement_map" not in result.dataframe.columns
+    assert COL_DETECTED_ENTITIES in result.trace_dataframe.columns
+    assert COL_REPLACEMENT_MAP in result.trace_dataframe.columns
+    assert COL_DETECTED_ENTITIES not in result.dataframe.columns
+    assert COL_REPLACEMENT_MAP not in result.dataframe.columns
     assert set(result.dataframe.columns) == {"text", "text_replaced", "text_with_spans"}
 
 
 def test_preview_exposes_trace_dataframe_for_display(
     stub_anonymizer_config: AnonymizerConfig,
+    stub_input: AnonymizerInput,
 ) -> None:
     replace_return = (
         pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
                 COL_REPLACED_TEXT: ["[REDACTED]"],
-                "_detected_entities": [[{"value": "Alice", "label": "first_name"}]],
-                "_replacement_map": [{"replacements": []}],
+                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_REPLACEMENT_MAP: [{"replacements": []}],
             }
         ),
         [],
@@ -123,12 +144,12 @@ def test_preview_exposes_trace_dataframe_for_display(
 
     preview = anonymizer.preview(
         config=stub_anonymizer_config,
-        data=pd.DataFrame({"text": ["Alice"]}),
+        data=stub_input,
         num_records=1,
     )
 
-    assert "_detected_entities" in preview.trace_dataframe.columns
-    assert "_detected_entities" not in preview.dataframe.columns
+    assert COL_DETECTED_ENTITIES in preview.trace_dataframe.columns
+    assert COL_DETECTED_ENTITIES not in preview.dataframe.columns
 
 
 def test_run_restores_original_text_column_names_for_user_dataframe(
@@ -140,7 +161,7 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
             COL_TEXT: ["Alice bio text"],
             COL_REPLACED_TEXT: ["[REDACTED] bio text"],
             COL_TAGGED_TEXT: ["<first_name>Alice</first_name> bio text"],
-            "_detected_entities": [[{"value": "Alice", "label": "first_name"}]],
+            COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
         }
     )
     replace_df.attrs["original_text_column"] = "bio"

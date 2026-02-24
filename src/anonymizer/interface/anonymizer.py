@@ -14,20 +14,17 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
 )
-from anonymizer.engine.detection.constants import COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
+from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
+from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplaceRunner
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 if TYPE_CHECKING:
     import pandas as pd
-    from data_designer.config.models import ModelConfig
-
-
-DEFAULT_MODEL_CONFIGS_PATH = Path(__file__).resolve().parents[1] / "config" / "default_model_configs" / "models.yaml"
 
 
 class Anonymizer:
@@ -36,14 +33,20 @@ class Anonymizer:
     def __init__(
         self,
         *,
+        model_configs: str | Path | None = None,
+        model_providers: list[ModelProvider] | str | Path | None = None,
+        artifact_path: str | Path | None = None,
         data_designer: DataDesigner | None = None,
-        artifact_path: str | Path = ".anonymizer-artifacts",
-        model_providers: list["ModelProvider"] | str | Path | None = None,
         detection_workflow: EntityDetectionWorkflow | None = None,
         replace_runner: ReplaceRunner | None = None,
     ) -> None:
+        resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
+        parsed = parse_model_configs(model_configs)
+        self._model_configs = parsed.model_configs
+        self._selected_models = parsed.selected_models
+
         self._data_designer = data_designer or DataDesigner(
-            artifact_path=Path(artifact_path),
+            artifact_path=resolved_artifact_path,
             model_providers=_resolve_model_providers(model_providers),
         )
         self._adapter = NddAdapter(data_designer=self._data_designer)
@@ -54,36 +57,20 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: pd.DataFrame | AnonymizerInput,
-        model_configs: list[ModelConfig] | str | Path | None = None,
-        model_providers: list[ModelProvider] | str | Path | None = None,
+        data: AnonymizerInput,
     ) -> AnonymizerResult:
         """Run full anonymization workflow."""
-        return self._run_internal(
-            config=config,
-            data=data,
-            model_configs=model_configs,
-            model_providers=model_providers,
-            preview_num_records=None,
-        )
+        return self._run_internal(config=config, data=data, preview_num_records=None)
 
     def preview(
         self,
         *,
         config: AnonymizerConfig,
-        data: pd.DataFrame | AnonymizerInput,
+        data: AnonymizerInput,
         num_records: int = 10,
-        model_configs: list[ModelConfig] | str | Path | None = None,
-        model_providers: list[ModelProvider] | str | Path | None = None,
     ) -> PreviewResult:
         """Run preview mode on a limited number of records."""
-        result = self._run_internal(
-            config=config,
-            data=data,
-            model_configs=model_configs,
-            model_providers=model_providers,
-            preview_num_records=num_records,
-        )
+        result = self._run_internal(config=config, data=data, preview_num_records=num_records)
         return PreviewResult(
             dataframe=result.dataframe,
             trace_dataframe=result.trace_dataframe,
@@ -95,23 +82,19 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: pd.DataFrame | AnonymizerInput,
-        model_configs: list[ModelConfig] | str | Path | None,
-        model_providers: list[ModelProvider] | str | Path | None,
+        data: AnonymizerInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
         input_df = read_input(data)
-        resolved_model_configs: list[ModelConfig] | str | Path = model_configs or DEFAULT_MODEL_CONFIGS_PATH
 
         detection_result = self._detection_workflow.run(
             input_df,
-            model_configs=resolved_model_configs,
-            model_providers=model_providers,
-            selected_models=config.selected_models.detection,
+            model_configs=self._model_configs,
+            selected_models=self._selected_models.detection,
             gliner_detection_threshold=config.gliner_detection_threshold,
             entity_labels=config.entity_labels,
             privacy_goal=config.privacy_goal,
-            data_summary=config.data_summary,
+            data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
             preview_num_records=preview_num_records,
         )
@@ -119,9 +102,8 @@ class Anonymizer:
         replaced_df, replace_failures = self._replace_runner.run(
             detection_result.dataframe,
             replace_strategy=config.replace,
-            model_configs=resolved_model_configs,
-            model_providers=model_providers,
-            selected_models=config.selected_models.replace,
+            model_configs=self._model_configs,
+            selected_models=self._selected_models.replace,
             preview_num_records=preview_num_records,
         )
 

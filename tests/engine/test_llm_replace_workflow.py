@@ -9,6 +9,7 @@ import pandas as pd
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.engine.constants import COL_REPLACEMENT_MAP
 from anonymizer.engine.ndd.adapter import WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 
@@ -22,7 +23,7 @@ def test_generate_map_only_preserves_input_attrs(
         dataframe=pd.DataFrame(
             {
                 "text": ["Alice works at Acme"],
-                "_replacement_map": [{"replacements": []}],
+                COL_REPLACEMENT_MAP: [{"replacements": []}],
             }
         ),
         failed_records=[],
@@ -41,7 +42,6 @@ def test_generate_map_only_preserves_input_attrs(
     result = workflow.generate_map_only(
         input_df,
         model_configs=stub_model_configs,
-        model_providers=None,
         selected_models=stub_replace_model_selection,
     )
 

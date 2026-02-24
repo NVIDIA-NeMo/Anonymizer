@@ -12,14 +12,13 @@ from typing import TYPE_CHECKING
 
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
-from data_designer.config.models import ModelConfig, ModelProvider, load_model_configs
+from data_designer.config.models import ModelConfig
 from data_designer.config.seed import SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
-from data_designer.config.utils.io_helpers import load_config_file
-from data_designer.interface.data_designer import DataDesigner
 
 if TYPE_CHECKING:
     import pandas as pd
+    from data_designer.interface.data_designer import DataDesigner
 
 
 RECORD_ID_COLUMN = "_anonymizer_record_id"
@@ -52,23 +51,20 @@ class NddAdapter:
         self,
         df: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig] | str | Path,
-        model_providers: list[ModelProvider] | str | Path | None,
+        model_configs: list[ModelConfig],
         columns: list[ColumnConfigT],
         workflow_name: str,
         preview_num_records: int | None = None,
     ) -> WorkflowRunResult:
         """Run one workflow and return output with missing-record tracking."""
         workflow_input_df = self._attach_record_ids(df=df)
-        workflow_data_designer = self._resolve_data_designer(model_providers=model_providers)
-        resolved_model_configs = load_model_configs(model_configs)
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             tmp_path = Path(tmp_dir)
             seed_path = tmp_path / "seed.parquet"
             workflow_input_df.to_parquet(seed_path, index=False)
 
-            config_builder = DataDesignerConfigBuilder(model_configs=resolved_model_configs)
+            config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
             config_builder.with_seed_dataset(
                 LocalFileSeedSource(path=str(seed_path)),
                 sampling_strategy=SamplingStrategy.ORDERED,
@@ -77,14 +73,14 @@ class NddAdapter:
                 config_builder.add_column(column)
 
             if preview_num_records is None:
-                run_results = workflow_data_designer.create(
+                run_results = self._data_designer.create(
                     config_builder,
                     num_records=len(workflow_input_df),
                     dataset_name=workflow_name,
                 )
                 output_df = run_results.load_dataset()
             else:
-                preview_results = workflow_data_designer.preview(
+                preview_results = self._data_designer.preview(
                     config_builder,
                     num_records=preview_num_records,
                 )
@@ -103,32 +99,6 @@ class NddAdapter:
             output_df=output_df,
         )
         return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
-
-    def _resolve_data_designer(self, model_providers: list[ModelProvider] | str | Path | None) -> DataDesigner:
-        if model_providers is None:
-            return self._data_designer
-
-        resolved_providers = self._load_model_providers(model_providers)
-        return DataDesigner(
-            artifact_path=self._data_designer._artifact_path,
-            model_providers=resolved_providers,
-            secret_resolver=self._data_designer.secret_resolver,
-        )
-
-    def _load_model_providers(
-        self,
-        model_providers: list[ModelProvider] | str | Path,
-    ) -> list[ModelProvider]:
-        if isinstance(model_providers, list):
-            if all(isinstance(provider, ModelProvider) for provider in model_providers):
-                return model_providers
-            raise ValueError("model_providers list must contain ModelProvider objects only.")
-
-        config_dict = load_config_file(model_providers)
-        raw_providers = config_dict.get("providers")
-        if not isinstance(raw_providers, list):
-            raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
-        return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
     def _attach_record_ids(self, df: pd.DataFrame) -> pd.DataFrame:
         if RECORD_ID_COLUMN in df.columns:

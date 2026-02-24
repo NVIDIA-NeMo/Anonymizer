@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -14,6 +13,7 @@ from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
 from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.engine.constants import COL_REPLACEMENT_MAP
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 
@@ -37,27 +37,20 @@ class LlmReplaceResult:
 class LlmReplaceWorkflow:
     """Generate replacement maps via LLM workflow."""
 
-    def __init__(self, adapter: NddAdapter, config_dir: Path | None = None) -> None:
+    def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
-        self._config_dir = config_dir
 
     def generate_map_only(
         self,
         dataframe: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig] | str | Path,
-        model_providers: list[Any] | str | Path | None,
+        model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         instructions: str | None = None,
         entities_column: str = "_entities_by_value",
         preview_num_records: int | None = None,
     ) -> LlmReplaceResult:
-        replace_alias = resolve_model_alias(
-            "replace_workflow",
-            "replacement_generator",
-            selected_models,
-            self._config_dir,
-        )
+        replace_alias = resolve_model_alias("replacement_generator", selected_models)
 
         working_df = dataframe.copy()
         working_df["_entity_examples"] = working_df.apply(
@@ -73,10 +66,9 @@ class LlmReplaceWorkflow:
         run_result = self._adapter.run_workflow(
             working_df,
             model_configs=model_configs,
-            model_providers=model_providers,
             columns=[
                 LLMStructuredColumnConfig(
-                    name="_replacement_map",
+                    name=COL_REPLACEMENT_MAP,
                     prompt=_get_replacement_mapping_prompt(
                         entities_column="_entities_for_replace",
                         instructions=instructions,

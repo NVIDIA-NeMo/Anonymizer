@@ -6,16 +6,15 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
-from data_designer.config.models import ModelConfig, load_model_configs
+from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.engine.detection.constants import (
+from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
@@ -32,9 +31,8 @@ from anonymizer.engine.detection.constants import (
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
-    DEFAULT_ENTITY_LABELS,
-    _jinja,
 )
+from anonymizer.engine.detection.constants import DEFAULT_ENTITY_LABELS, _jinja
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
@@ -127,16 +125,14 @@ class EntityDetectionResult:
 class EntityDetectionWorkflow:
     """Detection workflow using NDD LLM + custom-column steps."""
 
-    def __init__(self, adapter: NddAdapter, config_dir: Path | None = None) -> None:
+    def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
-        self._config_dir = config_dir
 
     def detect_and_validate_entities(
         self,
         dataframe: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig] | str | Path,
-        model_providers: list[Any] | str | Path | None,
+        model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
@@ -152,29 +148,13 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
         )
 
-        detection_alias = resolve_model_alias(
-            "entity_detection",
-            "entity_detector",
-            selected_models,
-            self._config_dir,
-        )
-        validator_alias = resolve_model_alias(
-            "entity_detection",
-            "entity_validator",
-            selected_models,
-            self._config_dir,
-        )
-        augmenter_alias = resolve_model_alias(
-            "entity_detection",
-            "entity_augmenter",
-            selected_models,
-            self._config_dir,
-        )
+        detection_alias = resolve_model_alias("entity_detector", selected_models)
+        validator_alias = resolve_model_alias("entity_validator", selected_models)
+        augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
 
         detection_result = self._adapter.run_workflow(
             dataframe,
             model_configs=workflow_model_configs,
-            model_providers=model_providers,
             columns=[
                 LLMTextColumnConfig(
                     name=COL_RAW_DETECTED,
@@ -226,8 +206,7 @@ class EntityDetectionWorkflow:
         self,
         dataframe: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig] | str | Path,
-        model_providers: list[Any] | str | Path | None,
+        model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
@@ -242,16 +221,10 @@ class EntityDetectionWorkflow:
             labels=labels,
             gliner_detection_threshold=gliner_detection_threshold,
         )
-        latent_alias = resolve_model_alias(
-            "entity_detection",
-            "latent_detector",
-            selected_models,
-            self._config_dir,
-        )
+        latent_alias = resolve_model_alias("latent_detector", selected_models)
         latent_result = self._adapter.run_workflow(
             dataframe,
             model_configs=workflow_model_configs,
-            model_providers=model_providers,
             columns=[
                 LLMStructuredColumnConfig(
                     name=COL_LATENT_ENTITIES,
@@ -272,8 +245,7 @@ class EntityDetectionWorkflow:
         self,
         dataframe: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig] | str | Path,
-        model_providers: list[Any] | str | Path | None,
+        model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
@@ -290,7 +262,6 @@ class EntityDetectionWorkflow:
         detected_result = self.detect_and_validate_entities(
             dataframe,
             model_configs=model_configs,
-            model_providers=model_providers,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
             entity_labels=entity_labels,
@@ -303,7 +274,6 @@ class EntityDetectionWorkflow:
             latent_result = self.identify_latent_entities(
                 detected_result.dataframe,
                 model_configs=model_configs,
-                model_providers=model_providers,
                 selected_models=selected_models,
                 gliner_detection_threshold=gliner_detection_threshold,
                 entity_labels=entity_labels,
@@ -329,12 +299,12 @@ class EntityDetectionWorkflow:
     def _inject_detector_params(
         self,
         *,
-        model_configs: list[ModelConfig] | str | Path,
+        model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         labels: list[str],
         gliner_detection_threshold: float,
     ) -> list[ModelConfig]:
-        resolved = deepcopy(load_model_configs(model_configs))
+        resolved = deepcopy(model_configs)
         for config in resolved:
             if config.alias != selected_models.entity_detector:
                 continue

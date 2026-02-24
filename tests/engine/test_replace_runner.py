@@ -12,7 +12,7 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.config.replace_strategies import HashReplace, LLMReplace, RedactReplace
-from anonymizer.engine.detection.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.replace.replace_runner import ReplaceRunner
@@ -29,7 +29,6 @@ def test_local_replace_runner_uses_strategy_directly(
         stub_dataframe_with_entities,
         replace_strategy=RedactReplace(),
         model_configs=stub_model_configs,
-        model_providers=None,
         selected_models=stub_replace_model_selection,
     )
     assert failures == []
@@ -47,7 +46,6 @@ def test_local_replace_runner_with_custom_format_template(
         stub_dataframe_with_entities,
         replace_strategy=RedactReplace(format_template="***"),
         model_configs=stub_model_configs,
-        model_providers=None,
         selected_models=stub_replace_model_selection,
     )
     assert failures == []
@@ -65,7 +63,7 @@ def test_llm_replace_runner_applies_generated_map(
             {
                 COL_TEXT: ["Alice works at Acme"],
                 COL_DETECTED_ENTITIES: [stub_entities],
-                "_replacement_map": [
+                COL_REPLACEMENT_MAP: [
                     {
                         "replacements": [
                             {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
@@ -82,7 +80,6 @@ def test_llm_replace_runner_applies_generated_map(
         pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_DETECTED_ENTITIES: [[]]}),
         replace_strategy=LLMReplace(),
         model_configs=stub_model_configs,
-        model_providers=None,
         selected_models=stub_replace_model_selection,
     )
     assert llm_workflow.generate_map_only.call_count == 1
@@ -100,7 +97,6 @@ def test_llm_replace_without_workflow_raises(
             pd.DataFrame({COL_TEXT: ["Alice"], COL_DETECTED_ENTITIES: [[]]}),
             replace_strategy=LLMReplace(),
             model_configs=stub_model_configs,
-            model_providers=None,
             selected_models=stub_replace_model_selection,
         )
 
@@ -112,7 +108,7 @@ def test_apply_replacement_map_handles_string_map() -> None:
             COL_DETECTED_ENTITIES: [
                 [{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]
             ],
-            "_replacement_map": ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
+            COL_REPLACEMENT_MAP: ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
         }
     )
     output_df = apply_replacement_map(dataframe)
@@ -132,7 +128,7 @@ def test_apply_replacement_map_handles_numpy_array_entities() -> None:
         {
             COL_TEXT: ["Alice works at Acme"],
             COL_DETECTED_ENTITIES: [entities],
-            "_replacement_map": [
+            COL_REPLACEMENT_MAP: [
                 {
                     "replacements": [
                         {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
@@ -163,7 +159,6 @@ def test_hash_replace_strategy_executes(
         input_df,
         replace_strategy=HashReplace(),
         model_configs=stub_model_configs,
-        model_providers=None,
         selected_models=stub_replace_model_selection,
     )
     assert failures == []

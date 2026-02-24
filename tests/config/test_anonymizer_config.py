@@ -5,11 +5,10 @@ from __future__ import annotations
 
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import (
     HashReplace,
     LabelReplace,
-    LLMReplace,
     RedactReplace,
 )
 from anonymizer.config.rewrite import (
@@ -32,12 +31,12 @@ def test_rewrite_defaults_privacy_goal() -> None:
     assert config.privacy_goal is not None
 
 
-def test_data_summary_is_top_level() -> None:
-    config = AnonymizerConfig(
-        replace=LLMReplace(),
+def test_data_summary_on_input() -> None:
+    inp = AnonymizerInput(
+        source="data.csv",
         data_summary="Medical clinic visit notes from outpatient encounters.",
     )
-    assert config.data_summary is not None
+    assert inp.data_summary is not None
 
 
 def test_privacy_goal_without_rewrite_raises() -> None:

@@ -9,14 +9,10 @@ import pandas as pd
 import pytest
 
 from anonymizer.config.anonymizer_config import AnonymizerInput
-from anonymizer.engine.detection.constants import COL_TEXT
+from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.io.writer import write_output
 from anonymizer.interface.errors import InvalidInputError
-
-# ---------------------------------------------------------------------------
-# writer: write_output
-# ---------------------------------------------------------------------------
 
 
 def test_write_output_csv_roundtrips(stub_dataframe: pd.DataFrame, tmp_path: Path) -> None:
@@ -36,30 +32,6 @@ def test_write_output_parquet_roundtrips(stub_dataframe: pd.DataFrame, tmp_path:
 def test_write_output_unsupported_format_raises(stub_dataframe: pd.DataFrame, tmp_path: Path) -> None:
     with pytest.raises(InvalidInputError, match="Unsupported output format"):
         write_output(stub_dataframe, tmp_path / "out.xlsx")
-
-
-# ---------------------------------------------------------------------------
-# reader: read_input — DataFrame path
-# ---------------------------------------------------------------------------
-
-
-def test_read_input_from_dataframe() -> None:
-    input_df = pd.DataFrame({"text": ["Alice works at Acme"]})
-    result = read_input(input_df)
-    assert COL_TEXT in result.columns
-    assert result[COL_TEXT].tolist() == input_df["text"].tolist()
-
-
-def test_read_input_from_dataframe_does_not_mutate_original() -> None:
-    input_df = pd.DataFrame({"text": ["Alice works at Acme"]})
-    result = read_input(input_df)
-    result[COL_TEXT] = "modified"
-    assert input_df["text"].iloc[0] != "modified"
-
-
-# ---------------------------------------------------------------------------
-# reader: read_input — AnonymizerInput with file sources
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

@@ -3,9 +3,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import pandas as pd
 from data_designer.config.models import ModelConfig
 
@@ -33,8 +30,7 @@ class ReplaceRunner:
         dataframe: pd.DataFrame,
         *,
         replace_strategy: ReplaceStrategy,
-        model_configs: list[ModelConfig] | str | Path,
-        model_providers: list[Any] | str | Path | None,
+        model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
@@ -48,7 +44,6 @@ class ReplaceRunner:
             map_result = self._llm_workflow.generate_map_only(
                 dataframe,
                 model_configs=model_configs,
-                model_providers=model_providers,
                 selected_models=selected_models,
                 instructions=replace_strategy.instructions,
                 preview_num_records=preview_num_records,

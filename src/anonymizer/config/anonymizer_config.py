@@ -3,11 +3,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from anonymizer.config.models import ModelSelection
 from anonymizer.config.replace_strategies import ReplaceStrategy
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
@@ -24,9 +21,10 @@ class AnonymizerInput(BaseModel):
     Format is inferred from file extension (.csv or .parquet).
     """
 
-    source: str | Path
+    source: str
     text_column: str = Field(default="text", min_length=1)
     id_column: str | None = None
+    data_summary: str | None = None
 
 
 class AnonymizerConfig(BaseModel):
@@ -35,8 +33,6 @@ class AnonymizerConfig(BaseModel):
     # Basics required for every dataset/workflow
     entity_labels: list[str] | None = None
     locale: str = Field(default="en_US", min_length=2)
-    data_summary: str | None = None
-    selected_models: ModelSelection = Field(default_factory=ModelSelection)
     gliner_detection_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
 
     # Replace configuration

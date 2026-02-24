@@ -3,8 +3,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -12,7 +11,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.engine.detection.constants import (
+from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
@@ -26,7 +25,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _merge_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
-from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_loader import load_default_model_selection, resolve_model_alias
 
 
 def test_run_with_latent_detection_calls_second_workflow(
@@ -64,7 +63,6 @@ def test_run_with_latent_detection_calls_second_workflow(
     result = workflow.run(
         input_df,
         model_configs=stub_detector_model_configs,
-        model_providers=None,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=True,
@@ -113,7 +111,6 @@ def test_run_without_latent_detection_materializes_final_entities(
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
         model_configs=stub_detector_model_configs,
-        model_providers=None,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=False,
@@ -144,7 +141,6 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
         model_configs=stub_detector_model_configs,
-        model_providers=None,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=False,
@@ -174,7 +170,6 @@ def test_run_preserves_original_text_column_attr(
     result = workflow.run(
         input_df,
         model_configs=stub_detector_model_configs,
-        model_providers=None,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=False,
@@ -213,7 +208,6 @@ def test_run_with_latent_detection_merges_failures_in_order(
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
         model_configs=stub_detector_model_configs,
-        model_providers=None,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=True,
@@ -241,7 +235,6 @@ def test_detect_and_validate_entities_drops_grouped_when_compute_grouped_false(
     result = workflow.detect_and_validate_entities(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
         model_configs=stub_detector_model_configs,
-        model_providers=None,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         compute_grouped=False,
@@ -258,7 +251,6 @@ def test_run_requires_privacy_goal_for_latent_path(
         workflow.run(
             pd.DataFrame({COL_TEXT: ["Alice"]}),
             model_configs=stub_detector_model_configs,
-            model_providers=None,
             selected_models=stub_detection_model_selection,
             gliner_detection_threshold=0.5,
             tag_latent_entities=True,
@@ -294,7 +286,8 @@ def test_inject_detector_params_no_matching_alias_leaves_configs_unchanged(
     stub_detector_model_configs: list[ModelConfig],
 ) -> None:
     workflow = EntityDetectionWorkflow(adapter=Mock())
-    selected_models = DetectionModelSelection(entity_detector="missing-detector")
+    defaults = load_default_model_selection().detection
+    selected_models = defaults.model_copy(update={"entity_detector": "missing-detector"})
     updated = workflow._inject_detector_params(
         model_configs=stub_detector_model_configs,
         selected_models=selected_models,
@@ -304,17 +297,11 @@ def test_inject_detector_params_no_matching_alias_leaves_configs_unchanged(
     assert all(config.inference_parameters.extra_body is None for config in updated)
 
 
-def test_resolve_model_alias_returns_fallback_when_config_dir_none() -> None:
-    selection = DetectionModelSelection(entity_detector="fallback-model")
-    resolved = resolve_model_alias("entity_detection", "entity_detector", selection, config_dir=None)
-    assert resolved == "fallback-model"
-
-
-def test_resolve_model_alias_returns_fallback_on_lookup_error(tmp_path: Path) -> None:
-    selection = DetectionModelSelection(entity_detector="fallback-model")
-    with patch("anonymizer.engine.ndd.model_loader.get_model_alias", side_effect=FileNotFoundError):
-        resolved = resolve_model_alias("entity_detection", "entity_detector", selection, config_dir=tmp_path)
-    assert resolved == "fallback-model"
+def test_resolve_model_alias_reads_from_selection_model() -> None:
+    defaults = load_default_model_selection().detection
+    selection = defaults.model_copy(update={"entity_detector": "custom-model"})
+    assert resolve_model_alias("entity_detector", selection) == "custom-model"
+    assert resolve_model_alias("entity_validator", selection) == defaults.entity_validator
 
 
 def test_merge_labels_normalizes_and_deduplicates_custom_labels() -> None:

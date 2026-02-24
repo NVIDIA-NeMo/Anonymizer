@@ -8,24 +8,19 @@ from pathlib import Path
 import pandas as pd
 
 from anonymizer.config.anonymizer_config import AnonymizerInput
-from anonymizer.engine.detection.constants import COL_TEXT
+from anonymizer.engine.constants import COL_TEXT
 from anonymizer.interface.errors import InvalidInputError
 
 
-def read_input(input_data: pd.DataFrame | AnonymizerInput) -> pd.DataFrame:
+def read_input(input_data: AnonymizerInput) -> pd.DataFrame:
     """Load input into a normalized dataframe with canonical internal text column."""
-    dataframe = _load_dataframe(input_data=input_data)
-    if isinstance(input_data, AnonymizerInput):
-        selected_text_column = input_data.text_column
-        if selected_text_column not in dataframe.columns:
-            raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
-        _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
-        dataframe = dataframe.rename(columns={selected_text_column: COL_TEXT})
-        dataframe.attrs["original_text_column"] = selected_text_column
-    elif "text" in dataframe.columns:
-        _validate_internal_column_collision(dataframe, selected_text_column="text")
-        dataframe = dataframe.rename(columns={"text": COL_TEXT})
-        dataframe.attrs["original_text_column"] = "text"
+    dataframe = _load_dataframe(input_data)
+    selected_text_column = input_data.text_column
+    if selected_text_column not in dataframe.columns:
+        raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
+    _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
+    dataframe = dataframe.rename(columns={selected_text_column: COL_TEXT})
+    dataframe.attrs["original_text_column"] = selected_text_column
     return dataframe
 
 
@@ -38,9 +33,7 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
     )
 
 
-def _load_dataframe(input_data: pd.DataFrame | AnonymizerInput) -> pd.DataFrame:
-    if isinstance(input_data, pd.DataFrame):
-        return input_data.copy()
+def _load_dataframe(input_data: AnonymizerInput) -> pd.DataFrame:
     source = Path(str(input_data.source))
     suffix = source.suffix.lower()
     if suffix == ".csv":
