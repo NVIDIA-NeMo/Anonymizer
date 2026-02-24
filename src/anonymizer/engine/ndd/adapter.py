@@ -60,15 +60,11 @@ class NddAdapter:
         workflow_input_df = self._attach_record_ids(df=df)
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seed.parquet"
-            workflow_input_df.to_parquet(seed_path, index=False)
+            seed_path = str(Path(tmp_dir) / "seed.parquet")
+            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
 
             config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
-            config_builder.with_seed_dataset(
-                LocalFileSeedSource(path=str(seed_path)),
-                sampling_strategy=SamplingStrategy.ORDERED,
-            )
+            config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
             for column in columns:
                 config_builder.add_column(column)
 
