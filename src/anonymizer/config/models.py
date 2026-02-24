@@ -3,34 +3,42 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class DetectionModelSelection(BaseModel):
-    """Role-level model aliases for entity detection."""
+    """Role-level model aliases for entity detection.
 
-    entity_detector: str = Field(default="gliner-pii-detector")
-    entity_validator: str = Field(default="gpt-oss-120b")
-    entity_augmenter: str = Field(default="gpt-oss-120b")
-    latent_detector: str = Field(default="nemotron-30b-thinking")
+    Defaults are loaded from ``default_model_configs/entity_detection.yaml``
+    via ``load_default_model_selection()``. Users override individual roles
+    through ``AnonymizerConfig(selected_models=...)``.
+    """
+
+    entity_detector: str
+    entity_validator: str
+    entity_augmenter: str
+    latent_detector: str
 
 
 class ReplaceModelSelection(BaseModel):
     """Role-level model aliases for replacement workflows."""
 
-    replacement_generator: str = Field(default="gpt-oss-120b")
+    replacement_generator: str
 
 
 class RewriteModelSelection(BaseModel):
     """Role-level model aliases for rewrite workflows."""
 
-    rewriter: str = Field(default="gpt-oss-120b")
-    evaluator: str = Field(default="nemotron-30b-thinking")
+    rewriter: str
+    evaluator: str
 
 
 class ModelSelection(BaseModel):
-    """Model alias selection grouped by workflow and role."""
+    """Model alias selection grouped by workflow and role.
 
-    detection: DetectionModelSelection = Field(default_factory=DetectionModelSelection)
-    replace: ReplaceModelSelection = Field(default_factory=ReplaceModelSelection)
-    rewrite: RewriteModelSelection = Field(default_factory=RewriteModelSelection)
+    Constructed with defaults from YAML via ``load_default_model_selection()``.
+    """
+
+    detection: DetectionModelSelection
+    replace: ReplaceModelSelection
+    rewrite: RewriteModelSelection
