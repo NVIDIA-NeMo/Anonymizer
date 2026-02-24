@@ -20,7 +20,7 @@ from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.replace.replace_runner import ReplaceRunner
+from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 if TYPE_CHECKING:
@@ -38,8 +38,22 @@ class Anonymizer:
         artifact_path: str | Path | None = None,
         data_designer: DataDesigner | None = None,
         detection_workflow: EntityDetectionWorkflow | None = None,
-        replace_runner: ReplaceRunner | None = None,
+        replace_runner: ReplacementWorkflow | None = None,
     ) -> None:
+        """Create an Anonymizer instance.
+
+        Args:
+            model_configs: Unified YAML (string or file path) defining the model
+                pool and optional ``selected_models`` overrides. ``None`` uses
+                bundled defaults. See ``default_model_configs/README.md``.
+            model_providers: Provider definitions (list, YAML string, or file path).
+                Each provider maps a name to an endpoint and API key.
+            artifact_path: Directory for intermediate artifacts. Defaults to
+                ``.anonymizer-artifacts``.
+            data_designer: Pre-configured DataDesigner instance (advanced usage).
+            detection_workflow: Custom detection workflow (advanced/testing).
+            replace_runner: Custom replacement workflow (advanced/testing).
+        """
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
         parsed = parse_model_configs(model_configs)
         self._model_configs = parsed.model_configs
@@ -51,7 +65,7 @@ class Anonymizer:
         )
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
-        self._replace_runner = replace_runner or ReplaceRunner(llm_workflow=LlmReplaceWorkflow(adapter=self._adapter))
+        self._replace_runner = replace_runner or ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=self._adapter))
 
     def run(
         self,
@@ -59,7 +73,12 @@ class Anonymizer:
         config: AnonymizerConfig,
         data: AnonymizerInput,
     ) -> AnonymizerResult:
-        """Run full anonymization workflow."""
+        """Run the full anonymization pipeline (detection + replacement).
+
+        Args:
+            config: Workflow behavior — replace strategy, entity labels, thresholds.
+            data: Input source with file path, text column, and optional data summary.
+        """
         return self._run_internal(config=config, data=data, preview_num_records=None)
 
     def preview(
@@ -69,7 +88,13 @@ class Anonymizer:
         data: AnonymizerInput,
         num_records: int = 10,
     ) -> PreviewResult:
-        """Run preview mode on a limited number of records."""
+        """Run the pipeline on a subset of records for quick inspection.
+
+        Args:
+            config: Workflow behavior — replace strategy, entity labels, thresholds.
+            data: Input source with file path, text column, and optional data summary.
+            num_records: Maximum records to process (default 10).
+        """
         result = self._run_internal(config=config, data=data, preview_num_records=num_records)
         return PreviewResult(
             dataframe=result.dataframe,

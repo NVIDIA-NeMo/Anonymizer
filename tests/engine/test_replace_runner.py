@@ -15,7 +15,7 @@ from anonymizer.config.replace_strategies import HashReplace, LLMReplace, Redact
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
-from anonymizer.engine.replace.replace_runner import ReplaceRunner
+from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.replace.strategies import apply_replacement_map
 
 
@@ -24,7 +24,7 @@ def test_local_replace_runner_uses_strategy_directly(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    runner = ReplaceRunner()
+    runner = ReplacementWorkflow()
     output_df, failures = runner.run(
         stub_dataframe_with_entities,
         replace_strategy=RedactReplace(),
@@ -41,7 +41,7 @@ def test_local_replace_runner_with_custom_format_template(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    runner = ReplaceRunner()
+    runner = ReplacementWorkflow()
     output_df, failures = runner.run(
         stub_dataframe_with_entities,
         replace_strategy=RedactReplace(format_template="***"),
@@ -75,7 +75,7 @@ def test_llm_replace_runner_applies_generated_map(
         ),
         failed_records=[FailedRecord(record_id="r1", step="replace-map-generation", reason="none")],
     )
-    runner = ReplaceRunner(llm_workflow=llm_workflow)
+    runner = ReplacementWorkflow(llm_workflow=llm_workflow)
     output_df, failures = runner.run(
         pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_DETECTED_ENTITIES: [[]]}),
         replace_strategy=LLMReplace(),
@@ -91,7 +91,7 @@ def test_llm_replace_without_workflow_raises(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    runner = ReplaceRunner()
+    runner = ReplacementWorkflow()
     with pytest.raises(ValueError, match="llm_workflow"):
         runner.run(
             pd.DataFrame({COL_TEXT: ["Alice"], COL_DETECTED_ENTITIES: [[]]}),
@@ -146,7 +146,7 @@ def test_hash_replace_strategy_executes(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    runner = ReplaceRunner()
+    runner = ReplacementWorkflow()
     input_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice"],

@@ -21,7 +21,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.replace.replace_runner import ReplaceRunner
+from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidInputError
 
@@ -42,7 +42,7 @@ def _make_anonymizer(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_DETECTED_ENTITIES: [[]]}),
         failed_records=[],
     )
-    replace_runner = Mock(spec=ReplaceRunner)
+    replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = replace_return or (
         pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}),
         [],

@@ -19,7 +19,7 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
 
 
-class ReplaceRunner:
+class ReplacementWorkflow:
     """Dispatch replace execution between local and LLM-backed strategies."""
 
     def __init__(self, llm_workflow: LlmReplaceWorkflow | None = None) -> None:
