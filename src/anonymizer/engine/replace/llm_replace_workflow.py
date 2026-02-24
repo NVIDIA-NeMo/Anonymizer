@@ -13,7 +13,7 @@ from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
 from anonymizer.config.models import ReplaceModelSelection
-from anonymizer.engine.constants import COL_REPLACEMENT_MAP
+from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 
@@ -47,7 +47,7 @@ class LlmReplaceWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         instructions: str | None = None,
-        entities_column: str = "_entities_by_value",
+        entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
     ) -> LlmReplaceResult:
         replace_alias = resolve_model_alias("replacement_generator", selected_models)
