@@ -1,0 +1,5 @@
+selected_models:
+  entity_detector: gliner-pii-detector
+  entity_validator: gpt-oss-120b
+  entity_augmenter: gpt-oss-120b
+  latent_detector: nemotron-30b-thinking

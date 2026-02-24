@@ -106,6 +106,9 @@ CLAUDE.local.md
 .claude/settings.local.json
 ai/tmp/
 
+# Anonymizer execution artifacts
+.anonymizer-artifacts/
+
 # TLS certs and keys (if any)
 *.crt
 *.key
