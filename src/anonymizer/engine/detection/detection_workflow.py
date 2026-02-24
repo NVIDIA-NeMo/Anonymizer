@@ -6,12 +6,13 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 
 import pandas as pd
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
+
+from anonymizer.config.rewrite import PrivacyGoal
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import (
@@ -210,7 +211,7 @@ class EntityDetectionWorkflow:
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
-        privacy_goal: Any | None,
+        privacy_goal: PrivacyGoal | None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
@@ -249,7 +250,7 @@ class EntityDetectionWorkflow:
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
-        privacy_goal: Any | None = None,
+        privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
         compute_grouped_entities: bool | None = None,
@@ -434,7 +435,7 @@ Already-detected entities: <<SEED_ENTITIES>>
     return prompt.replace("<<DATA_SUMMARY>>", context_section)
 
 
-def _get_latent_prompt(*, data_summary: str | None, privacy_goal: Any | None) -> str:
+def _get_latent_prompt(*, data_summary: str | None, privacy_goal: PrivacyGoal | None) -> str:
     summary_line = data_summary.strip() if data_summary else "Not provided"
     privacy_goal_text = _format_privacy_goal(privacy_goal)
     prompt = """You are performing: LATENT ENTITY & INFERENCE ANALYSIS for privacy protection.
@@ -494,9 +495,7 @@ Now produce the JSON for the input.
     return prompt
 
 
-def _format_privacy_goal(privacy_goal: Any | None) -> str:
+def _format_privacy_goal(privacy_goal: PrivacyGoal | None) -> str:
     if privacy_goal is None:
         return "Not provided"
-    if hasattr(privacy_goal, "to_prompt_string"):
-        return str(privacy_goal.to_prompt_string())
-    return str(privacy_goal)
+    return privacy_goal.to_prompt_string()

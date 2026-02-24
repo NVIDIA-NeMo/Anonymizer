@@ -11,6 +11,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
@@ -66,7 +67,10 @@ def test_run_with_latent_detection_calls_second_workflow(
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=True,
-        privacy_goal="Protect direct and latent identifiers.",
+        privacy_goal=PrivacyGoal(
+            protect="Protect direct and latent identifiers from disclosure.",
+            preserve="General utility and semantic meaning of the original text.",
+        ),
         data_summary="Employee records",
     )
 
@@ -83,11 +87,15 @@ def test_run_with_latent_detection_calls_second_workflow(
 def test_latent_prompt_includes_summary_and_goal() -> None:
     prompt = _get_latent_prompt(
         data_summary="Medical visit notes",
-        privacy_goal="Protect direct and inferred identities while preserving utility.",
+        privacy_goal=PrivacyGoal(
+            protect="Protect direct and inferred identities from re-identification.",
+            preserve="Clinical utility and semantic meaning of the original text.",
+        ),
     )
     assert "Data type summary:\nMedical visit notes" in prompt
     assert "The text will be rewritten according to this privacy goal:" in prompt
-    assert "Protect direct and inferred identities while preserving utility." in prompt
+    assert "PROTECT: Protect direct and inferred identities from re-identification." in prompt
+    assert "PRESERVE: Clinical utility and semantic meaning of the original text." in prompt
     assert "Every latent entity MUST include 1-2 short quotes from the text as evidence." in prompt
     assert COL_TAGGED_TEXT in prompt
 
@@ -211,7 +219,10 @@ def test_run_with_latent_detection_merges_failures_in_order(
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=True,
-        privacy_goal="Protect direct and latent identifiers.",
+        privacy_goal=PrivacyGoal(
+            protect="Protect direct and latent identifiers from disclosure.",
+            preserve="General utility and semantic meaning of the original text.",
+        ),
     )
     assert [item.record_id for item in result.failed_records] == ["d1", "l1"]
 
