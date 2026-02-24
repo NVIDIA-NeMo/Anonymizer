@@ -6,6 +6,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACEMENT_MAP
 from anonymizer.interface.display import (
     _build_replaced_entities,
     _normalize_replacement_map,
@@ -119,11 +120,11 @@ def test_render_record_html_contains_all_sections() -> None:
         {
             "text": "Alice works at Acme",
             "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION]",
-            "_detected_entities": [
+            COL_DETECTED_ENTITIES: [
                 {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
                 {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
             ],
-            "_replacement_map": {
+            COL_REPLACEMENT_MAP: {
                 "replacements": [
                     {"original": "Alice", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"},
                     {"original": "Acme", "label": "organization", "synthetic": "[REDACTED_ORGANIZATION]"},
@@ -140,13 +141,52 @@ def test_render_record_html_contains_all_sections() -> None:
     assert "record 0" in result
 
 
+def test_render_record_html_original_highlights_from_map_when_entities_empty() -> None:
+    """When _detected_entities is empty but replacement_map exists, Original gets highlights."""
+    row = {
+        "text": "Alice works at Acme",
+        "text_replaced": "Maya works at NovaCorp",
+        COL_DETECTED_ENTITIES: [],
+        COL_REPLACEMENT_MAP: {
+            "replacements": [
+                {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+                {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+            ]
+        },
+    }
+    html_str = render_record_html(pd.Series(row))
+    assert "Original" in html_str
+    assert "Alice" in html_str
+    assert "Acme" in html_str
+    assert "first_name" in html_str
+
+
+def test_render_record_html_replaced_highlights_from_map_when_entities_empty() -> None:
+    """When _detected_entities is empty but replacement_map exists, highlights come from map."""
+    row = {
+        "text": "Alice works at Acme",
+        "text_replaced": "Maya works at NovaCorp",
+        COL_DETECTED_ENTITIES: [],
+        COL_REPLACEMENT_MAP: {
+            "replacements": [
+                {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+                {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+            ]
+        },
+    }
+    html_str = render_record_html(pd.Series(row))
+    assert "Maya" in html_str
+    assert "NovaCorp" in html_str
+    assert "border:1.5px solid" in html_str
+
+
 def test_render_record_html_without_replacement_map() -> None:
     row = pd.Series(
         {
             "text": "Alice works here",
             "text_replaced": "Alice works here",
-            "_detected_entities": [],
-            "_replacement_map": {},
+            COL_DETECTED_ENTITIES: [],
+            COL_REPLACEMENT_MAP: {},
         }
     )
     result = render_record_html(row)
@@ -158,12 +198,103 @@ def _make_preview(rows: int = 2) -> PreviewResult:
         {
             "text": ["Alice", "Bob"][:rows],
             "text_replaced": ["[R]", "[R]"][:rows],
-            "_detected_entities": [[] for _ in range(rows)],
-            "_replacement_map": [{} for _ in range(rows)],
+            COL_DETECTED_ENTITIES: [[] for _ in range(rows)],
+            COL_REPLACEMENT_MAP: [{} for _ in range(rows)],
         }
     )
     df.attrs["original_text_column"] = "text"
     return PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=rows)
+
+
+def test_render_record_html_uses_detected_entities_over_map_scan() -> None:
+    """When _detected_entities is populated, use them directly instead of map-based scanning."""
+    row = pd.Series(
+        {
+            "text": "She works at the Lantern in Austin",
+            "text_replaced": "She works at [REDACTED_COMPANY] in [REDACTED_CITY]",
+            COL_DETECTED_ENTITIES: [
+                {"value": "The Lantern", "label": "company_name", "start_position": 13, "end_position": 24},
+                {"value": "Austin", "label": "city", "start_position": 28, "end_position": 34},
+            ],
+            COL_REPLACEMENT_MAP: {
+                "replacements": [
+                    {"original": "The Lantern", "label": "company_name", "synthetic": "[REDACTED_COMPANY]"},
+                    {"original": "Austin", "label": "city", "synthetic": "[REDACTED_CITY]"},
+                ]
+            },
+        }
+    )
+    result = render_record_html(row)
+    assert "company_name" in result
+    assert "city" in result
+    assert "[REDACTED_COMPANY]" in result
+    assert "[REDACTED_CITY]" in result
+
+
+def test_render_record_html_replaced_tags_positioned_correctly_with_case_mismatch() -> None:
+    """Tags in replaced text must not drift when entity value case differs from actual text.
+
+    Regression: when _detected_entities was discarded in favor of map-based scanning,
+    "The Lantern" (case-sensitive find) missed "the Lantern" in the text.  The gap-based
+    position tracking then drifted, placing tags inside replacement tokens.
+    """
+    row = pd.Series(
+        {
+            "text": "Hi Mara at the Lantern in Austin TX",
+            "text_replaced": "Hi [REDACTED_NAME] at [REDACTED_COMPANY] in [REDACTED_CITY] TX",
+            COL_DETECTED_ENTITIES: [
+                {"value": "Mara", "label": "first_name", "start_position": 3, "end_position": 7},
+                {"value": "The Lantern", "label": "company_name", "start_position": 11, "end_position": 22},
+                {"value": "Austin", "label": "city", "start_position": 26, "end_position": 32},
+            ],
+            COL_REPLACEMENT_MAP: {
+                "replacements": [
+                    {"original": "Mara", "label": "first_name", "synthetic": "[REDACTED_NAME]"},
+                    {"original": "The Lantern", "label": "company_name", "synthetic": "[REDACTED_COMPANY]"},
+                    {"original": "Austin", "label": "city", "synthetic": "[REDACTED_CITY]"},
+                ]
+            },
+        }
+    )
+    result = render_record_html(row)
+    assert "[REDACTED_CITY]" in result
+    assert "city" in result
+    assert "[REDACTED| city" not in result
+
+
+def test_render_record_html_mask_strategy_labels_are_distinct() -> None:
+    """When all replacements are identical (e.g. '*****'), each entity keeps its own label."""
+    row = pd.Series(
+        {
+            "text": "Mara in Austin",
+            "text_replaced": "***** in *****",
+            COL_DETECTED_ENTITIES: [
+                {"value": "Mara", "label": "first_name", "start_position": 0, "end_position": 4},
+                {"value": "Austin", "label": "city", "start_position": 8, "end_position": 14},
+            ],
+            COL_REPLACEMENT_MAP: {
+                "replacements": [
+                    {"original": "Mara", "label": "first_name", "synthetic": "*****"},
+                    {"original": "Austin", "label": "city", "synthetic": "*****"},
+                ]
+            },
+        }
+    )
+    result = render_record_html(row)
+    assert "first_name" in result
+    assert "city" in result
+
+
+def test_build_original_entities_from_map_case_insensitive() -> None:
+    """Fallback map scanning finds entities regardless of case."""
+    from anonymizer.interface.display import _build_original_entities_from_map
+
+    replacement_map = [{"original": "The Lantern", "label": "company_name"}]
+    text = "She works at the Lantern daily"
+    result = _build_original_entities_from_map(replacement_map, text)
+    assert len(result) == 1
+    assert result[0]["value"] == "the Lantern"
+    assert result[0]["start_position"] == 13
 
 
 def test_display_record_cycles_on_repeated_calls() -> None:

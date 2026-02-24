@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 
@@ -15,7 +16,7 @@ def test_anonymizer_result_repr_is_compact() -> None:
             {
                 "__nemo_anonymizer_text_input__": ["a"],
                 "__nemo_anonymizer_text_output__": ["b"],
-                "_detected_entities": [[]],
+                COL_DETECTED_ENTITIES: [[]],
             }
         ),
         failed_records=[],
@@ -37,7 +38,7 @@ def test_preview_result_repr_is_compact() -> None:
             {
                 "__nemo_anonymizer_text_input__": ["a"],
                 "__nemo_anonymizer_text_output__": ["b"],
-                "_detected_entities": [[]],
+                COL_DETECTED_ENTITIES: [[]],
             }
         ),
         failed_records=[],

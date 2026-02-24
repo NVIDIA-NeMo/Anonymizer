@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from typing import Any
 
 import pandas as pd
+
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACEMENT_MAP
 
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
@@ -56,11 +59,17 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
     text_col = original_text_column or "text"
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
-    entities = _normalize_entity_list(row.get("_detected_entities", []))
-    replacement_map = _normalize_replacement_map(row.get("_replacement_map", {}))
+    entities = _normalize_entity_list(row.get(COL_DETECTED_ENTITIES, []))
+    replacement_map = _normalize_replacement_map(row.get(COL_REPLACEMENT_MAP, {}))
+
+    if not entities and replacement_map:
+        entities = _build_original_entities_from_map(replacement_map, text)
 
     original_html = _render_highlighted_text(text, entities)
+
     replaced_entities = _build_replaced_entities(entities, replacement_map, text, replaced_text)
+    if not replaced_entities and replacement_map:
+        replaced_entities = _build_replaced_entities_from_map(replacement_map, replaced_text)
     replaced_html = _render_highlighted_text(replaced_text, replaced_entities)
     table_html = _render_replacement_table(replacement_map)
 
@@ -115,8 +124,13 @@ def _build_replaced_entities(
 ) -> list[dict[str, Any]]:
     """Compute entity positions in the replaced text by replaying the replacement splicing."""
     by_value_label: dict[tuple[str, str], str] = {}
+    by_value: dict[str, str] = {}
     for entry in replacement_map:
-        by_value_label[(entry.get("original", ""), entry.get("label", ""))] = entry.get("synthetic", "")
+        orig = entry.get("original", "")
+        label = entry.get("label", "")
+        synth = entry.get("synthetic", "")
+        by_value_label[(orig, label)] = synth
+        by_value[orig] = synth
 
     sorted_entities = sorted(
         original_entities,
@@ -139,7 +153,7 @@ def _build_replaced_entities(
         gap = start - original_cursor
         replaced_cursor += gap
 
-        synthetic = by_value_label.get((value, label), value)
+        synthetic = by_value_label.get((value, label), by_value.get(value, value))
         replaced_entities.append(
             {
                 "value": synthetic,
@@ -153,6 +167,66 @@ def _build_replaced_entities(
         original_cursor = end
 
     return replaced_entities
+
+
+def _build_original_entities_from_map(
+    replacement_map: list[dict[str, str]],
+    original_text: str,
+) -> list[dict[str, Any]]:
+    """Build entity positions by finding original values in original text.
+
+    Fallback when _detected_entities is empty but replacement_map exists.
+    Uses case-insensitive matching to align with how the detection engine
+    finds entities (e.g. "The Lantern" matching "the Lantern" in text).
+    """
+    result: list[dict[str, Any]] = []
+    for entry in replacement_map:
+        original = str(entry.get("original", ""))
+        label = str(entry.get("label", ""))
+        if not original or not label:
+            continue
+        for match in re.finditer(re.escape(original), original_text, flags=re.IGNORECASE):
+            result.append(
+                {
+                    "value": original_text[match.start() : match.end()],
+                    "label": label,
+                    "start_position": match.start(),
+                    "end_position": match.end(),
+                }
+            )
+    return sorted(result, key=lambda e: (e["start_position"], e["end_position"]))
+
+
+def _build_replaced_entities_from_map(
+    replacement_map: list[dict[str, str]],
+    replaced_text: str,
+) -> list[dict[str, Any]]:
+    """Build entity positions by finding synthetic values in replaced text.
+
+    Fallback when _detected_entities is empty but replacement_map exists (e.g. LLM
+    replace path where entity format differs).
+    """
+    result: list[dict[str, Any]] = []
+    for entry in replacement_map:
+        synthetic = str(entry.get("synthetic", ""))
+        label = str(entry.get("label", ""))
+        if not synthetic or not label:
+            continue
+        start = 0
+        while True:
+            pos = replaced_text.find(synthetic, start)
+            if pos < 0:
+                break
+            result.append(
+                {
+                    "value": synthetic,
+                    "label": label,
+                    "start_position": pos,
+                    "end_position": pos + len(synthetic),
+                }
+            )
+            start = pos + len(synthetic)
+    return sorted(result, key=lambda e: (e["start_position"], e["end_position"]))
 
 
 def _render_replacement_table(replacement_map: list[dict[str, str]]) -> str:
@@ -192,16 +266,24 @@ def _normalize_entity_list(raw: Any) -> list[dict[str, Any]]:
 
 
 def _normalize_replacement_map(raw: Any) -> list[dict[str, str]]:
-    parsed = raw
+    parsed: Any = raw
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             return []
+    elif hasattr(raw, "model_dump"):
+        parsed = raw.model_dump()
     if isinstance(parsed, dict):
         replacements = parsed.get("replacements", [])
         if isinstance(replacements, list):
-            return [r for r in replacements if isinstance(r, dict)]
+            result: list[dict[str, str]] = []
+            for r in replacements:
+                if isinstance(r, dict):
+                    result.append(r)
+                elif hasattr(r, "model_dump"):
+                    result.append(r.model_dump())
+            return result
     return []
 
 

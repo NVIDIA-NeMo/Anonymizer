@@ -16,7 +16,7 @@ from typing import Any
 
 from data_designer.config import custom_column_generator
 
-from anonymizer.engine.detection.constants import (
+from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,

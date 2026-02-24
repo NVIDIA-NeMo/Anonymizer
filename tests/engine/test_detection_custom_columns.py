@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from anonymizer.engine.detection.constants import (
+from anonymizer.engine.constants import (
     COL_INITIAL_TAGGED_TEXT,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
