@@ -27,7 +27,10 @@
 import tempfile
 from pathlib import Path
 
-NOTEBOOK_DIR = Path(__file__).resolve().parent
+try:
+    NOTEBOOK_DIR = Path(__file__).resolve().parent
+except NameError:
+    NOTEBOOK_DIR = Path.cwd()
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import LLMReplace
@@ -76,12 +79,10 @@ model_configs:
 
 tmp_dir = Path(tempfile.mkdtemp(prefix="anonymizer_notebook_"))
 providers_path = tmp_dir / "model_providers.yaml"
-configs_path = tmp_dir / "model_configs.yaml"
 
 providers_path.write_text(MODEL_PROVIDERS_YAML.strip() + "\n", encoding="utf-8")
-configs_path.write_text(MODEL_CONFIGS_YAML.strip() + "\n", encoding="utf-8")
 
-anonymizer = Anonymizer(model_providers=providers_path)
+anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=providers_path)
 
 # %% [markdown]
 # ## Run preview with LLM replacement
@@ -90,19 +91,18 @@ anonymizer = Anonymizer(model_providers=providers_path)
 # Set `data_summary` to help the LLM understand the domain.
 
 # %%
-config = AnonymizerConfig(
-    replace=LLMReplace(),
+config = AnonymizerConfig(replace=LLMReplace())
+
+input_data = AnonymizerInput(
+    source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),
+    text_column="bio",
     data_summary="Biographical profiles",
 )
 
 preview = anonymizer.preview(
     config=config,
-    data=AnonymizerInput(
-        source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),
-        text_column="bio",
-    ),
+    data=input_data,
     num_records=3,
-    model_configs=configs_path,
 )
 
 # %%

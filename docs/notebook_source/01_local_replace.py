@@ -25,7 +25,10 @@
 import tempfile
 from pathlib import Path
 
-NOTEBOOK_DIR = Path(__file__).resolve().parent
+try:
+    NOTEBOOK_DIR = Path(__file__).resolve().parent
+except NameError:
+    NOTEBOOK_DIR = Path.cwd()
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import HashReplace, LabelReplace, RedactReplace
@@ -80,12 +83,10 @@ model_configs:
 
 tmp_dir = Path(tempfile.mkdtemp(prefix="anonymizer_notebook_"))
 providers_path = tmp_dir / "model_providers.yaml"
-configs_path = tmp_dir / "model_configs.yaml"
 
 providers_path.write_text(MODEL_PROVIDERS_YAML.strip() + "\n", encoding="utf-8")
-configs_path.write_text(MODEL_CONFIGS_YAML.strip() + "\n", encoding="utf-8")
 
-anonymizer = Anonymizer(model_providers=providers_path)
+anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=providers_path)
 
 # %% [markdown]
 # ## Input data
@@ -108,7 +109,6 @@ redact_preview = anonymizer.preview(
     config=redact_config,
     data=input_data,
     num_records=3,
-    model_configs=configs_path,
 )
 
 redact_preview.display_record(0)
@@ -117,7 +117,6 @@ redact_preview.display_record(0)
 redact_run = anonymizer.run(
     config=redact_config,
     data=input_data,
-    model_configs=configs_path,
 )
 
 print(redact_run)
@@ -135,7 +134,6 @@ custom_preview = anonymizer.preview(
     config=custom_config,
     data=input_data,
     num_records=3,
-    model_configs=configs_path,
 )
 
 custom_preview.display_record(0)
@@ -152,7 +150,6 @@ label_preview = anonymizer.preview(
     config=label_config,
     data=input_data,
     num_records=3,
-    model_configs=configs_path,
 )
 
 label_preview.display_record(0)
@@ -170,7 +167,6 @@ hash_preview = anonymizer.preview(
     config=hash_config,
     data=input_data,
     num_records=3,
-    model_configs=configs_path,
 )
 
 hash_preview.display_record(0)
