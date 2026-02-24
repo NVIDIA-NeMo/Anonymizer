@@ -363,30 +363,30 @@ Additional rules:
 Use the candidates list as the authoritative source for entity values and labels.
 
 Example:
-{%% if %s == "xml" -%%}
+{%- if <<TAG_NOTATION>> == "xml" -%}
 Input text: My <first_name>name</first_name> is <first_name>Amy</first_name>, <age>35</age> in <country>San Diego</country>, <state>California</state>.
-{%% elif %s == "bracket" -%%}
+{%- elif <<TAG_NOTATION>> == "bracket" -%}
 Input text: My [[name|first_name]] is [[Amy|first_name]], [[35|age]] in [[San Diego|country]], [[California|state]].
-{%% elif %s == "paren" -%%}
+{%- elif <<TAG_NOTATION>> == "paren" -%}
 Input text: My ((PII:first_name|name)) is ((PII:first_name|Amy)), ((PII:age|35)) in ((PII:country|San Diego)), ((PII:state|California)).
-{%% else -%%}
+{%- else -%}
 Input text: My <<PII:first_name>>name<</PII:first_name>> is <<PII:first_name>>Amy<</PII:first_name>>, <<PII:age>>35<</PII:age>> in <<PII:country>>San Diego<</PII:country>>, <<PII:state>>California<</PII:state>>.
-{%% endif -%%}
+{%- endif -%}
 Candidates: [{"id": "id_name", "value": "name", "label": "first_name", "context_before": "My ", "context_after": " is Amy"}, {"id": "id_amy", "value": "Amy", "label": "first_name", "context_before": " is ", "context_after": ", 35"}, {"id": "id_35", "value": "35", "label": "age", "context_before": "Amy, ", "context_after": ", software"}, {"id": "id_sd", "value": "San Diego", "label": "country", "context_before": " in ", "context_after": ", California"}, {"id": "id_ca", "value": "California", "label": "state", "context_before": "Diego, ", "context_after": "."}]
 Output: [{"id": "id_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "id_amy", "decision": "keep", "proposed_label": "", "reason": "valid first name"}, {"id": "id_35", "decision": "keep", "proposed_label": "", "reason": "quasi-identifier"}, {"id": "id_sd", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "id_ca", "decision": "keep", "proposed_label": "", "reason": "valid state"}]
 
 ---
-Input text: %s
-Candidates: %s
-""" % (
-        COL_TAG_NOTATION,
-        COL_TAG_NOTATION,
-        COL_TAG_NOTATION,
-        _jinja(COL_MERGED_TAGGED_TEXT),
-        _jinja(COL_VALIDATION_CANDIDATES),
+Input text: <<TAGGED_TEXT>>
+Candidates: <<CANDIDATES>>
+"""
+    prompt = (
+        prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
+        .replace("<<TAGGED_TEXT>>", _jinja(COL_MERGED_TAGGED_TEXT))
+        .replace("<<CANDIDATES>>", _jinja(COL_VALIDATION_CANDIDATES))
+        .replace("<<VALID_CLASSES>>", ", ".join(labels))
     )
     context_section = f"\nData context: {data_summary}\n" if data_summary else ""
-    return prompt.replace("<<VALID_CLASSES>>", ", ".join(labels)).replace("<<DATA_SUMMARY>>", context_section)
+    return prompt.replace("<<DATA_SUMMARY>>", context_section)
 
 
 def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
@@ -408,30 +408,30 @@ Rules:
   Only tag data, never syntax
 
 Example:
-{%% if %s == "xml" -%%}
+{%- if <<TAG_NOTATION>> == "xml" -%}
 Input text: My name is Amy Steier in <city>San Diego</city>.
-{%% elif %s == "bracket" -%%}
+{%- elif <<TAG_NOTATION>> == "bracket" -%}
 Input text: My name is Amy Steier in [[San Diego|city]].
-{%% elif %s == "paren" -%%}
+{%- elif <<TAG_NOTATION>> == "paren" -%}
 Input text: My name is Amy Steier in ((PII:city|San Diego)).
-{%% else -%%}
+{%- else -%}
 Input text: My name is Amy Steier in <<PII:city>>San Diego<</PII:city>>.
-{%% endif -%%}
+{%- endif -%}
 Already-detected entities: [{"value": "San Diego", "label": "city"}]
 Output: [{"value": "Amy", "label": "first_name", "reason": "first name"}, {"value": "Steier", "label": "last_name", "reason": "last name"}]
 
 ---
-Input text: %s
-Already-detected entities: %s
-""" % (
-        COL_TAG_NOTATION,
-        COL_TAG_NOTATION,
-        COL_TAG_NOTATION,
-        _jinja(COL_INITIAL_TAGGED_TEXT),
-        _jinja(COL_SEED_ENTITIES_JSON),
+Input text: <<TAGGED_TEXT>>
+Already-detected entities: <<SEED_ENTITIES>>
+"""
+    prompt = (
+        prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
+        .replace("<<TAGGED_TEXT>>", _jinja(COL_INITIAL_TAGGED_TEXT))
+        .replace("<<SEED_ENTITIES>>", _jinja(COL_SEED_ENTITIES_JSON))
+        .replace("<<VALID_CLASSES>>", ", ".join(labels))
     )
     context_section = data_summary if data_summary else "Not provided"
-    return prompt.replace("<<VALID_CLASSES>>", ", ".join(labels)).replace("<<DATA_SUMMARY>>", context_section)
+    return prompt.replace("<<DATA_SUMMARY>>", context_section)
 
 
 def _get_latent_prompt(*, data_summary: str | None, privacy_goal: Any | None) -> str:

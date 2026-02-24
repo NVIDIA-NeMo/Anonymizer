@@ -81,6 +81,10 @@ class LlmReplaceWorkflow:
             preview_num_records=preview_num_records,
         )
         output_df = run_result.dataframe.copy()
+        # Carry pipeline metadata (e.g. original_text_column) through to downstream steps.
+        # pandas .attrs is experimental and not preserved through merge/concat/groupby,
+        # but is preserved through copy which is all we do here.
+        # TODO: consider wrapping df + metadata in a typed container.
         output_df.attrs = {**run_result.dataframe.attrs, **dataframe.attrs}
         return LlmReplaceResult(dataframe=output_df, failed_records=run_result.failed_records)
 
@@ -113,15 +117,15 @@ def _create_entity_examples(entities_by_value: Any) -> str:
 
 
 def _get_replacement_mapping_prompt(*, entities_column: str, instructions: str | None = None) -> str:
-    instruction_block = "\nAdditional instructions: %s\n" % instructions if instructions else ""
-    return """Generate synthetic replacements for sensitive entities. ONE value per entity, used consistently.
-%s
+    instruction_block = f"\nAdditional instructions: {instructions}\n" if instructions else ""
+    prompt = """Generate synthetic replacements for sensitive entities. ONE value per entity, used consistently.
+<<INSTRUCTION_BLOCK>>
 Context: {{ tagged_text }}
 
 Entities to replace:
-{%% for entity in %s %%}
+{%- for entity in <<ENTITIES_COLUMN>> %}
 - "{{ entity.value }}" ({{ entity.labels_str }})
-{%% endfor %%}
+{%- endfor %}
 
 Examples: {{ _entity_examples }}
 
@@ -134,10 +138,10 @@ Rules:
    - Contact: phone country code/country must match (+1→+44, USA→UK)
 
 2. Preserve wildcards and patterns:
-   - CHANGE concrete parts, KEEP wildcards (* %% ?) in same positions
+   - CHANGE concrete parts, KEEP wildcards (* % ?) in same positions
    - "10.0.*.*" → "192.168.*.*" (changed 10.0, kept *.*)
    - "file_*.log" → "output_*.log" (changed file, kept *)
-   - "user_%%@%%.com" → "person_%%@%%.net" (changed user/com, kept %%@%%)
+   - "user_%@%.com" → "person_%@%.net" (changed user/com, kept %@%)
    - DON'T return original unchanged! Change the non-wildcard parts
 
 3. Maintain format and type:
@@ -145,10 +149,8 @@ Rules:
    - Same demographic characteristics (Indian name → Indian name)
 
 CRITICAL: Every entity MUST have a different synthetic value. Never return original=synthetic.
-""" % (
-        instruction_block,
-        entities_column,
-    )
+"""
+    return prompt.replace("<<INSTRUCTION_BLOCK>>", instruction_block).replace("<<ENTITIES_COLUMN>>", entities_column)
 
 
 _EXAMPLE_LOOKUP: dict[str, str] = {
