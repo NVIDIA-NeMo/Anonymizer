@@ -140,6 +140,13 @@ class EntityDetectionWorkflow:
         compute_grouped: bool = True,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
+        """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
+
+        This is the primary detection workflow. It detects entities via GLiNER,
+        validates/reclassifies them with an LLM, augments with additional
+        entities the detector may have missed, and produces final standoff
+        entity spans with overlap resolution.
+        """
         labels = _merge_labels(entity_labels)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
@@ -214,6 +221,11 @@ class EntityDetectionWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
+        """Detect latent/inferred entities that could enable re-identification.
+
+        Runs after ``detect_and_validate_entities`` when rewrite mode is
+        enabled. Uses an LLM to identify entities inferable from context.
+        """
         labels = _merge_labels(entity_labels)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
@@ -255,6 +267,12 @@ class EntityDetectionWorkflow:
         compute_grouped_entities: bool | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
+        """Run the full detection pipeline, optionally including latent entity detection.
+
+        Calls ``detect_and_validate_entities`` first, then optionally
+        ``identify_latent_entities`` if ``tag_latent_entities`` is True
+        (rewrite mode). Merges failures from both stages.
+        """
         if tag_latent_entities and privacy_goal is None:
             raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
 
