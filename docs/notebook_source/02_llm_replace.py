@@ -32,9 +32,7 @@ try:
 except NameError:
     NOTEBOOK_DIR = Path.cwd()
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
-from anonymizer.config.replace_strategies import LLMReplace
-from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, LLMReplace
 
 # %%
 MODEL_PROVIDERS_YAML = """

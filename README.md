@@ -36,9 +36,7 @@ export NIM_API_KEY="your-nvidia-api-key"
 ### 3. Anonymize text
 
 ```python
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
-from anonymizer.config.replace_strategies import RedactReplace
-from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, RedactReplace
 
 # Uses default model providers (build.nvidia.com) via NIM_API_KEY env var
 anonymizer = Anonymizer()
@@ -79,7 +77,7 @@ anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 | **LLMReplace** | `Maya` | `instructions` |
 
 ```python
-from anonymizer.config.replace_strategies import RedactReplace, LabelReplace, HashReplace, LLMReplace
+from anonymizer import RedactReplace, LabelReplace, HashReplace, LLMReplace
 
 # Constant redaction
 AnonymizerConfig(replace=RedactReplace(format_template="****"))

@@ -34,12 +34,7 @@ except NameError:
 
 import pandas as pd
 
-from anonymizer.config.anonymizer_config import (
-    AnonymizerConfig,
-    AnonymizerInput,
-)
-from anonymizer.config.replace_strategies import RedactReplace
-from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, RedactReplace
 
 # %%
 MODEL_PROVIDERS_YAML = """
