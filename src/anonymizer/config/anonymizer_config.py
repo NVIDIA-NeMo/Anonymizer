@@ -21,27 +21,40 @@ class AnonymizerInput(BaseModel):
     Format is inferred from file extension (.csv or .parquet).
     """
 
-    source: str
-    text_column: str = Field(default="text", min_length=1)
-    id_column: str | None = None
-    data_summary: str | None = None
+    source: str = Field(description="Path to input file (.csv or .parquet).")
+    text_column: str = Field(default="text", min_length=1, description="Column containing the text to anonymize.")
+    id_column: str | None = Field(default=None, description="Optional column to use as record identifier.")
+    data_summary: str | None = Field(
+        default=None, description="Short description of the data. Improves LLM detection accuracy."
+    )
 
 
 class AnonymizerConfig(BaseModel):
     """Primary user-facing config for anonymization behavior."""
 
     # Basics required for every dataset/workflow
-    entity_labels: list[str] | None = None
-    locale: str = Field(default="en_US", min_length=2)
-    gliner_detection_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    entity_labels: list[str] | None = Field(
+        default=None, description="Additional entity labels to detect with GLiNER beyond the built-in set."
+    )
+    locale: str = Field(default="en_US", min_length=2, description="Locale for entity generation (e.g. en_US, de_DE).")
+    gliner_detection_threshold: float = Field(
+        default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
+    )
 
-    # Replace configuration
-    replace: ReplaceStrategy
+    replace: ReplaceStrategy = Field(
+        description="Replacement strategy (RedactReplace, LabelReplace, HashReplace, or LLMReplace)."
+    )
 
-    # Rewrite/evaluation configuration
-    rewrite: RewriteParams | None = None
-    privacy_goal: PrivacyGoal | None = None
-    evaluation: EvaluationCriteria = Field(default_factory=EvaluationCriteria)
+    rewrite: RewriteParams | None = Field(
+        default=None, description="Optional rewrite-mode parameters. Enables latent entity detection."
+    )
+    privacy_goal: PrivacyGoal | None = Field(
+        default=None, description="Structured privacy goal for rewrite mode. Auto-populated if rewrite is set."
+    )
+    evaluation: EvaluationCriteria = Field(
+        default_factory=EvaluationCriteria,
+        description="Criteria and thresholds for privacy leakage and utility scoring.",
+    )
 
     @field_validator("entity_labels")
     @classmethod

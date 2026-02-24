@@ -15,7 +15,9 @@ class LabelReplace(BaseModel):
     """Replace each entity with a readable label token."""
 
     kind: Literal["label"] = "label"
-    format_template: str = "<{text}, {label}>"
+    format_template: str = Field(
+        default="<{text}, {label}>", description="Template with {text} and {label} placeholders."
+    )
 
     @field_validator("format_template")
     @classmethod
@@ -39,8 +41,10 @@ class RedactReplace(BaseModel):
     """Replace each entity with a configurable redaction template."""
 
     kind: Literal["redact"] = "redact"
-    format_template: str = "[REDACTED_{label}]"
-    normalize_label: bool = True
+    format_template: str = Field(
+        default="[REDACTED_{label}]", description="Template with optional {text} and {label} placeholders."
+    )
+    normalize_label: bool = Field(default=True, description="Uppercase and clean label before substitution.")
 
     @field_validator("format_template")
     @classmethod
@@ -65,9 +69,13 @@ class HashReplace(BaseModel):
     """Replace each entity with a deterministic hash token."""
 
     kind: Literal["hash"] = "hash"
-    algorithm: Literal["sha256", "sha1", "md5"] = "sha256"
-    digest_length: int = Field(default=12, ge=6, le=64)
-    format_template: str = "<HASH_{label}_{digest}>"
+    algorithm: Literal["sha256", "sha1", "md5"] = Field(default="sha256", description="Hash algorithm.")
+    digest_length: int = Field(
+        default=12, ge=6, le=64, description="Number of hex characters to keep from the hash digest."
+    )
+    format_template: str = Field(
+        default="<HASH_{label}_{digest}>", description="Template with {digest} required; {text} and {label} optional."
+    )
 
     @field_validator("format_template")
     @classmethod
@@ -88,7 +96,9 @@ class LLMReplace(BaseModel):
     """Marker config for LLM-backed replacement workflow execution."""
 
     kind: Literal["llm"] = "llm"
-    instructions: str | None = None
+    instructions: str | None = Field(
+        default=None, description="Additional instructions for the LLM replacement generator."
+    )
 
 
 ReplaceStrategy = Annotated[
