@@ -457,7 +457,7 @@ def _get_latent_prompt(*, data_summary: str | None, privacy_goal: PrivacyGoal | 
     privacy_goal_text = _format_privacy_goal(privacy_goal)
     prompt = """You are performing: LATENT ENTITY & INFERENCE ANALYSIS for privacy protection.
 
-The text will be rewritten according to this privacy goal: %s
+The text will be rewritten according to this privacy goal: <<PRIVACY_GOAL>>
 
 Goal: Identify sensitive information that is NOT explicitly stated in the text, but is reasonably inferable from context and could materially increase re-identification risk or reveal sensitive attributes about a real person. Treat inference as a first-class privacy surface; do not assume removing explicit identifiers is sufficient.
 
@@ -477,11 +477,11 @@ Threat model:
 Assume an adversary who can read the text in full, has general domain knowledge and access to public information, and may have partial prior familiarity with the subject.
 
 Data type summary:
-%s
+<<DATA_SUMMARY>>
 
 Input text (identifiers already tagged inline):
 ---
-%s
+<<TAGGED_TEXT>>
 ---
 
 Rules (strict)
@@ -504,12 +504,12 @@ Quality checks before finalizing:
 - Remove any item without clear evidence quotes.
 
 Now produce the JSON for the input.
-""" % (
-        privacy_goal_text,
-        summary_line,
-        _jinja(COL_TAGGED_TEXT),
+"""
+    return (
+        prompt.replace("<<PRIVACY_GOAL>>", privacy_goal_text)
+        .replace("<<DATA_SUMMARY>>", summary_line)
+        .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))
     )
-    return prompt
 
 
 def _format_privacy_goal(privacy_goal: PrivacyGoal | None) -> str:
