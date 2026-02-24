@@ -126,7 +126,7 @@ class Anonymizer:
             preview_num_records=preview_num_records,
         )
 
-        replaced_df, replace_failures = self._replace_runner.run(
+        replace_result = self._replace_runner.run(
             detection_result.dataframe,
             replace_strategy=config.replace,
             model_configs=self._model_configs,
@@ -134,11 +134,11 @@ class Anonymizer:
             preview_num_records=preview_num_records,
         )
 
-        renamed_trace = _rename_output_columns(replaced_df)
+        renamed_trace = _rename_output_columns(replace_result.dataframe)
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace),
             trace_dataframe=renamed_trace,
-            failed_records=[*detection_result.failed_records, *replace_failures],
+            failed_records=[*detection_result.failed_records, *replace_result.failed_records],
         )
 
 

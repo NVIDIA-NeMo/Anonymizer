@@ -25,15 +25,15 @@ def test_local_replace_runner_uses_strategy_directly(
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     runner = ReplacementWorkflow()
-    output_df, failures = runner.run(
+    result = runner.run(
         stub_dataframe_with_entities,
         replace_strategy=RedactReplace(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
-    assert failures == []
-    assert COL_REPLACED_TEXT in output_df.columns
-    assert "[REDACTED_FIRST_NAME]" in output_df[COL_REPLACED_TEXT].iloc[0]
+    assert result.failed_records == []
+    assert COL_REPLACED_TEXT in result.dataframe.columns
+    assert "[REDACTED_FIRST_NAME]" in result.dataframe[COL_REPLACED_TEXT].iloc[0]
 
 
 def test_local_replace_runner_with_custom_format_template(
@@ -42,14 +42,14 @@ def test_local_replace_runner_with_custom_format_template(
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     runner = ReplacementWorkflow()
-    output_df, failures = runner.run(
+    result = runner.run(
         stub_dataframe_with_entities,
         replace_strategy=RedactReplace(format_template="***"),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
-    assert failures == []
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "*** works at ***"
+    assert result.failed_records == []
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "*** works at ***"
 
 
 def test_llm_replace_runner_applies_generated_map(
@@ -76,15 +76,15 @@ def test_llm_replace_runner_applies_generated_map(
         failed_records=[FailedRecord(record_id="r1", step="replace-map-generation", reason="none")],
     )
     runner = ReplacementWorkflow(llm_workflow=llm_workflow)
-    output_df, failures = runner.run(
+    result = runner.run(
         pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_DETECTED_ENTITIES: [[]]}),
         replace_strategy=LLMReplace(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
     assert llm_workflow.generate_map_only.call_count == 1
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
-    assert len(failures) == 1
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
+    assert len(result.failed_records) == 1
 
 
 def test_llm_replace_without_workflow_raises(
@@ -155,11 +155,11 @@ def test_hash_replace_strategy_executes(
             ],
         }
     )
-    output_df, failures = runner.run(
+    result = runner.run(
         input_df,
         replace_strategy=HashReplace(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
-    assert failures == []
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"
+    assert result.failed_records == []
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"

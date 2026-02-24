@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 from data_designer.config.models import ModelConfig
 
@@ -19,6 +21,14 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
 
 
+@dataclass(frozen=True)
+class ReplacementResult:
+    """Result of a replacement workflow execution."""
+
+    dataframe: pd.DataFrame
+    failed_records: list[FailedRecord]
+
+
 class ReplacementWorkflow:
     """Dispatch replace execution between local and LLM-backed strategies."""
 
@@ -33,10 +43,10 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
-    ) -> tuple[pd.DataFrame, list[FailedRecord]]:
+    ) -> ReplacementResult:
         if isinstance(replace_strategy, (LabelReplace, RedactReplace, HashReplace)):
             local_df = apply_local_replace_strategy(dataframe, strategy=replace_strategy)
-            return local_df, []
+            return ReplacementResult(dataframe=local_df, failed_records=[])
 
         if isinstance(replace_strategy, LLMReplace):
             if self._llm_workflow is None:
@@ -49,6 +59,6 @@ class ReplacementWorkflow:
                 preview_num_records=preview_num_records,
             )
             replaced_df = apply_replacement_map(map_result.dataframe)
-            return replaced_df, map_result.failed_records
+            return ReplacementResult(dataframe=replaced_df, failed_records=map_result.failed_records)
 
         raise ValueError(f"Unsupported replace strategy type: {type(replace_strategy).__name__}")

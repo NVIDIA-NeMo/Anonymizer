@@ -21,7 +21,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidInputError
 
@@ -35,7 +35,7 @@ def stub_input(tmp_path: Path) -> AnonymizerInput:
 
 def _make_anonymizer(
     detection_return: EntityDetectionResult | None = None,
-    replace_return: tuple | None = None,
+    replace_return: ReplacementResult | None = None,
 ) -> tuple[Anonymizer, Mock, Mock]:
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = detection_return or EntityDetectionResult(
@@ -43,9 +43,11 @@ def _make_anonymizer(
         failed_records=[],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
-    replace_runner.run.return_value = replace_return or (
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}),
-        [],
+    replace_runner.run.return_value = replace_return or ReplacementResult(
+        dataframe=pd.DataFrame(
+            {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
+        ),
+        failed_records=[],
     )
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     return anonymizer, detection_workflow, replace_runner
@@ -62,7 +64,10 @@ def test_run_merges_failed_records_from_both_stages(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_DETECTED_ENTITIES: [[]]}),
         failed_records=detection_failures,
     )
-    replace_return = (pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["Alice"]}), replace_failures)
+    replace_return = ReplacementResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["Alice"]}),
+        failed_records=replace_failures,
+    )
 
     anonymizer, _, _ = _make_anonymizer(detection_return=detection_result, replace_return=replace_return)
     result = anonymizer.run(config=stub_anonymizer_config, data=stub_input)
@@ -102,8 +107,8 @@ def test_run_exposes_trace_dataframe_and_filters_internal_columns(
     stub_anonymizer_config: AnonymizerConfig,
     stub_input: AnonymizerInput,
 ) -> None:
-    replace_return = (
-        pd.DataFrame(
+    replace_return = ReplacementResult(
+        dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
                 COL_REPLACED_TEXT: ["[REDACTED]"],
@@ -112,7 +117,7 @@ def test_run_exposes_trace_dataframe_and_filters_internal_columns(
                 COL_REPLACEMENT_MAP: [{"replacements": []}],
             }
         ),
-        [],
+        failed_records=[],
     )
     anonymizer, _, _ = _make_anonymizer(replace_return=replace_return)
 
@@ -129,8 +134,8 @@ def test_preview_exposes_trace_dataframe_for_display(
     stub_anonymizer_config: AnonymizerConfig,
     stub_input: AnonymizerInput,
 ) -> None:
-    replace_return = (
-        pd.DataFrame(
+    replace_return = ReplacementResult(
+        dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
                 COL_REPLACED_TEXT: ["[REDACTED]"],
@@ -138,7 +143,7 @@ def test_preview_exposes_trace_dataframe_for_display(
                 COL_REPLACEMENT_MAP: [{"replacements": []}],
             }
         ),
-        [],
+        failed_records=[],
     )
     anonymizer, _, _ = _make_anonymizer(replace_return=replace_return)
 
@@ -165,7 +170,7 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
         }
     )
     replace_df.attrs["original_text_column"] = "bio"
-    replace_return = (replace_df, [])
+    replace_return = ReplacementResult(dataframe=replace_df, failed_records=[])
     anonymizer, _, _ = _make_anonymizer(replace_return=replace_return)
 
     input_csv = tmp_path / "input.csv"
