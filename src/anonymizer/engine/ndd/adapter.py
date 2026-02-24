@@ -110,7 +110,11 @@ class NddAdapter:
 
     @staticmethod
     def _compute_record_id(row: pd.Series) -> str:
-        serialized = json.dumps(row.to_dict(), default=str, sort_keys=True, separators=(",", ":"))
+        # uuid5 is deterministic so input/output IDs match for missing-record tracking.
+        # Include row index so duplicate rows get distinct IDs.
+        # TODO: consider whether id_column from AnonymizerInput should be used here instead.
+        row_data = {**row.to_dict(), "__row_idx__": row.name}
+        serialized = json.dumps(row_data, default=str, sort_keys=True, separators=(",", ":"))
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
 
     def _detect_missing_records(
