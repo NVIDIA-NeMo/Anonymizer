@@ -31,8 +31,10 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
+    DEFAULT_ENTITY_LABELS,
+    ENTITY_LABEL_EXAMPLES,
 )
-from anonymizer.engine.detection.constants import DEFAULT_ENTITY_LABELS, _jinja
+from anonymizer.engine.detection.constants import _jinja
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
@@ -346,10 +348,28 @@ def _merge_labels(entity_labels: list[str] | None) -> list[str]:
     return merged
 
 
+def _format_label_examples(labels: list[str]) -> str:
+    """Build a formatted list of entity classes with examples.
+
+    Labels present in ENTITY_LABEL_EXAMPLES get their examples; custom labels
+    added by the user appear without examples so the LLM still knows they're valid.
+    """
+    lines: list[str] = []
+    for label in labels:
+        examples = ENTITY_LABEL_EXAMPLES.get(label)
+        if examples:
+            lines.append(f"- {label}: {', '.join(examples)}")
+        else:
+            lines.append(f"- {label}")
+    return "\n".join(lines)
+
+
 def _get_validation_prompt(*, data_summary: str | None, labels: list[str]) -> str:
     prompt = """Validate entity tags for privacy-sensitive information. For each entity, decide: keep, reclassify, or drop.
 <<DATA_SUMMARY>>
-Valid labels: <<VALID_CLASSES>>
+
+Here are all the valid entity classes with examples (only classes from this list can be proposed):
+<<LABEL_EXAMPLES>>
 
 What to KEEP:
 - Direct identifiers: names, emails, IDs, phone numbers, addresses, SSNs
@@ -391,7 +411,7 @@ Input text: My ((PII:first_name|name)) is ((PII:first_name|Amy)), ((PII:age|35))
 Input text: My <<PII:first_name>>name<</PII:first_name>> is <<PII:first_name>>Amy<</PII:first_name>>, <<PII:age>>35<</PII:age>> in <<PII:country>>San Diego<</PII:country>>, <<PII:state>>California<</PII:state>>.
 {%- endif -%}
 Candidates: [{"id": "id_name", "value": "name", "label": "first_name", "context_before": "My ", "context_after": " is Amy"}, {"id": "id_amy", "value": "Amy", "label": "first_name", "context_before": " is ", "context_after": ", 35"}, {"id": "id_35", "value": "35", "label": "age", "context_before": "Amy, ", "context_after": ", software"}, {"id": "id_sd", "value": "San Diego", "label": "country", "context_before": " in ", "context_after": ", California"}, {"id": "id_ca", "value": "California", "label": "state", "context_before": "Diego, ", "context_after": "."}]
-Output: [{"id": "id_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "id_amy", "decision": "keep", "proposed_label": "", "reason": "valid first name"}, {"id": "id_35", "decision": "keep", "proposed_label": "", "reason": "quasi-identifier"}, {"id": "id_sd", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "id_ca", "decision": "keep", "proposed_label": "", "reason": "valid state"}]
+Output: {"decisions": [{"id": "id_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "id_amy", "decision": "keep", "proposed_label": "", "reason": "valid first name"}, {"id": "id_35", "decision": "keep", "proposed_label": "", "reason": "quasi-identifier"}, {"id": "id_sd", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "id_ca", "decision": "keep", "proposed_label": "", "reason": "valid state"}]}
 
 ---
 Input text: <<TAGGED_TEXT>>
@@ -401,7 +421,7 @@ Candidates: <<CANDIDATES>>
         prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_MERGED_TAGGED_TEXT))
         .replace("<<CANDIDATES>>", _jinja(COL_VALIDATION_CANDIDATES))
-        .replace("<<VALID_CLASSES>>", ", ".join(labels))
+        .replace("<<LABEL_EXAMPLES>>", _format_label_examples(labels))
     )
     context_section = f"\nData context: {data_summary}\n" if data_summary else ""
     return prompt.replace("<<DATA_SUMMARY>>", context_section)
@@ -414,8 +434,11 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
 - Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
 
 We have the following type of data: <<DATA_SUMMARY>>
-Valid labels: <<VALID_CLASSES>>
-If no valid label fits, create descriptive snake_case label (e.g., clinic_name, server_name, transaction_id).
+
+Here are the known entity classes with examples. Prefer labels from this list when they fit:
+<<LABEL_EXAMPLES>>
+
+If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id).
 
 Rules:
 - Tag actual values, not placeholders
@@ -436,7 +459,7 @@ Input text: My name is Amy Steier in ((PII:city|San Diego)).
 Input text: My name is Amy Steier in <<PII:city>>San Diego<</PII:city>>.
 {%- endif -%}
 Already-detected entities: [{"value": "San Diego", "label": "city"}]
-Output: [{"value": "Amy", "label": "first_name", "reason": "first name"}, {"value": "Steier", "label": "last_name", "reason": "last name"}]
+Output: {"entities": [{"value": "Amy", "label": "first_name", "reason": "first name"}, {"value": "Steier", "label": "last_name", "reason": "last name"}]}
 
 ---
 Input text: <<TAGGED_TEXT>>
@@ -446,7 +469,7 @@ Already-detected entities: <<SEED_ENTITIES>>
         prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_INITIAL_TAGGED_TEXT))
         .replace("<<SEED_ENTITIES>>", _jinja(COL_SEED_ENTITIES_JSON))
-        .replace("<<VALID_CLASSES>>", ", ".join(labels))
+        .replace("<<LABEL_EXAMPLES>>", _format_label_examples(labels))
     )
     context_section = data_summary if data_summary else "Not provided"
     return prompt.replace("<<DATA_SUMMARY>>", context_section)
