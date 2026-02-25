@@ -356,9 +356,8 @@ def test_validation_prompt_includes_data_summary() -> None:
     assert "Data context: Medical records" in prompt
 
 
-def test_augment_prompt_includes_label_examples() -> None:
+def test_augment_prompt_includes_label_names() -> None:
     prompt = _get_augment_prompt(data_summary=None, labels=["phone_number", "age"])
-    assert "Here are the known entity classes with examples" in prompt
-    assert "- phone_number: 949-307-5488" in prompt
-    assert "- age: 76, 51, 35, 41" in prompt
+    assert "Here are the known entity classes" in prompt
+    assert "phone_number, age" in prompt
     assert "If no known label fits, create a concise snake_case label" in prompt

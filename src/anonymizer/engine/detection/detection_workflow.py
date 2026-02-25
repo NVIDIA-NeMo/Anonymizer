@@ -435,8 +435,8 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
 
 We have the following type of data: <<DATA_SUMMARY>>
 
-Here are the known entity classes with examples. Prefer labels from this list when they fit:
-<<LABEL_EXAMPLES>>
+Here are the known entity classes. Prefer labels from this list when they fit:
+<<VALID_CLASSES>>
 
 If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id).
 
@@ -469,7 +469,7 @@ Already-detected entities: <<SEED_ENTITIES>>
         prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_INITIAL_TAGGED_TEXT))
         .replace("<<SEED_ENTITIES>>", _jinja(COL_SEED_ENTITIES_JSON))
-        .replace("<<LABEL_EXAMPLES>>", _format_label_examples(labels))
+        .replace("<<VALID_CLASSES>>", ", ".join(labels))
     )
     context_section = data_summary if data_summary else "Not provided"
     return prompt.replace("<<DATA_SUMMARY>>", context_section)
