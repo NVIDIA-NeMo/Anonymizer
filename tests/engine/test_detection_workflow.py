@@ -22,7 +22,10 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
+    _format_label_examples,
+    _get_augment_prompt,
     _get_latent_prompt,
+    _get_validation_prompt,
     _merge_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -325,3 +328,36 @@ def test_latent_prompt_uses_not_provided_defaults() -> None:
     prompt = _get_latent_prompt(data_summary=None, privacy_goal=None)
     assert "Data type summary:\nNot provided" in prompt
     assert "The text will be rewritten according to this privacy goal: Not provided" in prompt
+
+
+def test_format_label_examples_includes_known_labels() -> None:
+    result = _format_label_examples(["first_name", "city", "ssn"])
+    assert "- first_name: Michael, Isabella, Carlos, Wei" in result
+    assert "- city: Houston, San Diego, Doha, Lahore" in result
+    assert "- ssn: 007-52-4910, 252-96-0016, 523-25-1554, 228-94-9430" in result
+
+
+def test_format_label_examples_handles_custom_labels_without_examples() -> None:
+    result = _format_label_examples(["first_name", "custom_label"])
+    assert "- first_name: Michael, Isabella, Carlos, Wei" in result
+    assert "- custom_label" in result
+    assert "- custom_label:" not in result
+
+
+def test_validation_prompt_includes_label_examples() -> None:
+    prompt = _get_validation_prompt(data_summary=None, labels=["email", "city"])
+    assert "Here are all the valid entity classes with examples" in prompt
+    assert "- email: derez_lester94@icloud.com" in prompt
+    assert "- city: Houston, San Diego, Doha, Lahore" in prompt
+
+
+def test_validation_prompt_includes_data_summary() -> None:
+    prompt = _get_validation_prompt(data_summary="Medical records", labels=["first_name"])
+    assert "Data context: Medical records" in prompt
+
+
+def test_augment_prompt_includes_label_names() -> None:
+    prompt = _get_augment_prompt(data_summary=None, labels=["phone_number", "age"])
+    assert "Here are the known entity classes" in prompt
+    assert "phone_number, age" in prompt
+    assert "If no known label fits, create a concise snake_case label" in prompt
