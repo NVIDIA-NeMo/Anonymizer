@@ -118,27 +118,33 @@ class Anonymizer:
             input_df,
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
-            gliner_detection_threshold=config.gliner_detection_threshold,
-            entity_labels=config.entity_labels,
-            privacy_goal=config.privacy_goal,
+            gliner_detection_threshold=config.detect.gliner_threshold,
+            entity_labels=config.detect.entity_labels,
+            privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
             preview_num_records=preview_num_records,
         )
 
-        replace_result = self._replace_runner.run(
-            detection_result.dataframe,
-            replace_strategy=config.replace,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.replace,
-            preview_num_records=preview_num_records,
-        )
+        if config.replace is not None:
+            replace_result = self._replace_runner.run(
+                detection_result.dataframe,
+                replace_method=config.replace,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.replace,
+                preview_num_records=preview_num_records,
+            )
+            final_df = replace_result.dataframe
+            replace_failures = replace_result.failed_records
+        else:
+            final_df = detection_result.dataframe
+            replace_failures = []
 
-        renamed_trace = _rename_output_columns(replace_result.dataframe)
+        renamed_trace = _rename_output_columns(final_df)
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace),
             trace_dataframe=renamed_trace,
-            failed_records=[*detection_result.failed_records, *replace_result.failed_records],
+            failed_records=[*detection_result.failed_records, *replace_failures],
         )
 
 

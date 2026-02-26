@@ -9,11 +9,10 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
-from anonymizer.config.replace_strategies import RedactReplace
-from anonymizer.config.rewrite import RewriteParams
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_TAGGED_TEXT,
@@ -39,7 +38,7 @@ def _make_anonymizer(
 ) -> tuple[Anonymizer, Mock, Mock]:
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = detection_return or EntityDetectionResult(
-        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_DETECTED_ENTITIES: [[]]}),
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [[]]}),
         failed_records=[],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
@@ -61,7 +60,7 @@ def test_run_merges_failed_records_from_both_stages(
     replace_failures = [FailedRecord(record_id="r2", step="replace", reason="parse error")]
 
     detection_result = EntityDetectionResult(
-        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_DETECTED_ENTITIES: [[]]}),
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [[]]}),
         failed_records=detection_failures,
     )
     replace_return = ReplacementResult(
@@ -78,7 +77,7 @@ def test_run_merges_failed_records_from_both_stages(
 
 
 def test_run_enables_latent_detection_when_rewrite_configured(stub_input: AnonymizerInput) -> None:
-    config = AnonymizerConfig(replace=RedactReplace(), rewrite=RewriteParams())
+    config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, detection_wf, _ = _make_anonymizer()
     anonymizer.run(config=config, data=stub_input)
 

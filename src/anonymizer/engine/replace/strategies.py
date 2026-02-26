@@ -9,8 +9,8 @@ from typing import Any
 
 import pandas as pd
 
-from anonymizer.config.replace_strategies import LocalReplaceStrategy
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
+from anonymizer.config.replace_strategies import LocalReplaceMethod
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
 
 
 @dataclass(frozen=True)
@@ -23,9 +23,9 @@ class ReplacementEntry:
 def apply_local_replace_strategy(
     dataframe: pd.DataFrame,
     *,
-    strategy: LocalReplaceStrategy,
+    strategy: LocalReplaceMethod,
     text_column: str = COL_TEXT,
-    entities_column: str = COL_DETECTED_ENTITIES,
+    entities_column: str = COL_FINAL_ENTITIES,
 ) -> pd.DataFrame:
     """Apply deterministic local replace strategy on detected entities."""
     output_df = dataframe.copy()
@@ -52,7 +52,7 @@ def apply_replacement_map(
     dataframe: pd.DataFrame,
     *,
     text_column: str = COL_TEXT,
-    entities_column: str = COL_DETECTED_ENTITIES,
+    entities_column: str = COL_FINAL_ENTITIES,
     replacement_map_column: str = COL_REPLACEMENT_MAP,
 ) -> pd.DataFrame:
     """Apply pre-generated replacement map to text."""
@@ -68,9 +68,7 @@ def apply_replacement_map(
     return output_df
 
 
-def _build_local_replacement_map(
-    row: pd.Series, strategy: LocalReplaceStrategy, entities_column: str
-) -> dict[str, Any]:
+def _build_local_replacement_map(row: pd.Series, strategy: LocalReplaceMethod, entities_column: str) -> dict[str, Any]:
     entities = [e for e in row.get(entities_column, []) if isinstance(e, dict)]
     if not entities:
         return {"replacements": []}

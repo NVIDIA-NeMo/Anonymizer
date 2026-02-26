@@ -5,30 +5,24 @@ from __future__ import annotations
 
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.replace_strategies import (
-    HashReplace,
-    LabelReplace,
-    RedactReplace,
-)
-from anonymizer.config.rewrite import (
-    PrivacyGoal,
-    RewriteParams,
+    Annotate,
+    Hash,
+    Redact,
 )
 
 
-def test_hash_replace_is_deterministic() -> None:
-    strategy = HashReplace()
+def test_hash_is_deterministic() -> None:
+    strategy = Hash()
     value = strategy.replace(text="alice@example.com", label="email")
     assert value == strategy.replace(text="alice@example.com", label="email")
 
 
 def test_rewrite_defaults_privacy_goal() -> None:
-    config = AnonymizerConfig(
-        replace=RedactReplace(),
-        rewrite=RewriteParams(),
-    )
-    assert config.privacy_goal is not None
+    config = AnonymizerConfig(rewrite=Rewrite())
+    assert config.rewrite is not None
+    assert config.rewrite.privacy_goal is not None
 
 
 def test_data_summary_on_input() -> None:
@@ -39,27 +33,47 @@ def test_data_summary_on_input() -> None:
     assert inp.data_summary is not None
 
 
-def test_privacy_goal_without_rewrite_raises() -> None:
-    with pytest.raises(ValueError, match="privacy_goal is only valid"):
-        AnonymizerConfig(
-            replace=LabelReplace(),
-            privacy_goal=PrivacyGoal(
-                protect="Protect direct patient identifiers from disclosure.",
-                preserve="Preserve medical reasoning and treatment sequence.",
-            ),
-        )
+def test_replace_and_rewrite_together_raises() -> None:
+    with pytest.raises(ValueError, match="Cannot use both replace and rewrite"):
+        AnonymizerConfig(replace=Redact(), rewrite=Rewrite())
 
 
-def test_label_replace_accepts_custom_template() -> None:
-    strategy = LabelReplace(format_template="[{label}]::{text}")
+def test_neither_replace_nor_rewrite_raises() -> None:
+    with pytest.raises(ValueError, match="Exactly one of replace or rewrite"):
+        AnonymizerConfig()
+
+
+def test_annotate_accepts_custom_template() -> None:
+    strategy = Annotate(format_template="[{label}]::{text}")
     assert strategy.replace(text="Alice", label="name") == "[name]::Alice"
 
 
-def test_redact_replace_defaults_to_label_aware_output() -> None:
-    strategy = RedactReplace()
+def test_redact_defaults_to_label_aware_output() -> None:
+    strategy = Redact()
     assert strategy.replace(text="Alice", label="first_name") == "[REDACTED_FIRST_NAME]"
 
 
-def test_redact_replace_allows_constant_template() -> None:
-    strategy = RedactReplace(format_template="****")
+def test_redact_allows_constant_template() -> None:
+    strategy = Redact(format_template="****")
     assert strategy.replace(text="Alice", label="first_name") == "****"
+
+
+def test_filter_labels_defaults_to_none() -> None:
+    config = AnonymizerConfig(replace=Redact())
+    assert config.replace.filter_labels is None
+
+
+def test_filter_labels_accepts_list() -> None:
+    config = AnonymizerConfig(replace=Redact(filter_labels=["FIRST_NAME", "email"]))
+    assert set(config.replace.filter_labels) == {"first_name", "email"}
+
+
+def test_filter_labels_strips_whitespace() -> None:
+    config = AnonymizerConfig(replace=Redact(filter_labels=["  first_name ", "email"]))
+    assert "first_name" in config.replace.filter_labels
+    assert "email" in config.replace.filter_labels
+
+
+def test_filter_labels_deduplicates() -> None:
+    config = AnonymizerConfig(replace=Redact(filter_labels=["email", "email"]))
+    assert config.replace.filter_labels == ["email"]

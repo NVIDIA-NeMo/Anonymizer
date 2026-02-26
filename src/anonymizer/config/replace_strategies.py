@@ -4,17 +4,40 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from string import Formatter
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+logger = logging.getLogger(__name__)
 
-class LabelReplace(BaseModel):
-    """Replace each entity with a readable label token."""
 
-    kind: Literal["label"] = "label"
+class ReplaceMethodBase(BaseModel):
+    """Shared configuration for all replacement methods."""
+
+    filter_labels: list[str] | None = Field(
+        default=None,
+        description="Subset of detected entity labels to replace. None replaces all detected entities.",
+    )
+
+    @field_validator("filter_labels")
+    @classmethod
+    def validate_filter_labels(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        cleaned = [label.strip().lower() for label in value if label.strip()]
+        deduped = sorted(set(cleaned))
+        if len(deduped) != len(cleaned):
+            logger.warning("filter_labels contained duplicates, removed automatically.")
+        return deduped
+
+
+class Annotate(ReplaceMethodBase):
+    """Tag each entity with a readable label token."""
+
+    kind: Literal["annotate"] = "annotate"
     format_template: str = Field(
         default="<{text}, {label}>", description="Template with {text} and {label} placeholders."
     )
@@ -37,7 +60,7 @@ class LabelReplace(BaseModel):
         )
 
 
-class RedactReplace(BaseModel):
+class Redact(ReplaceMethodBase):
     """Replace each entity with a configurable redaction template."""
 
     kind: Literal["redact"] = "redact"
@@ -65,7 +88,7 @@ class RedactReplace(BaseModel):
         )
 
 
-class HashReplace(BaseModel):
+class Hash(ReplaceMethodBase):
     """Replace each entity with a deterministic hash token."""
 
     kind: Literal["hash"] = "hash"
@@ -92,22 +115,22 @@ class HashReplace(BaseModel):
         return self.format_template.format(text=text, label=label.upper(), digest=digest)
 
 
-class LLMReplace(BaseModel):
-    """Marker config for LLM-backed replacement workflow execution."""
+class Substitute(ReplaceMethodBase):
+    """Replace entities with LLM-generated synthetic values."""
 
-    kind: Literal["llm"] = "llm"
+    kind: Literal["substitute"] = "substitute"
     instructions: str | None = Field(
         default=None, description="Additional instructions for the LLM replacement generator."
     )
 
 
-ReplaceStrategy = Annotated[
-    LabelReplace | RedactReplace | HashReplace | LLMReplace,
+ReplaceMethod = Annotated[
+    Annotate | Redact | Hash | Substitute,
     Field(discriminator="kind"),
 ]
 
-LocalReplaceStrategy = Annotated[
-    LabelReplace | RedactReplace | HashReplace,
+LocalReplaceMethod = Annotated[
+    Annotate | Redact | Hash,
     Field(discriminator="kind"),
 ]
 

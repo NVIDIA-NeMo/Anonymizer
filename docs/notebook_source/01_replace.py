@@ -12,11 +12,13 @@
 # ---
 
 # %% [markdown]
-# # Local Replace Strategies
+# # Replace Mode
 #
-# Three local strategies (Redact, Label, Hash) compared side by side.
-#
-# Each strategy is configurable via `format_template`.
+# Four replacement strategies compared side by side:
+# - **Redact** — remove entity, leave a marker
+# - **Annotate** — tag entity with its label (no removal)
+# - **Hash** — deterministic hash token
+# - **Substitute** — LLM-generated synthetic values
 
 # %% [markdown]
 # ## Setup
@@ -30,7 +32,7 @@ try:
 except NameError:
     NOTEBOOK_DIR = Path.cwd()
 
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, HashReplace, LabelReplace, RedactReplace
+from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact, Substitute
 
 # %%
 MODEL_PROVIDERS_YAML = """
@@ -93,15 +95,16 @@ anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=provid
 input_data = AnonymizerInput(
     source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),
     text_column="bio",
+    data_summary="Biographical profiles",
 )
 
 # %% [markdown]
-# ## RedactReplace
+# ## Redact
 #
 # Default: `[REDACTED_FIRST_NAME]`. Customize with `format_template`.
 
 # %%
-redact_config = AnonymizerConfig(replace=RedactReplace())
+redact_config = AnonymizerConfig(replace=Redact())
 
 redact_preview = anonymizer.preview(
     config=redact_config,
@@ -126,7 +129,7 @@ redact_run.display_record(0)
 # `format_template="***"` replaces every entity with the same constant.
 
 # %%
-custom_config = AnonymizerConfig(replace=RedactReplace(format_template="***"))
+custom_config = AnonymizerConfig(replace=Redact(format_template="***"))
 
 custom_preview = anonymizer.preview(
     config=custom_config,
@@ -137,29 +140,29 @@ custom_preview = anonymizer.preview(
 custom_preview.display_record(0)
 
 # %% [markdown]
-# ## LabelReplace
+# ## Annotate
 #
 # Default: `<Alice, first_name>`. Customize with `format_template` — must include `{text}` and `{label}`.
 
 # %%
-label_config = AnonymizerConfig(replace=LabelReplace())
+annotate_config = AnonymizerConfig(replace=Annotate())
 
-label_preview = anonymizer.preview(
-    config=label_config,
+annotate_preview = anonymizer.preview(
+    config=annotate_config,
     data=input_data,
     num_records=3,
 )
 
-label_preview.display_record(0)
+annotate_preview.display_record(0)
 
 # %% [markdown]
-# ## HashReplace
+# ## Hash
 #
 # Deterministic — same input always produces the same hash. Customize `format_template`
 # (must include `{digest}`), `algorithm` (`sha256`/`sha1`/`md5`), and `digest_length` (6–64).
 
 # %%
-hash_config = AnonymizerConfig(replace=HashReplace())
+hash_config = AnonymizerConfig(replace=Hash())
 
 hash_preview = anonymizer.preview(
     config=hash_config,
@@ -168,3 +171,22 @@ hash_preview = anonymizer.preview(
 )
 
 hash_preview.display_record(0)
+
+# %% [markdown]
+# ## Substitute
+#
+# Uses an LLM to generate contextually appropriate synthetic replacements. Unlike the
+# strategies above, the LLM considers the full document context — matching names to emails,
+# cities to states, etc.
+
+# %%
+substitute_config = AnonymizerConfig(replace=Substitute())
+
+substitute_preview = anonymizer.preview(
+    config=substitute_config,
+    data=input_data,
+    num_records=3,
+)
+
+# %%
+substitute_preview.display_record(0)

@@ -77,13 +77,6 @@ class PrivacyGoal(BaseModel):
         return f"PROTECT: {self.protect}\nPRESERVE: {self.preserve}"
 
 
-class RewriteParams(BaseModel):
-    """Configuration for rewrite-mode execution."""
-
-    instructions: str | None = None
-    skip_low_sensitivity_pii: bool = False
-
-
 class EvaluationCriteria(BaseModel):
     """Criteria and thresholds for privacy leakage and utility scoring."""
 
