@@ -122,15 +122,24 @@ def _build_replaced_entities(
     original_text: str,
     replaced_text: str,
 ) -> list[dict[str, Any]]:
-    """Compute entity positions in the replaced text by replaying the replacement splicing."""
+    """Compute entity positions in the replaced text by locating synthetic values directly.
+
+    Instead of replaying cursor arithmetic (which drifts when entity values
+    differ in case from the replacement map keys), we resolve each entity's
+    synthetic value and find it in the replaced text by scanning forward.
+    """
     by_value_label: dict[tuple[str, str], str] = {}
     by_value: dict[str, str] = {}
+    by_value_label_ci: dict[tuple[str, str], str] = {}
+    by_value_ci: dict[str, str] = {}
     for entry in replacement_map:
         orig = entry.get("original", "")
         label = entry.get("label", "")
         synth = entry.get("synthetic", "")
         by_value_label[(orig, label)] = synth
         by_value[orig] = synth
+        by_value_label_ci[(orig.lower(), label)] = synth
+        by_value_ci[orig.lower()] = synth
 
     sorted_entities = sorted(
         original_entities,
@@ -139,7 +148,7 @@ def _build_replaced_entities(
 
     replaced_entities: list[dict[str, Any]] = []
     original_cursor = 0
-    replaced_cursor = 0
+    search_from = 0
 
     for entity in sorted_entities:
         start = int(entity.get("start_position", 0))
@@ -150,23 +159,55 @@ def _build_replaced_entities(
         if start < original_cursor or end <= start or end > len(original_text):
             continue
 
-        gap = start - original_cursor
-        replaced_cursor += gap
+        synthetic = _resolve_synthetic(value, label, by_value_label, by_value, by_value_label_ci, by_value_ci)
+        original_span = original_text[start:end]
 
-        synthetic = by_value_label.get((value, label), by_value.get(value, value))
+        pos = replaced_text.find(synthetic, search_from) if synthetic else -1
+        if pos < 0 and synthetic != original_span:
+            pos = replaced_text.find(original_span, search_from)
+            if pos >= 0:
+                synthetic = original_span
+
+        if pos < 0:
+            original_cursor = end
+            continue
+
         replaced_entities.append(
             {
-                "value": synthetic,
+                "value": replaced_text[pos : pos + len(synthetic)],
                 "label": label,
-                "start_position": replaced_cursor,
-                "end_position": replaced_cursor + len(synthetic),
+                "start_position": pos,
+                "end_position": pos + len(synthetic),
             }
         )
-
-        replaced_cursor += len(synthetic)
+        search_from = pos + len(synthetic)
         original_cursor = end
 
     return replaced_entities
+
+
+def _resolve_synthetic(
+    value: str,
+    label: str,
+    by_value_label: dict[tuple[str, str], str],
+    by_value: dict[str, str],
+    by_value_label_ci: dict[tuple[str, str], str],
+    by_value_ci: dict[str, str],
+) -> str:
+    """Look up synthetic value with exact-match first, then case-insensitive fallback."""
+    result = by_value_label.get((value, label))
+    if result is not None:
+        return result
+    result = by_value.get(value)
+    if result is not None:
+        return result
+    result = by_value_label_ci.get((value.lower(), label))
+    if result is not None:
+        return result
+    result = by_value_ci.get(value.lower())
+    if result is not None:
+        return result
+    return value
 
 
 def _build_original_entities_from_map(
