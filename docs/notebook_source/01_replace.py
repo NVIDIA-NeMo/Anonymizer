@@ -12,11 +12,13 @@
 # ---
 
 # %% [markdown]
-# # Local Replace Strategies
+# # Replace Mode
 #
-# Three local strategies (Redact, Label, Hash) compared side by side.
-#
-# Each strategy is configurable via `format_template`.
+# Four replacement strategies compared side by side:
+# - **Redact** — remove entity, leave a marker
+# - **Annotate** — tag entity with its label (no removal)
+# - **Hash** — deterministic hash token
+# - **Substitute** — LLM-generated synthetic values
 
 # %% [markdown]
 # ## Setup
@@ -30,7 +32,7 @@ try:
 except NameError:
     NOTEBOOK_DIR = Path.cwd()
 
-from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact
+from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact, Substitute
 
 # %%
 MODEL_PROVIDERS_YAML = """
@@ -93,6 +95,7 @@ anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=provid
 input_data = AnonymizerInput(
     source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),
     text_column="bio",
+    data_summary="Biographical profiles",
 )
 
 # %% [markdown]
@@ -142,15 +145,15 @@ custom_preview.display_record(0)
 # Default: `<Alice, first_name>`. Customize with `format_template` — must include `{text}` and `{label}`.
 
 # %%
-label_config = AnonymizerConfig(replace=Annotate())
+annotate_config = AnonymizerConfig(replace=Annotate())
 
-label_preview = anonymizer.preview(
-    config=label_config,
+annotate_preview = anonymizer.preview(
+    config=annotate_config,
     data=input_data,
     num_records=3,
 )
 
-label_preview.display_record(0)
+annotate_preview.display_record(0)
 
 # %% [markdown]
 # ## Hash
@@ -168,3 +171,22 @@ hash_preview = anonymizer.preview(
 )
 
 hash_preview.display_record(0)
+
+# %% [markdown]
+# ## Substitute
+#
+# Uses an LLM to generate contextually appropriate synthetic replacements. Unlike the
+# strategies above, the LLM considers the full document context — matching names to emails,
+# cities to states, etc.
+
+# %%
+substitute_config = AnonymizerConfig(replace=Substitute())
+
+substitute_preview = anonymizer.preview(
+    config=substitute_config,
+    data=input_data,
+    num_records=3,
+)
+
+# %%
+substitute_preview.display_record(0)
