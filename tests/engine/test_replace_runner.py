@@ -105,9 +105,7 @@ def test_apply_replacement_map_handles_string_map() -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["abc Alice xyz"],
-            COL_FINAL_ENTITIES: [
-                [{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]
-            ],
+            COL_FINAL_ENTITIES: [[{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]],
             COL_REPLACEMENT_MAP: ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
         }
     )
@@ -150,9 +148,7 @@ def test_hash_strategy_executes(
     input_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice"],
-            COL_FINAL_ENTITIES: [
-                [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
-            ],
+            COL_FINAL_ENTITIES: [[{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]],
         }
     )
     result = runner.run(

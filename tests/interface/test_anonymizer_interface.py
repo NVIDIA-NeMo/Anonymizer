@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
-from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_FINAL_ENTITIES,

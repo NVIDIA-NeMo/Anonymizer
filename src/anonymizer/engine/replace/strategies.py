@@ -68,9 +68,7 @@ def apply_replacement_map(
     return output_df
 
 
-def _build_local_replacement_map(
-    row: pd.Series, strategy: LocalReplaceMethod, entities_column: str
-) -> dict[str, Any]:
+def _build_local_replacement_map(row: pd.Series, strategy: LocalReplaceMethod, entities_column: str) -> dict[str, Any]:
     entities = [e for e in row.get(entities_column, []) if isinstance(e, dict)]
     if not entities:
         return {"replacements": []}

@@ -80,15 +80,11 @@ class Rewrite(BaseModel):
 class AnonymizerConfig(BaseModel):
     """Primary user-facing config for anonymization behavior."""
 
-    detect: Detect = Field(
-        default_factory=Detect, description="Entity detection configuration."
-    )
+    detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(
         default=None, description="Replacement method (Redact(), Annotate(), Hash(), or Substitute())."
     )
-    rewrite: Rewrite | None = Field(
-        default=None, description="Optional rewrite-mode parameters. "
-    )
+    rewrite: Rewrite | None = Field(default=None, description="Optional rewrite-mode parameters. ")
 
     @model_validator(mode="after")
     def validate_exactly_one_mode(self) -> AnonymizerConfig:

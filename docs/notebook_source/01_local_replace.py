@@ -30,7 +30,7 @@ try:
 except NameError:
     NOTEBOOK_DIR = Path.cwd()
 
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Annotate, Hash, Redact
+from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact
 
 # %%
 MODEL_PROVIDERS_YAML = """
