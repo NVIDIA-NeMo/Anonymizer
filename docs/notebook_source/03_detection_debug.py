@@ -34,7 +34,7 @@ except NameError:
 
 import pandas as pd
 
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, RedactReplace
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
 
 # %%
 MODEL_PROVIDERS_YAML = """
@@ -91,7 +91,7 @@ anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=provid
 # care about the detection columns. Set `data_summary` on the input to improve augmenter/validator accuracy.
 
 # %%
-config = AnonymizerConfig(replace=RedactReplace())
+config = AnonymizerConfig(replace=Redact())
 
 input_data = AnonymizerInput(
     source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),

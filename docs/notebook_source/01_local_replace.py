@@ -30,7 +30,7 @@ try:
 except NameError:
     NOTEBOOK_DIR = Path.cwd()
 
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, HashReplace, LabelReplace, RedactReplace
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Annotate, Hash, Redact
 
 # %%
 MODEL_PROVIDERS_YAML = """
@@ -96,12 +96,12 @@ input_data = AnonymizerInput(
 )
 
 # %% [markdown]
-# ## RedactReplace
+# ## Redact
 #
 # Default: `[REDACTED_FIRST_NAME]`. Customize with `format_template`.
 
 # %%
-redact_config = AnonymizerConfig(replace=RedactReplace())
+redact_config = AnonymizerConfig(replace=Redact())
 
 redact_preview = anonymizer.preview(
     config=redact_config,
@@ -126,7 +126,7 @@ redact_run.display_record(0)
 # `format_template="***"` replaces every entity with the same constant.
 
 # %%
-custom_config = AnonymizerConfig(replace=RedactReplace(format_template="***"))
+custom_config = AnonymizerConfig(replace=Redact(format_template="***"))
 
 custom_preview = anonymizer.preview(
     config=custom_config,
@@ -137,12 +137,12 @@ custom_preview = anonymizer.preview(
 custom_preview.display_record(0)
 
 # %% [markdown]
-# ## LabelReplace
+# ## Annotate
 #
 # Default: `<Alice, first_name>`. Customize with `format_template` — must include `{text}` and `{label}`.
 
 # %%
-label_config = AnonymizerConfig(replace=LabelReplace())
+label_config = AnonymizerConfig(replace=Annotate())
 
 label_preview = anonymizer.preview(
     config=label_config,
@@ -153,13 +153,13 @@ label_preview = anonymizer.preview(
 label_preview.display_record(0)
 
 # %% [markdown]
-# ## HashReplace
+# ## Hash
 #
 # Deterministic — same input always produces the same hash. Customize `format_template`
 # (must include `{digest}`), `algorithm` (`sha256`/`sha1`/`md5`), and `digest_length` (6–64).
 
 # %%
-hash_config = AnonymizerConfig(replace=HashReplace())
+hash_config = AnonymizerConfig(replace=Hash())
 
 hash_preview = anonymizer.preview(
     config=hash_config,

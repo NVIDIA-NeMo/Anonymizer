@@ -32,7 +32,7 @@ try:
 except NameError:
     NOTEBOOK_DIR = Path.cwd()
 
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, LLMReplace
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
 
 # %%
 MODEL_PROVIDERS_YAML = """
@@ -85,11 +85,11 @@ anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=provid
 # %% [markdown]
 # ## Run preview with LLM replacement
 #
-# `LLMReplace()` sends entities to an LLM that generates synthetic values.
+# `Substitute()` sends entities to an LLM that generates synthetic values.
 # Set `data_summary` to help the LLM understand the domain.
 
 # %%
-config = AnonymizerConfig(replace=LLMReplace())
+config = AnonymizerConfig(replace=Substitute())
 
 input_data = AnonymizerInput(
     source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),

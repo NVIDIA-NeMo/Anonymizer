@@ -9,8 +9,8 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
-from anonymizer.config.replace_strategies import RedactReplace
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_TEXT
+from anonymizer.config.replace_strategies import Redact
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
 
 
@@ -38,8 +38,8 @@ def stub_replace_model_selection() -> ReplaceModelSelection:
 
 @pytest.fixture
 def stub_anonymizer_config() -> AnonymizerConfig:
-    """Minimal valid config using RedactReplace (no LLM needed)."""
-    return AnonymizerConfig(replace=RedactReplace())
+    """Minimal valid config using Redact (no LLM needed)."""
+    return AnonymizerConfig(replace=Redact())
 
 
 @pytest.fixture
@@ -61,5 +61,5 @@ def stub_entities() -> list[dict]:
 def stub_dataframe_with_entities(stub_dataframe: pd.DataFrame, stub_entities: list[dict]) -> pd.DataFrame:
     """DataFrame with text + detected entities — input shape for replace runner."""
     df = stub_dataframe.copy()
-    df[COL_DETECTED_ENTITIES] = [stub_entities]
+    df[COL_FINAL_ENTITIES] = [stub_entities]
     return df

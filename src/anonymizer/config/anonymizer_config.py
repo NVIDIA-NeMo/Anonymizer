@@ -3,16 +3,19 @@
 
 from __future__ import annotations
 
+import logging
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from anonymizer.config.replace_strategies import ReplaceStrategy
+from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
     DEFAULT_PROTECT_TEXT,
     EvaluationCriteria,
     PrivacyGoal,
-    RewriteParams,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AnonymizerInput(BaseModel):
@@ -29,31 +32,14 @@ class AnonymizerInput(BaseModel):
     )
 
 
-class AnonymizerConfig(BaseModel):
-    """Primary user-facing config for anonymization behavior."""
+class Detect(BaseModel):
+    """Configuration for the entity detection stage."""
 
-    # Basics required for every dataset/workflow
     entity_labels: list[str] | None = Field(
         default=None, description="Additional entity labels to detect with GLiNER beyond the built-in set."
     )
-    locale: str = Field(default="en_US", min_length=2, description="Locale for entity generation (e.g. en_US, de_DE).")
-    gliner_detection_threshold: float = Field(
+    gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
-    )
-
-    replace: ReplaceStrategy = Field(
-        description="Replacement strategy (RedactReplace, LabelReplace, HashReplace, or LLMReplace)."
-    )
-
-    rewrite: RewriteParams | None = Field(
-        default=None, description="Optional rewrite-mode parameters. Enables latent entity detection."
-    )
-    privacy_goal: PrivacyGoal | None = Field(
-        default=None, description="Structured privacy goal for rewrite mode. Auto-populated if rewrite is set."
-    )
-    evaluation: EvaluationCriteria = Field(
-        default_factory=EvaluationCriteria,
-        description="Criteria and thresholds for privacy leakage and utility scoring.",
     )
 
     @field_validator("entity_labels")
@@ -62,17 +48,52 @@ class AnonymizerConfig(BaseModel):
         if value is None:
             return value
         cleaned = [label.strip() for label in value if label.strip()]
-        if len(cleaned) != len(set(cleaned)):
-            raise ValueError("entity_labels must not contain duplicates")
-        return cleaned
+        deduped = sorted(set(cleaned))
+        if len(deduped) != len(cleaned):
+            logger.warning("entity_labels contained duplicates, removed automatically.")
+        return deduped
+
+
+class Rewrite(BaseModel):
+    """Configuration for rewrite-mode execution."""
+
+    privacy_goal: PrivacyGoal | None = Field(
+        default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
+    )
+    instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
+    skip_low_sensitivity_pii: bool = Field(default=False, description="Skip low-sensitivity PII during rewrite.")
+    evaluation: EvaluationCriteria = Field(
+        default_factory=EvaluationCriteria,
+        description="Criteria and thresholds for privacy leakage and utility scoring.",
+    )
 
     @model_validator(mode="after")
-    def validate_rewrite_goal_consistency(self) -> AnonymizerConfig:
-        if self.rewrite is None and self.privacy_goal is not None:
-            raise ValueError("privacy_goal is only valid when rewrite params are provided")
-        if self.rewrite is not None and self.privacy_goal is None:
+    def populate_default_privacy_goal(self) -> Rewrite:
+        if self.privacy_goal is None:
             self.privacy_goal = PrivacyGoal(
                 protect=DEFAULT_PROTECT_TEXT,
                 preserve=DEFAULT_PRESERVE_TEXT,
             )
+        return self
+
+
+class AnonymizerConfig(BaseModel):
+    """Primary user-facing config for anonymization behavior."""
+
+    detect: Detect = Field(
+        default_factory=Detect, description="Entity detection configuration."
+    )
+    replace: ReplaceMethod | None = Field(
+        default=None, description="Replacement method (Redact(), Annotate(), Hash(), or Substitute())."
+    )
+    rewrite: Rewrite | None = Field(
+        default=None, description="Optional rewrite-mode parameters. "
+    )
+
+    @model_validator(mode="after")
+    def validate_exactly_one_mode(self) -> AnonymizerConfig:
+        if self.replace is None and self.rewrite is None:
+            raise ValueError("Exactly one of replace or rewrite must be provided")
+        if self.replace is not None and self.rewrite is not None:
+            raise ValueError("Cannot use both replace and rewrite — choose one mode")
         return self
