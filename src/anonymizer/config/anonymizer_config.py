@@ -93,7 +93,13 @@ class AnonymizerConfig(BaseModel):
     @model_validator(mode="after")
     def validate_exactly_one_mode(self) -> AnonymizerConfig:
         if self.replace is None and self.rewrite is None:
-            raise ValueError("Exactly one of replace or rewrite must be provided")
+            raise ValueError(
+                "Exactly one of replace or rewrite must be provided."
+                " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
+            )
         if self.replace is not None and self.rewrite is not None:
-            raise ValueError("Cannot use both replace and rewrite — choose one mode")
+            raise ValueError(
+                "Cannot use both replace and rewrite — choose one mode."
+                " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
+            )
         return self

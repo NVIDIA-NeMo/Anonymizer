@@ -34,12 +34,12 @@ def test_data_summary_on_input() -> None:
 
 
 def test_replace_and_rewrite_together_raises() -> None:
-    with pytest.raises(ValueError, match="Cannot use both"):
+    with pytest.raises(ValueError, match="Cannot use both replace and rewrite"):
         AnonymizerConfig(replace=Redact(), rewrite=Rewrite())
 
 
 def test_neither_replace_nor_rewrite_raises() -> None:
-    with pytest.raises(ValueError, match="Exactly one"):
+    with pytest.raises(ValueError, match="Exactly one of replace or rewrite"):
         AnonymizerConfig()
 
 
@@ -64,7 +64,7 @@ def test_filter_labels_defaults_to_none() -> None:
 
 
 def test_filter_labels_accepts_list() -> None:
-    config = AnonymizerConfig(replace=Redact(filter_labels=["first_name", "email"]))
+    config = AnonymizerConfig(replace=Redact(filter_labels=["FIRST_NAME", "email"]))
     assert set(config.replace.filter_labels) == {"first_name", "email"}
 
 

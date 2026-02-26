@@ -27,7 +27,7 @@ class ReplaceMethodBase(BaseModel):
     def validate_filter_labels(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
-        cleaned = [label.strip() for label in value if label.strip()]
+        cleaned = [label.strip().lower() for label in value if label.strip()]
         deduped = sorted(set(cleaned))
         if len(deduped) != len(cleaned):
             logger.warning("filter_labels contained duplicates, removed automatically.")
