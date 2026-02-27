@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha1
+
+logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
 
@@ -359,6 +362,7 @@ def _safe_json_loads(value: dict | str) -> dict:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {}
     except json.JSONDecodeError:
+        logger.warning("Failed to parse JSON in postprocessing pipeline: %.120r", value)
         return {}
 
 
