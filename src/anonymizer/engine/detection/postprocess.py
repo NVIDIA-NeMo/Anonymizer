@@ -361,8 +361,12 @@ def _safe_json_loads(value: dict | str) -> dict:
     try:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse JSON in postprocessing pipeline: %.120r", value)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Failed to parse JSON in postprocessing pipeline (error=%s, length=%d)",
+            exc.msg,
+            len(value),
+        )
         return {}
 
 
