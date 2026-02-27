@@ -35,9 +35,16 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
 
 def _load_dataframe(input_data: AnonymizerInput) -> pd.DataFrame:
     source = Path(str(input_data.source))
+    if not source.exists():
+        raise InvalidInputError(f"Input path does not exist: {source}")
+    if not source.is_file():
+        raise InvalidInputError(f"Input path is not a file: {source}")
     suffix = source.suffix.lower()
-    if suffix == ".csv":
-        return pd.read_csv(source)
-    if suffix == ".parquet":
-        return pd.read_parquet(source)
+    try:
+        if suffix == ".csv":
+            return pd.read_csv(source)
+        if suffix == ".parquet":
+            return pd.read_parquet(source)
+    except (OSError, pd.errors.ParserError, ValueError) as error:
+        raise InvalidInputError(f"Failed to read input data from path: {source}") from error
     raise InvalidInputError(f"Unsupported input format: {suffix}. Use .csv or .parquet.")

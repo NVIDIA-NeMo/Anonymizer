@@ -93,3 +93,50 @@ def test_read_input_preserves_text_attr_when_column_exists(tmp_path: Path) -> No
     inp = AnonymizerInput(source=str(file_path))
     result = read_input(inp)
     assert result.attrs["original_text_column"] == "text"
+
+
+def test_read_input_missing_path_raises(tmp_path: Path) -> None:
+    missing_file = tmp_path / "missing" / "data.csv"
+    inp = AnonymizerInput(source=str(missing_file))
+    with pytest.raises(InvalidInputError, match="does not exist"):
+        read_input(inp)
+
+
+def test_write_output_creates_parent_directories(stub_dataframe: pd.DataFrame, tmp_path: Path) -> None:
+    out_path = tmp_path / "nested" / "deep" / "out.csv"
+    write_output(stub_dataframe, out_path)
+    assert out_path.exists()
+
+
+def test_read_input_directory_path_raises(tmp_path: Path) -> None:
+    directory_path = tmp_path / "data.csv"
+    directory_path.mkdir()
+    inp = AnonymizerInput(source=str(directory_path))
+    with pytest.raises(InvalidInputError, match="is not a file"):
+        read_input(inp)
+
+
+def test_read_input_pandas_failure_raises_invalid_input_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file_path = tmp_path / "data.csv"
+    file_path.write_text("text\nhello\n")
+
+    def _raise_read_error(*args: object, **kwargs: object) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(pd, "read_csv", _raise_read_error)
+    inp = AnonymizerInput(source=str(file_path))
+    with pytest.raises(InvalidInputError, match="Failed to read input data"):
+        read_input(inp)
+
+
+def test_write_output_unwritable_path_raises_invalid_input_error(
+    stub_dataframe: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out_path = tmp_path / "nested" / "out.csv"
+
+    def _raise_write_error(*args: object, **kwargs: object) -> None:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", _raise_write_error)
+    with pytest.raises(InvalidInputError, match="Failed to write output data"):
+        write_output(stub_dataframe, out_path)
