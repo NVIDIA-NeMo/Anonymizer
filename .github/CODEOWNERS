@@ -6,6 +6,7 @@
 
 src/ @NVIDIA-NeMo/anonymizer-reviewers
 tests/ @NVIDIA-NeMo/anonymizer-reviewers
+docs/ @NVIDIA-NeMo/anonymizer-reviewers
 
 # Critical files require maintainers
 pyproject.toml @NVIDIA-NeMo/anonymizer-maintainers
