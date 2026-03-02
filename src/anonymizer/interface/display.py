@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -41,6 +42,14 @@ LABEL_BORDER_COLORS: list[str] = [
     "#a855f7",
     "#ef4444",
 ]
+
+
+@dataclass(frozen=True)
+class _SyntheticLookupMaps:
+    by_value_label: dict[tuple[str, str], str]
+    by_value: dict[str, str]
+    by_value_label_ci: dict[tuple[str, str], str]
+    by_value_ci: dict[str, str]
 
 
 def _color_for_label(label: str) -> tuple[str, str]:
@@ -140,6 +149,12 @@ def _build_replaced_entities(
         by_value[orig] = synth
         by_value_label_ci[(orig.lower(), label)] = synth
         by_value_ci[orig.lower()] = synth
+    lookups = _SyntheticLookupMaps(
+        by_value_label=by_value_label,
+        by_value=by_value,
+        by_value_label_ci=by_value_label_ci,
+        by_value_ci=by_value_ci,
+    )
 
     sorted_entities = sorted(
         original_entities,
@@ -159,7 +174,7 @@ def _build_replaced_entities(
         if start < original_cursor or end <= start or end > len(original_text):
             continue
 
-        synthetic = _resolve_synthetic(value, label, by_value_label, by_value, by_value_label_ci, by_value_ci)
+        synthetic = _resolve_synthetic(value, label, lookups)
         original_span = original_text[start:end]
 
         pos = replaced_text.find(synthetic, search_from) if synthetic else -1
@@ -189,22 +204,19 @@ def _build_replaced_entities(
 def _resolve_synthetic(
     value: str,
     label: str,
-    by_value_label: dict[tuple[str, str], str],
-    by_value: dict[str, str],
-    by_value_label_ci: dict[tuple[str, str], str],
-    by_value_ci: dict[str, str],
+    lookups: _SyntheticLookupMaps,
 ) -> str:
     """Look up synthetic value with exact-match first, then case-insensitive fallback."""
-    result = by_value_label.get((value, label))
+    result = lookups.by_value_label.get((value, label))
     if result is not None:
         return result
-    result = by_value.get(value)
+    result = lookups.by_value.get(value)
     if result is not None:
         return result
-    result = by_value_label_ci.get((value.lower(), label))
+    result = lookups.by_value_label_ci.get((value.lower(), label))
     if result is not None:
         return result
-    result = by_value_ci.get(value.lower())
+    result = lookups.by_value_ci.get(value.lower())
     if result is not None:
         return result
     return value
