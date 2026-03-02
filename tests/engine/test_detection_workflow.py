@@ -130,7 +130,9 @@ def test_run_without_latent_detection_materializes_final_entities(
 
     assert adapter.run_workflow.call_count == 1
     assert COL_FINAL_ENTITIES in result.dataframe.columns
-    assert result.dataframe[COL_FINAL_ENTITIES].tolist() == result.dataframe[COL_DETECTED_ENTITIES].tolist()
+    detected = result.dataframe[COL_DETECTED_ENTITIES].tolist()
+    final = result.dataframe[COL_FINAL_ENTITIES].tolist()
+    assert final == [{"entities": row} for row in detected]
 
 
 def test_run_compute_grouped_entities_false_drops_grouped_column(
@@ -349,6 +351,9 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "Here are all the valid entity classes with examples" in prompt
     assert "- email: derez_lester94@icloud.com" in prompt
     assert "- city: Houston, San Diego, Doha, Lahore" in prompt
+    assert "Copy ids exactly as given; never modify entries" in prompt
+    assert "You MUST fill in a decision for EVERY entry in the template" in prompt
+    assert "Return ONLY the entries from the template" in prompt
 
 
 def test_validation_prompt_includes_data_summary() -> None:
