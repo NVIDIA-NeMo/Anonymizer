@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -30,6 +31,16 @@ class AnonymizerInput(BaseModel):
     data_summary: str | None = Field(
         default=None, description="Short description of the data. Improves LLM detection accuracy."
     )
+
+    @field_validator("source")
+    @classmethod
+    def validate_source_path(cls, value: str) -> str:
+        source = Path(value)
+        if not source.exists():
+            raise ValueError(f"Input path does not exist: {source}")
+        if not source.is_file():
+            raise ValueError(f"Input path is not a file: {source}")
+        return value
 
 
 class Detect(BaseModel):

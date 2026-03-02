@@ -7,12 +7,13 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from anonymizer.config.anonymizer_config import AnonymizerInput
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.io.writer import write_output
-from anonymizer.interface.errors import InvalidInputError
+from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
 
 def test_write_output_csv_roundtrips(stub_dataframe: pd.DataFrame, tmp_path: Path) -> None:
@@ -95,11 +96,10 @@ def test_read_input_preserves_text_attr_when_column_exists(tmp_path: Path) -> No
     assert result.attrs["original_text_column"] == "text"
 
 
-def test_read_input_missing_path_raises(tmp_path: Path) -> None:
+def test_anonymizer_input_missing_path_raises_validation_error(tmp_path: Path) -> None:
     missing_file = tmp_path / "missing" / "data.csv"
-    inp = AnonymizerInput(source=str(missing_file))
-    with pytest.raises(InvalidInputError, match="does not exist"):
-        read_input(inp)
+    with pytest.raises(ValidationError, match="Input path does not exist"):
+        AnonymizerInput(source=str(missing_file))
 
 
 def test_write_output_creates_parent_directories(stub_dataframe: pd.DataFrame, tmp_path: Path) -> None:
@@ -108,15 +108,14 @@ def test_write_output_creates_parent_directories(stub_dataframe: pd.DataFrame, t
     assert out_path.exists()
 
 
-def test_read_input_directory_path_raises(tmp_path: Path) -> None:
+def test_anonymizer_input_directory_path_raises_validation_error(tmp_path: Path) -> None:
     directory_path = tmp_path / "data.csv"
     directory_path.mkdir()
-    inp = AnonymizerInput(source=str(directory_path))
-    with pytest.raises(InvalidInputError, match="is not a file"):
-        read_input(inp)
+    with pytest.raises(ValidationError, match="Input path is not a file"):
+        AnonymizerInput(source=str(directory_path))
 
 
-def test_read_input_pandas_failure_raises_invalid_input_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_input_pandas_failure_raises_anonymizer_io_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file_path = tmp_path / "data.csv"
     file_path.write_text("text\nhello\n")
 
@@ -125,11 +124,11 @@ def test_read_input_pandas_failure_raises_invalid_input_error(tmp_path: Path, mo
 
     monkeypatch.setattr(pd, "read_csv", _raise_read_error)
     inp = AnonymizerInput(source=str(file_path))
-    with pytest.raises(InvalidInputError, match="Failed to read input data"):
+    with pytest.raises(AnonymizerIOError, match="Failed to read input data"):
         read_input(inp)
 
 
-def test_write_output_unwritable_path_raises_invalid_input_error(
+def test_write_output_unwritable_path_raises_anonymizer_io_error(
     stub_dataframe: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     out_path = tmp_path / "nested" / "out.csv"
@@ -138,5 +137,5 @@ def test_write_output_unwritable_path_raises_invalid_input_error(
         raise PermissionError("permission denied")
 
     monkeypatch.setattr(pd.DataFrame, "to_csv", _raise_write_error)
-    with pytest.raises(InvalidInputError, match="Failed to write output data"):
+    with pytest.raises(AnonymizerIOError, match="Failed to write output data"):
         write_output(stub_dataframe, out_path)

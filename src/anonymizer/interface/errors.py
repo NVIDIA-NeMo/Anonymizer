@@ -10,3 +10,7 @@ class AnonymizerError(Exception):
 
 class InvalidInputError(AnonymizerError):
     """Raised when input data or configuration is invalid."""
+
+
+class AnonymizerIOError(AnonymizerError):
+    """Raised when file IO operations fail."""

@@ -7,14 +7,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from anonymizer.interface.errors import InvalidInputError
+from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
+from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
 
 def write_output(dataframe: pd.DataFrame, output_path: str | Path) -> Path:
     """Write dataframe to csv/parquet based on output suffix."""
     path = Path(output_path)
     suffix = path.suffix.lower()
-    if suffix not in {".csv", ".parquet"}:
+    if suffix not in SUPPORTED_IO_FORMATS:
         raise InvalidInputError(f"Unsupported output format for path: {path}")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -24,4 +25,4 @@ def write_output(dataframe: pd.DataFrame, output_path: str | Path) -> Path:
         dataframe.to_parquet(path, index=False)
         return path
     except (OSError, ValueError) as error:
-        raise InvalidInputError(f"Failed to write output data to path: {path}") from error
+        raise AnonymizerIOError(f"Failed to write output data to path: {path}") from error

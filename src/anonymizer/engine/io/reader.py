@@ -9,7 +9,8 @@ import pandas as pd
 
 from anonymizer.config.anonymizer_config import AnonymizerInput
 from anonymizer.engine.constants import COL_TEXT
-from anonymizer.interface.errors import InvalidInputError
+from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
+from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
 
 def read_input(input_data: AnonymizerInput) -> pd.DataFrame:
@@ -35,16 +36,13 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
 
 def _load_dataframe(input_data: AnonymizerInput) -> pd.DataFrame:
     source = Path(str(input_data.source))
-    if not source.exists():
-        raise InvalidInputError(f"Input path does not exist: {source}")
-    if not source.is_file():
-        raise InvalidInputError(f"Input path is not a file: {source}")
     suffix = source.suffix.lower()
+    if suffix not in SUPPORTED_IO_FORMATS:
+        supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
+        raise InvalidInputError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
     try:
         if suffix == ".csv":
             return pd.read_csv(source)
-        if suffix == ".parquet":
-            return pd.read_parquet(source)
+        return pd.read_parquet(source)
     except (OSError, pd.errors.ParserError, ValueError) as error:
-        raise InvalidInputError(f"Failed to read input data from path: {source}") from error
-    raise InvalidInputError(f"Unsupported input format: {suffix}. Use .csv or .parquet.")
+        raise AnonymizerIOError(f"Failed to read input data from path: {source}") from error
