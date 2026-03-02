@@ -31,6 +31,8 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
+    COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
@@ -110,6 +112,55 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
     seed_spans = _from_dicts(entities=row.get(COL_SEED_ENTITIES, []))
     row[COL_MERGED_TAGGED_TEXT] = build_tagged_text(text=text, entities=seed_spans)
     row[COL_VALIDATION_CANDIDATES] = build_validation_candidates(text=text, entities=seed_spans)
+    return row
+
+
+@custom_column_generator(required_columns=[COL_VALIDATION_CANDIDATES])
+def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
+    """Pre-populate the decisions template with candidate IDs so the LLM only fills in decision/reason."""
+    candidates = row.get(COL_VALIDATION_CANDIDATES, [])
+    row[COL_VALIDATION_SKELETON] = {
+        "decisions": [
+            {
+                "id": c["id"],
+                "value": c["value"],
+                "label": c["label"],
+                "decision": None,
+                "proposed_label": None,
+                "reason": None,
+            }
+            for c in candidates
+            if isinstance(c, dict)
+        ]
+    }
+    return row
+
+
+@custom_column_generator(
+    required_columns=[COL_VALIDATION_DECISIONS, COL_VALIDATION_CANDIDATES],
+)
+def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
+    """Enrich validation decisions with entity value and filter to known candidate IDs only."""
+    validated = row.get(COL_VALIDATION_DECISIONS, {})
+    # Both columns come from upstream structured/custom DD steps in the same cell-by-cell
+    # workflow, so they are expected as native Python objects (dict/list), not JSON strings.
+    candidates = row.get(COL_VALIDATION_CANDIDATES, [])
+
+    if not isinstance(validated, dict):
+        return row
+
+    value_by_id = {c["id"]: c["value"] for c in candidates if isinstance(c, dict) and "id" in c and "value" in c}
+    valid_ids = set(value_by_id)
+
+    decisions = validated.get("decisions", [])
+    filtered: list[dict[str, str]] = []
+    if isinstance(decisions, list):
+        for d in decisions:
+            if not isinstance(d, dict) or d.get("id") not in valid_ids:
+                continue
+            filtered.append({**d, "value": value_by_id.get(d["id"], "")})
+
+    row[COL_VALIDATED_ENTITIES] = {"decisions": filtered}
     return row
 
 

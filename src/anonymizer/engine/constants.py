@@ -30,6 +30,8 @@ COL_MERGED_TAGGED_TEXT = "_merged_tagged_text"
 COL_VALIDATION_CANDIDATES = "_validation_candidates"
 
 # Step 5: LLM validation
+COL_VALIDATION_SKELETON = "_validation_skeleton"
+COL_VALIDATION_DECISIONS = "_validation_decisions"
 COL_VALIDATED_ENTITIES = "_validated_entities"
 
 # Step 6: apply_validation_and_finalize

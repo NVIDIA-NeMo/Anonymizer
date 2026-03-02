@@ -31,6 +31,8 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
+    COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
 )
@@ -38,6 +40,8 @@ from anonymizer.engine.detection.constants import _jinja
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
+    build_validation_skeleton,
+    enrich_validation_decisions,
     merge_and_build_candidates,
     parse_detected_entities,
     prepare_validation_inputs,
@@ -178,11 +182,19 @@ class EntityDetectionWorkflow:
                     name=COL_VALIDATION_CANDIDATES,
                     generator_function=prepare_validation_inputs,
                 ),
+                CustomColumnConfig(
+                    name=COL_VALIDATION_SKELETON, generator_function=build_validation_skeleton, drop=True
+                ),
                 LLMStructuredColumnConfig(
-                    name=COL_VALIDATED_ENTITIES,
+                    name=COL_VALIDATION_DECISIONS,
                     prompt=_get_validation_prompt(data_summary=data_summary, labels=labels),
                     model_alias=validator_alias,
                     output_format=ValidationDecisions,
+                    drop=True,
+                ),
+                CustomColumnConfig(
+                    name=COL_VALIDATED_ENTITIES,
+                    generator_function=enrich_validation_decisions,
                 ),
                 CustomColumnConfig(
                     name=COL_SEED_ENTITIES_JSON,
@@ -308,7 +320,11 @@ class EntityDetectionWorkflow:
             final_failures = detected_result.failed_records
 
         if COL_DETECTED_ENTITIES in final_df.columns:
-            final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES]
+            final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
+                lambda x: (
+                    {"entities": x.tolist() if hasattr(x, "tolist") else list(x)} if x is not None else {"entities": []}
+                )
+            )
         if "original_text_column" in dataframe.attrs:
             final_df.attrs["original_text_column"] = dataframe.attrs["original_text_column"]
         return EntityDetectionResult(
@@ -365,7 +381,7 @@ def _format_label_examples(labels: list[str]) -> str:
 
 
 def _get_validation_prompt(*, data_summary: str | None, labels: list[str]) -> str:
-    prompt = """Validate entity tags for privacy-sensitive information. For each entity, decide: keep, reclassify, or drop.
+    prompt = """Validate entity tags for privacy-sensitive information. For each entity in the template below, fill in the "decision" and "reason" fields. Fill in "proposed_label" only when decision is "reclass".
 <<DATA_SUMMARY>>
 
 Here are all the valid entity classes with examples (only classes from this list can be proposed):
@@ -388,17 +404,18 @@ What to DROP:
 - Placeholders or label names (e.g., "name", "email", "date")
 - Syntax/metadata in structured formats (field names, column headers, keywords)
 - Generic time references that are not specific dates (e.g., "today", "now", "soon")
+- Kinship and family-role terms used as relationship descriptors are not quasi-identifiers.
 
 Additional rules:
 - Check context matches label (not just format)
-- Use exact text from the tagged span
 - Prefer ssn over national_id or account_number if ambiguous
 - Prefer phone_number over fax_number unless "fax" is explicit
 - VIN length 17 is vehicle_identifier, shorter is license_plate (check context for regional variations)
 - Numbers preceded by '$' are monetary values, not entities like age or account number
 - If classified as date_of_birth, verify context is appropriate; otherwise use date
-
-Use the candidates list as the authoritative source for entity values and labels.
+- You MUST fill in a decision for EVERY entry in the template — do not skip any
+- Return ONLY the entries from the template — do not add new entries for entities not already in the template
+- Copy ids exactly as given; never modify entries
 
 Example:
 {%- if <<TAG_NOTATION>> == "xml" -%}
@@ -410,17 +427,17 @@ Input text: My ((PII:first_name|name)) is ((PII:first_name|Amy)), ((PII:age|35))
 {%- else -%}
 Input text: My <<PII:first_name>>name<</PII:first_name>> is <<PII:first_name>>Amy<</PII:first_name>>, <<PII:age>>35<</PII:age>> in <<PII:country>>San Diego<</PII:country>>, <<PII:state>>California<</PII:state>>.
 {%- endif -%}
-Candidates: [{"id": "id_name", "value": "name", "label": "first_name", "context_before": "My ", "context_after": " is Amy"}, {"id": "id_amy", "value": "Amy", "label": "first_name", "context_before": " is ", "context_after": ", 35"}, {"id": "id_35", "value": "35", "label": "age", "context_before": "Amy, ", "context_after": ", software"}, {"id": "id_sd", "value": "San Diego", "label": "country", "context_before": " in ", "context_after": ", California"}, {"id": "id_ca", "value": "California", "label": "state", "context_before": "Diego, ", "context_after": "."}]
-Output: {"decisions": [{"id": "id_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "id_amy", "decision": "keep", "proposed_label": "", "reason": "valid first name"}, {"id": "id_35", "decision": "keep", "proposed_label": "", "reason": "quasi-identifier"}, {"id": "id_sd", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "id_ca", "decision": "keep", "proposed_label": "", "reason": "valid state"}]}
+Template: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "age_16_18", "value": "35", "label": "age", "decision": null, "proposed_label": null, "reason": null}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": null, "proposed_label": null, "reason": null}, {"id": "state_33_43", "value": "California", "label": "state", "decision": null, "proposed_label": null, "reason": null}]}
+Output: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": "keep", "proposed_label": "", "reason": "real first name"}, {"id": "age_16_18", "value": "35", "label": "age", "decision": "keep", "proposed_label": "", "reason": "age quasi-identifier"}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "state_33_43", "value": "California", "label": "state", "decision": "keep", "proposed_label": "", "reason": "state quasi-identifier"}]}
 
 ---
 Input text: <<TAGGED_TEXT>>
-Candidates: <<CANDIDATES>>
+Template: <<VALIDATION_SKELETON>>
 """
     prompt = (
         prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_MERGED_TAGGED_TEXT))
-        .replace("<<CANDIDATES>>", _jinja(COL_VALIDATION_CANDIDATES))
+        .replace("<<VALIDATION_SKELETON>>", _jinja(COL_VALIDATION_SKELETON))
         .replace("<<LABEL_EXAMPLES>>", _format_label_examples(labels))
     )
     context_section = f"\nData context: {data_summary}\n" if data_summary else ""
