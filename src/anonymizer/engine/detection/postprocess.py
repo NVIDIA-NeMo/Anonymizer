@@ -7,7 +7,6 @@ import json
 import re
 from dataclasses import dataclass
 from enum import Enum
-from hashlib import sha1
 
 VALIDATION_CONTEXT_WINDOW = 32
 
@@ -67,7 +66,7 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
             continue
         if start is None or end is None or start < 0 or end <= start or end > len(text):
             continue
-        entity_id = _build_entity_id(index=idx, value=value, label=label, start=start, end=end)
+        entity_id = _build_entity_id(label=label, start=start, end=end)
         parsed.append(
             EntitySpan(
                 entity_id=entity_id,
@@ -173,14 +172,7 @@ def apply_augmented_entities(
         if not value or not label:
             continue
         for start, end in _find_all_occurrences(text=text, needle=value):
-            entity_id = _build_entity_id(
-                index=idx,
-                value=value,
-                label=label,
-                start=start,
-                end=end,
-                source="augmenter",
-            )
+            entity_id = _build_entity_id(label=label, start=start, end=end)
             merged.append(
                 EntitySpan(
                     entity_id=entity_id,
@@ -224,14 +216,7 @@ def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]
             else:
                 part_label = "middle_name"
             for start, end in _find_all_occurrences(text=text, needle=part):
-                entity_id = _build_entity_id(
-                    index=idx,
-                    value=part,
-                    label=part_label,
-                    start=start,
-                    end=end,
-                    source="name_split",
-                )
+                entity_id = _build_entity_id(label=part_label, start=start, end=end)
                 extra.append(
                     EntitySpan(
                         entity_id=entity_id,
@@ -314,14 +299,7 @@ def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[Ent
     for idx, (key, label) in enumerate(entity_map.items()):
         original_value = next(e.value for e in entities if e.value.lower() == key)
         for start, end in _find_all_occurrences(text=text, needle=original_value):
-            entity_id = _build_entity_id(
-                index=idx,
-                value=text[start:end],
-                label=label,
-                start=start,
-                end=end,
-                source="propagation",
-            )
+            entity_id = _build_entity_id(label=label, start=start, end=end)
             expanded.append(
                 EntitySpan(
                     entity_id=entity_id,
@@ -395,17 +373,8 @@ def _find_all_occurrences(text: str, needle: str) -> list[tuple[int, int]]:
     return positions
 
 
-def _build_entity_id(
-    *,
-    index: int,
-    value: str,
-    label: str,
-    start: int,
-    end: int,
-    source: str = "detector",
-) -> str:
-    digest = sha1(f"{source}:{index}:{value}:{label}:{start}:{end}".encode("utf-8")).hexdigest()
-    return digest[:16]
+def _build_entity_id(*, label: str, start: int, end: int) -> str:
+    return f"{label}_{start}_{end}"
 
 
 def _choose_tag_notation(text: str) -> TagNotation:
