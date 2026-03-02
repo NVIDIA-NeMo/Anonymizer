@@ -148,6 +148,9 @@ Rules:
    - Same structure, length patterns, character types
    - Same demographic characteristics (Indian name → Indian name)
 
+4. Fit the surrounding text naturally:
+   - Check that the synthetic value reads correctly with the words immediately before and after it in the original text.
+
 CRITICAL: Every entity MUST have a different synthetic value. Never return original=synthetic.
 """
     return prompt.replace("<<INSTRUCTION_BLOCK>>", instruction_block).replace("<<ENTITIES_COLUMN>>", entities_column)
