@@ -6,10 +6,35 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 LOG_INDENT = "  |-- "
 
-# Suppress DataDesigner's verbose logs by default. Users can see them by
-# lowering the data_designer logger to DEBUG:
-#   logging.getLogger("data_designer").setLevel(logging.DEBUG)
-logging.getLogger("data_designer").setLevel(logging.WARNING)
+_DEFAULT_NOISY_LOGGERS = ["httpx", "httpcore", "mcp"]
+
+
+def configure_logging(*, verbose: bool = False) -> None:
+    """Set up logging for Anonymizer.
+
+    Call this once before using :class:`~anonymizer.interface.anonymizer.Anonymizer`.
+
+    Args:
+        verbose: When False (default), only Anonymizer progress messages are
+            shown and DataDesigner engine logs are suppressed.  When True,
+            DataDesigner DEBUG logs are also emitted.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    # Clear existing handlers to avoid duplicates on repeated calls
+    root.handlers.clear()
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
+    root.addHandler(handler)
+
+    logging.getLogger("anonymizer").setLevel(logging.INFO)
+    logging.getLogger("data_designer").setLevel(logging.DEBUG if verbose else logging.WARNING)
+
+    for name in _DEFAULT_NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)

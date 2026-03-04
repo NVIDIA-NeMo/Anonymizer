@@ -40,7 +40,6 @@ class Anonymizer:
         model_configs: str | Path | None = None,
         model_providers: list[ModelProvider] | str | Path | None = None,
         artifact_path: str | Path | None = None,
-        verbose: bool = False,
         data_designer: DataDesigner | None = None,
         detection_workflow: EntityDetectionWorkflow | None = None,
         replace_runner: ReplacementWorkflow | None = None,
@@ -55,13 +54,10 @@ class Anonymizer:
                 Each provider maps a name to an endpoint and API key.
             artifact_path: Directory for intermediate artifacts. Defaults to
                 ``.anonymizer-artifacts``.
-            verbose: Show detailed DataDesigner engine logs (default False).
             data_designer: Pre-configured DataDesigner instance (advanced usage).
             detection_workflow: Custom detection workflow (advanced/testing).
             replace_runner: Custom replacement workflow (advanced/testing).
         """
-        if verbose:
-            logging.getLogger("data_designer").setLevel(logging.DEBUG)
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
         parsed = parse_model_configs(model_configs)
         self._model_configs = parsed.model_configs
