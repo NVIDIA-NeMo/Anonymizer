@@ -27,13 +27,15 @@ import pandas as pd
 tmp_dir = tempfile.mkdtemp(prefix="logging_demo_")
 csv_path = Path(tmp_dir) / "sample.csv"
 
-pd.DataFrame({
-    "text": [
-        "Alice Johnson works at Acme Corp in Portland, Oregon.",
-        "Contact Bob Smith at bob.smith@example.com or 555-0123.",
-        "Dr. Carol Lee treated patient #12345 on 2024-03-15.",
-    ]
-}).to_csv(csv_path, index=False)
+pd.DataFrame(
+    {
+        "text": [
+            "Alice Johnson works at Acme Corp in Portland, Oregon.",
+            "Contact Bob Smith at bob.smith@example.com or 555-0123.",
+            "Dr. Carol Lee treated patient #12345 on 2024-03-15.",
+        ]
+    }
+).to_csv(csv_path, index=False)
 
 print(f"Sample data saved to {csv_path}")
 
@@ -48,7 +50,7 @@ from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInpu
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.interface.anonymizer import Anonymizer
 
-MODEL_CONFIGS = f"""
+MODEL_CONFIGS = """
 model_configs:
   - alias: gliner-pii-detector
     model: nvidia/gliner-pii

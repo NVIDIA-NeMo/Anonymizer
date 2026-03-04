@@ -12,6 +12,7 @@ LOG_INDENT = "  |-- "
 
 _DEFAULT_NOISY_LOGGERS = ["httpx", "httpcore", "mcp"]
 
+
 def configure_logging(*, verbose: bool = False) -> None:
     """Set up logging for Anonymizer.
 

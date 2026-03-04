@@ -18,12 +18,12 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
-from anonymizer.logging import LOG_INDENT, configure_logging
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
+from anonymizer.logging import LOG_INDENT, configure_logging
 
 if TYPE_CHECKING:
     import pandas as pd

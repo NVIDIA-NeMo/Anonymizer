@@ -36,11 +36,13 @@ def _make_logging_anonymizer(
         [{"value": "Alice", "label": "first_name"}, {"value": "Acme", "label": "organization"}],
         [{"value": "Bob", "label": "first_name"}],
     ]
-    det_df = pd.DataFrame({
-        COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
-        COL_DETECTED_ENTITIES: entities,
-        COL_FINAL_ENTITIES: entities,
-    })
+    det_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
+            COL_DETECTED_ENTITIES: entities,
+            COL_FINAL_ENTITIES: entities,
+        }
+    )
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=det_df,
@@ -48,10 +50,12 @@ def _make_logging_anonymizer(
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = ReplacementResult(
-        dataframe=pd.DataFrame({
-            COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
-            COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
-        }),
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
+                COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
+            }
+        ),
         failed_records=replace_failures or [],
     )
     return Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
