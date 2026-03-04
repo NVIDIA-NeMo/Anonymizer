@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
@@ -25,9 +27,11 @@ def test_rewrite_defaults_privacy_goal() -> None:
     assert config.rewrite.privacy_goal is not None
 
 
-def test_data_summary_on_input() -> None:
+def test_data_summary_on_input(tmp_path: Path) -> None:
+    source_path = tmp_path / "data.csv"
+    source_path.write_text("text\nsample\n")
     inp = AnonymizerInput(
-        source="data.csv",
+        source=str(source_path),
         data_summary="Medical clinic visit notes from outpatient encounters.",
     )
     assert inp.data_summary is not None
