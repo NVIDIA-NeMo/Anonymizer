@@ -79,6 +79,11 @@ def test_entities_payload_from_raw_invalid_returns_empty() -> None:
     assert payload.entities == []
 
 
+def test_entities_payload_from_malformed_list_returns_empty() -> None:
+    payload = EntitiesSchema.from_raw(["not-an-entity"])
+    assert payload.entities == []
+
+
 def test_validation_candidates_payload_from_raw_list() -> None:
     payload = ValidationCandidatesSchema.from_raw(
         [{"id": "city_3_10", "value": "Seattle", "label": "city", "context_before": "in ", "context_after": ", WA"}]
@@ -94,6 +99,11 @@ def test_raw_validation_decisions_payload_from_raw_list() -> None:
     assert len(payload.decisions) == 1
     assert payload.decisions[0].decision is not None
     assert payload.decisions[0].decision.value == "keep"
+
+
+def test_raw_validation_decisions_payload_from_malformed_list_returns_empty() -> None:
+    payload = RawValidationDecisionsSchema.from_raw({"decisions": ["bad-item"]})
+    assert payload.decisions == []
 
 
 def test_validated_decisions_payload_from_raw_list() -> None:

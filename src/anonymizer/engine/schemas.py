@@ -6,7 +6,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -18,6 +18,13 @@ def _parse_raw_wrapper(
     fallback_keys: tuple[str, ...] = (),
 ) -> T:
     """Parse raw DataFrame cell value (dict, list, or numpy array) into a wrapper schema."""
+
+    def _safe_validate(candidate_list: list[object]) -> T:
+        try:
+            return model_cls.model_validate({key: candidate_list})
+        except ValidationError:
+            return model_cls()
+
     if isinstance(raw, dict):
         candidate = raw.get(key)
         if candidate is None:
@@ -26,18 +33,18 @@ def _parse_raw_wrapper(
                 if candidate is not None:
                     break
         if isinstance(candidate, list):
-            return model_cls.model_validate({key: candidate})
+            return _safe_validate(candidate)
         if hasattr(candidate, "tolist"):
             as_list = candidate.tolist()
             if isinstance(as_list, list):
-                return model_cls.model_validate({key: as_list})
+                return _safe_validate(as_list)
         return model_cls()
     if isinstance(raw, list):
-        return model_cls.model_validate({key: raw})
+        return _safe_validate(raw)
     if hasattr(raw, "tolist"):
         as_list = raw.tolist()
         if isinstance(as_list, list):
-            return model_cls.model_validate({key: as_list})
+            return _safe_validate(as_list)
     return model_cls()
 
 
