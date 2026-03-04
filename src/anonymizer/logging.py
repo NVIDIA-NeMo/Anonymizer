@@ -12,11 +12,11 @@ LOG_INDENT = "  |-- "
 
 _DEFAULT_NOISY_LOGGERS = ["httpx", "httpcore", "mcp"]
 
-
 def configure_logging(*, verbose: bool = False) -> None:
     """Set up logging for Anonymizer.
 
-    Call this once before using :class:`~anonymizer.interface.anonymizer.Anonymizer`.
+    Called automatically on first :class:`~anonymizer.interface.anonymizer.Anonymizer`
+    instantiation. Call explicitly before creating an Anonymizer to customize behavior.
 
     Args:
         verbose: When False (default), only Anonymizer progress messages are

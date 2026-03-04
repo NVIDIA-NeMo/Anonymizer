@@ -18,7 +18,7 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
-from anonymizer.logging import LOG_INDENT
+from anonymizer.logging import LOG_INDENT, configure_logging
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -29,6 +29,17 @@ if TYPE_CHECKING:
     import pandas as pd
 
 logger = logging.getLogger("anonymizer")
+
+_logging_initialized = False
+
+
+def _initialize_logging() -> None:
+    """Run one-time logging setup."""
+    global _logging_initialized
+    if _logging_initialized:
+        return
+    configure_logging()
+    _logging_initialized = True
 
 
 class Anonymizer:
@@ -58,6 +69,7 @@ class Anonymizer:
             detection_workflow: Custom detection workflow (advanced/testing).
             replace_runner: Custom replacement workflow (advanced/testing).
         """
+        _initialize_logging()
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
         parsed = parse_model_configs(model_configs)
         self._model_configs = parsed.model_configs
