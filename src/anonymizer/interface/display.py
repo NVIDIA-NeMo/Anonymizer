@@ -166,11 +166,7 @@ def _build_replaced_entities(
         end = entity.end_position
         value = entity.value
         label = entity.label
-        if (
-            start < original_cursor
-            or end <= start
-            or end > len(original_text)
-        ):
+        if start < original_cursor or end <= start or end > len(original_text):
             continue
 
         synthetic = _resolve_synthetic(value, label, lookups)
