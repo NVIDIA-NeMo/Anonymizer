@@ -140,6 +140,32 @@ def test_apply_replacement_map_handles_numpy_array_entities() -> None:
     assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
 
 
+def test_apply_replacement_map_handles_dict_wrapped_entities() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+                    ]
+                }
+            ],
+            COL_REPLACEMENT_MAP: [
+                {
+                    "replacements": [
+                        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+                        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+                    ]
+                }
+            ],
+        }
+    )
+    output_df = apply_replacement_map(dataframe)
+    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
+
+
 def test_hash_strategy_executes(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
@@ -237,7 +263,116 @@ def test_filter_entities_preserves_original_column() -> None:
         {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
         {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
     ]
+    input_df = pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": entities}]})
+    filtered_df = _filter_entities_by_label(input_df, filter_labels=["first_name"])
+    assert len(filtered_df[COL_FINAL_ENTITIES].iloc[0]["entities"]) == 1
+    assert len(input_df[COL_FINAL_ENTITIES].iloc[0]["entities"]) == 2
+
+
+def test_filter_entities_normalizes_list_to_dict_wrapped() -> None:
+    """Bare list entities are normalized to dict-wrapped format after filtering."""
+    entities = [
+        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+    ]
     input_df = pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [entities]})
     filtered_df = _filter_entities_by_label(input_df, filter_labels=["first_name"])
-    assert len(filtered_df[COL_FINAL_ENTITIES].iloc[0]) == 1
-    assert len(input_df[COL_FINAL_ENTITIES].iloc[0]) == 2
+    result = filtered_df[COL_FINAL_ENTITIES].iloc[0]
+    assert isinstance(result, dict)
+    assert len(result["entities"]) == 1
+
+
+# --- detection → replace integration ---
+
+
+def test_detection_output_flows_through_redact(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Smoke test: dict-wrapped final_entities from detection must work with Redact."""
+    detection_output = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {
+                            "id": "first_name_0_5",
+                            "value": "Alice",
+                            "label": "first_name",
+                            "start_position": 0,
+                            "end_position": 5,
+                            "score": 1.0,
+                            "source": "detector",
+                        },
+                        {
+                            "id": "org_15_19",
+                            "value": "Acme",
+                            "label": "organization",
+                            "start_position": 15,
+                            "end_position": 19,
+                            "score": 0.9,
+                            "source": "augmenter",
+                        },
+                    ]
+                }
+            ],
+        }
+    )
+    runner = ReplacementWorkflow()
+    result = runner.run(
+        detection_output,
+        replace_method=Redact(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
+    assert "Alice" not in replaced
+    assert "Acme" not in replaced
+    assert "[REDACTED_FIRST_NAME]" in replaced
+    assert "[REDACTED_ORGANIZATION]" in replaced
+
+
+def test_detection_output_with_numpy_entities_flows_through_redact(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Regression: parquet round-trip produces {"entities": numpy_array}."""
+    detection_output = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": np.array(
+                        [
+                            {
+                                "id": "first_name_0_5",
+                                "value": "Alice",
+                                "label": "first_name",
+                                "start_position": 0,
+                                "end_position": 5,
+                            },
+                            {
+                                "id": "org_15_19",
+                                "value": "Acme",
+                                "label": "organization",
+                                "start_position": 15,
+                                "end_position": 19,
+                            },
+                        ],
+                        dtype=object,
+                    )
+                }
+            ],
+        }
+    )
+    runner = ReplacementWorkflow()
+    result = runner.run(
+        detection_output,
+        replace_method=Redact(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
+    assert "Alice" not in replaced
+    assert "[REDACTED_FIRST_NAME]" in replaced

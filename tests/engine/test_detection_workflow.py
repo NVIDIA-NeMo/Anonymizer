@@ -130,9 +130,11 @@ def test_run_without_latent_detection_materializes_final_entities(
 
     assert adapter.run_workflow.call_count == 1
     assert COL_FINAL_ENTITIES in result.dataframe.columns
-    detected = result.dataframe[COL_DETECTED_ENTITIES].tolist()
-    final = result.dataframe[COL_FINAL_ENTITIES].tolist()
-    assert final == [{"entities": row} for row in detected]
+    final = result.dataframe[COL_FINAL_ENTITIES].iloc[0]
+    assert isinstance(final, dict)
+    assert len(final["entities"]) == 1
+    assert final["entities"][0]["value"] == "Alice"
+    assert final["entities"][0]["label"] == "first_name"
 
 
 def test_run_compute_grouped_entities_false_drops_grouped_column(

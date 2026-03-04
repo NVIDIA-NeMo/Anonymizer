@@ -23,9 +23,11 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.custom_columns import (
     _from_dicts,
+    build_validation_skeleton,
     enrich_validation_decisions,
     parse_detected_entities,
 )
@@ -105,4 +107,45 @@ def test_enrich_validation_decisions_ignores_non_dict_validation_payload() -> No
         ],
     }
     result = enrich_validation_decisions(row)
-    assert result == row
+    assert result[COL_VALIDATED_ENTITIES] == {"decisions": []}
+
+
+def test_build_validation_skeleton_produces_null_decisions() -> None:
+    row: dict[str, Any] = {
+        COL_VALIDATION_CANDIDATES: [
+            {
+                "id": "first_name_0_5",
+                "value": "Alice",
+                "label": "first_name",
+                "context_before": "",
+                "context_after": " works",
+            },
+            {"id": "org_15_19", "value": "Acme", "label": "organization", "context_before": "at ", "context_after": ""},
+        ],
+    }
+    result = build_validation_skeleton(row)
+    skeleton = result[COL_VALIDATION_SKELETON]
+    assert len(skeleton["decisions"]) == 2
+    assert skeleton["decisions"][0]["id"] == "first_name_0_5"
+    assert skeleton["decisions"][0]["value"] == "Alice"
+    assert skeleton["decisions"][0]["label"] == "first_name"
+    assert skeleton["decisions"][0]["decision"] is None
+    assert skeleton["decisions"][0]["proposed_label"] is None
+    assert skeleton["decisions"][1]["id"] == "org_15_19"
+
+
+def test_build_validation_skeleton_handles_candidates_with_missing_keys() -> None:
+    row: dict[str, Any] = {
+        COL_VALIDATION_CANDIDATES: [
+            {"id": "x"},
+            {"value": "Alice"},
+            {},
+        ],
+    }
+    result = build_validation_skeleton(row)
+    skeleton = result[COL_VALIDATION_SKELETON]
+    assert len(skeleton["decisions"]) == 3
+    assert skeleton["decisions"][0]["id"] == "x"
+    assert skeleton["decisions"][0]["value"] == ""
+    assert skeleton["decisions"][1]["id"] == ""
+    assert skeleton["decisions"][1]["value"] == "Alice"

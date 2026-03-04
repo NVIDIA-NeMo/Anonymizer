@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACEMENT_MAP
+from anonymizer.engine.schemas import EntitySchema
 from anonymizer.interface.display import (
     _build_replaced_entities,
     _normalize_replacement_map,
@@ -16,8 +17,12 @@ from anonymizer.interface.display import (
 from anonymizer.interface.results import PreviewResult
 
 
+def _entity(value: str, label: str, start: int, end: int) -> EntitySchema:
+    return EntitySchema(value=value, label=label, start_position=start, end_position=end)
+
+
 def test_highlighted_text_wraps_entity_in_styled_span() -> None:
-    entities = [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
+    entities = [_entity("Alice", "first_name", 0, 5)]
     result = _render_highlighted_text("Alice works here", entities)
     assert "Alice" in result
     assert "first_name" in result
@@ -25,15 +30,15 @@ def test_highlighted_text_wraps_entity_in_styled_span() -> None:
 
 
 def test_highlighted_text_escapes_html_in_plain_text() -> None:
-    entities = [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
+    entities = [_entity("Alice", "first_name", 0, 5)]
     result = _render_highlighted_text("Alice <b>works</b> here", entities)
     assert "&lt;b&gt;" in result
 
 
 def test_highlighted_text_preserves_text_between_entities() -> None:
     entities = [
-        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+        _entity("Alice", "first_name", 0, 5),
+        _entity("Acme", "organization", 15, 19),
     ]
     result = _render_highlighted_text("Alice works at Acme", entities)
     assert " works at " in result
@@ -46,8 +51,8 @@ def test_highlighted_text_no_entities_returns_escaped_text() -> None:
 
 def test_highlighted_text_skips_overlapping_entity() -> None:
     entities = [
-        {"value": "John Doe", "label": "full_name", "start_position": 0, "end_position": 8},
-        {"value": "Doe", "label": "last_name", "start_position": 5, "end_position": 8},
+        _entity("John Doe", "full_name", 0, 8),
+        _entity("Doe", "last_name", 5, 8),
     ]
     result = _render_highlighted_text("John Doe went home", entities)
     assert "full_name" in result
@@ -56,8 +61,8 @@ def test_highlighted_text_skips_overlapping_entity() -> None:
 
 def test_highlighted_text_consistent_color_per_label() -> None:
     entities = [
-        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-        {"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 13},
+        _entity("Alice", "first_name", 0, 5),
+        _entity("Bob", "first_name", 10, 13),
     ]
     result = _render_highlighted_text("Alice met Bob here", entities)
     border_colors = [
@@ -69,29 +74,27 @@ def test_highlighted_text_consistent_color_per_label() -> None:
 
 def test_replaced_entities_tracks_shifted_positions() -> None:
     original_entities = [
-        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+        _entity("Alice", "first_name", 0, 5),
+        _entity("Acme", "organization", 15, 19),
     ]
     replacement_map = [
         {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
         {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
     ]
-    replaced_text = "Maya works at NovaCorp"
-
-    result = _build_replaced_entities(original_entities, replacement_map, "Alice works at Acme", replaced_text)
+    result = _build_replaced_entities(original_entities, replacement_map, "Alice works at Acme")
     assert len(result) == 2
-    assert result[0]["value"] == "Maya"
-    assert result[0]["start_position"] == 0
-    assert result[0]["end_position"] == 4
-    assert result[1]["value"] == "NovaCorp"
-    assert result[1]["start_position"] == 14
+    assert result[0].value == "Maya"
+    assert result[0].start_position == 0
+    assert result[0].end_position == 4
+    assert result[1].value == "NovaCorp"
+    assert result[1].start_position == 14
 
 
 def test_replaced_entities_empty_map_uses_original_values() -> None:
-    original_entities = [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
-    result = _build_replaced_entities(original_entities, [], "Alice works", "Alice works")
+    original_entities = [_entity("Alice", "first_name", 0, 5)]
+    result = _build_replaced_entities(original_entities, [], "Alice works")
     assert len(result) == 1
-    assert result[0]["value"] == "Alice"
+    assert result[0].value == "Alice"
 
 
 def test_normalize_replacement_map_from_dict() -> None:
@@ -232,12 +235,7 @@ def test_render_record_html_uses_detected_entities_over_map_scan() -> None:
 
 
 def test_render_record_html_replaced_tags_positioned_correctly_with_case_mismatch() -> None:
-    """Tags in replaced text must not drift when entity value case differs from actual text.
-
-    Regression: when _detected_entities was discarded in favor of map-based scanning,
-    "The Lantern" (case-sensitive find) missed "the Lantern" in the text.  The gap-based
-    position tracking then drifted, placing tags inside replacement tokens.
-    """
+    """Tags in replaced text must not drift when entity value case differs from actual text."""
     row = pd.Series(
         {
             "text": "Hi Mara at the Lantern in Austin TX",
@@ -293,8 +291,8 @@ def test_build_original_entities_from_map_case_insensitive() -> None:
     text = "She works at the Lantern daily"
     result = _build_original_entities_from_map(replacement_map, text)
     assert len(result) == 1
-    assert result[0]["value"] == "the Lantern"
-    assert result[0]["start_position"] == 13
+    assert result[0].value == "the Lantern"
+    assert result[0].start_position == 13
 
 
 def test_display_record_cycles_on_repeated_calls() -> None:
