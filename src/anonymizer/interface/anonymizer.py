@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,9 +15,10 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
 )
-from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
+from anonymizer.logging import LOG_INDENT
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -25,6 +27,8 @@ from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 if TYPE_CHECKING:
     import pandas as pd
+
+logger = logging.getLogger("anonymizer")
 
 
 class Anonymizer:
@@ -36,6 +40,7 @@ class Anonymizer:
         model_configs: str | Path | None = None,
         model_providers: list[ModelProvider] | str | Path | None = None,
         artifact_path: str | Path | None = None,
+        verbose: bool = False,
         data_designer: DataDesigner | None = None,
         detection_workflow: EntityDetectionWorkflow | None = None,
         replace_runner: ReplacementWorkflow | None = None,
@@ -50,14 +55,18 @@ class Anonymizer:
                 Each provider maps a name to an endpoint and API key.
             artifact_path: Directory for intermediate artifacts. Defaults to
                 ``.anonymizer-artifacts``.
+            verbose: Show detailed DataDesigner engine logs (default False).
             data_designer: Pre-configured DataDesigner instance (advanced usage).
             detection_workflow: Custom detection workflow (advanced/testing).
             replace_runner: Custom replacement workflow (advanced/testing).
         """
+        if verbose:
+            logging.getLogger("data_designer").setLevel(logging.DEBUG)
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
         parsed = parse_model_configs(model_configs)
         self._model_configs = parsed.model_configs
         self._selected_models = parsed.selected_models
+        logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
 
         self._data_designer = data_designer or DataDesigner(
             artifact_path=resolved_artifact_path,
@@ -113,7 +122,13 @@ class Anonymizer:
         preview_num_records: int | None,
     ) -> AnonymizerResult:
         input_df = read_input(data)
+        num_records = len(input_df)
+        logger.info("📂 Loaded %d records from %s (column: '%s')", num_records, data.source, data.text_column)
 
+        if preview_num_records is not None:
+            logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", preview_num_records, num_records)
+
+        logger.info("🔍 Running entity detection on %d records", num_records)
         detection_result = self._detection_workflow.run(
             input_df,
             model_configs=self._model_configs,
@@ -126,8 +141,18 @@ class Anonymizer:
             compute_grouped_entities=True if config.replace is not None else None,
             preview_num_records=preview_num_records,
         )
+        entity_count = _count_entities(detection_result.dataframe)
+        detection_failed = len(detection_result.failed_records)
+        logger.info(
+            LOG_INDENT + "✅ Detection complete — %d entities found across %d records (%d failed)",
+            entity_count,
+            len(detection_result.dataframe),
+            detection_failed,
+        )
 
         if config.replace is not None:
+            strategy_name = type(config.replace).__name__
+            logger.info("🔄 Running %s replacement", strategy_name)
             replace_result = self._replace_runner.run(
                 detection_result.dataframe,
                 replace_method=config.replace,
@@ -137,16 +162,25 @@ class Anonymizer:
             )
             final_df = replace_result.dataframe
             replace_failures = replace_result.failed_records
+            logger.info(LOG_INDENT + "✅ Replacement complete (%d failed)", len(replace_failures))
         else:
             final_df = detection_result.dataframe
             replace_failures = []
 
+        all_failures = [*detection_result.failed_records, *replace_failures]
         renamed_trace = _rename_output_columns(final_df)
+        logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace),
             trace_dataframe=renamed_trace,
-            failed_records=[*detection_result.failed_records, *replace_failures],
+            failed_records=all_failures,
         )
+
+
+def _count_entities(df: pd.DataFrame) -> int:
+    if COL_DETECTED_ENTITIES not in df.columns:
+        return 0
+    return int(df[COL_DETECTED_ENTITIES].apply(len).sum())
 
 
 def _resolve_model_providers(
