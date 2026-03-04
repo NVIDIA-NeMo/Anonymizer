@@ -28,9 +28,10 @@ import tempfile
 from pathlib import Path
 
 try:
-    NOTEBOOK_DIR = Path(__file__).resolve().parent
+    NOTEBOOK_SOURCE_DIR = Path(__file__).resolve().parent
 except NameError:
-    NOTEBOOK_DIR = Path.cwd()
+    # Running as .ipynb — cwd is docs/notebooks/, data lives in docs/notebook_source/
+    NOTEBOOK_SOURCE_DIR = Path.cwd().parent / "notebook_source"
 
 from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact, Substitute
 
@@ -93,7 +94,7 @@ anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=provid
 
 # %%
 input_data = AnonymizerInput(
-    source=str(NOTEBOOK_DIR / "data" / "synth_bios_sample10.csv"),
+    source=str(NOTEBOOK_SOURCE_DIR / "data" / "synth_bios_sample10.csv"),
     text_column="bio",
     data_summary="Biographical profiles",
 )

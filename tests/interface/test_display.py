@@ -81,7 +81,12 @@ def test_replaced_entities_tracks_shifted_positions() -> None:
         {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
         {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
     ]
-    result = _build_replaced_entities(original_entities, replacement_map, "Alice works at Acme")
+    result = _build_replaced_entities(
+        original_entities,
+        replacement_map,
+        "Alice works at Acme",
+        "Maya works at NovaCorp",
+    )
     assert len(result) == 2
     assert result[0].value == "Maya"
     assert result[0].start_position == 0
@@ -92,7 +97,7 @@ def test_replaced_entities_tracks_shifted_positions() -> None:
 
 def test_replaced_entities_empty_map_uses_original_values() -> None:
     original_entities = [_entity("Alice", "first_name", 0, 5)]
-    result = _build_replaced_entities(original_entities, [], "Alice works")
+    result = _build_replaced_entities(original_entities, [], "Alice works", "Alice works")
     assert len(result) == 1
     assert result[0].value == "Alice"
 
@@ -316,6 +321,60 @@ def test_display_record_explicit_index_does_not_advance_cycle() -> None:
     preview = _make_preview(rows=2)
     preview.display_record(index=1)
     assert preview._display_cycle_index == 0
+
+
+def test_build_replaced_entities_no_drift_with_case_mismatch() -> None:
+    """Regression for #15: case-insensitive expanded entities must resolve correctly.
+
+    expand_entity_occurrences stores value=text[start:end] which may differ in case
+    from the replacement map key (e.g. "the Lantern" vs "The Lantern"). The old
+    cursor-replay approach missed the map entry and used a wrong-length fallback,
+    causing cumulative drift on all subsequent entities.
+    """
+    original_text = "Mara works at The Lantern in Austin. the Lantern is her home. Luis visits."
+    original_entities = [
+        _entity("Mara", "first_name", 0, 4),
+        _entity("The Lantern", "company_name", 14, 25),
+        _entity("Austin", "city", 29, 35),
+        _entity("the Lantern", "company_name", 37, 48),
+        _entity("Luis", "first_name", 65, 69),
+    ]
+    replacement_map = [
+        {"original": "Mara", "label": "first_name", "synthetic": "Leila"},
+        {"original": "The Lantern", "label": "company_name", "synthetic": "The Ember"},
+        {"original": "Austin", "label": "city", "synthetic": "Boulder"},
+        {"original": "Luis", "label": "first_name", "synthetic": "Diego"},
+    ]
+    replaced_text = "Leila works at The Ember in Boulder. The Ember is her home. Diego visits."
+
+    result = _build_replaced_entities(original_entities, replacement_map, original_text, replaced_text)
+    assert len(result) == 5
+    for entity in result:
+        actual = replaced_text[entity.start_position : entity.end_position]
+        assert actual == entity.value, (
+            f"expected {entity.value!r} at [{entity.start_position}:{entity.end_position}], got {actual!r}"
+        )
+
+
+def test_build_replaced_entities_no_drift_when_entity_absent_from_map() -> None:
+    """When an entity is not in the map, its original text span stays; no drift on later entities."""
+    original_text = "Contact Sofia and Diego at Acme"
+    original_entities = [
+        _entity("Sofia", "first_name", 8, 13),
+        _entity("Diego", "first_name", 18, 23),
+        _entity("Acme", "organization", 27, 31),
+    ]
+    replacement_map = [
+        {"original": "Diego", "label": "first_name", "synthetic": "Carlos"},
+        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+    ]
+    replaced_text = "Contact Sofia and Carlos at NovaCorp"
+
+    result = _build_replaced_entities(original_entities, replacement_map, original_text, replaced_text)
+    assert len(result) == 3
+    for entity in result:
+        actual = replaced_text[entity.start_position : entity.end_position]
+        assert actual == entity.value
 
 
 def test_display_record_out_of_bounds_raises() -> None:

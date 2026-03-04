@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -43,6 +44,14 @@ LABEL_BORDER_COLORS: list[str] = [
 ]
 
 
+@dataclass(frozen=True)
+class _SyntheticLookupMaps:
+    by_value_label: dict[tuple[str, str], str]
+    by_value: dict[str, str]
+    by_value_label_ci: dict[tuple[str, str], str]
+    by_value_ci: dict[str, str]
+
+
 def _color_for_label(label: str) -> tuple[str, str]:
     idx = hash(label) % len(ENTITY_COLORS)
     return ENTITY_COLORS[idx], LABEL_BORDER_COLORS[idx]
@@ -67,7 +76,7 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
 
     original_html = _render_highlighted_text(text, entities)
 
-    replaced_entities = _build_replaced_entities(entities, replacement_map, text)
+    replaced_entities = _build_replaced_entities(entities, replacement_map, text, replaced_text)
     if not replaced_entities and replacement_map:
         replaced_entities = _build_replaced_entities_from_map(replacement_map, replaced_text)
     replaced_html = _render_highlighted_text(replaced_text, replaced_entities)
@@ -120,48 +129,96 @@ def _build_replaced_entities(
     original_entities: list[EntitySchema],
     replacement_map: list[dict[str, str]],
     original_text: str,
+    replaced_text: str,
 ) -> list[EntitySchema]:
-    """Compute entity positions in the replaced text by replaying the replacement splicing."""
+    """Compute entity positions in the replaced text by locating synthetic values directly.
+
+    Instead of replaying cursor arithmetic (which drifts when entity values
+    differ in case from the replacement map keys), we resolve each entity's
+    synthetic value and find it in the replaced text by scanning forward.
+    """
     by_value_label: dict[tuple[str, str], str] = {}
     by_value: dict[str, str] = {}
+    by_value_label_ci: dict[tuple[str, str], str] = {}
+    by_value_ci: dict[str, str] = {}
     for entry in replacement_map:
         orig = entry.get("original", "")
         label = entry.get("label", "")
         synth = entry.get("synthetic", "")
         by_value_label[(orig, label)] = synth
         by_value[orig] = synth
+        by_value_label_ci[(orig.lower(), label)] = synth
+        by_value_ci[orig.lower()] = synth
+    lookups = _SyntheticLookupMaps(
+        by_value_label=by_value_label,
+        by_value=by_value,
+        by_value_label_ci=by_value_label_ci,
+        by_value_ci=by_value_ci,
+    )
 
     sorted_entities = sorted(original_entities, key=lambda e: (e.start_position, e.end_position))
-
     replaced_entities: list[EntitySchema] = []
     original_cursor = 0
-    replaced_cursor = 0
+    search_from = 0
 
     for entity in sorted_entities:
+        start = entity.start_position
+        end = entity.end_position
+        value = entity.value
+        label = entity.label
         if (
-            entity.start_position < original_cursor
-            or entity.end_position <= entity.start_position
-            or entity.end_position > len(original_text)
+            start < original_cursor
+            or end <= start
+            or end > len(original_text)
         ):
             continue
 
-        gap = entity.start_position - original_cursor
-        replaced_cursor += gap
+        synthetic = _resolve_synthetic(value, label, lookups)
+        original_span = original_text[start:end]
 
-        synthetic = by_value_label.get((entity.value, entity.label), by_value.get(entity.value, entity.value))
+        pos = replaced_text.find(synthetic, search_from) if synthetic else -1
+        if pos < 0 and synthetic != original_span:
+            pos = replaced_text.find(original_span, search_from)
+            if pos >= 0:
+                synthetic = original_span
+
+        if pos < 0:
+            original_cursor = end
+            continue
+
         replaced_entities.append(
             EntitySchema(
-                value=synthetic,
-                label=entity.label,
-                start_position=replaced_cursor,
-                end_position=replaced_cursor + len(synthetic),
+                value=replaced_text[pos : pos + len(synthetic)],
+                label=label,
+                start_position=pos,
+                end_position=pos + len(synthetic),
             )
         )
-
-        replaced_cursor += len(synthetic)
-        original_cursor = entity.end_position
+        search_from = pos + len(synthetic)
+        original_cursor = end
 
     return replaced_entities
+
+
+def _resolve_synthetic(
+    value: str,
+    label: str,
+    lookups: _SyntheticLookupMaps,
+) -> str:
+    """Look up synthetic value with exact-match first, then case-insensitive fallback."""
+    result = lookups.by_value_label.get((value, label))
+    if result is not None:
+        return result
+    result = lookups.by_value.get(value)
+    if result is not None:
+        return result
+    result = lookups.by_value_label_ci.get((value.lower(), label))
+    if result is not None:
+        return result
+    result = lookups.by_value_ci.get(value.lower())
+    if result is not None:
+        return result
+    return value
 
 
 def _build_original_entities_from_map(
