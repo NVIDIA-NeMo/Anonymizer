@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import json
+import logging
+
+import pytest
 
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
@@ -631,3 +634,13 @@ def test_expand_case_insensitive_matching() -> None:
     entities = [EntitySpan("e1", "Alice", "first_name", 0, 5, 1.0, "detector")]
     expanded = expand_entity_occurrences(text=text, entities=entities)
     assert len(expanded) == 2
+
+
+def test_parse_raw_entities_logs_warning_on_malformed_json(caplog: pytest.LogCaptureFixture) -> None:
+    payload = '{"name":"Alice","ssn":"123-45-6789",invalid}'
+    with caplog.at_level(logging.WARNING, logger="anonymizer.engine.detection.postprocess"):
+        result = parse_raw_entities(raw_response=payload, text="hello")
+    assert result == []
+    assert any("Failed to parse JSON" in m for m in caplog.messages)
+    assert any("length=" in m for m in caplog.messages)
+    assert payload not in "\n".join(caplog.messages)

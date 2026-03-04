@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
 
@@ -336,7 +339,12 @@ def _safe_json_loads(value: dict | str) -> dict:
     try:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Failed to parse JSON in postprocessing pipeline (error=%s, length=%d)",
+            exc.msg,
+            len(value),
+        )
         return {}
 
 
