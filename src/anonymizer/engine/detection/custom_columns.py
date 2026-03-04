@@ -45,6 +45,15 @@ from anonymizer.engine.detection.postprocess import (
     group_entities_by_value,
     parse_raw_entities,
 )
+from anonymizer.engine.schemas import (
+    EntitiesSchema,
+    RawValidationDecisionsSchema,
+    ValidatedDecisionSchema,
+    ValidatedDecisionsSchema,
+    ValidationCandidatesSchema,
+    ValidationSkeletonDecisionSchema,
+    ValidationSkeletonSchema,
+)
 
 
 @custom_column_generator(
@@ -118,21 +127,13 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
 @custom_column_generator(required_columns=[COL_VALIDATION_CANDIDATES])
 def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-populate the decisions template with candidate IDs so the LLM only fills in decision/reason."""
-    candidates = row.get(COL_VALIDATION_CANDIDATES, [])
-    row[COL_VALIDATION_SKELETON] = {
-        "decisions": [
-            {
-                "id": c["id"],
-                "value": c["value"],
-                "label": c["label"],
-                "decision": None,
-                "proposed_label": None,
-                "reason": None,
-            }
-            for c in candidates
-            if isinstance(c, dict)
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, []))
+    skeleton = ValidationSkeletonSchema(
+        decisions=[
+            ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in candidates.candidates
         ]
-    }
+    )
+    row[COL_VALIDATION_SKELETON] = skeleton.model_dump(mode="json")
     return row
 
 
@@ -141,26 +142,26 @@ def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
 )
 def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
     """Enrich validation decisions with entity value and filter to known candidate IDs only."""
-    validated = row.get(COL_VALIDATION_DECISIONS, {})
-    # Both columns come from upstream structured/custom DD steps in the same cell-by-cell
-    # workflow, so they are expected as native Python objects (dict/list), not JSON strings.
-    candidates = row.get(COL_VALIDATION_CANDIDATES, [])
+    raw_decisions = RawValidationDecisionsSchema.from_raw(row.get(COL_VALIDATION_DECISIONS, {}))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, []))
 
-    if not isinstance(validated, dict):
-        return row
+    candidate_lookup = {c.id: c for c in candidates.candidates}
+    valid_ids = set(candidate_lookup)
 
-    value_by_id = {c["id"]: c["value"] for c in candidates if isinstance(c, dict) and "id" in c and "value" in c}
-    valid_ids = set(value_by_id)
+    enriched = [
+        ValidatedDecisionSchema(
+            id=d.id,
+            decision=d.decision,
+            proposed_label=d.proposed_label,
+            reason=d.reason,
+            value=candidate_lookup[d.id].value,
+            label=candidate_lookup[d.id].label,
+        )
+        for d in raw_decisions.decisions
+        if d.id in valid_ids
+    ]
 
-    decisions = validated.get("decisions", [])
-    filtered: list[dict[str, str]] = []
-    if isinstance(decisions, list):
-        for d in decisions:
-            if not isinstance(d, dict) or d.get("id") not in valid_ids:
-                continue
-            filtered.append({**d, "value": value_by_id.get(d["id"], "")})
-
-    row[COL_VALIDATED_ENTITIES] = {"decisions": filtered}
+    row[COL_VALIDATED_ENTITIES] = ValidatedDecisionsSchema(decisions=enriched).model_dump(mode="json")
     return row
 
 
@@ -184,17 +185,16 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _from_dicts(entities: list[dict[str, str | int | float]]) -> list[EntitySpan]:
-    result: list[EntitySpan] = []
-    for entity in entities:
-        result.append(
-            EntitySpan(
-                entity_id=str(entity.get("id", "")),
-                value=str(entity.get("value", "")),
-                label=str(entity.get("label", "")),
-                start_position=int(entity.get("start_position", 0)),
-                end_position=int(entity.get("end_position", 0)),
-                score=float(entity.get("score", 0.0)),
-                source=str(entity.get("source", "detector")),
-            )
+    parsed = EntitiesSchema.from_raw(entities)
+    return [
+        EntitySpan(
+            entity_id=e.id,
+            value=e.value,
+            label=e.label,
+            start_position=e.start_position,
+            end_position=e.end_position,
+            score=e.score,
+            source=e.source,
         )
-    return result
+        for e in parsed.entities
+    ]

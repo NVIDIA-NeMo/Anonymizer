@@ -48,18 +48,15 @@ from anonymizer.engine.detection.custom_columns import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-
-
-class ValidationChoice(str, Enum):
-    keep = "keep"
-    reclass = "reclass"
-    drop = "drop"
+from anonymizer.engine.schemas import EntitiesSchema, ValidationChoice
 
 
 class ValidationDecision(BaseModel):
     """Per-entity validation decision from the LLM validator."""
 
     id: str
+    value: str = Field(default="", description="Entity value (echoed from skeleton)")
+    label: str = Field(default="", description="Entity label (echoed from skeleton)")
     decision: ValidationChoice
     proposed_label: str = Field(
         default="",
@@ -321,9 +318,7 @@ class EntityDetectionWorkflow:
 
         if COL_DETECTED_ENTITIES in final_df.columns:
             final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                lambda x: (
-                    {"entities": x.tolist() if hasattr(x, "tolist") else list(x)} if x is not None else {"entities": []}
-                )
+                lambda x: EntitiesSchema.from_raw(x).model_dump()
             )
         if "original_text_column" in dataframe.attrs:
             final_df.attrs["original_text_column"] = dataframe.attrs["original_text_column"]

@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 
 from anonymizer.config.replace_strategies import LocalReplaceMethod
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
+from anonymizer.engine.schemas import EntitiesSchema
 
 
 @dataclass(frozen=True)
@@ -31,17 +31,16 @@ def apply_local_replace_strategy(
     output_df = dataframe.copy()
     output_df[COL_REPLACEMENT_MAP] = output_df.apply(
         lambda row: _build_local_replacement_map(
-            row=row,
+            entities=EntitiesSchema.from_raw(row.get(entities_column, [])),
             strategy=strategy,
-            entities_column=entities_column,
         ),
         axis=1,
     )
     output_df[COL_REPLACED_TEXT] = output_df.apply(
         lambda row: _apply_replacement_map_to_text(
             text=str(row.get(text_column, "")),
-            entities=row.get(entities_column, []),
-            replacement_map=row[COL_REPLACEMENT_MAP],
+            entities=EntitiesSchema.from_raw(row.get(entities_column, [])),
+            replacements=_parse_replacements(row[COL_REPLACEMENT_MAP]),
         ),
         axis=1,
     )
@@ -60,38 +59,35 @@ def apply_replacement_map(
     output_df[COL_REPLACED_TEXT] = output_df.apply(
         lambda row: _apply_replacement_map_to_text(
             text=str(row.get(text_column, "")),
-            entities=row.get(entities_column, []),
-            replacement_map=row.get(replacement_map_column, {"replacements": []}),
+            entities=EntitiesSchema.from_raw(row.get(entities_column, [])),
+            replacements=_parse_replacements(row.get(replacement_map_column, {"replacements": []})),
         ),
         axis=1,
     )
     return output_df
 
 
-def _build_local_replacement_map(row: pd.Series, strategy: LocalReplaceMethod, entities_column: str) -> dict[str, Any]:
-    entities = [e for e in row.get(entities_column, []) if isinstance(e, dict)]
-    if not entities:
+def _build_local_replacement_map(
+    entities: EntitiesSchema, strategy: LocalReplaceMethod
+) -> dict[str, list[dict[str, str]]]:
+    if not entities.entities:
         return {"replacements": []}
     replacements: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for entity in entities:
-        value = str(entity.get("value", ""))
-        label = str(entity.get("label", ""))
-        if not value or not label:
+    for entity in entities.entities:
+        if not entity.value or not entity.label:
             continue
-        key = (value, label)
+        key = (entity.value, entity.label)
         if key in seen:
             continue
         seen.add(key)
-        synthetic = strategy.replace(text=value, label=label)
-        replacements.append({"original": value, "label": label, "synthetic": synthetic})
+        synthetic = strategy.replace(text=entity.value, label=entity.label)
+        replacements.append({"original": entity.value, "label": entity.label, "synthetic": synthetic})
     return {"replacements": replacements}
 
 
-def _apply_replacement_map_to_text(text: str, entities: Any, replacement_map: Any) -> str:
-    normalized_entities = [e for e in entities if isinstance(e, dict)]
-    replacements = _normalize_replacements(replacement_map)
-    if not normalized_entities or not replacements:
+def _apply_replacement_map_to_text(text: str, entities: EntitiesSchema, replacements: list[ReplacementEntry]) -> str:
+    if not entities.entities or not replacements:
         return text
 
     by_value_label: dict[tuple[str, str], str] = {}
@@ -101,16 +97,7 @@ def _apply_replacement_map_to_text(text: str, entities: Any, replacement_map: An
         by_value[replacement.original] = replacement.synthetic
 
     spans = sorted(
-        (
-            (
-                int(entity.get("start_position", 0)),
-                int(entity.get("end_position", 0)),
-                str(entity.get("value", "")),
-                str(entity.get("label", "")),
-            )
-            for entity in normalized_entities
-            if entity.get("start_position") is not None and entity.get("end_position") is not None
-        ),
+        ((entity.start_position, entity.end_position, entity.value, entity.label) for entity in entities.entities),
         key=lambda item: item[0],
     )
 
@@ -127,7 +114,8 @@ def _apply_replacement_map_to_text(text: str, entities: Any, replacement_map: An
     return "".join(parts)
 
 
-def _normalize_replacements(raw: Any) -> list[ReplacementEntry]:
+def _parse_replacements(raw: str | dict | object) -> list[ReplacementEntry]:
+    """Parse raw replacement map (JSON string or dict) into typed entries."""
     parsed = raw
     if isinstance(raw, str):
         try:
