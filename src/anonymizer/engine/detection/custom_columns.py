@@ -89,7 +89,7 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
     )
     row[COL_MERGED_ENTITIES] = [entity.as_dict() for entity in merged]
     row[COL_MERGED_TAGGED_TEXT] = build_tagged_text(text=text, entities=merged)
-    row[COL_VALIDATION_CANDIDATES] = build_validation_candidates(text=text, entities=merged)
+    row[COL_VALIDATION_CANDIDATES] = {"candidates": build_validation_candidates(text=text, entities=merged)}
     return row
 
 
@@ -120,14 +120,14 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _from_dicts(entities=row.get(COL_SEED_ENTITIES, []))
     row[COL_MERGED_TAGGED_TEXT] = build_tagged_text(text=text, entities=seed_spans)
-    row[COL_VALIDATION_CANDIDATES] = build_validation_candidates(text=text, entities=seed_spans)
+    row[COL_VALIDATION_CANDIDATES] = {"candidates": build_validation_candidates(text=text, entities=seed_spans)}
     return row
 
 
 @custom_column_generator(required_columns=[COL_VALIDATION_CANDIDATES])
 def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-populate the decisions template with candidate IDs so the LLM only fills in decision/reason."""
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, []))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, {}))
     skeleton = ValidationSkeletonSchema(
         decisions=[
             ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in candidates.candidates
@@ -143,7 +143,7 @@ def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
 def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
     """Enrich validation decisions with entity value and filter to known candidate IDs only."""
     raw_decisions = RawValidationDecisionsSchema.from_raw(row.get(COL_VALIDATION_DECISIONS, {}))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, []))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, {}))
 
     candidate_lookup = {c.id: c for c in candidates.candidates}
     valid_ids = set(candidate_lookup)
@@ -178,14 +178,16 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     expanded = expand_entity_occurrences(text=text, entities=validated)
-    row[COL_DETECTED_ENTITIES] = [entity.as_dict() for entity in expanded]
+    row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
+        mode="json"
+    )
     row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=expanded)
-    row[COL_ENTITIES_BY_VALUE] = group_entities_by_value(entities=expanded)
+    row[COL_ENTITIES_BY_VALUE] = {"entities_by_value": group_entities_by_value(entities=expanded)}
     return row
 
 
 def _from_dicts(entities: list[dict[str, str | int | float]]) -> list[EntitySpan]:
-    parsed = EntitiesSchema.from_raw(entities)
+    parsed = EntitiesSchema.from_raw({"entities": entities})
     return [
         EntitySpan(
             entity_id=e.id,

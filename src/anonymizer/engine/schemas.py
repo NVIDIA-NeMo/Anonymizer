@@ -17,7 +17,7 @@ def _parse_raw_wrapper(
     key: str,
     fallback_keys: tuple[str, ...] = (),
 ) -> T:
-    """Parse raw DataFrame cell value (dict, list, or numpy array) into a wrapper schema."""
+    """Parse raw DataFrame cell value into a wrapper schema."""
 
     def _safe_validate(candidate_list: list[object]) -> T:
         try:
@@ -38,13 +38,6 @@ def _parse_raw_wrapper(
             as_list = candidate.tolist()
             if isinstance(as_list, list):
                 return _safe_validate(as_list)
-        return model_cls()
-    if isinstance(raw, list):
-        return _safe_validate(raw)
-    if hasattr(raw, "tolist"):
-        as_list = raw.tolist()
-        if isinstance(as_list, list):
-            return _safe_validate(as_list)
     return model_cls()
 
 

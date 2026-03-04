@@ -62,7 +62,7 @@ def test_substitute_runner_applies_generated_map(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
-                COL_FINAL_ENTITIES: [stub_entities],
+                COL_FINAL_ENTITIES: [{"entities": stub_entities}],
                 COL_REPLACEMENT_MAP: [
                     {
                         "replacements": [
@@ -77,7 +77,7 @@ def test_substitute_runner_applies_generated_map(
     )
     runner = ReplacementWorkflow(llm_workflow=llm_workflow)
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [[]]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -94,7 +94,7 @@ def test_substitute_without_workflow_raises(
     runner = ReplacementWorkflow()
     with pytest.raises(ValueError, match="llm_workflow"):
         runner.run(
-            pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [[]]}),
+            pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}]}),
             replace_method=Substitute(),
             model_configs=stub_model_configs,
             selected_models=stub_replace_model_selection,
@@ -105,7 +105,9 @@ def test_apply_replacement_map_handles_string_map() -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["abc Alice xyz"],
-            COL_FINAL_ENTITIES: [[{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]],
+            COL_FINAL_ENTITIES: [
+                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]}
+            ],
             COL_REPLACEMENT_MAP: ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
         }
     )
@@ -114,7 +116,7 @@ def test_apply_replacement_map_handles_string_map() -> None:
 
 
 def test_apply_replacement_map_handles_numpy_array_entities() -> None:
-    """Entities may come back as numpy arrays after parquet round-trip through DataDesigner."""
+    """Entities may come back as dict-wrapped numpy arrays after parquet round-trip through DataDesigner."""
     entities = np.array(
         [
             {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
@@ -125,7 +127,7 @@ def test_apply_replacement_map_handles_numpy_array_entities() -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
-            COL_FINAL_ENTITIES: [entities],
+            COL_FINAL_ENTITIES: [{"entities": entities}],
             COL_REPLACEMENT_MAP: [
                 {
                     "replacements": [
@@ -174,7 +176,9 @@ def test_hash_strategy_executes(
     input_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice"],
-            COL_FINAL_ENTITIES: [[{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]],
+            COL_FINAL_ENTITIES: [
+                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+            ],
         }
     )
     result = runner.run(
@@ -269,8 +273,8 @@ def test_filter_entities_preserves_original_column() -> None:
     assert len(input_df[COL_FINAL_ENTITIES].iloc[0]["entities"]) == 2
 
 
-def test_filter_entities_normalizes_list_to_dict_wrapped() -> None:
-    """Bare list entities are normalized to dict-wrapped format after filtering."""
+def test_filter_entities_bare_list_is_treated_as_empty() -> None:
+    """Bare list payloads are non-canonical and ignored."""
     entities = [
         {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
         {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
@@ -279,7 +283,7 @@ def test_filter_entities_normalizes_list_to_dict_wrapped() -> None:
     filtered_df = _filter_entities_by_label(input_df, filter_labels=["first_name"])
     result = filtered_df[COL_FINAL_ENTITIES].iloc[0]
     assert isinstance(result, dict)
-    assert len(result["entities"]) == 1
+    assert result["entities"] == []
 
 
 # --- detection → replace integration ---

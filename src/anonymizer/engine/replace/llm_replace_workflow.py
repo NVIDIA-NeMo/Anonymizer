@@ -54,11 +54,11 @@ class LlmReplaceWorkflow:
 
         working_df = dataframe.copy()
         working_df["_entity_examples"] = working_df.apply(
-            lambda row: _create_entity_examples(EntitiesByValueSchema.from_raw(row.get(entities_column, []))),
+            lambda row: _create_entity_examples(EntitiesByValueSchema.from_raw(row.get(entities_column, {}))),
             axis=1,
         )
         working_df["_entities_for_replace"] = working_df.apply(
-            lambda row: _enrich_entities_for_template(EntitiesByValueSchema.from_raw(row.get(entities_column, []))),
+            lambda row: _enrich_entities_for_template(EntitiesByValueSchema.from_raw(row.get(entities_column, {}))),
             axis=1,
         )
         working_df["_entities_for_replace_json"] = working_df["_entities_for_replace"].apply(json.dumps)

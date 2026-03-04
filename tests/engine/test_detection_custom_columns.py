@@ -79,10 +79,12 @@ def test_enrich_validation_decisions_adds_value_from_candidates() -> None:
                 {"id": "id2", "decision": "drop", "proposed_label": "", "reason": "placeholder"},
             ]
         },
-        COL_VALIDATION_CANDIDATES: [
-            {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""},
-            {"id": "id2", "value": "name", "label": "first_name", "context_before": "", "context_after": ""},
-        ],
+        COL_VALIDATION_CANDIDATES: {
+            "candidates": [
+                {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""},
+                {"id": "id2", "value": "name", "label": "first_name", "context_before": "", "context_after": ""},
+            ]
+        },
     }
     result = enrich_validation_decisions(row)
     decisions = result[COL_VALIDATED_ENTITIES]["decisions"]
@@ -93,7 +95,7 @@ def test_enrich_validation_decisions_adds_value_from_candidates() -> None:
 def test_enrich_validation_decisions_filters_unknown_ids() -> None:
     row = {
         COL_VALIDATION_DECISIONS: {"decisions": [{"id": "unknown_id", "decision": "keep", "proposed_label": ""}]},
-        COL_VALIDATION_CANDIDATES: [],
+        COL_VALIDATION_CANDIDATES: {"candidates": []},
     }
     result = enrich_validation_decisions(row)
     assert result[COL_VALIDATED_ENTITIES]["decisions"] == []
@@ -102,9 +104,11 @@ def test_enrich_validation_decisions_filters_unknown_ids() -> None:
 def test_enrich_validation_decisions_ignores_non_dict_validation_payload() -> None:
     row = {
         COL_VALIDATION_DECISIONS: "unexpected-string-payload",
-        COL_VALIDATION_CANDIDATES: [
-            {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""}
-        ],
+        COL_VALIDATION_CANDIDATES: {
+            "candidates": [
+                {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""}
+            ]
+        },
     }
     result = enrich_validation_decisions(row)
     assert result[COL_VALIDATED_ENTITIES] == {"decisions": []}
@@ -112,16 +116,24 @@ def test_enrich_validation_decisions_ignores_non_dict_validation_payload() -> No
 
 def test_build_validation_skeleton_produces_null_decisions() -> None:
     row: dict[str, Any] = {
-        COL_VALIDATION_CANDIDATES: [
-            {
-                "id": "first_name_0_5",
-                "value": "Alice",
-                "label": "first_name",
-                "context_before": "",
-                "context_after": " works",
-            },
-            {"id": "org_15_19", "value": "Acme", "label": "organization", "context_before": "at ", "context_after": ""},
-        ],
+        COL_VALIDATION_CANDIDATES: {
+            "candidates": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "context_before": "",
+                    "context_after": " works",
+                },
+                {
+                    "id": "org_15_19",
+                    "value": "Acme",
+                    "label": "organization",
+                    "context_before": "at ",
+                    "context_after": "",
+                },
+            ]
+        },
     }
     result = build_validation_skeleton(row)
     skeleton = result[COL_VALIDATION_SKELETON]
@@ -136,11 +148,13 @@ def test_build_validation_skeleton_produces_null_decisions() -> None:
 
 def test_build_validation_skeleton_handles_candidates_with_missing_keys() -> None:
     row: dict[str, Any] = {
-        COL_VALIDATION_CANDIDATES: [
-            {"id": "x"},
-            {"value": "Alice"},
-            {},
-        ],
+        COL_VALIDATION_CANDIDATES: {
+            "candidates": [
+                {"id": "x"},
+                {"value": "Alice"},
+                {},
+            ]
+        },
     }
     result = build_validation_skeleton(row)
     skeleton = result[COL_VALIDATION_SKELETON]

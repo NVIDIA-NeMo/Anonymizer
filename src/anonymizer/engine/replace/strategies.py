@@ -31,7 +31,7 @@ def apply_local_replace_strategy(
     output_df = dataframe.copy()
     output_df[COL_REPLACEMENT_MAP] = output_df.apply(
         lambda row: _build_local_replacement_map(
-            entities=EntitiesSchema.from_raw(row.get(entities_column, [])),
+            entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
             strategy=strategy,
         ),
         axis=1,
@@ -39,7 +39,7 @@ def apply_local_replace_strategy(
     output_df[COL_REPLACED_TEXT] = output_df.apply(
         lambda row: _apply_replacement_map_to_text(
             text=str(row.get(text_column, "")),
-            entities=EntitiesSchema.from_raw(row.get(entities_column, [])),
+            entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
             replacements=_parse_replacements(row[COL_REPLACEMENT_MAP]),
         ),
         axis=1,
@@ -59,7 +59,7 @@ def apply_replacement_map(
     output_df[COL_REPLACED_TEXT] = output_df.apply(
         lambda row: _apply_replacement_map_to_text(
             text=str(row.get(text_column, "")),
-            entities=EntitiesSchema.from_raw(row.get(entities_column, [])),
+            entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
             replacements=_parse_replacements(row.get(replacement_map_column, {"replacements": []})),
         ),
         axis=1,

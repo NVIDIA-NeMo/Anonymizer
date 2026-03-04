@@ -38,7 +38,7 @@ def _make_anonymizer(
 ) -> tuple[Anonymizer, Mock, Mock]:
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = detection_return or EntityDetectionResult(
-        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [[]]}),
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=[],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
@@ -60,7 +60,7 @@ def test_run_merges_failed_records_from_both_stages(
     replace_failures = [FailedRecord(record_id="r2", step="replace", reason="parse error")]
 
     detection_result = EntityDetectionResult(
-        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [[]]}),
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=detection_failures,
     )
     replace_return = ReplacementResult(
@@ -112,7 +112,7 @@ def test_run_exposes_trace_dataframe_and_filters_internal_columns(
                 COL_TEXT: ["Alice"],
                 COL_REPLACED_TEXT: ["[REDACTED]"],
                 COL_TAGGED_TEXT: ["<first_name>Alice</first_name>"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                 COL_REPLACEMENT_MAP: [{"replacements": []}],
             }
         ),
@@ -138,7 +138,7 @@ def test_preview_exposes_trace_dataframe_for_display(
             {
                 COL_TEXT: ["Alice"],
                 COL_REPLACED_TEXT: ["[REDACTED]"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                 COL_REPLACEMENT_MAP: [{"replacements": []}],
             }
         ),
@@ -165,7 +165,7 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
             COL_TEXT: ["Alice bio text"],
             COL_REPLACED_TEXT: ["[REDACTED] bio text"],
             COL_TAGGED_TEXT: ["<first_name>Alice</first_name> bio text"],
-            COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+            COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
         }
     )
     replace_df.attrs["original_text_column"] = "bio"

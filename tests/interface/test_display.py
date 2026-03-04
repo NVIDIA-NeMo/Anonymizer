@@ -123,10 +123,12 @@ def test_render_record_html_contains_all_sections() -> None:
         {
             "text": "Alice works at Acme",
             "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION]",
-            COL_DETECTED_ENTITIES: [
-                {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
-            ],
+            COL_DETECTED_ENTITIES: {
+                "entities": [
+                    {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                    {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+                ]
+            },
             COL_REPLACEMENT_MAP: {
                 "replacements": [
                     {"original": "Alice", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"},
@@ -149,7 +151,7 @@ def test_render_record_html_original_highlights_from_map_when_entities_empty() -
     row = {
         "text": "Alice works at Acme",
         "text_replaced": "Maya works at NovaCorp",
-        COL_DETECTED_ENTITIES: [],
+        COL_DETECTED_ENTITIES: {"entities": []},
         COL_REPLACEMENT_MAP: {
             "replacements": [
                 {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
@@ -169,7 +171,7 @@ def test_render_record_html_replaced_highlights_from_map_when_entities_empty() -
     row = {
         "text": "Alice works at Acme",
         "text_replaced": "Maya works at NovaCorp",
-        COL_DETECTED_ENTITIES: [],
+        COL_DETECTED_ENTITIES: {"entities": []},
         COL_REPLACEMENT_MAP: {
             "replacements": [
                 {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
@@ -188,7 +190,7 @@ def test_render_record_html_without_replacement_map() -> None:
         {
             "text": "Alice works here",
             "text_replaced": "Alice works here",
-            COL_DETECTED_ENTITIES: [],
+            COL_DETECTED_ENTITIES: {"entities": []},
             COL_REPLACEMENT_MAP: {},
         }
     )
@@ -201,7 +203,7 @@ def _make_preview(rows: int = 2) -> PreviewResult:
         {
             "text": ["Alice", "Bob"][:rows],
             "text_replaced": ["[R]", "[R]"][:rows],
-            COL_DETECTED_ENTITIES: [[] for _ in range(rows)],
+            COL_DETECTED_ENTITIES: [{"entities": []} for _ in range(rows)],
             COL_REPLACEMENT_MAP: [{} for _ in range(rows)],
         }
     )
@@ -215,10 +217,12 @@ def test_render_record_html_uses_detected_entities_over_map_scan() -> None:
         {
             "text": "She works at the Lantern in Austin",
             "text_replaced": "She works at [REDACTED_COMPANY] in [REDACTED_CITY]",
-            COL_DETECTED_ENTITIES: [
-                {"value": "The Lantern", "label": "company_name", "start_position": 13, "end_position": 24},
-                {"value": "Austin", "label": "city", "start_position": 28, "end_position": 34},
-            ],
+            COL_DETECTED_ENTITIES: {
+                "entities": [
+                    {"value": "The Lantern", "label": "company_name", "start_position": 13, "end_position": 24},
+                    {"value": "Austin", "label": "city", "start_position": 28, "end_position": 34},
+                ]
+            },
             COL_REPLACEMENT_MAP: {
                 "replacements": [
                     {"original": "The Lantern", "label": "company_name", "synthetic": "[REDACTED_COMPANY]"},
@@ -240,11 +244,13 @@ def test_render_record_html_replaced_tags_positioned_correctly_with_case_mismatc
         {
             "text": "Hi Mara at the Lantern in Austin TX",
             "text_replaced": "Hi [REDACTED_NAME] at [REDACTED_COMPANY] in [REDACTED_CITY] TX",
-            COL_DETECTED_ENTITIES: [
-                {"value": "Mara", "label": "first_name", "start_position": 3, "end_position": 7},
-                {"value": "The Lantern", "label": "company_name", "start_position": 11, "end_position": 22},
-                {"value": "Austin", "label": "city", "start_position": 26, "end_position": 32},
-            ],
+            COL_DETECTED_ENTITIES: {
+                "entities": [
+                    {"value": "Mara", "label": "first_name", "start_position": 3, "end_position": 7},
+                    {"value": "The Lantern", "label": "company_name", "start_position": 11, "end_position": 22},
+                    {"value": "Austin", "label": "city", "start_position": 26, "end_position": 32},
+                ]
+            },
             COL_REPLACEMENT_MAP: {
                 "replacements": [
                     {"original": "Mara", "label": "first_name", "synthetic": "[REDACTED_NAME]"},
@@ -266,10 +272,12 @@ def test_render_record_html_mask_strategy_labels_are_distinct() -> None:
         {
             "text": "Mara in Austin",
             "text_replaced": "***** in *****",
-            COL_DETECTED_ENTITIES: [
-                {"value": "Mara", "label": "first_name", "start_position": 0, "end_position": 4},
-                {"value": "Austin", "label": "city", "start_position": 8, "end_position": 14},
-            ],
+            COL_DETECTED_ENTITIES: {
+                "entities": [
+                    {"value": "Mara", "label": "first_name", "start_position": 0, "end_position": 4},
+                    {"value": "Austin", "label": "city", "start_position": 8, "end_position": 14},
+                ]
+            },
             COL_REPLACEMENT_MAP: {
                 "replacements": [
                     {"original": "Mara", "label": "first_name", "synthetic": "*****"},

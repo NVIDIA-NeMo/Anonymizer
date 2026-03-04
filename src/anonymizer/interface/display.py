@@ -59,7 +59,7 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
     text_col = original_text_column or "text"
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
-    entities = EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES, [])).entities
+    entities = EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES, {})).entities
     replacement_map = _normalize_replacement_map(row.get(COL_REPLACEMENT_MAP, {}))
 
     if not entities and replacement_map:

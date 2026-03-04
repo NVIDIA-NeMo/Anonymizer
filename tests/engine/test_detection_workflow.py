@@ -43,7 +43,7 @@ def test_run_with_latent_detection_calls_second_workflow(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
                     COL_TAGGED_TEXT: ["<first_name>Alice</first_name> works in <city>Seattle</city>"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                 }
             ),
             failed_records=[],
@@ -53,7 +53,7 @@ def test_run_with_latent_detection_calls_second_workflow(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
                     COL_TAGGED_TEXT: ["<first_name>Alice</first_name> works in <city>Seattle</city>"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                     COL_LATENT_ENTITIES: [[{"value": "Acme Corp", "label": "organization", "sensitivity": "medium"}]],
                 }
             ),
@@ -112,7 +112,7 @@ def test_run_without_latent_detection_materializes_final_entities(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
             }
         ),
         failed_records=[],
@@ -146,8 +146,8 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
-                COL_ENTITIES_BY_VALUE: [[{"value": "Alice", "labels": ["first_name"]}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             }
         ),
         failed_records=[],
@@ -174,7 +174,7 @@ def test_run_preserves_original_text_column_attr(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
             }
         ),
         failed_records=[],
@@ -203,7 +203,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                 }
             ),
             failed_records=[FailedRecord(record_id="d1", step="entity-detection", reason="detected failure")],
@@ -212,7 +212,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                     COL_LATENT_ENTITIES: [[{"value": "Acme Corp", "label": "organization", "sensitivity": "medium"}]],
                 }
             ),
@@ -243,8 +243,8 @@ def test_detect_and_validate_entities_drops_grouped_when_compute_grouped_false(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
-                COL_ENTITIES_BY_VALUE: [[{"value": "Alice", "labels": ["first_name"]}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             }
         ),
         failed_records=[],
