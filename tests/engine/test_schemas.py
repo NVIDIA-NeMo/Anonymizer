@@ -53,6 +53,25 @@ def test_entities_payload_from_raw_dict() -> None:
     assert payload.entities[0].label == "organization"
 
 
+def test_entities_payload_from_raw_model_instance() -> None:
+    raw = EntitiesSchema(
+        entities=[
+            {
+                "id": "org_15_19",
+                "value": "Acme",
+                "label": "organization",
+                "start_position": 15,
+                "end_position": 19,
+                "score": 0.8,
+                "source": "augmenter",
+            }
+        ]
+    )
+    payload = EntitiesSchema.from_raw(raw)
+    assert len(payload.entities) == 1
+    assert payload.entities[0].label == "organization"
+
+
 def test_entities_payload_from_raw_numpy_array() -> None:
     raw = {
         "entities": np.array(

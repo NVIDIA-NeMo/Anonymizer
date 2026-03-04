@@ -25,6 +25,11 @@ def _parse_raw_wrapper(
         except ValidationError:
             return model_cls()
 
+    if isinstance(raw, model_cls):
+        return raw
+    if isinstance(raw, BaseModel):
+        raw = raw.model_dump(mode="python")
+
     if isinstance(raw, dict):
         candidate = raw.get(key)
         if candidate is None:
@@ -32,6 +37,10 @@ def _parse_raw_wrapper(
                 candidate = raw.get(fk)
                 if candidate is not None:
                     break
+        if isinstance(candidate, model_cls):
+            return candidate
+        if isinstance(candidate, BaseModel):
+            candidate = candidate.model_dump(mode="python")
         if isinstance(candidate, list):
             return _safe_validate(candidate)
         if hasattr(candidate, "tolist"):

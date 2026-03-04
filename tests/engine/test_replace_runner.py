@@ -17,6 +17,21 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow, _filter_entities_by_label
 from anonymizer.engine.replace.strategies import apply_replacement_map
+from anonymizer.engine.schemas import EntitiesSchema
+
+
+def _build_entities_payload(payload_kind: str) -> object:
+    entities_list = [
+        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+    ]
+    if payload_kind == "dict_wrapper":
+        return {"entities": entities_list}
+    if payload_kind == "numpy_wrapped_dict_wrapper":
+        return {"entities": np.array(entities_list, dtype=object)}
+    if payload_kind == "entities_schema":
+        return EntitiesSchema(entities=entities_list)
+    raise ValueError(f"Unsupported payload kind: {payload_kind}")
 
 
 def test_local_replace_runner_uses_strategy_directly(
@@ -115,45 +130,15 @@ def test_apply_replacement_map_handles_string_map() -> None:
     assert output_df[COL_REPLACED_TEXT].iloc[0] == "abc Elena xyz"
 
 
-def test_apply_replacement_map_handles_numpy_array_entities() -> None:
-    """Entities may come back as dict-wrapped numpy arrays after parquet round-trip through DataDesigner."""
-    entities = np.array(
-        [
-            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-            {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
-        ],
-        dtype=object,
-    )
+@pytest.mark.parametrize(
+    "payload_kind",
+    ["dict_wrapper", "numpy_wrapped_dict_wrapper", "entities_schema"],
+)
+def test_apply_replacement_map_handles_entity_payload_shapes(payload_kind: str) -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
-            COL_FINAL_ENTITIES: [{"entities": entities}],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
-                        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
-                    ]
-                }
-            ],
-        }
-    )
-    output_df = apply_replacement_map(dataframe)
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
-
-
-def test_apply_replacement_map_handles_dict_wrapped_entities() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme"],
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
-                    ]
-                }
-            ],
+            COL_FINAL_ENTITIES: [_build_entities_payload(payload_kind)],
             COL_REPLACEMENT_MAP: [
                 {
                     "replacements": [

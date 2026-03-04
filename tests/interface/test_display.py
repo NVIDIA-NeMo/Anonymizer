@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACEMENT_MAP
-from anonymizer.engine.schemas import EntitySchema
+from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.interface.display import (
     _build_replaced_entities,
     _normalize_replacement_map,
@@ -19,6 +20,20 @@ from anonymizer.interface.results import PreviewResult
 
 def _entity(value: str, label: str, start: int, end: int) -> EntitySchema:
     return EntitySchema(value=value, label=label, start_position=start, end_position=end)
+
+
+def _build_detected_entities_payload(payload_kind: str) -> object:
+    entities_list = [
+        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+    ]
+    if payload_kind == "dict_wrapper":
+        return {"entities": entities_list}
+    if payload_kind == "numpy_wrapped_dict_wrapper":
+        return {"entities": np.array(entities_list, dtype=object)}
+    if payload_kind == "entities_schema":
+        return EntitiesSchema(entities=entities_list)
+    raise ValueError(f"Unsupported payload kind: {payload_kind}")
 
 
 def test_highlighted_text_wraps_entity_in_styled_span() -> None:
@@ -123,17 +138,16 @@ def test_normalize_replacement_map_non_dict_returns_empty() -> None:
     assert _normalize_replacement_map([1, 2, 3]) == []
 
 
-def test_render_record_html_contains_all_sections() -> None:
+@pytest.mark.parametrize(
+    "payload_kind",
+    ["dict_wrapper", "numpy_wrapped_dict_wrapper", "entities_schema"],
+)
+def test_render_record_html_contains_all_sections(payload_kind: str) -> None:
     row = pd.Series(
         {
             "text": "Alice works at Acme",
             "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION]",
-            COL_DETECTED_ENTITIES: {
-                "entities": [
-                    {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                    {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
-                ]
-            },
+            COL_DETECTED_ENTITIES: _build_detected_entities_payload(payload_kind),
             COL_REPLACEMENT_MAP: {
                 "replacements": [
                     {"original": "Alice", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"},
