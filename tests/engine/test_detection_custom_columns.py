@@ -14,7 +14,11 @@ import json
 from typing import Any
 
 from anonymizer.engine.constants import (
+    COL_AUGMENTED_ENTITIES,
+    COL_DETECTED_ENTITIES,
+    COL_ENTITIES_BY_VALUE,
     COL_INITIAL_TAGGED_TEXT,
+    COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -26,20 +30,22 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.custom_columns import (
-    _from_dicts,
+    _parse_entity_spans,
+    apply_validation_and_finalize,
     build_validation_skeleton,
     enrich_validation_decisions,
+    merge_and_build_candidates,
     parse_detected_entities,
 )
 
 
-def test_from_dicts_handles_empty_list() -> None:
-    assert _from_dicts([]) == []
+def test_parse_entity_spans_handles_malformed_payload() -> None:
+    assert _parse_entity_spans([]) == []
 
 
-def test_from_dicts_defaults_missing_keys() -> None:
+def test_parse_entity_spans_defaults_missing_keys() -> None:
     """After a parquet round-trip some keys may be absent."""
-    spans = _from_dicts([{"value": "Bob", "label": "first_name"}])
+    spans = _parse_entity_spans({"entities": [{"value": "Bob", "label": "first_name"}]})
     assert spans[0].entity_id == ""
     assert spans[0].start_position == 0
     assert spans[0].score == 0.0
@@ -68,7 +74,33 @@ def test_parse_produces_valid_tagged_text_and_notation() -> None:
     assert "(555) 123-4567" in result[COL_INITIAL_TAGGED_TEXT]
     assert "phone_number" in result[COL_INITIAL_TAGGED_TEXT]
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
-    assert json.loads(result[COL_SEED_ENTITIES_JSON]) == result[COL_SEED_ENTITIES]
+    assert json.loads(result[COL_SEED_ENTITIES_JSON]) == result[COL_SEED_ENTITIES]["entities"]
+
+
+def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "Alice works at Acme in Seattle.",
+        COL_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 0.95,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    result = merge_and_build_candidates(row)
+    assert "entities" in result[COL_MERGED_ENTITIES]
+    assert isinstance(result[COL_MERGED_ENTITIES]["entities"], list)
+    assert "candidates" in result[COL_VALIDATION_CANDIDATES]
+    assert isinstance(result[COL_VALIDATION_CANDIDATES]["candidates"], list)
 
 
 def test_enrich_validation_decisions_adds_value_from_candidates() -> None:
@@ -163,3 +195,39 @@ def test_build_validation_skeleton_handles_candidates_with_missing_keys() -> Non
     assert skeleton["decisions"][0]["value"] == ""
     assert skeleton["decisions"][1]["id"] == ""
     assert skeleton["decisions"][1]["value"] == "Alice"
+
+
+def test_apply_validation_and_finalize_writes_schema_shaped_entities_by_value() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "Alice works at Acme.",
+        COL_MERGED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 0.95,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {"decisions": []},
+    }
+
+    result = apply_validation_and_finalize(row)
+    assert "entities_by_value" in result[COL_ENTITIES_BY_VALUE]
+    assert isinstance(result[COL_ENTITIES_BY_VALUE]["entities_by_value"], list)
+
+
+def test_apply_validation_and_finalize_handles_malformed_merged_entities() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "Alice works at Acme.",
+        COL_MERGED_ENTITIES: ["bad-shape"],
+        COL_VALIDATED_ENTITIES: {"decisions": []},
+    }
+
+    result = apply_validation_and_finalize(row)
+    assert result[COL_DETECTED_ENTITIES] == {"entities": []}
+    assert result[COL_ENTITIES_BY_VALUE] == {"entities_by_value": []}
