@@ -118,7 +118,10 @@ def get_model_alias(workflow_name: WorkflowName, role: str, config_dir: Path | N
     return selected_models[role]
 
 
-def resolve_model_alias(role: str, selection_model: object) -> str:
+def resolve_model_alias(
+    role: str,
+    selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection,
+) -> str:
     """Read model alias directly from the selection model.
 
     The selection model is already populated with defaults from YAML

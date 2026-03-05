@@ -123,6 +123,7 @@ class Anonymizer:
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
+            compute_grouped_entities=True if config.replace is not None else None,
             preview_num_records=preview_num_records,
         )
 

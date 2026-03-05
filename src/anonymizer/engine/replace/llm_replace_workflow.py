@@ -5,27 +5,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
-from pydantic import BaseModel, Field
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, ENTITY_LABEL_EXAMPLES
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-
-
-class EntityReplacement(BaseModel):
-    original: str = Field(min_length=1, description="The original entity value")
-    label: str = Field(min_length=1, description="The entity label/type")
-    synthetic: str = Field(min_length=1, description="The synthetic replacement value")
-
-
-class ReplacementMap(BaseModel):
-    replacements: list[EntityReplacement] = Field(default_factory=list, description="List of entity replacements")
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 
 @dataclass(frozen=True)
@@ -54,11 +43,11 @@ class LlmReplaceWorkflow:
 
         working_df = dataframe.copy()
         working_df["_entity_examples"] = working_df.apply(
-            lambda row: _create_entity_examples(row.get(entities_column, [])),
+            lambda row: _create_entity_examples(EntitiesByValueSchema.from_raw(row.get(entities_column, {}))),
             axis=1,
         )
         working_df["_entities_for_replace"] = working_df.apply(
-            lambda row: _normalize_entities_by_value(row.get(entities_column, [])),
+            lambda row: _enrich_entities_for_template(EntitiesByValueSchema.from_raw(row.get(entities_column, {}))),
             axis=1,
         )
         working_df["_entities_for_replace_json"] = working_df["_entities_for_replace"].apply(json.dumps)
@@ -74,7 +63,7 @@ class LlmReplaceWorkflow:
                         instructions=instructions,
                     ),
                     model_alias=replace_alias,
-                    output_format=ReplacementMap,
+                    output_format=EntityReplacementMapSchema,
                 )
             ],
             workflow_name="replace-map-generation",
@@ -89,25 +78,15 @@ class LlmReplaceWorkflow:
         return LlmReplaceResult(dataframe=output_df, failed_records=run_result.failed_records)
 
 
-def _normalize_entities_by_value(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for entity in raw:
-        if not isinstance(entity, dict):
-            continue
-        enriched = {**entity}
-        labels = enriched.get("labels", [])
-        enriched["labels_str"] = ", ".join(str(label) for label in labels) if isinstance(labels, list) else ""
-        normalized.append(enriched)
-    return normalized
+def _enrich_entities_for_template(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:
+    """Add ``labels_str`` for Jinja template rendering."""
+    return [{"value": e.value, "labels": e.labels, "labels_str": ", ".join(e.labels)} for e in parsed.entities_by_value]
 
 
-def _create_entity_examples(entities_by_value: Any) -> str:
-    normalized = _normalize_entities_by_value(entities_by_value)
+def _create_entity_examples(parsed: EntitiesByValueSchema) -> str:
     labels: set[str] = set()
-    for entity in normalized:
-        labels.update(str(label) for label in entity.get("labels", []) if str(label))
+    for entity in parsed.entities_by_value:
+        labels.update(label for label in entity.labels if label)
     if not labels:
         return ""
     examples = {
@@ -147,6 +126,9 @@ Rules:
 3. Maintain format and type:
    - Same structure, length patterns, character types
    - Same demographic characteristics (Indian name → Indian name)
+
+4. Fit the surrounding text naturally:
+   - Check that the synthetic value reads correctly with the words immediately before and after it in the original text.
 
 CRITICAL: Every entity MUST have a different synthetic value. Never return original=synthetic.
 """
