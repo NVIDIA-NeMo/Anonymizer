@@ -59,7 +59,7 @@ def stub_entities() -> list[dict]:
 
 @pytest.fixture
 def stub_dataframe_with_entities(stub_dataframe: pd.DataFrame, stub_entities: list[dict]) -> pd.DataFrame:
-    """DataFrame with text + detected entities — input shape for replace runner."""
+    """DataFrame with text + detected entities — canonical dict-wrapped shape from detection."""
     df = stub_dataframe.copy()
-    df[COL_FINAL_ENTITIES] = [stub_entities]
+    df[COL_FINAL_ENTITIES] = [{"entities": stub_entities}]
     return df

@@ -43,7 +43,7 @@ def test_run_with_latent_detection_calls_second_workflow(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
                     COL_TAGGED_TEXT: ["<first_name>Alice</first_name> works in <city>Seattle</city>"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                 }
             ),
             failed_records=[],
@@ -53,7 +53,7 @@ def test_run_with_latent_detection_calls_second_workflow(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
                     COL_TAGGED_TEXT: ["<first_name>Alice</first_name> works in <city>Seattle</city>"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                     COL_LATENT_ENTITIES: [[{"value": "Acme Corp", "label": "organization", "sensitivity": "medium"}]],
                 }
             ),
@@ -112,7 +112,7 @@ def test_run_without_latent_detection_materializes_final_entities(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
             }
         ),
         failed_records=[],
@@ -130,7 +130,11 @@ def test_run_without_latent_detection_materializes_final_entities(
 
     assert adapter.run_workflow.call_count == 1
     assert COL_FINAL_ENTITIES in result.dataframe.columns
-    assert result.dataframe[COL_FINAL_ENTITIES].tolist() == result.dataframe[COL_DETECTED_ENTITIES].tolist()
+    final = result.dataframe[COL_FINAL_ENTITIES].iloc[0]
+    assert isinstance(final, dict)
+    assert len(final["entities"]) == 1
+    assert final["entities"][0]["value"] == "Alice"
+    assert final["entities"][0]["label"] == "first_name"
 
 
 def test_run_compute_grouped_entities_false_drops_grouped_column(
@@ -142,8 +146,8 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
-                COL_ENTITIES_BY_VALUE: [[{"value": "Alice", "labels": ["first_name"]}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             }
         ),
         failed_records=[],
@@ -170,7 +174,7 @@ def test_run_preserves_original_text_column_attr(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
             }
         ),
         failed_records=[],
@@ -199,7 +203,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                 }
             ),
             failed_records=[FailedRecord(record_id="d1", step="entity-detection", reason="detected failure")],
@@ -208,7 +212,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
-                    COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
                     COL_LATENT_ENTITIES: [[{"value": "Acme Corp", "label": "organization", "sensitivity": "medium"}]],
                 }
             ),
@@ -239,8 +243,8 @@ def test_detect_and_validate_entities_drops_grouped_when_compute_grouped_false(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]],
-                COL_ENTITIES_BY_VALUE: [[{"value": "Alice", "labels": ["first_name"]}]],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             }
         ),
         failed_records=[],
@@ -349,6 +353,9 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "Here are all the valid entity classes with examples" in prompt
     assert "- email: derez_lester94@icloud.com" in prompt
     assert "- city: Houston, San Diego, Doha, Lahore" in prompt
+    assert "Copy ids exactly as given; never modify entries" in prompt
+    assert "You MUST fill in a decision for EVERY entry in the template" in prompt
+    assert "Return ONLY the entries from the template" in prompt
 
 
 def test_validation_prompt_includes_data_summary() -> None:

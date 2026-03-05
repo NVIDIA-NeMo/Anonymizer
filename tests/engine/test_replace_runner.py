@@ -17,6 +17,21 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow, _filter_entities_by_label
 from anonymizer.engine.replace.strategies import apply_replacement_map
+from anonymizer.engine.schemas import EntitiesSchema
+
+
+def _build_entities_payload(payload_kind: str) -> object:
+    entities_list = [
+        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+    ]
+    if payload_kind == "dict_wrapper":
+        return {"entities": entities_list}
+    if payload_kind == "numpy_wrapped_dict_wrapper":
+        return {"entities": np.array(entities_list, dtype=object)}
+    if payload_kind == "entities_schema":
+        return EntitiesSchema(entities=entities_list)
+    raise ValueError(f"Unsupported payload kind: {payload_kind}")
 
 
 def test_local_replace_runner_uses_strategy_directly(
@@ -62,7 +77,7 @@ def test_substitute_runner_applies_generated_map(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
-                COL_FINAL_ENTITIES: [stub_entities],
+                COL_FINAL_ENTITIES: [{"entities": stub_entities}],
                 COL_REPLACEMENT_MAP: [
                     {
                         "replacements": [
@@ -77,7 +92,7 @@ def test_substitute_runner_applies_generated_map(
     )
     runner = ReplacementWorkflow(llm_workflow=llm_workflow)
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [[]]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -94,7 +109,7 @@ def test_substitute_without_workflow_raises(
     runner = ReplacementWorkflow()
     with pytest.raises(ValueError, match="llm_workflow"):
         runner.run(
-            pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [[]]}),
+            pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}]}),
             replace_method=Substitute(),
             model_configs=stub_model_configs,
             selected_models=stub_replace_model_selection,
@@ -105,7 +120,9 @@ def test_apply_replacement_map_handles_string_map() -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["abc Alice xyz"],
-            COL_FINAL_ENTITIES: [[{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]],
+            COL_FINAL_ENTITIES: [
+                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]}
+            ],
             COL_REPLACEMENT_MAP: ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
         }
     )
@@ -113,19 +130,15 @@ def test_apply_replacement_map_handles_string_map() -> None:
     assert output_df[COL_REPLACED_TEXT].iloc[0] == "abc Elena xyz"
 
 
-def test_apply_replacement_map_handles_numpy_array_entities() -> None:
-    """Entities may come back as numpy arrays after parquet round-trip through DataDesigner."""
-    entities = np.array(
-        [
-            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-            {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
-        ],
-        dtype=object,
-    )
+@pytest.mark.parametrize(
+    "payload_kind",
+    ["dict_wrapper", "numpy_wrapped_dict_wrapper", "entities_schema"],
+)
+def test_apply_replacement_map_handles_entity_payload_shapes(payload_kind: str) -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
-            COL_FINAL_ENTITIES: [entities],
+            COL_FINAL_ENTITIES: [_build_entities_payload(payload_kind)],
             COL_REPLACEMENT_MAP: [
                 {
                     "replacements": [
@@ -148,7 +161,9 @@ def test_hash_strategy_executes(
     input_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice"],
-            COL_FINAL_ENTITIES: [[{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]],
+            COL_FINAL_ENTITIES: [
+                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+            ],
         }
     )
     result = runner.run(
@@ -237,7 +252,116 @@ def test_filter_entities_preserves_original_column() -> None:
         {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
         {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
     ]
+    input_df = pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": entities}]})
+    filtered_df = _filter_entities_by_label(input_df, filter_labels=["first_name"])
+    assert len(filtered_df[COL_FINAL_ENTITIES].iloc[0]["entities"]) == 1
+    assert len(input_df[COL_FINAL_ENTITIES].iloc[0]["entities"]) == 2
+
+
+def test_filter_entities_bare_list_is_treated_as_empty() -> None:
+    """Bare list payloads are non-canonical and ignored."""
+    entities = [
+        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+    ]
     input_df = pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [entities]})
     filtered_df = _filter_entities_by_label(input_df, filter_labels=["first_name"])
-    assert len(filtered_df[COL_FINAL_ENTITIES].iloc[0]) == 1
-    assert len(input_df[COL_FINAL_ENTITIES].iloc[0]) == 2
+    result = filtered_df[COL_FINAL_ENTITIES].iloc[0]
+    assert isinstance(result, dict)
+    assert result["entities"] == []
+
+
+# --- detection → replace integration ---
+
+
+def test_detection_output_flows_through_redact(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Smoke test: dict-wrapped final_entities from detection must work with Redact."""
+    detection_output = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {
+                            "id": "first_name_0_5",
+                            "value": "Alice",
+                            "label": "first_name",
+                            "start_position": 0,
+                            "end_position": 5,
+                            "score": 1.0,
+                            "source": "detector",
+                        },
+                        {
+                            "id": "org_15_19",
+                            "value": "Acme",
+                            "label": "organization",
+                            "start_position": 15,
+                            "end_position": 19,
+                            "score": 0.9,
+                            "source": "augmenter",
+                        },
+                    ]
+                }
+            ],
+        }
+    )
+    runner = ReplacementWorkflow()
+    result = runner.run(
+        detection_output,
+        replace_method=Redact(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
+    assert "Alice" not in replaced
+    assert "Acme" not in replaced
+    assert "[REDACTED_FIRST_NAME]" in replaced
+    assert "[REDACTED_ORGANIZATION]" in replaced
+
+
+def test_detection_output_with_numpy_entities_flows_through_redact(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Regression: parquet round-trip produces {"entities": numpy_array}."""
+    detection_output = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": np.array(
+                        [
+                            {
+                                "id": "first_name_0_5",
+                                "value": "Alice",
+                                "label": "first_name",
+                                "start_position": 0,
+                                "end_position": 5,
+                            },
+                            {
+                                "id": "org_15_19",
+                                "value": "Acme",
+                                "label": "organization",
+                                "start_position": 15,
+                                "end_position": 19,
+                            },
+                        ],
+                        dtype=object,
+                    )
+                }
+            ],
+        }
+    )
+    runner = ReplacementWorkflow()
+    result = runner.run(
+        detection_output,
+        replace_method=Redact(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
+    assert "Alice" not in replaced
+    assert "[REDACTED_FIRST_NAME]" in replaced

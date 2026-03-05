@@ -20,6 +20,7 @@ from anonymizer.engine.constants import COL_FINAL_ENTITIES
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.schemas import EntitiesSchema
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,10 @@ def _filter_entities_by_label(
     allowed = {label.lower() for label in filter_labels}
     filtered = dataframe.copy()
     filtered[entities_column] = filtered[entities_column].apply(
-        lambda entities: [e for e in entities if isinstance(e, dict) and e.get("label", "").lower() in allowed]
+        lambda raw: _filter_entities(EntitiesSchema.from_raw(raw), allowed).model_dump()
     )
     return filtered
+
+
+def _filter_entities(entities: EntitiesSchema, allowed: set[str]) -> EntitiesSchema:
+    return EntitiesSchema(entities=[e for e in entities.entities if e.label.lower() in allowed])
