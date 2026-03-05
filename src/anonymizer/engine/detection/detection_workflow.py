@@ -5,12 +5,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from enum import Enum
 
 import pandas as pd
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.models import ModelConfig
-from pydantic import BaseModel, Field
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -48,75 +46,12 @@ from anonymizer.engine.detection.custom_columns import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.schemas import EntitiesSchema, ValidationChoice
-
-
-class ValidationDecision(BaseModel):
-    """Per-entity validation decision from the LLM validator."""
-
-    id: str
-    value: str = Field(default="", description="Entity value (echoed from skeleton)")
-    label: str = Field(default="", description="Entity label (echoed from skeleton)")
-    decision: ValidationChoice
-    proposed_label: str = Field(
-        default="",
-        description="Correct label when decision is 'reclass', otherwise empty",
-    )
-    reason: str | None = None
-
-
-class ValidationDecisions(BaseModel):
-    decisions: list[ValidationDecision] = Field(default_factory=list)
-
-
-class AugmentedEntity(BaseModel):
-    value: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    reason: str | None = None
-
-
-class AugmentedEntities(BaseModel):
-    entities: list[AugmentedEntity] = Field(default_factory=list)
-
-
-class LatentEntity(BaseModel):
-    category: LatentCategory
-    label: str = Field(
-        min_length=1,
-        description=(
-            "General category/class of the inference in snake_case "
-            "(e.g., employer, specific_institution, home_location, medication, health_condition)"
-        ),
-    )
-    value: str = Field(
-        min_length=1,
-        description="Concise inferred value (generalize if not pinned down strongly by evidence)",
-    )
-    confidence: LatentConfidence
-    evidence: list[str] = Field(
-        min_length=1,
-        max_length=2,
-        description="One or two short quotes from the text that support this inference",
-    )
-    rationale: str = Field(
-        min_length=20,
-        max_length=150,
-        description="One sentence explaining the inference without adding new facts",
-    )
-
-
-class LatentEntities(BaseModel):
-    latent_entities: list[LatentEntity] = Field(default_factory=list)
-
-
-class LatentCategory(str, Enum):
-    latent_identifier = "latent_identifier"
-    latent_sensitive_attribute = "latent_sensitive_attribute"
-
-
-class LatentConfidence(str, Enum):
-    high = "high"
-    medium = "medium"
+from anonymizer.engine.schemas import (
+    AugmentedEntitiesSchema,
+    EntitiesSchema,
+    LatentEntitiesSchema,
+    ValidationDecisionsSchema,
+)
 
 
 @dataclass(frozen=True)
@@ -186,7 +121,7 @@ class EntityDetectionWorkflow:
                     name=COL_VALIDATION_DECISIONS,
                     prompt=_get_validation_prompt(data_summary=data_summary, labels=labels),
                     model_alias=validator_alias,
-                    output_format=ValidationDecisions,
+                    output_format=ValidationDecisionsSchema,
                     drop=True,
                 ),
                 CustomColumnConfig(
@@ -201,7 +136,7 @@ class EntityDetectionWorkflow:
                     name=COL_AUGMENTED_ENTITIES,
                     prompt=_get_augment_prompt(data_summary=data_summary, labels=labels),
                     model_alias=augmenter_alias,
-                    output_format=AugmentedEntities,
+                    output_format=AugmentedEntitiesSchema,
                 ),
                 CustomColumnConfig(
                     name=COL_MERGED_ENTITIES,
@@ -256,7 +191,7 @@ class EntityDetectionWorkflow:
                         privacy_goal=privacy_goal,
                     ),
                     model_alias=latent_alias,
-                    output_format=LatentEntities,
+                    output_format=LatentEntitiesSchema,
                 )
             ],
             workflow_name="latent-entity-detection",

@@ -9,23 +9,12 @@ from dataclasses import dataclass
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
-from pydantic import BaseModel, Field
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, ENTITY_LABEL_EXAMPLES
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.schemas import EntitiesByValueSchema
-
-
-class EntityReplacement(BaseModel):
-    original: str = Field(min_length=1, description="The original entity value")
-    label: str = Field(min_length=1, description="The entity label/type")
-    synthetic: str = Field(min_length=1, description="The synthetic replacement value")
-
-
-class ReplacementMap(BaseModel):
-    replacements: list[EntityReplacement] = Field(default_factory=list, description="List of entity replacements")
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 
 @dataclass(frozen=True)
@@ -74,7 +63,7 @@ class LlmReplaceWorkflow:
                         instructions=instructions,
                     ),
                     model_alias=replace_alias,
-                    output_format=ReplacementMap,
+                    output_format=EntityReplacementMapSchema,
                 )
             ],
             workflow_name="replace-map-generation",

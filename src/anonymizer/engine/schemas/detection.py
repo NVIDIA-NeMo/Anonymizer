@@ -4,66 +4,16 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TypeVar
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
-T = TypeVar("T", bound=BaseModel)
-
-
-def _parse_raw_wrapper(
-    model_cls: type[T],
-    raw: object,
-    key: str,
-    fallback_keys: tuple[str, ...] = (),
-) -> T:
-    """Parse raw DataFrame cell value into a wrapper schema."""
-
-    def _safe_validate(candidate_list: list[object]) -> T:
-        try:
-            return model_cls.model_validate({key: candidate_list})
-        except ValidationError:
-            return model_cls()
-
-    if isinstance(raw, model_cls):
-        return raw
-    if isinstance(raw, BaseModel):
-        raw = raw.model_dump(mode="python")
-
-    if isinstance(raw, dict):
-        candidate = raw.get(key)
-        if candidate is None:
-            for fk in fallback_keys:
-                candidate = raw.get(fk)
-                if candidate is not None:
-                    break
-        if isinstance(candidate, model_cls):
-            return candidate
-        if isinstance(candidate, BaseModel):
-            candidate = candidate.model_dump(mode="python")
-        if isinstance(candidate, list):
-            return _safe_validate(candidate)
-        if hasattr(candidate, "tolist"):
-            as_list = candidate.tolist()
-            if isinstance(as_list, list):
-                return _safe_validate(as_list)
-    return model_cls()
-
-
-# ---------------------------------------------------------------------------
-# Shared enums
-# ---------------------------------------------------------------------------
+from anonymizer.engine.schemas.shared import _parse_raw_wrapper
 
 
 class ValidationChoice(str, Enum):
     keep = "keep"
     reclass = "reclass"
     drop = "drop"
-
-
-# ---------------------------------------------------------------------------
-# Entity schemas
-# ---------------------------------------------------------------------------
 
 
 class EntitySchema(BaseModel):
@@ -88,11 +38,6 @@ class EntitiesSchema(BaseModel):
         return _parse_raw_wrapper(cls, raw, "entities")
 
 
-# ---------------------------------------------------------------------------
-# Validation candidate schemas
-# ---------------------------------------------------------------------------
-
-
 class ValidationCandidateSchema(BaseModel):
     id: str = Field(default="")
     value: str = Field(default="")
@@ -107,11 +52,6 @@ class ValidationCandidatesSchema(BaseModel):
     @classmethod
     def from_raw(cls, raw: object) -> ValidationCandidatesSchema:
         return _parse_raw_wrapper(cls, raw, "candidates", fallback_keys=("entities",))
-
-
-# ---------------------------------------------------------------------------
-# Raw validation decision schemas (LLM output before enrichment)
-# ---------------------------------------------------------------------------
 
 
 class RawValidationDecisionSchema(BaseModel):
@@ -129,16 +69,7 @@ class RawValidationDecisionsSchema(BaseModel):
         return _parse_raw_wrapper(cls, raw, "decisions")
 
 
-# ---------------------------------------------------------------------------
-# Validated (enriched) decision schemas
-# ---------------------------------------------------------------------------
-
-
-class ValidatedDecisionSchema(BaseModel):
-    id: str = Field(default="")
-    decision: ValidationChoice | None = None
-    proposed_label: str = Field(default="")
-    reason: str | None = None
+class ValidatedDecisionSchema(RawValidationDecisionSchema):
     value: str = Field(default="")
     label: str = Field(default="")
 
@@ -149,11 +80,6 @@ class ValidatedDecisionsSchema(BaseModel):
     @classmethod
     def from_raw(cls, raw: object) -> ValidatedDecisionsSchema:
         return _parse_raw_wrapper(cls, raw, "decisions")
-
-
-# ---------------------------------------------------------------------------
-# Validation skeleton schemas
-# ---------------------------------------------------------------------------
 
 
 class ValidationSkeletonDecisionSchema(BaseModel):
@@ -173,9 +99,72 @@ class ValidationSkeletonSchema(BaseModel):
         return _parse_raw_wrapper(cls, raw, "decisions")
 
 
-# ---------------------------------------------------------------------------
-# Entities-by-value schemas (grouped for replacement)
-# ---------------------------------------------------------------------------
+class ValidationDecisionSchema(BaseModel):
+    """Per-entity validation decision from the LLM validator."""
+
+    id: str
+    value: str = Field(default="", description="Entity value (echoed from skeleton)")
+    label: str = Field(default="", description="Entity label (echoed from skeleton)")
+    decision: ValidationChoice
+    proposed_label: str = Field(
+        default="",
+        description="Correct label when decision is 'reclass', otherwise empty",
+    )
+    reason: str | None = None
+
+
+class ValidationDecisionsSchema(BaseModel):
+    decisions: list[ValidationDecisionSchema] = Field(default_factory=list)
+
+
+class AugmentedEntitySchema(BaseModel):
+    value: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    reason: str | None = None
+
+
+class AugmentedEntitiesSchema(BaseModel):
+    entities: list[AugmentedEntitySchema] = Field(default_factory=list)
+
+
+class LatentCategory(str, Enum):
+    latent_identifier = "latent_identifier"
+    latent_sensitive_attribute = "latent_sensitive_attribute"
+
+
+class LatentConfidence(str, Enum):
+    high = "high"
+    medium = "medium"
+
+
+class LatentEntitySchema(BaseModel):
+    category: LatentCategory
+    label: str = Field(
+        min_length=1,
+        description=(
+            "General category/class of the inference in snake_case "
+            "(e.g., employer, specific_institution, home_location, medication, health_condition)"
+        ),
+    )
+    value: str = Field(
+        min_length=1,
+        description="Concise inferred value (generalize if not pinned down strongly by evidence)",
+    )
+    confidence: LatentConfidence
+    evidence: list[str] = Field(
+        min_length=1,
+        max_length=2,
+        description="One or two short quotes from the text that support this inference",
+    )
+    rationale: str = Field(
+        min_length=20,
+        max_length=150,
+        description="One sentence explaining the inference without adding new facts",
+    )
+
+
+class LatentEntitiesSchema(BaseModel):
+    latent_entities: list[LatentEntitySchema] = Field(default_factory=list)
 
 
 class EntityByValueSchema(BaseModel):
