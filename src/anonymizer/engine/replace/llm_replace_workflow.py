@@ -99,6 +99,29 @@ def _get_replacement_mapping_prompt(*, entities_column: str, instructions: str |
     instruction_block = f"\nAdditional instructions: {instructions}\n" if instructions else ""
     prompt = """Generate synthetic replacements for sensitive entities. ONE value per entity, used consistently.
 <<INSTRUCTION_BLOCK>>
+
+The replacements must:
+   - prevent re-identification
+   - remain plausible in context
+   - match the grammatical role of the original value
+    (e.g., verbs remain verbs, nouns remain nouns)
+   - be of the same class label as the original
+
+The replacements must NOT:
+   - be a synonym or near-synonym of the original value
+   - e a closely related specialization of the same role
+
+Prefer replacements that shift the concept to a different but plausible value within a related domain, \
+or a nearby role that is clearly distinct from the original.
+Avoid overly broad or vague generalizations.
+
+Examples of bad replacements that are too close in meaning:
+"mentor" -> "advisor"
+"schoolteacher" -> "educator"
+
+Example of a good replacement that shifts subfields:
+"costume designer" -> "set designer"
+
 Context: {{ tagged_text }}
 
 Entities to replace:
@@ -126,11 +149,20 @@ Rules:
 3. Maintain format and type:
    - Same structure, length patterns, character types
    - Same demographic characteristics (Indian name → Indian name)
+   - Do not add new words that were not present in the original span.
+     Match the structural pattern of the span.
 
 4. Fit the surrounding text naturally:
    - Check that the synthetic value reads correctly with the words immediately before and after it in the original text.
 
+5. When replacing geographic locations, keep the replacements within
+   a coherent region so that travel routes and residences remain plausible.
+
 CRITICAL: Every entity MUST have a different synthetic value. Never return original=synthetic.
+
+Before generating replacements, verify:
+   - That each new_value is clearly different in meaning from the original and is not a synonym or simple rewording.
+   - That all geographic replacements remain mutually consistent (cities belong to the replaced state/region, and travel routes remain plausible).
 """
     return prompt.replace("<<INSTRUCTION_BLOCK>>", instruction_block).replace("<<ENTITIES_COLUMN>>", entities_column)
 
