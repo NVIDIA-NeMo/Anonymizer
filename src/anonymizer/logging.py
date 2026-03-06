@@ -7,35 +7,66 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import dataclass
 
 LOG_INDENT = "  |-- "
 
 _DEFAULT_NOISY_LOGGERS = ["httpx", "httpcore", "mcp"]
 
+_anonymizer_handler: logging.Handler | None = None
 
-def configure_logging(*, verbose: bool = False) -> None:
+
+@dataclass(frozen=True)
+class LoggingConfig:
+    """Logging configuration with preset factories."""
+
+    anonymizer_level: str = "INFO"
+    data_designer_level: str = "WARNING"
+
+    @classmethod
+    def default(cls) -> LoggingConfig:
+        return cls(anonymizer_level="INFO", data_designer_level="WARNING")
+
+    @classmethod
+    def verbose(cls) -> LoggingConfig:
+        return cls(anonymizer_level="INFO", data_designer_level="INFO")
+
+    @classmethod
+    def debug(cls) -> LoggingConfig:
+        return cls(anonymizer_level="DEBUG", data_designer_level="DEBUG")
+
+
+def configure_logging(
+    config: LoggingConfig | None = None,
+    *,
+    verbose: bool = False,
+) -> None:
     """Set up logging for Anonymizer.
 
-    Called automatically on first :class:`~anonymizer.interface.anonymizer.Anonymizer`
-    instantiation. Call explicitly before creating an Anonymizer to customize behavior.
-
     Args:
-        verbose: When False (default), only Anonymizer progress messages are
-            shown and DataDesigner engine logs are suppressed.  When True,
-            DataDesigner DEBUG logs are also emitted.
+        config: Logging preset. Defaults to ``LoggingConfig.default()``.
+        verbose: Deprecated convenience flag. ``True`` maps to
+            ``LoggingConfig.verbose()``. Ignored when *config* is provided.
     """
+    if config is None:
+        config = LoggingConfig.verbose() if verbose else LoggingConfig.default()
+
+    global _anonymizer_handler
+
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
+    root.setLevel(logging.DEBUG)
 
-    # Clear existing handlers to avoid duplicates on repeated calls
-    root.handlers.clear()
+    # Replace only our own handler to avoid removing handlers added by
+    # test infrastructure (e.g. pytest caplog) or other libraries.
+    if _anonymizer_handler is not None:
+        root.removeHandler(_anonymizer_handler)
 
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
-    root.addHandler(handler)
+    _anonymizer_handler = logging.StreamHandler(sys.stderr)
+    _anonymizer_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
+    root.addHandler(_anonymizer_handler)
 
-    logging.getLogger("anonymizer").setLevel(logging.INFO)
-    logging.getLogger("data_designer").setLevel(logging.DEBUG if verbose else logging.WARNING)
+    logging.getLogger("anonymizer").setLevel(config.anonymizer_level)
+    logging.getLogger("data_designer").setLevel(config.data_designer_level)
 
     for name in _DEFAULT_NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)

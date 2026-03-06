@@ -8,7 +8,7 @@ __version__ = "0.1.0"
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.interface.anonymizer import Anonymizer
-from anonymizer.logging import configure_logging
+from anonymizer.logging import LoggingConfig, configure_logging
 
 __all__ = [
     "Anonymizer",
@@ -17,6 +17,7 @@ __all__ = [
     "Annotate",
     "Detect",
     "Hash",
+    "LoggingConfig",
     "Redact",
     "Rewrite",
     "Substitute",

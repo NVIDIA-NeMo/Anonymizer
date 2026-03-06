@@ -5,9 +5,9 @@
 # running NDD/DataDesigner backend. Run cells individually in VS Code or PyCharm.
 
 # %%
-from anonymizer.logging import configure_logging
+from anonymizer.logging import LoggingConfig, configure_logging
 
-configure_logging()  # use configure_logging(verbose=True) to see DataDesigner engine logs
+configure_logging()  # or LoggingConfig.verbose() / LoggingConfig.debug()
 
 # %%
 import tempfile
