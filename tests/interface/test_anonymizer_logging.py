@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock
@@ -63,19 +64,27 @@ def _make_logging_anonymizer(
 
 
 def test_run_logs_pipeline_stages(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
-    anonymizer = _make_logging_anonymizer()
     config = AnonymizerConfig(replace=Redact())
 
     with caplog.at_level(logging.INFO, logger="anonymizer"):
+        anonymizer = _make_logging_anonymizer()
         anonymizer.run(config=config, data=stub_input)
 
     messages = caplog.text
     assert "📂 Loaded 2 records from" in messages
+    assert "🔎 detector:" in messages
+    assert "✅ validator:" in messages
+    assert "🧩 augmenter:" in messages
     assert "🔍 Running entity detection on 2 records" in messages
-    assert "✅ Detection complete" in messages
+    assert "📋 Detection complete" in messages
     assert "3 entities" in messages
+    assert re.search(r"\[\d+\.\ds\]", messages), "Detection timing not found"
+    assert "labels:" in messages
+    assert "first_name=2" in messages
+    assert "organization=1" in messages
     assert "🔄 Running Redact replacement" in messages
-    assert "✅ Replacement complete" in messages
+    assert "📋 Replacement complete" in messages
+    assert re.search(r"Replacement complete.*\[\d+\.\ds\]", messages), "Replacement timing not found"
     assert "🎉 Pipeline complete" in messages
     assert "2 records processed" in messages
 
@@ -91,7 +100,7 @@ def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.Log
         anonymizer.run(config=config, data=stub_input)
 
     messages = caplog.text
-    assert "✅ Detection complete" in messages
+    assert "📋 Detection complete" in messages
     assert "1 failed" in messages
     assert "🎉 Pipeline complete" in messages
     assert "2 total failures" in messages
@@ -109,7 +118,7 @@ def test_run_without_replacement_skips_replace_logs(
     messages = caplog.text
     assert "🔍 Running entity detection" in messages
     assert "🔄 Running Redact replacement" not in messages
-    assert "✅ Replacement complete" not in messages
+    assert "📋 Replacement complete" not in messages
     assert "🎉 Pipeline complete" in messages
 
 

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,6 +77,10 @@ class Anonymizer:
         self._model_configs = parsed.model_configs
         self._selected_models = parsed.selected_models
         logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
+        det = self._selected_models.detection
+        logger.info(LOG_INDENT + "🔎 detector:  %s", det.entity_detector)
+        logger.info(LOG_INDENT + "✅ validator: %s", det.entity_validator)
+        logger.info(LOG_INDENT + "🧩 augmenter: %s", det.entity_augmenter)
 
         self._data_designer = data_designer or DataDesigner(
             artifact_path=resolved_artifact_path,
@@ -137,6 +143,7 @@ class Anonymizer:
             logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", preview_num_records, num_records)
 
         logger.info("🔍 Running entity detection on %d records", num_records)
+        t0 = time.perf_counter()
         detection_result = self._detection_workflow.run(
             input_df,
             model_configs=self._model_configs,
@@ -149,26 +156,39 @@ class Anonymizer:
             compute_grouped_entities=True if config.replace is not None else None,
             preview_num_records=preview_num_records,
         )
+        detection_elapsed = time.perf_counter() - t0
         entity_count = _count_entities(detection_result.dataframe)
         detection_failed = len(detection_result.failed_records)
         logger.info(
-            LOG_INDENT + "✅ Detection complete — %d entities found across %d records (%d failed)",
+            LOG_INDENT + "📋 Detection complete — %d entities found across %d records (%d failed) [%.1fs]",
             entity_count,
             len(detection_result.dataframe),
             detection_failed,
+            detection_elapsed,
         )
+        if COL_DETECTED_ENTITIES in detection_result.dataframe.columns:
+            label_counts = _count_labels(detection_result.dataframe[COL_DETECTED_ENTITIES])
+            if label_counts:
+                summary = ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
+                logger.info(LOG_INDENT + "labels: %s", summary)
         if logger.isEnabledFor(logging.DEBUG):
-            per_record = detection_result.dataframe[COL_DETECTED_ENTITIES].apply(len).tolist()
+            det_df = detection_result.dataframe
+            per_record = det_df[COL_DETECTED_ENTITIES].apply(len).tolist()
             logger.debug(
-                LOG_INDENT + "entities per record: min=%d, max=%d, mean=%.1f",
+                "entities per record: min=%d, max=%d, mean=%.1f",
                 min(per_record) if per_record else 0,
                 max(per_record) if per_record else 0,
                 sum(per_record) / len(per_record) if per_record else 0,
             )
+            for idx, row in det_df.iterrows():
+                row_labels = _count_labels_for_row(row[COL_DETECTED_ENTITIES])
+                summary = ", ".join(f"{l}={c}" for l, c in row_labels.most_common()) if row_labels else "(none)"
+                logger.debug("  record %s: %d entities — %s", idx, sum(row_labels.values()), summary)
 
         if config.replace is not None:
             strategy_name = type(config.replace).__name__
             logger.info("🔄 Running %s replacement", strategy_name)
+            t0 = time.perf_counter()
             replace_result = self._replace_runner.run(
                 detection_result.dataframe,
                 replace_method=config.replace,
@@ -176,14 +196,21 @@ class Anonymizer:
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
             )
+            replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe
             replace_failures = replace_result.failed_records
-            logger.info(LOG_INDENT + "✅ Replacement complete (%d failed)", len(replace_failures))
+            logger.info(
+                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]", len(replace_failures), replace_elapsed
+            )
         else:
             final_df = detection_result.dataframe
             replace_failures = []
 
         all_failures = [*detection_result.failed_records, *replace_failures]
+        if all_failures and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("failed records:")
+            for f in all_failures:
+                logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         renamed_trace = _rename_output_columns(final_df)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         return AnonymizerResult(
@@ -191,6 +218,36 @@ class Anonymizer:
             trace_dataframe=renamed_trace,
             failed_records=all_failures,
         )
+
+
+def _unwrap_entities(raw: object) -> list:
+    if isinstance(raw, dict):
+        return raw.get("entities", [])
+    if isinstance(raw, list):
+        return raw
+    return getattr(raw, "entities", [])
+
+
+def _entity_label(entity: object) -> str | None:
+    if isinstance(entity, dict):
+        return entity.get("label")
+    return getattr(entity, "label", None)
+
+
+def _count_labels_for_row(raw: object) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for entity in _unwrap_entities(raw):
+        label = _entity_label(entity)
+        if label:
+            counts[label] += 1
+    return counts
+
+
+def _count_labels(entities_column: pd.Series) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for raw in entities_column:
+        counts += _count_labels_for_row(raw)
+    return counts
 
 
 def _count_entities(df: pd.DataFrame) -> int:

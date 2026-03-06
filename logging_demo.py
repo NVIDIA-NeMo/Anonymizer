@@ -71,6 +71,30 @@ result_detect_only = anonymizer.run(
 result_detect_only.dataframe
 
 # %% [markdown]
+# ## Scenario 4: Verbose mode (surfaces DataDesigner progress)
+
+# %%
+configure_logging(LoggingConfig.verbose())
+
+result_verbose = anonymizer.run(
+    config=AnonymizerConfig(replace=Redact()),
+    data=AnonymizerInput(source=str(csv_path)),
+)
+result_verbose.dataframe
+
+# %% [markdown]
+# ## Scenario 5: Debug mode (fine-grained Anonymizer diagnostics)
+
+# %%
+configure_logging(LoggingConfig.debug())
+
+result_debug = anonymizer.run(
+    config=AnonymizerConfig(replace=Redact()),
+    data=AnonymizerInput(source=str(csv_path)),
+)
+result_debug.dataframe
+
+# %% [markdown]
 # ## Cleanup
 #
 # This file is temporary and should be removed before merging.

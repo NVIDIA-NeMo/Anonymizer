@@ -22,7 +22,7 @@ class TestLoggingConfig:
     def test_debug_preset(self) -> None:
         config = LoggingConfig.debug()
         assert config.anonymizer_level == "DEBUG"
-        assert config.data_designer_level == "DEBUG"
+        assert config.data_designer_level == "WARNING"
 
 
 class TestConfigureLogging:
@@ -39,7 +39,7 @@ class TestConfigureLogging:
     def test_debug_config_sets_levels(self) -> None:
         configure_logging(LoggingConfig.debug())
         assert logging.getLogger("anonymizer").level == logging.DEBUG
-        assert logging.getLogger("data_designer").level == logging.DEBUG
+        assert logging.getLogger("data_designer").level == logging.WARNING
 
     def test_no_args_uses_default(self) -> None:
         configure_logging()

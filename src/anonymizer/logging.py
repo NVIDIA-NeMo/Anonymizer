@@ -42,7 +42,7 @@ class LoggingConfig:
 
     @classmethod
     def debug(cls) -> LoggingConfig:
-        return cls(anonymizer_level="DEBUG", data_designer_level="DEBUG")
+        return cls(anonymizer_level="DEBUG", data_designer_level="WARNING")
 
 
 def configure_logging(
@@ -70,9 +70,12 @@ def configure_logging(
     )
     root.setLevel(min_level)
 
-    # Clear all root handlers (including Jupyter's default) and install ours
-    # so messages aren't duplicated. Keep any non-StreamHandler (e.g. caplog).
-    root.handlers = [h for h in root.handlers if not isinstance(h, logging.StreamHandler)]
+    # Remove our previous handler and any plain StreamHandlers (e.g. Jupyter's
+    # default) to avoid duplicate output. Preserve subclassed handlers (e.g.
+    # pytest's LogCaptureHandler) that only happen to extend StreamHandler.
+    if _anonymizer_handler is not None and _anonymizer_handler in root.handlers:
+        root.removeHandler(_anonymizer_handler)
+    root.handlers = [h for h in root.handlers if type(h) is not logging.StreamHandler]
 
     _anonymizer_handler = logging.StreamHandler(sys.stderr)
     _anonymizer_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
