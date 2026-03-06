@@ -7,16 +7,7 @@
 # %%
 from anonymizer.logging import configure_logging
 
-configure_logging(verbose=True)  # use configure_logging(verbose=True) to see DataDesigner engine logs
-
-# %% [markdown]
-# ## Configuration
-#
-# Set `GLINER_ENDPOINT` below to point to your GLiNER NIM instance.
-
-# %%
-# Change this to your GLiNER NIM endpoint URL
-GLINER_ENDPOINT = ""
+configure_logging()  # use configure_logging(verbose=True) to see DataDesigner engine logs
 
 # %%
 import tempfile
@@ -43,52 +34,11 @@ print(f"Sample data saved to {csv_path}")
 # ## Scenario 1: Full run with Redact replacement
 
 # %%
-from data_designer.config.default_model_settings import get_default_providers
-from data_designer.config.models import ModelProvider
-
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.interface.anonymizer import Anonymizer
 
-MODEL_CONFIGS = """
-model_configs:
-  - alias: gliner-pii-detector
-    model: nvidia/gliner-pii
-    provider: gliner-nim
-    inference_parameters:
-      max_parallel_requests: 16
-      temperature: 0.0
-      top_p: 1.0
-      max_tokens: 1024
-      timeout: 120
-
-  - alias: gpt-oss-120b
-    model: nvdev/openai/gpt-oss-120b
-    provider: nvidia
-    inference_parameters:
-      max_parallel_requests: 16
-      max_tokens: 16384
-      temperature: 0.3
-      top_p: 0.95
-      timeout: 300
-
-  - alias: nemotron-30b-thinking
-    model: nvidia/nemotron-3-nano-30b-a3b
-    provider: nvidia
-    inference_parameters:
-      max_parallel_requests: 16
-      max_tokens: 8192
-      temperature: 0.4
-      top_p: 1.0
-      timeout: 300
-"""
-
-providers = get_default_providers() + [ModelProvider(name="gliner-nim", endpoint=GLINER_ENDPOINT)]
-
-anonymizer = Anonymizer(
-    model_configs=MODEL_CONFIGS,
-    model_providers=providers,
-)
+anonymizer = Anonymizer()
 result = anonymizer.run(
     config=AnonymizerConfig(replace=Redact()),
     data=AnonymizerInput(source=str(csv_path)),
