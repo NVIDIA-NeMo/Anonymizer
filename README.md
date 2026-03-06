@@ -27,7 +27,7 @@ make install
 
 ### 2. Set up model providers
 
-By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com) — NemotronPII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs. See [model configuration docs](docs/concepts/models/model-provider-config.md) for details.
+By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — NemotronPII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
 
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
