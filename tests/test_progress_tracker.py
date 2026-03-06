@@ -27,28 +27,28 @@ class TestProgressTracker:
         assert "progress" not in caplog.text
 
     def test_logs_final(self, caplog: pytest.LogCaptureFixture) -> None:
-        tracker = ProgressTracker(total=10, label="Replacement")
+        tracker = ProgressTracker(total=50, label="Replacement")
         with caplog.at_level(logging.INFO, logger="anonymizer"):
-            for _ in range(10):
+            for _ in range(50):
                 tracker.record_success()
             tracker.log_final()
-        assert "10/10" in caplog.text
+        assert "50/50" in caplog.text
 
     def test_tracks_failures(self, caplog: pytest.LogCaptureFixture) -> None:
-        tracker = ProgressTracker(total=20, label="Replacement")
+        tracker = ProgressTracker(total=50, label="Replacement")
         with caplog.at_level(logging.INFO, logger="anonymizer"):
             tracker.record_success()
             tracker.record_failure()
-            for _ in range(18):
+            for _ in range(48):
                 tracker.record_success()
             tracker.log_final()
         assert "1 failed" in caplog.text
 
     def test_small_total_no_progress_logs(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Under threshold (50), no interval progress logs emitted."""
+        """Under threshold (50), no progress logs emitted (not even final)."""
         tracker = ProgressTracker(total=10, label="Replacement")
         with caplog.at_level(logging.INFO, logger="anonymizer"):
             for _ in range(10):
                 tracker.record_success()
-        # Only final log, no interval logs
+            tracker.log_final()
         assert "progress" not in caplog.text

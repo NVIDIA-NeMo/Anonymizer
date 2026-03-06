@@ -5,7 +5,7 @@
 # running NDD/DataDesigner backend. Run cells individually in VS Code or PyCharm.
 
 # %%
-from anonymizer.logging import LoggingConfig, configure_logging
+from anonymizer.logging import LoggingConfig, configure_logging  # noqa: F401
 
 configure_logging()  # default: anonymizer INFO, DD suppressed
 # configure_logging(LoggingConfig.verbose())  # anonymizer INFO + DD progress

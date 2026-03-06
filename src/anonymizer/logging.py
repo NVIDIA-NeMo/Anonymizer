@@ -12,7 +12,15 @@ from dataclasses import dataclass
 
 LOG_INDENT = "  |-- "
 
-_DEFAULT_NOISY_LOGGERS = ["httpx", "httpcore", "mcp"]
+_DEFAULT_NOISY_LOGGERS = [
+    "httpx",
+    "httpcore",
+    "mcp",
+    "litellm",
+    "LiteLLM",
+    "openai",
+    "asyncio",
+]
 
 _anonymizer_handler: logging.Handler | None = None
 
@@ -55,12 +63,16 @@ def configure_logging(
     global _anonymizer_handler
 
     root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
+    # Set root to the minimum configured level so managed loggers can emit.
+    min_level = min(
+        getattr(logging, config.anonymizer_level),
+        getattr(logging, config.data_designer_level),
+    )
+    root.setLevel(min_level)
 
-    # Replace only our own handler to avoid removing handlers added by
-    # test infrastructure (e.g. pytest caplog) or other libraries.
-    if _anonymizer_handler is not None:
-        root.removeHandler(_anonymizer_handler)
+    # Clear all root handlers (including Jupyter's default) and install ours
+    # so messages aren't duplicated. Keep any non-StreamHandler (e.g. caplog).
+    root.handlers = [h for h in root.handlers if not isinstance(h, logging.StreamHandler)]
 
     _anonymizer_handler = logging.StreamHandler(sys.stderr)
     _anonymizer_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
@@ -101,7 +113,7 @@ class ProgressTracker:
         self._record(success=False)
 
     def log_final(self) -> None:
-        if self.completed > 0:
+        if self._enabled and self.completed > 0:
             self._log_progress()
 
     def _record(self, *, success: bool) -> None:
