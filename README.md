@@ -36,12 +36,12 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 ### 3. Anonymize text
 
 ```python
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, RedactReplace
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
 
 # Uses default model providers (build.nvidia.com) via NVIDIA_API_KEY env var
 anonymizer = Anonymizer()
 
-config = AnonymizerConfig(replace=RedactReplace())
+config = AnonymizerConfig(replace=Redact())
 
 preview = anonymizer.preview(
     config=config,
