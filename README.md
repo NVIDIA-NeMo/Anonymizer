@@ -30,7 +30,7 @@ make install
 By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com) — NemotronPII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs. See [model configuration docs](docs/concepts/models/model-provider-config.md) for details.
 
 ```bash
-export NIM_API_KEY="your-nvidia-api-key"
+export NVIDIA_API_KEY="your-nvidia-api-key"
 ```
 
 ### 3. Anonymize text
@@ -38,7 +38,7 @@ export NIM_API_KEY="your-nvidia-api-key"
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, RedactReplace
 
-# Uses default model providers (build.nvidia.com) via NIM_API_KEY env var
+# Uses default model providers (build.nvidia.com) via NVIDIA_API_KEY env var
 anonymizer = Anonymizer()
 
 config = AnonymizerConfig(replace=RedactReplace())

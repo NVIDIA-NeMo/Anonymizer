@@ -2,7 +2,6 @@ model_configs:
   - alias: gliner-pii-detector
     model: nvidia/gliner-pii
     provider: nvidia
-    skip_health_check: true
     inference_parameters:
       max_parallel_requests: 16
       timeout: 120
