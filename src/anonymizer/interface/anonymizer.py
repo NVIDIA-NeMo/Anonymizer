@@ -157,6 +157,14 @@ class Anonymizer:
             len(detection_result.dataframe),
             detection_failed,
         )
+        if logger.isEnabledFor(logging.DEBUG):
+            per_record = detection_result.dataframe[COL_DETECTED_ENTITIES].apply(len).tolist()
+            logger.debug(
+                LOG_INDENT + "entities per record: min=%d, max=%d, mean=%.1f",
+                min(per_record) if per_record else 0,
+                max(per_record) if per_record else 0,
+                sum(per_record) / len(per_record) if per_record else 0,
+            )
 
         if config.replace is not None:
             strategy_name = type(config.replace).__name__
