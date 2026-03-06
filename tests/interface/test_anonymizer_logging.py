@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -121,3 +122,41 @@ def test_preview_logs_preview_mode(stub_input: AnonymizerInput, caplog: pytest.L
 
     messages = caplog.text
     assert "👀 Preview mode: processing 5 of 2 records" in messages
+
+
+def _create_csv(num_records: int) -> str:
+    path = tempfile.mktemp(suffix=".csv")
+    pd.DataFrame({"text": [f"Name{i} works here" for i in range(num_records)]}).to_csv(path, index=False)
+    return path
+
+
+def test_local_replace_logs_progress_for_large_datasets(caplog: pytest.LogCaptureFixture) -> None:
+    """When record count >= 50, ProgressTracker emits interval logs."""
+    num_records = 100
+    entities = [
+        [{"value": f"Name{i}", "label": "first_name", "start_position": 0, "end_position": 5}]
+        for i in range(num_records)
+    ]
+    det_df = pd.DataFrame(
+        {
+            COL_TEXT: [f"Name{i} works here" for i in range(num_records)],
+            COL_DETECTED_ENTITIES: entities,
+            COL_FINAL_ENTITIES: entities,
+        }
+    )
+    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow.run.return_value = EntityDetectionResult(
+        dataframe=det_df, failed_records=[]
+    )
+    replace_runner = ReplacementWorkflow()
+    anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
+    config = AnonymizerConfig(replace=Redact())
+
+    csv_path = _create_csv(num_records)
+    input_data = AnonymizerInput(source=csv_path)
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        anonymizer.run(config=config, data=input_data)
+
+    assert "Replacement progress:" in caplog.text
+    assert "rec/s" in caplog.text
