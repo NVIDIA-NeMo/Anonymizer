@@ -23,7 +23,6 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
 from anonymizer.engine.schemas import EntitiesSchema
 
-
 logger = logging.getLogger("anonymizer.replace")
 
 

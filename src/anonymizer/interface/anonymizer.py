@@ -23,7 +23,7 @@ from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
-from anonymizer.logging import LOG_INDENT, LoggingConfig, configure_logging
+from anonymizer.logging import LOG_INDENT, configure_logging
 
 if TYPE_CHECKING:
     import pandas as pd

@@ -124,6 +124,13 @@ def test_preview_logs_preview_mode(stub_input: AnonymizerInput, caplog: pytest.L
     assert "👀 Preview mode: processing 5 of 2 records" in messages
 
 
+def test_configure_logging_with_config_object() -> None:
+    from anonymizer.logging import LoggingConfig, configure_logging
+
+    configure_logging(LoggingConfig.verbose())
+    assert logging.getLogger("data_designer").level == logging.INFO
+
+
 def _create_csv(num_records: int) -> str:
     path = tempfile.mktemp(suffix=".csv")
     pd.DataFrame({"text": [f"Name{i} works here" for i in range(num_records)]}).to_csv(path, index=False)
@@ -145,9 +152,7 @@ def test_local_replace_logs_progress_for_large_datasets(caplog: pytest.LogCaptur
         }
     )
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
-    detection_workflow.run.return_value = EntityDetectionResult(
-        dataframe=det_df, failed_records=[]
-    )
+    detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
     replace_runner = ReplacementWorkflow()
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())

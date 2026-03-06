@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
 from anonymizer.logging import LoggingConfig, configure_logging
 
 

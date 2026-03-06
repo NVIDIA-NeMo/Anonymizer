@@ -54,7 +54,6 @@ from anonymizer.engine.schemas import (
     ValidationDecisionsSchema,
 )
 
-
 logger = logging.getLogger("anonymizer.detection")
 
 
@@ -102,7 +101,9 @@ class EntityDetectionWorkflow:
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
         logger.debug(
             "detection aliases: detector=%s, validator=%s, augmenter=%s",
-            detection_alias, validator_alias, augmenter_alias,
+            detection_alias,
+            validator_alias,
+            augmenter_alias,
         )
 
         detection_result = self._adapter.run_workflow(

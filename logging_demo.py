@@ -7,7 +7,9 @@
 # %%
 from anonymizer.logging import LoggingConfig, configure_logging
 
-configure_logging()  # or LoggingConfig.verbose() / LoggingConfig.debug()
+configure_logging()  # default: anonymizer INFO, DD suppressed
+# configure_logging(LoggingConfig.verbose())  # anonymizer INFO + DD progress
+# configure_logging(LoggingConfig.debug())    # everything DEBUG
 
 # %%
 import tempfile
