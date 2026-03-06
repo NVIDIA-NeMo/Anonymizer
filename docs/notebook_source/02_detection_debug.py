@@ -23,7 +23,6 @@
 # ## Setup
 
 # %%
-import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -38,52 +37,7 @@ import pandas as pd
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
 
 # %%
-MODEL_PROVIDERS_YAML = """
-providers:
-  - name: nvidia
-    endpoint: https://integrate.api.nvidia.com/v1
-    provider_type: openai
-    api_key: NIM_API_KEY
-
-  - name: nvidia-pii
-    endpoint: https://gliner-xx5zzfj46.brevlab.com/v1
-    provider_type: openai
-    api_key: NIM_API_KEY
-"""
-
-MODEL_CONFIGS_YAML = """
-model_configs:
-  - alias: gliner-pii-detector
-    model: nvidia/nemotron-pii
-    provider: nvidia-pii
-
-  - alias: gpt-oss-120b
-    model: nvdev/openai/gpt-oss-120b
-    provider: nvidia
-    inference_parameters:
-      max_parallel_requests: 8
-      temperature: 0.3
-      top_p: 0.95
-      max_tokens: 10000
-      timeout: 180
-
-  - alias: nemotron-30b-thinking
-    model: nvidia/nemotron-3-nano-30b-a3b
-    provider: nvidia
-    inference_parameters:
-      max_parallel_requests: 8
-      temperature: 0.4
-      top_p: 1.0
-      max_tokens: 4096
-      timeout: 180
-"""
-
-tmp_dir = Path(tempfile.mkdtemp(prefix="anonymizer_notebook_"))
-providers_path = tmp_dir / "model_providers.yaml"
-
-providers_path.write_text(MODEL_PROVIDERS_YAML.strip() + "\n", encoding="utf-8")
-
-anonymizer = Anonymizer(model_configs=MODEL_CONFIGS_YAML, model_providers=providers_path)
+anonymizer = Anonymizer()
 
 # %% [markdown]
 # ## Run
