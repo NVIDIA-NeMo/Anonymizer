@@ -14,13 +14,15 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
 )
+from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.ndd.model_loader import parse_model_configs
+from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 if TYPE_CHECKING:
@@ -81,6 +83,7 @@ class Anonymizer:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
         """
+        self._validate_preflight_config(config)
         return self._run_internal(config=config, data=data, preview_num_records=None)
 
     def preview(
@@ -97,6 +100,7 @@ class Anonymizer:
             data: Input source with file path, text column, and optional data summary.
             num_records: Maximum records to process (default 10).
         """
+        self._validate_preflight_config(config)
         result = self._run_internal(config=config, data=data, preview_num_records=num_records)
         return PreviewResult(
             dataframe=result.dataframe,
@@ -104,6 +108,10 @@ class Anonymizer:
             failed_records=result.failed_records,
             preview_num_records=num_records,
         )
+
+    def validate_config(self, config: AnonymizerConfig) -> None:
+        """Validate that the active workflow config is compatible with model selections."""
+        self._validate_preflight_config(config)
 
     def _run_internal(
         self,
@@ -147,6 +155,18 @@ class Anonymizer:
             trace_dataframe=renamed_trace,
             failed_records=[*detection_result.failed_records, *replace_failures],
         )
+
+    def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
+        """Run semantic preflight checks shared by validate, run, and preview."""
+        try:
+            validate_model_alias_references(
+                self._model_configs,
+                self._selected_models,
+                check_substitute=isinstance(config.replace, Substitute),
+                check_rewrite=config.rewrite is not None,
+            )
+        except ValueError as exc:
+            raise InvalidConfigError(str(exc)) from exc
 
 
 def _resolve_model_providers(

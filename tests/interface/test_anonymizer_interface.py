@@ -8,8 +8,11 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
+from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.models import ModelSelection, ReplaceModelSelection, RewriteModelSelection
+from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_FINAL_ENTITIES,
@@ -22,7 +25,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
-from anonymizer.interface.errors import InvalidInputError
+from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
 
 
 @pytest.fixture
@@ -202,3 +205,136 @@ def test_run_with_colliding_internal_text_column_raises(
             config=stub_anonymizer_config,
             data=AnonymizerInput(source=str(input_csv), text_column="bio"),
         )
+
+
+def test_validate_config_passes_for_valid_replace_config(stub_anonymizer_config: AnonymizerConfig) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer.validate_config(stub_anonymizer_config)
+
+
+def test_validate_config_passes_for_valid_substitute_config() -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer.validate_config(AnonymizerConfig(replace=Substitute()))
+
+
+def test_validate_config_passes_for_valid_rewrite_config() -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer.validate_config(AnonymizerConfig(rewrite=Rewrite()))
+
+
+def test_validate_config_raises_on_unknown_detection_alias(
+    stub_anonymizer_config: AnonymizerConfig,
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={
+            "detection": anonymizer._selected_models.detection.model_copy(
+                update={"entity_detector": "bad-detection-alias"}
+            )
+        }
+    )
+
+    with pytest.raises(InvalidConfigError, match="bad-detection-alias"):
+        anonymizer.validate_config(stub_anonymizer_config)
+
+
+def test_validate_config_raises_on_unknown_replace_alias_for_substitute(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+    )
+
+    with pytest.raises(InvalidConfigError, match="bad-replace-alias"):
+        anonymizer.validate_config(AnonymizerConfig(replace=Substitute()))
+
+
+def test_validate_config_skips_replace_alias_for_non_substitute(
+    stub_anonymizer_config: AnonymizerConfig,
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+    )
+
+    anonymizer.validate_config(stub_anonymizer_config)
+
+
+def test_validate_config_raises_on_unknown_rewrite_alias(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+    )
+
+    with pytest.raises(InvalidConfigError, match="bad-rewrite-alias"):
+        anonymizer.validate_config(AnonymizerConfig(rewrite=Rewrite()))
+
+
+def test_validate_config_skips_rewrite_alias_without_rewrite(
+    stub_anonymizer_config: AnonymizerConfig,
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+    )
+
+    anonymizer.validate_config(stub_anonymizer_config)
+
+
+def test_run_raises_invalid_config_before_workflows(
+    stub_input: AnonymizerInput,
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, detection_wf, replace_runner = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+    )
+
+    with pytest.raises(InvalidConfigError, match="bad-replace-alias"):
+        anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
+
+    detection_wf.run.assert_not_called()
+    replace_runner.run.assert_not_called()
+
+
+def test_preview_raises_invalid_config_before_workflows(
+    stub_input: AnonymizerInput,
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, detection_wf, replace_runner = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+    )
+
+    with pytest.raises(InvalidConfigError, match="bad-rewrite-alias"):
+        anonymizer.preview(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input, num_records=1)
+
+    detection_wf.run.assert_not_called()
+    replace_runner.run.assert_not_called()

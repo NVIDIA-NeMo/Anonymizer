@@ -149,16 +149,42 @@ def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> Mode
     )
 
 
+def validate_model_alias_references(
+    model_configs: list[ModelConfig],
+    selected_models: ModelSelection,
+    *,
+    check_substitute: bool = False,
+    check_rewrite: bool = False,
+) -> None:
+    """Validate that active workflow model aliases exist in the model pool."""
+    known_aliases = {model_config.alias for model_config in model_configs}
+
+    roles_to_check: dict[str, str] = {
+        f"detection.{role}": alias for role, alias in selected_models.detection.model_dump().items()
+    }
+    if check_substitute:
+        roles_to_check.update(
+            {f"replace.{role}": alias for role, alias in selected_models.replace.model_dump().items()}
+        )
+    if check_rewrite:
+        roles_to_check.update(
+            {f"rewrite.{role}": alias for role, alias in selected_models.rewrite.model_dump().items()}
+        )
+
+    unknown = {path: alias for path, alias in roles_to_check.items() if alias not in known_aliases}
+    if unknown:
+        unknown_str = ", ".join(f"{path}={alias!r}" for path, alias in sorted(unknown.items()))
+        raise ValueError(
+            f"Selected model aliases not found in model pool: {unknown_str}. Known aliases: {sorted(known_aliases)}"
+        )
+
+
 def _validate_alias_references(
     models_config: dict[str, Any],
     selections: dict[str, str],
     workflow_name: str,
 ) -> None:
-    """Validate that workflow role selections reference aliases defined in models.yaml.
-
-    TODO: Move this into an Anonymizer.validate_config() step (similar to DD's
-    DataDesigner.validate()) so mismatches are caught at config-build time.
-    """
+    """Validate that bundled workflow YAMLs reference aliases defined in models.yaml."""
     known_aliases = {m["alias"] for m in models_config.get("model_configs", [])}
     unknown = set(selections.values()) - known_aliases
     if unknown:
