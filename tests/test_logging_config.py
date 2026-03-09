@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from unittest.mock import Mock
 
 import pytest
 
@@ -47,3 +48,12 @@ def test_no_args_uses_default() -> None:
 def test_verbose_bool_backward_compat() -> None:
     configure_logging(verbose=True)
     assert logging.getLogger("data_designer").level == logging.INFO
+
+
+def test_user_config_survives_anonymizer_init() -> None:
+    """configure_logging() before Anonymizer() should not be overwritten."""
+    from anonymizer.interface.anonymizer import Anonymizer
+
+    configure_logging(LoggingConfig.debug())
+    Anonymizer(detection_workflow=Mock(), replace_runner=Mock())
+    assert logging.getLogger("anonymizer").level == logging.DEBUG

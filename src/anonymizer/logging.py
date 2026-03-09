@@ -23,6 +23,7 @@ _DEFAULT_NOISY_LOGGERS = [
 ]
 
 _anonymizer_handler: logging.Handler | None = None
+_configured = False
 
 
 @dataclass(frozen=True)
@@ -60,29 +61,31 @@ def configure_logging(
     if config is None:
         config = LoggingConfig.verbose() if verbose else LoggingConfig.default()
 
-    global _anonymizer_handler
+    global _anonymizer_handler, _configured
+    _configured = True
 
-    root = logging.getLogger()
-    # Set root to the minimum configured level so managed loggers can emit.
-    min_level = min(
-        getattr(logging, config.anonymizer_level),
-        getattr(logging, config.data_designer_level),
-    )
-    root.setLevel(min_level)
+    anon_logger = logging.getLogger("anonymizer")
+    dd_logger = logging.getLogger("data_designer")
 
-    # Remove our previous handler and any plain StreamHandlers (e.g. Jupyter's
-    # default) to avoid duplicate output. Preserve subclassed handlers (e.g.
-    # pytest's LogCaptureHandler) that only happen to extend StreamHandler.
-    if _anonymizer_handler is not None and _anonymizer_handler in root.handlers:
-        root.removeHandler(_anonymizer_handler)
-    root.handlers = [h for h in root.handlers if type(h) is not logging.StreamHandler]
+    # Attach our handler to the anonymizer logger (not root) so we don't
+    # clobber application-level logging configured via stdlib APIs.
+    if _anonymizer_handler is not None and _anonymizer_handler in anon_logger.handlers:
+        anon_logger.removeHandler(_anonymizer_handler)
+    anon_logger.handlers = [h for h in anon_logger.handlers if type(h) is not logging.StreamHandler]
 
     _anonymizer_handler = logging.StreamHandler(sys.stderr)
     _anonymizer_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
-    root.addHandler(_anonymizer_handler)
+    anon_logger.addHandler(_anonymizer_handler)
+    anon_logger.propagate = False
+    anon_logger.setLevel(config.anonymizer_level)
 
-    logging.getLogger("anonymizer").setLevel(config.anonymizer_level)
-    logging.getLogger("data_designer").setLevel(config.data_designer_level)
+    # DD logger gets its own handler so its messages are formatted consistently.
+    dd_logger.handlers = [h for h in dd_logger.handlers if type(h) is not logging.StreamHandler]
+    dd_handler = logging.StreamHandler(sys.stderr)
+    dd_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
+    dd_logger.addHandler(dd_handler)
+    dd_logger.propagate = False
+    dd_logger.setLevel(config.data_designer_level)
 
     for name in _DEFAULT_NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)

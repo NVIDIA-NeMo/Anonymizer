@@ -130,7 +130,7 @@ def test_preview_logs_preview_mode(stub_input: AnonymizerInput, caplog: pytest.L
         anonymizer.preview(config=config, data=stub_input, num_records=5)
 
     messages = caplog.text
-    assert "👀 Preview mode: processing 5 of 2 records" in messages
+    assert "👀 Preview mode: processing 2 of 2 records" in messages
 
 
 def test_configure_logging_with_config_object() -> None:

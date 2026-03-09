@@ -32,16 +32,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer")
 
-_logging_initialized = False
-
 
 def _initialize_logging() -> None:
-    """Run one-time logging setup."""
-    global _logging_initialized
-    if _logging_initialized:
+    """Run one-time logging setup if the user hasn't already called configure_logging()."""
+    from anonymizer import logging as _logging_mod
+
+    if _logging_mod._configured:
         return
     configure_logging()
-    _logging_initialized = True
 
 
 class Anonymizer:
@@ -139,24 +137,23 @@ class Anonymizer:
         num_records = len(input_df)
         logger.info("📂 Loaded %d records from %s (column: '%s')", num_records, data.source, data.text_column)
         if logger.isEnabledFor(logging.DEBUG):
-            text_lengths = input_df[COL_TEXT].str.len()
+            text_lengths = input_df[COL_TEXT].astype(str).str.len()
             logger.debug(
                 "input text lengths: min=%d, max=%d, mean=%.0f chars (%d records)",
                 text_lengths.min(),
                 text_lengths.max(),
                 text_lengths.mean(),
-                len(input_df),
+                num_records,
             )
-
-        if preview_num_records is not None:
-            logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", preview_num_records, num_records)
-
-        if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "detection config: threshold=%.2f, labels=%s",
                 config.detect.gliner_threshold,
                 config.detect.entity_labels or "(default)",
             )
+
+        if preview_num_records is not None:
+            effective_preview = min(preview_num_records, num_records)
+            logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", effective_preview, num_records)
         logger.info("🔍 Running entity detection on %d records", num_records)
         t0 = time.perf_counter()
         detection_result = self._detection_workflow.run(
