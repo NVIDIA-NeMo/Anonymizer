@@ -488,7 +488,7 @@ Rules (strict)
    into a higher-level structured attribute (e.g., "college/undergrad" →
    bachelor's degree) is allowed.
 2) Evidence-bounded inference:
-   - Every latent entity MUST include 1–2 short quotes from the text as evidence.
+   - Every latent entity MUST include 1-2 short quotes from the text as evidence.
    - Do NOT "jump" to a specific named entity unless the evidence pins it down strongly.
    - If multiple plausible specifics exist, DO NOT guess: either generalize (e.g., "a major Boston cancer center") or omit.
 3) High signal only:
