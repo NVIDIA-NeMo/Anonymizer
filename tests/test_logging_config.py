@@ -5,47 +5,45 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from anonymizer.logging import LoggingConfig, configure_logging
 
 
-class TestLoggingConfig:
-    def test_default_preset(self) -> None:
-        config = LoggingConfig.default()
-        assert config.anonymizer_level == "INFO"
-        assert config.data_designer_level == "WARNING"
-
-    def test_verbose_preset(self) -> None:
-        config = LoggingConfig.verbose()
-        assert config.anonymizer_level == "INFO"
-        assert config.data_designer_level == "INFO"
-
-    def test_debug_preset(self) -> None:
-        config = LoggingConfig.debug()
-        assert config.anonymizer_level == "DEBUG"
-        assert config.data_designer_level == "WARNING"
+@pytest.mark.parametrize(
+    "preset, expected_anonymizer, expected_dd",
+    [
+        ("default", "INFO", "WARNING"),
+        ("verbose", "INFO", "INFO"),
+        ("debug", "DEBUG", "INFO"),
+    ],
+)
+def test_preset_levels(preset: str, expected_anonymizer: str, expected_dd: str) -> None:
+    config = getattr(LoggingConfig, preset)()
+    assert config.anonymizer_level == expected_anonymizer
+    assert config.data_designer_level == expected_dd
 
 
-class TestConfigureLogging:
-    def test_default_config_sets_levels(self) -> None:
-        configure_logging(LoggingConfig.default())
-        assert logging.getLogger("anonymizer").level == logging.INFO
-        assert logging.getLogger("data_designer").level == logging.WARNING
+@pytest.mark.parametrize(
+    "preset, expected_anonymizer, expected_dd",
+    [
+        ("default", logging.INFO, logging.WARNING),
+        ("verbose", logging.INFO, logging.INFO),
+        ("debug", logging.DEBUG, logging.INFO),
+    ],
+)
+def test_configure_logging_sets_levels(preset: str, expected_anonymizer: int, expected_dd: int) -> None:
+    configure_logging(getattr(LoggingConfig, preset)())
+    assert logging.getLogger("anonymizer").level == expected_anonymizer
+    assert logging.getLogger("data_designer").level == expected_dd
 
-    def test_verbose_config_sets_levels(self) -> None:
-        configure_logging(LoggingConfig.verbose())
-        assert logging.getLogger("anonymizer").level == logging.INFO
-        assert logging.getLogger("data_designer").level == logging.INFO
 
-    def test_debug_config_sets_levels(self) -> None:
-        configure_logging(LoggingConfig.debug())
-        assert logging.getLogger("anonymizer").level == logging.DEBUG
-        assert logging.getLogger("data_designer").level == logging.WARNING
+def test_no_args_uses_default() -> None:
+    configure_logging()
+    assert logging.getLogger("anonymizer").level == logging.INFO
+    assert logging.getLogger("data_designer").level == logging.WARNING
 
-    def test_no_args_uses_default(self) -> None:
-        configure_logging()
-        assert logging.getLogger("anonymizer").level == logging.INFO
-        assert logging.getLogger("data_designer").level == logging.WARNING
 
-    def test_verbose_bool_backward_compat(self) -> None:
-        configure_logging(verbose=True)
-        assert logging.getLogger("data_designer").level == logging.INFO
+def test_verbose_bool_backward_compat() -> None:
+    configure_logging(verbose=True)
+    assert logging.getLogger("data_designer").level == logging.INFO

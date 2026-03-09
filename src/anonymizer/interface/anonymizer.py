@@ -138,10 +138,25 @@ class Anonymizer:
         input_df = read_input(data)
         num_records = len(input_df)
         logger.info("📂 Loaded %d records from %s (column: '%s')", num_records, data.source, data.text_column)
+        if logger.isEnabledFor(logging.DEBUG):
+            text_lengths = input_df[COL_TEXT].str.len()
+            logger.debug(
+                "input text lengths: min=%d, max=%d, mean=%.0f chars (%d records)",
+                text_lengths.min(),
+                text_lengths.max(),
+                text_lengths.mean(),
+                len(input_df),
+            )
 
         if preview_num_records is not None:
             logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", preview_num_records, num_records)
 
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "detection config: threshold=%.2f, labels=%s",
+                config.detect.gliner_threshold,
+                config.detect.entity_labels or "(default)",
+            )
         logger.info("🔍 Running entity detection on %d records", num_records)
         t0 = time.perf_counter()
         detection_result = self._detection_workflow.run(
@@ -171,20 +186,6 @@ class Anonymizer:
             if label_counts:
                 summary = ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
                 logger.info(LOG_INDENT + "labels: %s", summary)
-        if logger.isEnabledFor(logging.DEBUG):
-            det_df = detection_result.dataframe
-            per_record = det_df[COL_DETECTED_ENTITIES].apply(len).tolist()
-            logger.debug(
-                "entities per record: min=%d, max=%d, mean=%.1f",
-                min(per_record) if per_record else 0,
-                max(per_record) if per_record else 0,
-                sum(per_record) / len(per_record) if per_record else 0,
-            )
-            for idx, row in det_df.iterrows():
-                row_labels = _count_labels_for_row(row[COL_DETECTED_ENTITIES])
-                summary = ", ".join(f"{l}={c}" for l, c in row_labels.most_common()) if row_labels else "(none)"
-                logger.debug("  record %s: %d entities — %s", idx, sum(row_labels.values()), summary)
-
         if config.replace is not None:
             strategy_name = type(config.replace).__name__
             logger.info("🔄 Running %s replacement", strategy_name)
@@ -253,7 +254,7 @@ def _count_labels(entities_column: pd.Series) -> Counter[str]:
 def _count_entities(df: pd.DataFrame) -> int:
     if COL_DETECTED_ENTITIES not in df.columns:
         return 0
-    return int(df[COL_DETECTED_ENTITIES].apply(len).sum())
+    return int(df[COL_DETECTED_ENTITIES].apply(lambda raw: len(_unwrap_entities(raw))).sum())
 
 
 def _resolve_model_providers(

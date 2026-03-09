@@ -42,7 +42,7 @@ class LoggingConfig:
 
     @classmethod
     def debug(cls) -> LoggingConfig:
-        return cls(anonymizer_level="DEBUG", data_designer_level="WARNING")
+        return cls(anonymizer_level="DEBUG", data_designer_level="INFO")
 
 
 def configure_logging(

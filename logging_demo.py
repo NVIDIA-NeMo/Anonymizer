@@ -9,7 +9,7 @@ from anonymizer.logging import LoggingConfig, configure_logging  # noqa: F401
 
 configure_logging()  # default: anonymizer INFO, DD suppressed
 # configure_logging(LoggingConfig.verbose())  # anonymizer INFO + DD progress
-# configure_logging(LoggingConfig.debug())    # everything DEBUG
+# configure_logging(LoggingConfig.debug())    # anonymizer DEBUG + DD INFO
 
 # %%
 import tempfile

@@ -21,11 +21,8 @@ def _enable_debug() -> None:
     configure_logging(LoggingConfig.debug())
 
 
-def _make_anonymizer(
-    *,
-    detection_failures: list[FailedRecord] | None = None,
-    replace_failures: list[FailedRecord] | None = None,
-) -> Anonymizer:
+@pytest.fixture
+def _stub_anonymizer() -> Anonymizer:
     entities = [
         [{"value": "Alice", "label": "first_name"}, {"value": "Acme", "label": "organization"}],
         [{"value": "Bob", "label": "first_name"}],
@@ -40,7 +37,9 @@ def _make_anonymizer(
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=det_df,
-        failed_records=detection_failures or [],
+        failed_records=[
+            FailedRecord(record_id="r1", step="detection", reason="timeout"),
+        ],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = ReplacementResult(
@@ -50,39 +49,36 @@ def _make_anonymizer(
                 COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
             }
         ),
-        failed_records=replace_failures or [],
+        failed_records=[
+            FailedRecord(record_id="r2", step="replace", reason="parse error"),
+        ],
     )
     return Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
 
 
-def test_debug_logs_entity_counts(tmp_path: pytest.TempPathFactory, caplog: pytest.LogCaptureFixture) -> None:
+@pytest.fixture
+def debug_messages(
+    tmp_path: pytest.TempPathFactory,
+    _stub_anonymizer: Anonymizer,
+    caplog: pytest.LogCaptureFixture,
+) -> list[str]:
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": ["Alice works at Acme", "Bob likes cats"]}).to_csv(csv_path, index=False)
-    anonymizer = _make_anonymizer()
     config = AnonymizerConfig(replace=Redact())
-
     with caplog.at_level(logging.DEBUG, logger="anonymizer"):
-        anonymizer.run(config=config, data=AnonymizerInput(source=str(csv_path)))
-
-    debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
-    assert any("entities per record" in m for m in debug_messages)
-    assert any("record 0:" in m and "first_name=1" in m and "organization=1" in m for m in debug_messages)
-    assert any("record 1:" in m and "first_name=1" in m for m in debug_messages)
+        _stub_anonymizer.run(config=config, data=AnonymizerInput(source=str(csv_path)))
+    return [r.message for r in caplog.records if r.levelno == logging.DEBUG]
 
 
-def test_debug_logs_failed_record_details(tmp_path: pytest.TempPathFactory, caplog: pytest.LogCaptureFixture) -> None:
-    csv_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme", "Bob likes cats"]}).to_csv(csv_path, index=False)
-    anonymizer = _make_anonymizer(
-        detection_failures=[FailedRecord(record_id="r1", step="detection", reason="timeout")],
-        replace_failures=[FailedRecord(record_id="r2", step="replace", reason="parse error")],
-    )
-    config = AnonymizerConfig(replace=Redact())
-
-    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
-        anonymizer.run(config=config, data=AnonymizerInput(source=str(csv_path)))
-
-    debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
-    assert any("failed records:" in m for m in debug_messages)
-    assert any("r1" in m and "detection" in m for m in debug_messages)
-    assert any("r2" in m and "replace" in m for m in debug_messages)
+@pytest.mark.parametrize(
+    "expected_substring",
+    [
+        "failed records:",
+        "r1",
+        "r2",
+        "input text lengths:",
+        "detection config: threshold=",
+    ],
+)
+def test_debug_log_contains(debug_messages: list[str], expected_substring: str) -> None:
+    assert any(expected_substring in m for m in debug_messages)
