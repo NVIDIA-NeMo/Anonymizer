@@ -178,6 +178,28 @@ class SensitivityDispositionSchema(BaseModel):
             level = SensitivityLevel(level)
         return [e for e in self.sensitivity_disposition if e.sensitivity == level]
 
+    def entities_by_method(self, method: ProtectionMethod | str) -> list[EntityDispositionSchema]:
+        if isinstance(method, str):
+            method = ProtectionMethod(method)
+        return [e for e in self.sensitivity_disposition if e.protection_method_suggestion == method]
+
+    def medium_and_high_sensitivity(self) -> list[EntityDispositionSchema]:
+        return [
+            e for e in self.sensitivity_disposition if e.sensitivity in (SensitivityLevel.medium, SensitivityLevel.high)
+        ]
+
+    def to_rewrite_context(self) -> str:
+        """Format disposition for injection into rewrite prompts — medium and high sensitivity entities only."""
+        entities = self.medium_and_high_sensitivity()
+        if not entities:
+            return "No medium or high sensitivity entities identified."
+        lines = []
+        for e in entities:
+            lines.append(
+                f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion} (Reason: {e.protection_reason})'
+            )
+        return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # Meaning Units
