@@ -211,7 +211,9 @@ class Anonymizer:
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         renamed_trace = _rename_output_columns(final_df)
-        logger.info("🎉 Pipeline complete — %d records processed, %d total failures", effective_records, len(all_failures))
+        logger.info(
+            "🎉 Pipeline complete — %d records processed, %d total failures", effective_records, len(all_failures)
+        )
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace),
             trace_dataframe=renamed_trace,
