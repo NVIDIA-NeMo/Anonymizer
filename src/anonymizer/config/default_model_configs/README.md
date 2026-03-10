@@ -7,7 +7,7 @@ This directory contains the default model configurations used by the Anonymizer 
 - **`models.yaml`** — Defines the pool of available models (alias, provider, inference parameters). Each entry becomes a `ModelConfig` that NeMo Data Designer can route requests to.
 - **`detection.yaml`** — Maps detection workflow roles (e.g. `entity_detector`, `entity_validator`) to model aliases from `models.yaml`.
 - **`replace.yaml`** — Maps replacement workflow roles (e.g. `replacement_generator`) to model aliases from `models.yaml`.
-- **`rewrite.yaml`** — Maps rewrite workflow roles (e.g. `rewriter`, `evaluator`) to model aliases from `models.yaml`. Placeholder for now until we add rewriting.
+- **`rewrite.yaml`** — Maps rewrite workflow roles (`domain_classifier`, `disposition_analyzer`, `meaning_extractor`, `qa_generator`, `rewriter`, `evaluator`, `repairer`, `judge`) to model aliases from `models.yaml`.
 
 ## Relationship to `config/models.py`
 

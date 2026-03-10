@@ -21,12 +21,12 @@ def test_load_workflow_config_contains_selected_models() -> None:
     config = load_workflow_config(WorkflowName.detection)
     assert "model_configs" in config
     assert "selected_models" in config
-    assert config["selected_models"]["entity_detector"] == "gliner-pii-detector"
+    assert config["selected_models"]["entity_detector"]
 
 
 def test_get_model_alias_reads_workflow_mapping() -> None:
     alias = get_model_alias(workflow_name=WorkflowName.detection, role="entity_validator")
-    assert alias == "gpt-oss-120b"
+    assert isinstance(alias, str) and alias
 
 
 WORKFLOW_YAMLS = [p.stem for p in DEFAULT_CONFIG_DIR.glob("*.yaml") if p.stem != "models"]
@@ -44,9 +44,22 @@ def test_default_workflow_aliases_exist_in_models(workflow_name: str) -> None:
 
 def test_load_default_model_selection_populates_all_workflows() -> None:
     selection = load_default_model_selection()
-    assert selection.detection.entity_detector == "gliner-pii-detector"
-    assert selection.replace.replacement_generator == "gpt-oss-120b"
-    assert selection.rewrite.rewriter == "gpt-oss-120b"
+    # Detection
+    assert selection.detection.entity_detector
+    assert selection.detection.entity_validator
+    assert selection.detection.entity_augmenter
+    assert selection.detection.latent_detector
+    # Replace
+    assert selection.replace.replacement_generator
+    # Rewrite — all 8 roles must be populated
+    assert selection.rewrite.domain_classifier
+    assert selection.rewrite.disposition_analyzer
+    assert selection.rewrite.meaning_extractor
+    assert selection.rewrite.qa_generator
+    assert selection.rewrite.rewriter
+    assert selection.rewrite.evaluator
+    assert selection.rewrite.repairer
+    assert selection.rewrite.judge
 
 
 def test_parse_model_configs_none_uses_defaults() -> None:

@@ -1,3 +1,9 @@
 selected_models:
+  domain_classifier: gpt-oss-120b
+  disposition_analyzer: gpt-oss-120b
+  meaning_extractor: gpt-oss-120b
+  qa_generator: gpt-oss-120b
   rewriter: gpt-oss-120b
   evaluator: nemotron-30b-thinking
+  repairer: gpt-oss-120b
+  judge: nemotron-30b-thinking

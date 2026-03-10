@@ -7,12 +7,7 @@ from pydantic import BaseModel
 
 
 class DetectionModelSelection(BaseModel):
-    """Role-level model aliases for entity detection.
-
-    Defaults are loaded from ``default_model_configs/entity_detection.yaml``
-    via ``load_default_model_selection()``. Users override individual roles
-    through ``AnonymizerConfig(selected_models=...)``.
-    """
+    """Model aliases for the entity detection pipeline."""
 
     entity_detector: str
     entity_validator: str
@@ -21,23 +16,26 @@ class DetectionModelSelection(BaseModel):
 
 
 class ReplaceModelSelection(BaseModel):
-    """Role-level model aliases for replacement workflows."""
+    """Model aliases for the replacement pipeline."""
 
     replacement_generator: str
 
 
 class RewriteModelSelection(BaseModel):
-    """Role-level model aliases for rewrite workflows."""
+    """Model aliases for the rewrite pipeline."""
 
+    domain_classifier: str
+    disposition_analyzer: str
+    meaning_extractor: str
+    qa_generator: str
     rewriter: str
-    evaluator: str
+    evaluator: str  # QA re-answering on rewritten text (reading comprehension)
+    repairer: str  # targeted repair when privacy leakage is detected (generation)
+    judge: str  # final holistic evaluation: privacy + quality + naturalness
 
 
 class ModelSelection(BaseModel):
-    """Model alias selection grouped by workflow and role.
-
-    Constructed with defaults from YAML via ``load_default_model_selection()``.
-    """
+    """Model alias selections for all pipelines, loaded from YAML defaults via ``load_default_model_selection()``."""
 
     detection: DetectionModelSelection
     replace: ReplaceModelSelection
