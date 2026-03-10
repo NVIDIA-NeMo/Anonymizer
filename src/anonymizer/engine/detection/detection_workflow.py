@@ -429,14 +429,22 @@ def _get_latent_prompt(*, data_summary: str | None, privacy_goal: PrivacyGoal | 
 
 The text will be rewritten according to this privacy goal: <<PRIVACY_GOAL>>
 
-Goal: Identify sensitive information that is NOT explicitly stated in the text, but is reasonably inferable from context and could materially increase re-identification risk or reveal sensitive attributes about a real person. Treat inference as a first-class privacy surface; do not assume removing explicit identifiers is sufficient.
+Goal: Identify sensitive information that is NOT explicitly stated in the text, \
+but is reasonably inferable from context and could materially increase re-identification \
+risk or reveal sensitive attributes about a real person. Treat inference as a first-class \
+privacy surface; do not assume removing explicit identifiers is sufficient.
 
 Return only inferences that would help an adversary narrow down or recognize the subject in the real world, or would reveal sensitive attributes about them.
 
-Examples of eligible latent content when strongly supported:
+Examples of *eligible* latent content when strongly supported by contextual evidence:
 - Identity linkage: specific employer, school, institution, unique role, affiliation group, recognizable relationship
 - Where/when linkage: home area, prior location, travel pattern, event timeframe, distinctive routine
+- Personal characteristics: gender, marital status (e.g. 'married', 'single', 'divorced', 'seperated'), date of birth,
+  race/ethnicity, age, education level, employment status, occupation
 - Sensitive attributes: health condition/procedure/medication, legal situation, immigration status, assault/violence, substance use, etc.
+- Medical procedures, screenings, or anatomy-specific tests may imply biological sex or gender. These are valid latent inferences
+  when strongly supported by clinical context (e.g., Pap smear → female).
+- Derived attributes inferred from contextual signals.
 
 Non-examples (exclude):
 - Generic domain nouns that do not narrow identity (e.g., "a company", "a school", "a clinic", "a court", "a neighborhood")
@@ -456,27 +464,53 @@ Input text (identifiers already tagged inline):
 
 Rules (strict)
 1) True latent only:
-   - Do NOT repeat any already-tagged entities.
-   - Do NOT output anything explicitly stated in the raw text.
+{%- if <<TAG_NOTATION>> == "xml" -%}
+   - Do NOT repeat any already-tagged entities, e.g., <first_name>Alex</first_name>.
+{%- elif <<TAG_NOTATION>> == "bracket" -%}
+   - Do NOT repeat any already-tagged entities, e.g., [[Alex|first_name]].
+{%- elif <<TAG_NOTATION>> == "paren" -%}
+   - Do NOT repeat any already-tagged entities, e.g., ((PII:first_name|Alex)).
+{%- else -%}
+   - Do NOT repeat any already-tagged entities, e.g., <<PII:first_name>>Alex<</PII:first_name>>.
+{%- endif -%}
+   - Do NOT output verbatim spans from the text.
+   - You MAY output structured attributes that are logically implied by the text,
+     even if the exact phrase does not appear.
+   Derived attributes are allowed when they summarize or normalize multiple
+   contextual cues into a structured attribute useful for identification.
+   Examples:
+   - “my husband passed last year” → marital_status = widowed
+   - references to "undergrad", "college", or "university" → bachelor's degree
+   - finance-market cues (Bloomberg screens, earnings season, roadshow, closing bell)
+     → works in finance / financial analyst role
+   These inferred attributes must not simply restate the SAME value already
+   tagged in the text. However, normalizing or summarizing tagged information
+   into a higher-level structured attribute (e.g., "college/undergrad" →
+   bachelor's degree) is allowed.
 2) Evidence-bounded inference:
    - Every latent entity MUST include 1-2 short quotes from the text as evidence.
    - Do NOT "jump" to a specific named entity unless the evidence pins it down strongly.
-   - If multiple plausible specifics exist, DO NOT guess: either generalize or omit.
+   - If multiple plausible specifics exist, DO NOT guess: either generalize (e.g., "a major Boston cancer center") or omit.
 3) High signal only:
    - Prefer returning an EMPTY list over generic filler.
-   - If the inference does not materially increase identifiability or reveal a sensitive attribute, exclude it.
+   Attributes such as occupation, education level, immigration status,
+   ethnicity, language ability, and institutional affiliation may be
+   included when strongly supported, even if individually common,
+   because they become identifying when intersected.
+   Education inferences are eligible when strongly supported, including
+   normalized education attributes such as undergraduate degree or bachelor's-level education.
 4) Non-redundant:
    - Do not output multiple variants of the same inference.
-
-Quality checks before finalizing:
-- Remove any item whose value is too generic to help an adversary.
+Quality checks before finalizing
+- Remove any item whose value is too generic to help an adversary (e.g., "a company", "a school", "a clinic", "a court", "a neighborhood") unless additional context would allow a real person to be narrowed down.
 - Remove any item that restates explicit text.
 - Remove any item without clear evidence quotes.
 
 Now produce the JSON for the input.
 """
     return (
-        prompt.replace("<<PRIVACY_GOAL>>", privacy_goal_text)
+        prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
+        .replace("<<PRIVACY_GOAL>>", privacy_goal_text)
         .replace("<<DATA_SUMMARY>>", summary_line)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))
     )
