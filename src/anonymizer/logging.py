@@ -50,6 +50,7 @@ def configure_logging(
     config: LoggingConfig | None = None,
     *,
     verbose: bool = False,
+    enabled: bool = True,
 ) -> None:
     """Set up logging for Anonymizer.
 
@@ -57,12 +58,17 @@ def configure_logging(
         config: Logging preset. Defaults to ``LoggingConfig.default()``.
         verbose: Deprecated convenience flag. ``True`` maps to
             ``LoggingConfig.verbose()``. Ignored when *config* is provided.
+        enabled: Set to ``False`` to prevent Anonymizer from adding any log
+            handlers. Useful when the caller manages logging independently.
     """
-    if config is None:
-        config = LoggingConfig.verbose() if verbose else LoggingConfig.default()
-
     global _anonymizer_handler, _configured
     _configured = True
+
+    if not enabled:
+        return
+
+    if config is None:
+        config = LoggingConfig.verbose() if verbose else LoggingConfig.default()
 
     anon_logger = logging.getLogger("anonymizer")
     dd_logger = logging.getLogger("data_designer")

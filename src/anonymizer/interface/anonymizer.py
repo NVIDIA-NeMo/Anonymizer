@@ -151,10 +151,11 @@ class Anonymizer:
                 config.detect.entity_labels or "(default)",
             )
 
+        effective_records = num_records
         if preview_num_records is not None:
-            effective_preview = min(preview_num_records, num_records)
-            logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", effective_preview, num_records)
-        logger.info("🔍 Running entity detection on %d records", num_records)
+            effective_records = min(preview_num_records, num_records)
+            logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", effective_records, num_records)
+        logger.info("🔍 Running entity detection on %d records", effective_records)
         t0 = time.perf_counter()
         detection_result = self._detection_workflow.run(
             input_df,
@@ -210,7 +211,7 @@ class Anonymizer:
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         renamed_trace = _rename_output_columns(final_df)
-        logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
+        logger.info("🎉 Pipeline complete — %d records processed, %d total failures", effective_records, len(all_failures))
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace),
             trace_dataframe=renamed_trace,
