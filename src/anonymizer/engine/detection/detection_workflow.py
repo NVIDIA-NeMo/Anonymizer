@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -53,6 +54,8 @@ from anonymizer.engine.schemas import (
     ValidationDecisionsSchema,
 )
 
+logger = logging.getLogger("anonymizer.detection")
+
 
 @dataclass(frozen=True)
 class EntityDetectionResult:
@@ -96,6 +99,12 @@ class EntityDetectionWorkflow:
         detection_alias = resolve_model_alias("entity_detector", selected_models)
         validator_alias = resolve_model_alias("entity_validator", selected_models)
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
+        logger.debug(
+            "detection aliases: detector=%s, validator=%s, augmenter=%s",
+            detection_alias,
+            validator_alias,
+            augmenter_alias,
+        )
 
         detection_result = self._adapter.run_workflow(
             dataframe,

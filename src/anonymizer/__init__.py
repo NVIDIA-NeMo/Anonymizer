@@ -14,19 +14,22 @@ from anonymizer.interface.errors import (
     InvalidConfigError,
     InvalidInputError,
 )
+from anonymizer.logging import LoggingConfig, configure_logging
 
 __all__ = [
     "Anonymizer",
     "AnonymizerConfig",
+    "AnonymizerError",
     "AnonymizerInput",
+    "AnonymizerIOError",
     "Annotate",
     "Detect",
     "Hash",
-    "AnonymizerError",
-    "AnonymizerIOError",
     "InvalidConfigError",
     "InvalidInputError",
+    "LoggingConfig",
     "Redact",
     "Rewrite",
     "Substitute",
+    "configure_logging",
 ]

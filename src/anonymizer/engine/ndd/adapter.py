@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from data_designer.interface.data_designer import DataDesigner
 
+logger = logging.getLogger("anonymizer.ndd")
 
 RECORD_ID_COLUMN = "_anonymizer_record_id"
 
@@ -46,6 +48,7 @@ class NddAdapter:
 
     def __init__(self, data_designer: DataDesigner) -> None:
         self._data_designer = data_designer
+        logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
 
     def run_workflow(
         self,
@@ -58,6 +61,9 @@ class NddAdapter:
     ) -> WorkflowRunResult:
         """Run one workflow and return output with missing-record tracking."""
         workflow_input_df = self._attach_record_ids(df=df)
+        logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
+        col_names = [c.name for c in columns]
+        logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
@@ -85,6 +91,7 @@ class NddAdapter:
                 else:
                     output_df = preview_results.dataset
 
+        logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
         failed_records = self._detect_missing_records(
             workflow_name=workflow_name,
             input_df=(

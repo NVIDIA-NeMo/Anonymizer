@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Generator
+
 import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
@@ -17,6 +20,15 @@ from anonymizer.config.models import (
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
+
+
+@pytest.fixture(autouse=True)
+def _caplog_for_anonymizer(caplog: pytest.LogCaptureFixture) -> Generator[None]:
+    """Ensure caplog captures from the anonymizer logger (propagate=False)."""
+    anon_logger = logging.getLogger("anonymizer")
+    anon_logger.addHandler(caplog.handler)
+    yield
+    anon_logger.removeHandler(caplog.handler)
 
 
 @pytest.fixture
