@@ -8,7 +8,12 @@ import pytest
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig
-from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
+from anonymizer.config.models import (
+    DetectionModelSelection,
+    ModelSelection,
+    ReplaceModelSelection,
+    RewriteModelSelection,
+)
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
@@ -27,6 +32,12 @@ def stub_model_configs() -> list[ModelConfig]:
 
 
 @pytest.fixture
+def stub_known_model_configs() -> list[ModelConfig]:
+    """Minimal model pool for alias validation tests."""
+    return [ModelConfig(alias="known", model="some/model")]
+
+
+@pytest.fixture
 def stub_detection_model_selection() -> DetectionModelSelection:
     return load_default_model_selection().detection
 
@@ -34,6 +45,21 @@ def stub_detection_model_selection() -> DetectionModelSelection:
 @pytest.fixture
 def stub_replace_model_selection() -> ReplaceModelSelection:
     return load_default_model_selection().replace
+
+
+@pytest.fixture
+def stub_slim_model_selection() -> ModelSelection:
+    """Selection model where every role points to the same known alias."""
+    return ModelSelection(
+        detection=DetectionModelSelection(
+            entity_detector="known",
+            entity_validator="known",
+            entity_augmenter="known",
+            latent_detector="known",
+        ),
+        replace=ReplaceModelSelection(replacement_generator="known"),
+        rewrite=RewriteModelSelection(rewriter="known", evaluator="known"),
+    )
 
 
 @pytest.fixture
