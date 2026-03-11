@@ -4,7 +4,14 @@
 from __future__ import annotations
 
 import pytest
+from data_designer.config.models import ModelConfig
 
+from anonymizer.config.models import (
+    DetectionModelSelection,
+    ModelSelection,
+    ReplaceModelSelection,
+    RewriteModelSelection,
+)
 from anonymizer.engine.ndd.model_loader import (
     DEFAULT_CONFIG_DIR,
     WorkflowName,
@@ -14,6 +21,7 @@ from anonymizer.engine.ndd.model_loader import (
     load_workflow_config,
     load_workflow_selections,
     parse_model_configs,
+    validate_model_alias_references,
 )
 
 
@@ -81,3 +89,129 @@ model_configs:
     result = parse_model_configs(yaml_str)
     assert len(result.model_configs) == 1
     assert result.selected_models.detection.entity_detector == "gliner-pii-detector"
+
+
+def test_validate_model_alias_references_accepts_valid_detection_aliases(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    validate_model_alias_references(
+        stub_known_model_configs,
+        stub_slim_model_selection,
+    )
+
+
+def test_validate_model_alias_references_raises_on_unknown_detection_alias(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "detection": DetectionModelSelection(
+                entity_detector="bad-detection-alias",
+                entity_validator="known",
+                entity_augmenter="known",
+                latent_detector="known",
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="bad-detection-alias"):
+        validate_model_alias_references(
+            stub_known_model_configs,
+            selected_models,
+        )
+
+
+def test_validate_model_alias_references_skips_latent_detector_when_not_rewrite(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "detection": stub_slim_model_selection.detection.model_copy(update={"latent_detector": "bad-latent-alias"})
+        }
+    )
+
+    validate_model_alias_references(
+        stub_known_model_configs,
+        selected_models,
+    )
+
+
+def test_validate_model_alias_references_raises_on_unknown_replace_alias_when_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+    )
+
+    with pytest.raises(ValueError, match="bad-replace-alias"):
+        validate_model_alias_references(
+            stub_known_model_configs,
+            selected_models,
+            check_substitute=True,
+        )
+
+
+def test_validate_model_alias_references_skips_replace_alias_when_not_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+    )
+
+    validate_model_alias_references(
+        stub_known_model_configs,
+        selected_models,
+    )
+
+
+def test_validate_model_alias_references_raises_on_unknown_rewrite_alias_when_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+    )
+
+    with pytest.raises(ValueError, match="bad-rewrite-alias"):
+        validate_model_alias_references(
+            stub_known_model_configs,
+            selected_models,
+            check_rewrite=True,
+        )
+
+
+def test_validate_model_alias_references_raises_on_unknown_latent_detector_when_rewrite_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "detection": stub_slim_model_selection.detection.model_copy(update={"latent_detector": "bad-latent-alias"})
+        }
+    )
+
+    with pytest.raises(ValueError, match="bad-latent-alias"):
+        validate_model_alias_references(
+            stub_known_model_configs,
+            selected_models,
+            check_rewrite=True,
+        )
+
+
+def test_validate_model_alias_references_skips_rewrite_alias_when_not_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+    )
+
+    validate_model_alias_references(
+        stub_known_model_configs,
+        selected_models,
+    )

@@ -12,5 +12,9 @@ class InvalidInputError(AnonymizerError):
     """Raised when input data or configuration is invalid."""
 
 
+class InvalidConfigError(AnonymizerError):
+    """Raised when model aliases or semantic configuration are invalid."""
+
+
 class AnonymizerIOError(AnonymizerError):
     """Raised when file IO operations fail."""
