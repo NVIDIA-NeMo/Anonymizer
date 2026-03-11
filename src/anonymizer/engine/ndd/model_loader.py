@@ -158,17 +158,22 @@ def validate_model_alias_references(
 ) -> None:
     """Validate that active workflow model aliases exist in the model pool."""
     known_aliases = {model_config.alias for model_config in model_configs}
+    detection_roles = selected_models.detection.model_dump()
 
     roles_to_check: dict[str, str] = {
-        f"detection.{role}": alias for role, alias in selected_models.detection.model_dump().items()
+        f"detection.{role}": detection_roles[role]
+        for role in ("entity_detector", "entity_validator", "entity_augmenter")
     }
+    if check_rewrite:
+        roles_to_check.update(
+            {
+                "detection.latent_detector": detection_roles["latent_detector"],
+                **{f"rewrite.{role}": alias for role, alias in selected_models.rewrite.model_dump().items()},
+            }
+        )
     if check_substitute:
         roles_to_check.update(
             {f"replace.{role}": alias for role, alias in selected_models.replace.model_dump().items()}
-        )
-    if check_rewrite:
-        roles_to_check.update(
-            {f"rewrite.{role}": alias for role, alias in selected_models.rewrite.model_dump().items()}
         )
 
     unknown = {path: alias for path, alias in roles_to_check.items() if alias not in known_aliases}

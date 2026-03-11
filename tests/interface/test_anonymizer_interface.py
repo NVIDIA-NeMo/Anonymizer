@@ -287,6 +287,38 @@ def test_validate_config_raises_on_unknown_rewrite_alias(
         anonymizer.validate_config(AnonymizerConfig(rewrite=Rewrite()))
 
 
+def test_validate_config_skips_latent_detector_without_rewrite(
+    stub_anonymizer_config: AnonymizerConfig,
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "detection": stub_slim_model_selection.detection.model_copy(update={"latent_detector": "bad-latent-alias"})
+        }
+    )
+
+    anonymizer.validate_config(stub_anonymizer_config)
+
+
+def test_validate_config_raises_on_unknown_latent_detector_in_rewrite(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "detection": stub_slim_model_selection.detection.model_copy(update={"latent_detector": "bad-latent-alias"})
+        }
+    )
+
+    with pytest.raises(InvalidConfigError, match="bad-latent-alias"):
+        anonymizer.validate_config(AnonymizerConfig(rewrite=Rewrite()))
+
+
 def test_validate_config_skips_rewrite_alias_without_rewrite(
     stub_anonymizer_config: AnonymizerConfig,
     stub_known_model_configs: list[ModelConfig],
