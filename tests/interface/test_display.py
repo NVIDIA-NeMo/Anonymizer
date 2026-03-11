@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACEMENT_MAP
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES, COL_REPLACEMENT_MAP
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.interface.display import (
     _build_replaced_entities,
@@ -255,6 +255,38 @@ def test_render_record_html_uses_detected_entities_over_map_scan() -> None:
     assert "city" in result
     assert "[REDACTED_COMPANY]" in result
     assert "[REDACTED_CITY]" in result
+
+
+def test_render_record_html_prefers_final_entities_for_filtered_replace_preview() -> None:
+    row = pd.Series(
+        {
+            "text": "Mara Delgado works in Austin",
+            "text_replaced": "[REDACTED_FIRST_NAME] Delgado works in Austin",
+            COL_DETECTED_ENTITIES: {
+                "entities": [
+                    {"value": "Mara", "label": "first_name", "start_position": 0, "end_position": 4},
+                    {"value": "Delgado", "label": "last_name", "start_position": 5, "end_position": 12},
+                    {"value": "Austin", "label": "city", "start_position": 22, "end_position": 28},
+                ]
+            },
+            COL_FINAL_ENTITIES: {
+                "entities": [
+                    {"value": "Mara", "label": "first_name", "start_position": 0, "end_position": 4},
+                ]
+            },
+            COL_REPLACEMENT_MAP: {
+                "replacements": [
+                    {"original": "Mara", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"},
+                ]
+            },
+        }
+    )
+
+    result = render_record_html(row)
+
+    assert "first_name" in result
+    assert "| last_name" not in result
+    assert "| city" not in result
 
 
 def test_render_record_html_replaced_tags_positioned_correctly_with_case_mismatch() -> None:
