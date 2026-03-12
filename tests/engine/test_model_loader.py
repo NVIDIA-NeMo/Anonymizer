@@ -10,7 +10,6 @@ from anonymizer.config.models import (
     DetectionModelSelection,
     ModelSelection,
     ReplaceModelSelection,
-    RewriteModelSelection,
 )
 from anonymizer.engine.ndd.model_loader import (
     DEFAULT_CONFIG_DIR,
@@ -188,7 +187,7 @@ def test_validate_model_alias_references_raises_on_unknown_rewrite_alias_when_en
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     selected_models = stub_slim_model_selection.model_copy(
-        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+        update={"rewrite": stub_slim_model_selection.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     with pytest.raises(ValueError, match="bad-rewrite-alias"):
@@ -222,7 +221,7 @@ def test_validate_model_alias_references_skips_rewrite_alias_when_not_enabled(
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     selected_models = stub_slim_model_selection.model_copy(
-        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+        update={"rewrite": stub_slim_model_selection.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     validate_model_alias_references(

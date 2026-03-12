@@ -59,7 +59,6 @@ def stub_replace_model_selection() -> ReplaceModelSelection:
     return load_default_model_selection().replace
 
 
-
 @pytest.fixture
 def stub_rewrite_model_selection() -> RewriteModelSelection:
     return load_default_model_selection().rewrite
