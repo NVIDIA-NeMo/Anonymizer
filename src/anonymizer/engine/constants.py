@@ -135,3 +135,13 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
 }
 
 DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
+
+
+# ---------------------------------------------------------------------------
+# Prompt utilities
+# ---------------------------------------------------------------------------
+
+
+def _jinja(col: str) -> str:
+    """Wrap a column name in Jinja2 template syntax for use in NDD prompts."""
+    return "{{ " + col + " }}"

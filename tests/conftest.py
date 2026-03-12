@@ -8,7 +8,7 @@ import pytest
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig
-from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
+from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
@@ -34,6 +34,11 @@ def stub_detection_model_selection() -> DetectionModelSelection:
 @pytest.fixture
 def stub_replace_model_selection() -> ReplaceModelSelection:
     return load_default_model_selection().replace
+
+
+@pytest.fixture
+def stub_rewrite_model_selection() -> RewriteModelSelection:
+    return load_default_model_selection().rewrite
 
 
 @pytest.fixture

@@ -33,8 +33,8 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
+    _jinja,
 )
-from anonymizer.engine.detection.constants import _jinja
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,

@@ -12,6 +12,9 @@ Each schema group corresponds to one pipeline step:
         EntityDispositionSchema, SensitivityDispositionSchema
 
     Step 3a — Meaning unit extraction
+            (Meaning units are small, PII-safe semantic units
+            extracted from the source text and used to generate
+            content-preservation QA.)
         MeaningUnitsSchema
 
     Step 3b — QA generation
@@ -121,7 +124,11 @@ class CombinedRiskLevel(str, Enum):
 
 
 class EntityDispositionSchema(BaseModel):
-    """Protection decision for a single entity."""
+    """Protection decision for one tagged or latent entity in rewrite planning.
+
+    Each instance represents one entry in the sensitivity disposition, not each
+    repeated text span where that entity may appear.
+    """
 
     model_config = ConfigDict(use_enum_values=True)
 
@@ -131,21 +138,21 @@ class EntityDispositionSchema(BaseModel):
     sensitivity: SensitivityLevel
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
-    does_need_protection: bool
+    needs_protection: bool
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
     combined_risk_level: CombinedRiskLevel
 
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
-        if not self.does_need_protection and self.protection_method_suggestion != ProtectionMethod.left_as_is:
+        if not self.needs_protection and self.protection_method_suggestion != ProtectionMethod.left_as_is:
             raise ValueError(
-                f"Entity {self.id}: does_need_protection=False requires protection_method_suggestion='left_as_is', "
+                f"Entity {self.id}: needs_protection=False requires protection_method_suggestion='left_as_is', "
                 f"got '{self.protection_method_suggestion}'"
             )
-        if self.does_need_protection and self.protection_method_suggestion == ProtectionMethod.left_as_is:
+        if self.needs_protection and self.protection_method_suggestion == ProtectionMethod.left_as_is:
             raise ValueError(
-                f"Entity {self.id}: does_need_protection=True cannot have protection_method_suggestion='left_as_is'"
+                f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='left_as_is'"
             )
         return self
 
@@ -154,7 +161,7 @@ class SensitivityDispositionSchema(BaseModel):
     """Complete sensitivity disposition for a document — LLM output schema.
 
     Validates that entity IDs are sequential from 1 and that each entity's
-    ``does_need_protection`` flag is consistent with its ``protection_method_suggestion``.
+    ``needs_protection`` flag is consistent with its ``protection_method_suggestion``.
     """
 
     # Non-empty by design: the rewrite workflow only runs when entities were detected.
@@ -171,7 +178,7 @@ class SensitivityDispositionSchema(BaseModel):
         return self
 
     def entities_needing_protection(self) -> list[EntityDispositionSchema]:
-        return [e for e in self.sensitivity_disposition if e.does_need_protection]
+        return [e for e in self.sensitivity_disposition if e.needs_protection]
 
     def entities_by_sensitivity(self, level: SensitivityLevel | str) -> list[EntityDispositionSchema]:
         if isinstance(level, str):
@@ -297,7 +304,7 @@ class RewriteOutputSchema(BaseModel):
 
 
 class QualityAnswerSchema(BaseModel):
-    id: str
+    id: int
     answer: str
 
 
@@ -308,7 +315,7 @@ class QualityAnswersSchema(BaseModel):
 
 
 class PrivacyAnswerItemSchema(BaseModel):
-    id: str
+    id: int
     answer: PrivacyAnswer
 
 
@@ -319,7 +326,7 @@ class PrivacyAnswersSchema(BaseModel):
 
 
 class QACompareItemSchema(BaseModel):
-    id: str
+    id: int
     score: float = Field(ge=0.0, le=1.0)
     reason: str | None = None
 
@@ -352,7 +359,7 @@ class JudgeEvaluationSchema(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Utility: template-based privacy QA generation (no LLM required)
-# TODO(#32): move to engine/rewrite/steps/qa_generation.py once that step exists
+# TODO(#32): move to engine/rewrite/qa_generation.py once that workflow owns it
 # ---------------------------------------------------------------------------
 
 
@@ -366,32 +373,18 @@ def generate_privacy_qa_from_disposition(
     All questions expect the answer "no" — a "yes" answer indicates a privacy leak.
     """
     if isinstance(sensitivity_disposition, dict):
-        raw_entities = sensitivity_disposition.get("sensitivity_disposition", [])
-        entities_to_protect = [e for e in raw_entities if e.get("does_need_protection", False)]
-        questions = []
-        for idx, e in enumerate(entities_to_protect, start=1):
-            questions.append(
-                PrivacyQuestionSchema(
-                    id=idx,
-                    question=f"Can the {e['entity_label']} '{e['entity_value']}' be deduced from the rewritten text?",
-                    sensitivity=SensitivityLevel(e.get("sensitivity", "medium")),
-                    entity_label=e["entity_label"],
-                    entity_value=e["entity_value"],
-                    category=EntityCategory(e.get("category", "quasi_identifier")),
-                )
+        sensitivity_disposition = SensitivityDispositionSchema.model_validate(sensitivity_disposition)
+
+    questions = []
+    for idx, entity in enumerate(sensitivity_disposition.entities_needing_protection(), start=1):
+        questions.append(
+            PrivacyQuestionSchema(
+                id=idx,
+                question=f"Can the {entity.entity_label} '{entity.entity_value}' be deduced from the rewritten text?",
+                sensitivity=SensitivityLevel(entity.sensitivity),
+                entity_label=entity.entity_label,
+                entity_value=entity.entity_value,
+                category=EntityCategory(entity.category),
             )
-    else:
-        entities_to_protect = sensitivity_disposition.entities_needing_protection()
-        questions = []
-        for idx, e in enumerate(entities_to_protect, start=1):
-            questions.append(
-                PrivacyQuestionSchema(
-                    id=idx,
-                    question=f"Can the {e.entity_label} '{e.entity_value}' be deduced from the rewritten text?",
-                    sensitivity=SensitivityLevel(e.sensitivity),
-                    entity_label=e.entity_label,
-                    entity_value=e.entity_value,
-                    category=EntityCategory(e.category),
-                )
-            )
+        )
     return PrivacyQAPairsSchema(items=questions)

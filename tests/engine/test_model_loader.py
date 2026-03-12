@@ -21,7 +21,8 @@ def test_load_workflow_config_contains_selected_models() -> None:
     config = load_workflow_config(WorkflowName.detection)
     assert "model_configs" in config
     assert "selected_models" in config
-    assert config["selected_models"]["entity_detector"]
+    entity_detector = config["selected_models"]["entity_detector"]
+    assert isinstance(entity_detector, str) and entity_detector
 
 
 def test_get_model_alias_reads_workflow_mapping() -> None:
