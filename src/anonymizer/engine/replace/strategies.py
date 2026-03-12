@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections import Counter
 from dataclasses import dataclass
 
 import pandas as pd
@@ -11,6 +13,9 @@ import pandas as pd
 from anonymizer.config.replace_strategies import LocalReplaceMethod
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.logging import ProgressTracker
+
+logger = logging.getLogger("anonymizer")
 
 
 @dataclass(frozen=True)
@@ -29,21 +34,45 @@ def apply_local_replace_strategy(
 ) -> pd.DataFrame:
     """Apply deterministic local replace strategy on detected entities."""
     output_df = dataframe.copy()
-    output_df[COL_REPLACEMENT_MAP] = output_df.apply(
-        lambda row: _build_local_replacement_map(
+    tracker = ProgressTracker(total=len(output_df), label="Replacement")
+
+    _debug = logger.isEnabledFor(logging.DEBUG)
+    total_label_counts: Counter[str] = Counter()
+    replacement_maps = []
+    for idx, (_, row) in enumerate(output_df.iterrows()):
+        rmap = _build_local_replacement_map(
             entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
             strategy=strategy,
-        ),
-        axis=1,
-    )
-    output_df[COL_REPLACED_TEXT] = output_df.apply(
-        lambda row: _apply_replacement_map_to_text(
-            text=str(row.get(text_column, "")),
-            entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
-            replacements=_parse_replacements(row[COL_REPLACEMENT_MAP]),
-        ),
-        axis=1,
-    )
+        )
+        replacement_maps.append(rmap)
+        if _debug:
+            row_counts: Counter[str] = Counter()
+            for r in rmap.get("replacements", []):
+                row_counts[r.get("label", "unknown")] += 1
+            total_label_counts += row_counts
+            n = sum(row_counts.values())
+            summary = ", ".join(f"{l}={c}" for l, c in row_counts.most_common()) if row_counts else "(none)"
+            logger.debug("  record %d: %d replacements — %s", idx, n, summary)
+        tracker.record_success()
+    output_df[COL_REPLACEMENT_MAP] = replacement_maps
+
+    if _debug:
+        total = sum(total_label_counts.values())
+        summary = ", ".join(f"{label}={count}" for label, count in total_label_counts.most_common())
+        logger.debug("replacement stats: %d unique entities replaced (%s)", total, summary)
+
+    replaced_texts = []
+    for _, row in output_df.iterrows():
+        replaced_texts.append(
+            _apply_replacement_map_to_text(
+                text=str(row.get(text_column, "")),
+                entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
+                replacements=_parse_replacements(row[COL_REPLACEMENT_MAP]),
+            )
+        )
+    output_df[COL_REPLACED_TEXT] = replaced_texts
+
+    tracker.log_final()
     return output_df
 
 

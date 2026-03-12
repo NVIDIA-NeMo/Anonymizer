@@ -335,10 +335,11 @@ def test_latent_prompt_uses_not_provided_defaults() -> None:
 
 
 def test_format_label_examples_includes_known_labels() -> None:
-    result = _format_label_examples(["first_name", "city", "ssn"])
+    result = _format_label_examples(["first_name", "city", "ssn", "race_ethnicity"])
     assert "- first_name: Michael, Isabella, Carlos, Wei" in result
     assert "- city: Houston, San Diego, Doha, Lahore" in result
     assert "- ssn: 007-52-4910, 252-96-0016, 523-25-1554, 228-94-9430" in result
+    assert "- race_ethnicity: white, African-American, Korean, Hispanic" in result
 
 
 def test_format_label_examples_handles_custom_labels_without_examples() -> None:
@@ -349,13 +350,16 @@ def test_format_label_examples_handles_custom_labels_without_examples() -> None:
 
 
 def test_validation_prompt_includes_label_examples() -> None:
-    prompt = _get_validation_prompt(data_summary=None, labels=["email", "city"])
+    prompt = _get_validation_prompt(data_summary=None, labels=["email", "city", "sexuality"])
     assert "Here are all the valid entity classes with examples" in prompt
     assert "- email: derez_lester94@icloud.com" in prompt
     assert "- city: Houston, San Diego, Doha, Lahore" in prompt
     assert "Copy ids exactly as given; never modify entries" in prompt
     assert "You MUST fill in a decision for EVERY entry in the template" in prompt
     assert "Return ONLY the entries from the template" in prompt
+    assert 'The word "straight" rarely has the label "sexuality"' in prompt
+    assert 'If any tagging notation captures only "dem" from "demeanor"' in prompt
+    assert 'The entity label "occupation" refers only to a specific paid job title or profession' in prompt
 
 
 def test_validation_prompt_includes_data_summary() -> None:

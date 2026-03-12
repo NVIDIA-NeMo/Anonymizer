@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACEMENT_MAP
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES, COL_REPLACEMENT_MAP
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 
 ENTITY_COLORS: list[str] = [
@@ -68,7 +68,7 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
     text_col = original_text_column or "text"
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
-    entities = EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES, {})).entities
+    entities = _resolve_display_entities(row)
     replacement_map = _normalize_replacement_map(row.get(COL_REPLACEMENT_MAP, {}))
 
     if not entities and replacement_map:
@@ -90,6 +90,14 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
         replaced_html=replaced_html,
         table_html=table_html,
     )
+
+
+def _resolve_display_entities(row: pd.Series) -> list[EntitySchema]:
+    """Prefer the final entity set so preview matches replacement behavior."""
+    final_entities = EntitiesSchema.from_raw(row.get(COL_FINAL_ENTITIES, {})).entities
+    if final_entities:
+        return final_entities
+    return EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES, {})).entities
 
 
 def _render_highlighted_text(text: str, entities: list[EntitySchema]) -> str:
