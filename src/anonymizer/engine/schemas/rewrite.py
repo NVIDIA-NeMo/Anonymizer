@@ -1,0 +1,392 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Pydantic schemas for the rewrite pipeline.
+
+Each schema group corresponds to one pipeline step:
+
+    Step 1 — Domain classification
+        DomainClassificationSchema
+
+    Step 2 — Sensitivity disposition (per-entity protection plan)
+        EntityDispositionSchema, SensitivityDispositionSchema
+
+    Step 3a — Meaning unit extraction
+            (Meaning units are small, PII-safe semantic units
+            extracted from the source text and used to generate
+            content-preservation QA.)
+        MeaningUnitsSchema
+
+    Step 3b — QA generation
+        QualityQAPairsSchema          (LLM — quality questions from meaning units)
+        PrivacyQAPairsSchema          (template — one question per entity needing protection)
+
+    Step 4 — Rewrite generation
+        RewriteSchema
+
+    Step 5 — Evaluate & repair
+        QualityAnswersSchema          (LLM re-answers quality questions on rewritten text)
+        PrivacyAnswersSchema          (LLM re-answers privacy questions on rewritten text)
+        QACompareResultsSchema        (LLM scores quality answer match)
+
+    Step 6 — Final judge
+        JudgeEvaluationSchema         (holistic privacy + quality + naturalness scores)
+
+Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
+                  ProtectionMethod, CombinedRiskLevel, MeaningUnitAspect, PrivacyAnswer
+
+Utility: generate_privacy_qa_from_disposition — template-based, no LLM required.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# ---------------------------------------------------------------------------
+# Domain
+# ---------------------------------------------------------------------------
+
+
+class Domain(str, Enum):
+    """Valid domain types for domain classification and meaning unit extraction."""
+
+    BIOGRAPHY = "BIOGRAPHY"
+    CHAT_EMAIL_CSAT = "CHAT_EMAIL_CSAT"
+    PRODUCT_REVIEW = "PRODUCT_REVIEW"
+    NEWS_JOURNALISM = "NEWS_JOURNALISM"
+    MARKETING_ADVERTISING = "MARKETING_ADVERTISING"
+    TECHNICAL_ENGINEERING_SOFTWARE = "TECHNICAL_ENGINEERING_SOFTWARE"
+    SCIENTIFIC_ACADEMIC = "SCIENTIFIC_ACADEMIC"
+    SECURITY_INFOSEC = "SECURITY_INFOSEC"
+    FINANCIAL = "FINANCIAL"
+    ECONOMIC = "ECONOMIC"
+    POLICY_REGULATORY_COMPLIANCE = "POLICY_REGULATORY_COMPLIANCE"
+    LEGAL = "LEGAL"
+    HR_PEOPLE_OPS = "HR_PEOPLE_OPS"
+    MANAGEMENT_OPERATIONS = "MANAGEMENT_OPERATIONS"
+    CLINICAL_EHR_MEDICAL = "CLINICAL_EHR_MEDICAL"
+    EDUCATIONAL_PEDAGOGICAL = "EDUCATIONAL_PEDAGOGICAL"
+    FICTION_CREATIVE = "FICTION_CREATIVE"
+    ENTERTAINMENT_MEDIA = "ENTERTAINMENT_MEDIA"
+    SOCIAL_CULTURAL_OPED = "SOCIAL_CULTURAL_OPED"
+    PROCEDURAL_INSTRUCTIONAL = "PROCEDURAL_INSTRUCTIONAL"
+    META_TEXT = "META_TEXT"
+    SOCIAL_MEDIA = "SOCIAL_MEDIA"
+    TRANSCRIPTS_INTERVIEWS = "TRANSCRIPTS_INTERVIEWS"
+    OTHER = "OTHER"
+
+
+class DomainClassificationSchema(BaseModel):
+    """LLM output schema for domain classification step."""
+
+    domain: Domain
+    domain_confidence: float = Field(ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity Disposition
+# ---------------------------------------------------------------------------
+
+
+class EntitySource(str, Enum):
+    tagged = "tagged"  # from GLiNER + LLM validation (explicit in text)
+    latent = "latent"  # from latent entity detection (inferred from context)
+
+
+class EntityCategory(str, Enum):
+    direct_identifier = "direct_identifier"
+    quasi_identifier = "quasi_identifier"
+    sensitive_attribute = "sensitive_attribute"
+    latent_identifier = "latent_identifier"
+
+
+class SensitivityLevel(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+class ProtectionMethod(str, Enum):
+    replace = "replace"
+    generalize = "generalize"
+    remove = "remove"
+    paraphrase = "paraphrase"
+    left_as_is = "left_as_is"
+
+
+class CombinedRiskLevel(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+class EntityDispositionSchema(BaseModel):
+    """Protection decision for one tagged or latent entity in rewrite planning.
+
+    Each instance represents one entry in the sensitivity disposition, not each
+    repeated text span where that entity may appear.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    id: int = Field(ge=1)
+    source: EntitySource
+    category: EntityCategory
+    sensitivity: SensitivityLevel
+    entity_label: str = Field(min_length=1)
+    entity_value: str = Field(min_length=1)
+    needs_protection: bool
+    protection_reason: str = Field(min_length=10, max_length=500)
+    protection_method_suggestion: ProtectionMethod
+    combined_risk_level: CombinedRiskLevel
+
+    @model_validator(mode="after")
+    def _validate_protection_consistency(self) -> EntityDispositionSchema:
+        if not self.needs_protection and self.protection_method_suggestion != ProtectionMethod.left_as_is:
+            raise ValueError(
+                f"Entity {self.id}: needs_protection=False requires protection_method_suggestion='left_as_is', "
+                f"got '{self.protection_method_suggestion}'"
+            )
+        if self.needs_protection and self.protection_method_suggestion == ProtectionMethod.left_as_is:
+            raise ValueError(
+                f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='left_as_is'"
+            )
+        return self
+
+
+class SensitivityDispositionSchema(BaseModel):
+    """Complete sensitivity disposition for a document — LLM output schema.
+
+    Validates that entity IDs are sequential from 1 and that each entity's
+    ``needs_protection`` flag is consistent with its ``protection_method_suggestion``.
+    """
+
+    # Non-empty by design: the rewrite workflow only runs when entities were detected.
+    # The orchestrator is responsible for short-circuiting before this step if detection
+    # found nothing, so an empty disposition indicates a pipeline bug, not a valid state.
+    sensitivity_disposition: list[EntityDispositionSchema] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_ids_sequential(self) -> SensitivityDispositionSchema:
+        ids = [e.id for e in self.sensitivity_disposition]
+        expected = list(range(1, len(ids) + 1))
+        if sorted(ids) != expected:
+            raise ValueError(f"Entity IDs must be sequential starting from 1. Got: {sorted(ids)}, expected: {expected}")
+        return self
+
+    @property
+    def protected_entities(self) -> list[EntityDispositionSchema]:
+        return [e for e in self.sensitivity_disposition if e.needs_protection]
+
+    @property
+    def medium_and_high_sensitivity_entities(self) -> list[EntityDispositionSchema]:
+        return [
+            e for e in self.sensitivity_disposition if e.sensitivity in (SensitivityLevel.medium, SensitivityLevel.high)
+        ]
+
+    def get_entities_by_sensitivity(self, level: SensitivityLevel | str) -> list[EntityDispositionSchema]:
+        if isinstance(level, str):
+            level = SensitivityLevel(level)
+        return [e for e in self.sensitivity_disposition if e.sensitivity == level]
+
+    def get_entities_by_method(self, method: ProtectionMethod | str) -> list[EntityDispositionSchema]:
+        if isinstance(method, str):
+            method = ProtectionMethod(method)
+        return [e for e in self.sensitivity_disposition if e.protection_method_suggestion == method]
+
+    def format_for_rewrite_context(self) -> str:
+        """Format disposition for injection into rewrite prompts — medium and high sensitivity entities only."""
+        entities = self.medium_and_high_sensitivity_entities
+        if not entities:
+            return "No medium or high sensitivity entities identified."
+        lines = []
+        for e in entities:
+            lines.append(
+                f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion} (Reason: {e.protection_reason})'
+            )
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Meaning Units
+# ---------------------------------------------------------------------------
+
+
+class MeaningUnitAspect(str, Enum):
+    ROLE = "role"
+    PROCESS = "process"
+    RELATIONSHIP = "relationship"
+    ENVIRONMENT = "environment"
+    ROUTINE = "routine"
+    CREATIVE_OUTPUT = "creative_output"
+    VALUE = "value"
+    MOTIVATION = "motivation"
+    INFLUENCE = "influence"
+    AUDIENCE = "audience"
+    LEGAL_BASIS = "legal_basis"
+    INSTITUTION = "institution"
+    JUSTIFICATION = "justification"
+    PROCEDURAL_STATUS = "procedural_status"
+    TEMPORAL_SEQUENCE = "temporal_sequence"
+    RIGHTS_IMPACT = "rights_impact"
+
+
+class MeaningUnitSchema(BaseModel):
+    id: int = Field(ge=1)
+    aspect: MeaningUnitAspect
+    unit: str = Field(min_length=1)
+
+
+class MeaningUnitsSchema(BaseModel):
+    """LLM output schema for meaning unit extraction step."""
+
+    # Non-empty by design: meaning extraction only runs when entities were detected.
+    units: list[MeaningUnitSchema] = Field(min_length=1)
+
+
+# ---------------------------------------------------------------------------
+# QA Generation
+# ---------------------------------------------------------------------------
+
+
+class QualityQAItemSchema(BaseModel):
+    id: int
+    aspect: str
+    question: str
+    reference_answer: str
+
+
+class QualityQAPairsSchema(BaseModel):
+    """LLM output schema for quality QA generation step."""
+
+    items: list[QualityQAItemSchema]
+
+
+class PrivacyAnswer(str, Enum):
+    yes = "yes"
+    no = "no"
+
+
+class PrivacyQuestionSchema(BaseModel):
+    id: int
+    question: str
+    sensitivity: SensitivityLevel
+    entity_label: str
+    entity_value: str
+    category: EntityCategory
+
+
+class PrivacyQAPairsSchema(BaseModel):
+    """Privacy QA pairs for a document — generated from disposition without an LLM.
+
+    All questions expect the answer ``no``. A ``yes`` answer indicates a privacy leak.
+    See ``generate_privacy_qa_from_disposition``.
+    """
+
+    items: list[PrivacyQuestionSchema]
+
+
+# ---------------------------------------------------------------------------
+# Rewrite
+# ---------------------------------------------------------------------------
+
+
+class RewriteOutputSchema(BaseModel):
+    """LLM output schema for rewrite and repair steps."""
+
+    rewritten_text: str
+
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+
+class QualityAnswerSchema(BaseModel):
+    id: int
+    answer: str
+
+
+class QualityAnswersSchema(BaseModel):
+    """LLM output schema for quality QA re-answer step (on rewritten text)."""
+
+    answers: list[QualityAnswerSchema]
+
+
+class PrivacyAnswerItemSchema(BaseModel):
+    id: int
+    answer: PrivacyAnswer
+
+
+class PrivacyAnswersSchema(BaseModel):
+    """LLM output schema for privacy QA re-answer step (on rewritten text)."""
+
+    answers: list[PrivacyAnswerItemSchema]
+
+
+class QACompareItemSchema(BaseModel):
+    id: int
+    score: float = Field(ge=0.0, le=1.0)
+    reason: str | None = None
+
+
+class QACompareResultsSchema(BaseModel):
+    """LLM output schema for quality QA comparison step."""
+
+    per_item: list[QACompareItemSchema]
+
+
+# ---------------------------------------------------------------------------
+# Judge
+# ---------------------------------------------------------------------------
+
+
+class JudgeScoreSchema(BaseModel):
+    """Single rubric score from the final holistic judge."""
+
+    score: int = Field(ge=1, le=10)
+    reason: str = Field(default="")
+
+
+class JudgeEvaluationSchema(BaseModel):
+    """LLM output schema for the final judge step (privacy + quality + naturalness rubrics)."""
+
+    privacy: JudgeScoreSchema
+    quality: JudgeScoreSchema
+    naturalness: JudgeScoreSchema
+
+
+# ---------------------------------------------------------------------------
+# Utility: template-based privacy QA generation (no LLM required)
+# TODO(#32): move to engine/rewrite/qa_generation.py once that workflow owns it
+# ---------------------------------------------------------------------------
+
+
+def generate_privacy_qa_from_disposition(
+    sensitivity_disposition: SensitivityDispositionSchema | dict[str, Any],
+) -> PrivacyQAPairsSchema:
+    """Generate privacy QA questions from sensitivity disposition without an LLM call.
+
+    Produces one question per entity that needs protection:
+        "Can the {entity_label} '{entity_value}' be deduced from the rewritten text?"
+    All questions expect the answer "no" — a "yes" answer indicates a privacy leak.
+    """
+    if isinstance(sensitivity_disposition, dict):
+        sensitivity_disposition = SensitivityDispositionSchema.model_validate(sensitivity_disposition)
+
+    questions = []
+    for idx, entity in enumerate(sensitivity_disposition.protected_entities, start=1):
+        questions.append(
+            PrivacyQuestionSchema(
+                id=idx,
+                question=f"Can the {entity.entity_label} '{entity.entity_value}' be deduced from the rewritten text?",
+                sensitivity=SensitivityLevel(entity.sensitivity),
+                entity_label=entity.entity_label,
+                entity_value=entity.entity_value,
+                category=EntityCategory(entity.category),
+            )
+        )
+    return PrivacyQAPairsSchema(items=questions)

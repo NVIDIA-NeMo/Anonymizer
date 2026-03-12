@@ -48,6 +48,28 @@ COL_LATENT_ENTITIES = "_latent_entities"
 COL_FINAL_ENTITIES = "final_entities"
 
 # ---------------------------------------------------------------------------
+# Rewrite pipeline — internal columns (prefixed with _)
+# ---------------------------------------------------------------------------
+
+COL_DOMAIN = "_domain"
+COL_DOMAIN_CONFIDENCE = "_domain_confidence"
+COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
+COL_MEANING_UNITS = "_meaning_units"
+COL_QUALITY_QA = "_quality_qa"
+COL_PRIVACY_QA = "_privacy_qa"
+COL_REWRITTEN_TEXT = "_rewritten_text"  # pre-repair intermediate; renamed to {text_col}_rewritten in user output
+COL_QUALITY_QA_REANSWER = "_quality_qa_reanswer"
+COL_QUALITY_QA_COMPARE = "_quality_qa_compare"
+COL_PRIVACY_QA_REANSWER = "_privacy_qa_reanswer"
+COL_JUDGE_EVALUATION = "_judge_evaluation"
+
+# Rewrite pipeline — user-facing output columns
+COL_UTILITY_SCORE = "utility_score"
+COL_LEAKAGE_MASS = "leakage_mass"
+COL_ANY_HIGH_LEAKED = "any_high_leaked"
+COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
+
+# ---------------------------------------------------------------------------
 # Entity labels and examples
 #
 # Source of truth for default entity labels and their examples.
@@ -113,3 +135,13 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
 }
 
 DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
+
+
+# ---------------------------------------------------------------------------
+# Prompt utilities
+# ---------------------------------------------------------------------------
+
+
+def _jinja(col: str) -> str:
+    """Wrap a column name in Jinja2 template syntax for use in NDD prompts."""
+    return "{{ " + col + " }}"

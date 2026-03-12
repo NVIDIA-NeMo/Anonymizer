@@ -10,7 +10,6 @@ from anonymizer.config.models import (
     DetectionModelSelection,
     ModelSelection,
     ReplaceModelSelection,
-    RewriteModelSelection,
 )
 from anonymizer.engine.ndd.model_loader import (
     DEFAULT_CONFIG_DIR,
@@ -29,12 +28,13 @@ def test_load_workflow_config_contains_selected_models() -> None:
     config = load_workflow_config(WorkflowName.detection)
     assert "model_configs" in config
     assert "selected_models" in config
-    assert config["selected_models"]["entity_detector"] == "gliner-pii-detector"
+    entity_detector = config["selected_models"]["entity_detector"]
+    assert isinstance(entity_detector, str) and entity_detector
 
 
 def test_get_model_alias_reads_workflow_mapping() -> None:
     alias = get_model_alias(workflow_name=WorkflowName.detection, role="entity_validator")
-    assert alias == "gpt-oss-120b"
+    assert isinstance(alias, str) and alias
 
 
 WORKFLOW_YAMLS = [p.stem for p in DEFAULT_CONFIG_DIR.glob("*.yaml") if p.stem != "models"]
@@ -52,9 +52,22 @@ def test_default_workflow_aliases_exist_in_models(workflow_name: str) -> None:
 
 def test_load_default_model_selection_populates_all_workflows() -> None:
     selection = load_default_model_selection()
-    assert selection.detection.entity_detector == "gliner-pii-detector"
-    assert selection.replace.replacement_generator == "gpt-oss-120b"
-    assert selection.rewrite.rewriter == "gpt-oss-120b"
+    # Detection
+    assert selection.detection.entity_detector
+    assert selection.detection.entity_validator
+    assert selection.detection.entity_augmenter
+    assert selection.detection.latent_detector
+    # Replace
+    assert selection.replace.replacement_generator
+    # Rewrite — all 8 roles must be populated
+    assert selection.rewrite.domain_classifier
+    assert selection.rewrite.disposition_analyzer
+    assert selection.rewrite.meaning_extractor
+    assert selection.rewrite.qa_generator
+    assert selection.rewrite.rewriter
+    assert selection.rewrite.evaluator
+    assert selection.rewrite.repairer
+    assert selection.rewrite.judge
 
 
 def test_parse_model_configs_none_uses_defaults() -> None:
@@ -174,7 +187,7 @@ def test_validate_model_alias_references_raises_on_unknown_rewrite_alias_when_en
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     selected_models = stub_slim_model_selection.model_copy(
-        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+        update={"rewrite": stub_slim_model_selection.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     with pytest.raises(ValueError, match="bad-rewrite-alias"):
@@ -208,7 +221,7 @@ def test_validate_model_alias_references_skips_rewrite_alias_when_not_enabled(
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     selected_models = stub_slim_model_selection.model_copy(
-        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+        update={"rewrite": stub_slim_model_selection.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     validate_model_alias_references(

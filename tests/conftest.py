@@ -60,6 +60,11 @@ def stub_replace_model_selection() -> ReplaceModelSelection:
 
 
 @pytest.fixture
+def stub_rewrite_model_selection() -> RewriteModelSelection:
+    return load_default_model_selection().rewrite
+
+
+@pytest.fixture
 def stub_slim_model_selection() -> ModelSelection:
     """Selection model where every role points to the same known alias."""
     return ModelSelection(
@@ -70,7 +75,16 @@ def stub_slim_model_selection() -> ModelSelection:
             latent_detector="known",
         ),
         replace=ReplaceModelSelection(replacement_generator="known"),
-        rewrite=RewriteModelSelection(rewriter="known", evaluator="known"),
+        rewrite=RewriteModelSelection(
+            domain_classifier="known",
+            disposition_analyzer="known",
+            meaning_extractor="known",
+            qa_generator="known",
+            rewriter="known",
+            evaluator="known",
+            repairer="known",
+            judge="known",
+        ),
     )
 
 

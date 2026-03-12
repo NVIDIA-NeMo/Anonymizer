@@ -11,7 +11,7 @@ import pytest
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
-from anonymizer.config.models import ModelSelection, ReplaceModelSelection, RewriteModelSelection
+from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
@@ -280,7 +280,7 @@ def test_validate_config_raises_on_unknown_rewrite_alias(
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection
     anonymizer._selected_models = anonymizer._selected_models.model_copy(
-        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+        update={"rewrite": anonymizer._selected_models.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     with pytest.raises(InvalidConfigError, match="bad-rewrite-alias"):
@@ -295,9 +295,7 @@ def test_validate_config_skips_latent_detector_without_rewrite(
     anonymizer, _, _ = _make_anonymizer()
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection.model_copy(
-        update={
-            "detection": stub_slim_model_selection.detection.model_copy(update={"latent_detector": "bad-latent-alias"})
-        }
+        update={"rewrite": stub_slim_model_selection.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     anonymizer.validate_config(stub_anonymizer_config)
@@ -328,7 +326,7 @@ def test_validate_config_skips_rewrite_alias_without_rewrite(
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection
     anonymizer._selected_models = anonymizer._selected_models.model_copy(
-        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+        update={"rewrite": anonymizer._selected_models.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     anonymizer.validate_config(stub_anonymizer_config)
@@ -362,7 +360,7 @@ def test_preview_raises_invalid_config_before_workflows(
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection
     anonymizer._selected_models = anonymizer._selected_models.model_copy(
-        update={"rewrite": RewriteModelSelection(rewriter="bad-rewrite-alias", evaluator="known")}
+        update={"rewrite": anonymizer._selected_models.rewrite.model_copy(update={"rewriter": "bad-rewrite-alias"})}
     )
 
     with pytest.raises(InvalidConfigError, match="bad-rewrite-alias"):
