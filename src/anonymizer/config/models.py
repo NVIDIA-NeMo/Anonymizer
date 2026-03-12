@@ -29,13 +29,16 @@ class RewriteModelSelection(BaseModel):
     meaning_extractor: str
     qa_generator: str
     rewriter: str
-    evaluator: str  # QA re-answering on rewritten text (reading comprehension)
-    repairer: str  # targeted repair when privacy leakage is detected (generation)
-    judge: str  # final holistic evaluation: privacy + quality + naturalness
+    evaluator: str
+    repairer: str
+    judge: str
 
 
 class ModelSelection(BaseModel):
-    """Model alias selections for all pipelines, loaded from YAML defaults via ``load_default_model_selection()``."""
+    """Model alias selection grouped by workflow and role.
+
+    Constructed with defaults from YAML via ``load_default_model_selection()``.
+    """
 
     detection: DetectionModelSelection
     replace: ReplaceModelSelection

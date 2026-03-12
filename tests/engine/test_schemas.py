@@ -254,36 +254,38 @@ def test_sensitivity_disposition_invalid_duplicate_ids() -> None:
         )
 
 
-def test_sensitivity_disposition_entities_needing_protection(mixed_disposition: SensitivityDispositionSchema) -> None:
-    protected = mixed_disposition.entities_needing_protection()
+def test_sensitivity_disposition_protected_entities(mixed_disposition: SensitivityDispositionSchema) -> None:
+    protected = mixed_disposition.protected_entities
     assert len(protected) == 1
     assert protected[0].entity_label == "first_name"
 
 
-def test_sensitivity_disposition_entities_by_method(mixed_disposition: SensitivityDispositionSchema) -> None:
-    replaceable = mixed_disposition.entities_by_method("replace")
+def test_sensitivity_disposition_get_entities_by_method(mixed_disposition: SensitivityDispositionSchema) -> None:
+    replaceable = mixed_disposition.get_entities_by_method("replace")
     assert len(replaceable) == 1
     assert replaceable[0].entity_label == "first_name"
-    left = mixed_disposition.entities_by_method("left_as_is")
+    left = mixed_disposition.get_entities_by_method("left_as_is")
     assert len(left) == 1
     assert left[0].entity_label == "city"
 
 
-def test_sensitivity_disposition_medium_and_high_sensitivity(mixed_disposition: SensitivityDispositionSchema) -> None:
+def test_sensitivity_disposition_medium_and_high_sensitivity_entities(
+    mixed_disposition: SensitivityDispositionSchema,
+) -> None:
     # Both entities in mixed_disposition have sensitivity=high
-    result = mixed_disposition.medium_and_high_sensitivity()
+    result = mixed_disposition.medium_and_high_sensitivity_entities
     assert len(result) == 2
 
 
-def test_sensitivity_disposition_to_rewrite_context(mixed_disposition: SensitivityDispositionSchema) -> None:
-    context = mixed_disposition.to_rewrite_context()
+def test_sensitivity_disposition_format_for_rewrite_context(mixed_disposition: SensitivityDispositionSchema) -> None:
+    context = mixed_disposition.format_for_rewrite_context()
     assert "[HIGH]" in context
     assert "first_name" in context
     assert "Alice" in context
     assert "→ replace" in context
 
 
-def test_sensitivity_disposition_to_rewrite_context_empty_when_all_low() -> None:
+def test_sensitivity_disposition_format_for_rewrite_context_empty_when_all_low() -> None:
     schema = SensitivityDispositionSchema.model_validate(
         {
             "sensitivity_disposition": [
@@ -293,7 +295,7 @@ def test_sensitivity_disposition_to_rewrite_context_empty_when_all_low() -> None
             ]
         }
     )
-    assert schema.to_rewrite_context() == "No medium or high sensitivity entities identified."
+    assert schema.format_for_rewrite_context() == "No medium or high sensitivity entities identified."
 
 
 # generate_privacy_qa_from_disposition

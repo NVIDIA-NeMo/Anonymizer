@@ -177,27 +177,29 @@ class SensitivityDispositionSchema(BaseModel):
             raise ValueError(f"Entity IDs must be sequential starting from 1. Got: {sorted(ids)}, expected: {expected}")
         return self
 
-    def entities_needing_protection(self) -> list[EntityDispositionSchema]:
+    @property
+    def protected_entities(self) -> list[EntityDispositionSchema]:
         return [e for e in self.sensitivity_disposition if e.needs_protection]
 
-    def entities_by_sensitivity(self, level: SensitivityLevel | str) -> list[EntityDispositionSchema]:
-        if isinstance(level, str):
-            level = SensitivityLevel(level)
-        return [e for e in self.sensitivity_disposition if e.sensitivity == level]
-
-    def entities_by_method(self, method: ProtectionMethod | str) -> list[EntityDispositionSchema]:
-        if isinstance(method, str):
-            method = ProtectionMethod(method)
-        return [e for e in self.sensitivity_disposition if e.protection_method_suggestion == method]
-
-    def medium_and_high_sensitivity(self) -> list[EntityDispositionSchema]:
+    @property
+    def medium_and_high_sensitivity_entities(self) -> list[EntityDispositionSchema]:
         return [
             e for e in self.sensitivity_disposition if e.sensitivity in (SensitivityLevel.medium, SensitivityLevel.high)
         ]
 
-    def to_rewrite_context(self) -> str:
+    def get_entities_by_sensitivity(self, level: SensitivityLevel | str) -> list[EntityDispositionSchema]:
+        if isinstance(level, str):
+            level = SensitivityLevel(level)
+        return [e for e in self.sensitivity_disposition if e.sensitivity == level]
+
+    def get_entities_by_method(self, method: ProtectionMethod | str) -> list[EntityDispositionSchema]:
+        if isinstance(method, str):
+            method = ProtectionMethod(method)
+        return [e for e in self.sensitivity_disposition if e.protection_method_suggestion == method]
+
+    def format_for_rewrite_context(self) -> str:
         """Format disposition for injection into rewrite prompts — medium and high sensitivity entities only."""
-        entities = self.medium_and_high_sensitivity()
+        entities = self.medium_and_high_sensitivity_entities
         if not entities:
             return "No medium or high sensitivity entities identified."
         lines = []
@@ -376,7 +378,7 @@ def generate_privacy_qa_from_disposition(
         sensitivity_disposition = SensitivityDispositionSchema.model_validate(sensitivity_disposition)
 
     questions = []
-    for idx, entity in enumerate(sensitivity_disposition.entities_needing_protection(), start=1):
+    for idx, entity in enumerate(sensitivity_disposition.protected_entities, start=1):
         questions.append(
             PrivacyQuestionSchema(
                 id=idx,
