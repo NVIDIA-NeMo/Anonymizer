@@ -391,9 +391,9 @@ Input text: My <first_name>name</first_name> is <first_name>Amy</first_name>, <a
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
 Input text: My [[name|first_name]] is [[Amy|first_name]], [[35|age]] in [[San Diego|country]], [[California|state]].
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: My ((PII:first_name|name)) is ((PII:first_name|Amy)), ((PII:age|35)) in ((PII:country|San Diego)), ((PII:state|California)).
+Input text: My ((SENSITIVE:first_name|name)) is ((SENSITIVE:first_name|Amy)), ((SENSITIVE:age|35)) in ((SENSITIVE:country|San Diego)), ((SENSITIVE:state|California)).
 {%- else -%}
-Input text: My <<PII:first_name>>name<</PII:first_name>> is <<PII:first_name>>Amy<</PII:first_name>>, <<PII:age>>35<</PII:age>> in <<PII:country>>San Diego<</PII:country>>, <<PII:state>>California<</PII:state>>.
+Input text: My <<SENSITIVE:first_name>>name<</SENSITIVE:first_name>> is <<SENSITIVE:first_name>>Amy<</SENSITIVE:first_name>>, <<SENSITIVE:age>>35<</SENSITIVE:age>> in <<SENSITIVE:country>>San Diego<</SENSITIVE:country>>, <<SENSITIVE:state>>California<</SENSITIVE:state>>.
 {%- endif -%}
 Template: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "age_16_18", "value": "35", "label": "age", "decision": null, "proposed_label": null, "reason": null}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": null, "proposed_label": null, "reason": null}, {"id": "state_33_43", "value": "California", "label": "state", "decision": null, "proposed_label": null, "reason": null}]}
 Output: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": "keep", "proposed_label": "", "reason": "real first name"}, {"id": "age_16_18", "value": "35", "label": "age", "decision": "keep", "proposed_label": "", "reason": "age quasi-identifier"}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "state_33_43", "value": "California", "label": "state", "decision": "keep", "proposed_label": "", "reason": "state quasi-identifier"}]}
@@ -420,7 +420,7 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
 
 We have the following type of data: <<DATA_SUMMARY>>
 
-Here are the known entity classes. Prefer labels from this list when they fit:
+Here are the known entity classes. Strongly prefer labels from this list when they fit:
 <<VALID_CLASSES>>
 
 If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id).
@@ -513,9 +513,9 @@ Rules (strict)
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
    - Do NOT repeat any already-tagged entities, e.g., [[Alex|first_name]].
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-   - Do NOT repeat any already-tagged entities, e.g., ((PII:first_name|Alex)).
+   - Do NOT repeat any already-tagged entities, e.g., ((SENSITIVE:first_name|Alex)).
 {%- else -%}
-   - Do NOT repeat any already-tagged entities, e.g., <<PII:first_name>>Alex<</PII:first_name>>.
+   - Do NOT repeat any already-tagged entities, e.g., <<SENSITIVE:first_name>>Alex<</SENSITIVE:first_name>>.
 {%- endif -%}
    - Do NOT output verbatim spans from the text.
    - You MAY output structured attributes that are logically implied by the text,

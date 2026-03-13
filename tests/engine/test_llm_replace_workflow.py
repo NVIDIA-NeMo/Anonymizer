@@ -34,7 +34,7 @@ def test_generate_map_only_preserves_input_attrs(
         {
             "text": ["Alice works at Acme"],
             "_entities_by_value": [[{"value": "Alice", "labels": ["first_name"]}]],
-            "tagged_text": ["<<PII:first_name>>Alice<</PII:first_name>> works at Acme"],
+            "tagged_text": ["<<SENSITIVE:first_name>>Alice<</SENSITIVE:first_name>> works at Acme"],
         }
     )
     input_df.attrs["original_text_column"] = "bio"
