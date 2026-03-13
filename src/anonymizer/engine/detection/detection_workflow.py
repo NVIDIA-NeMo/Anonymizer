@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -33,8 +34,8 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
+    _jinja,
 )
-from anonymizer.engine.detection.constants import _jinja
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
@@ -52,6 +53,8 @@ from anonymizer.engine.schemas import (
     LatentEntitiesSchema,
     ValidationDecisionsSchema,
 )
+
+logger = logging.getLogger("anonymizer.detection")
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,12 @@ class EntityDetectionWorkflow:
         detection_alias = resolve_model_alias("entity_detector", selected_models)
         validator_alias = resolve_model_alias("entity_validator", selected_models)
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
+        logger.debug(
+            "detection aliases: detector=%s, validator=%s, augmenter=%s",
+            detection_alias,
+            validator_alias,
+            augmenter_alias,
+        )
 
         detection_result = self._adapter.run_workflow(
             dataframe,
@@ -343,6 +352,9 @@ Additional rules:
 - VIN length 17 is vehicle_identifier, shorter is license_plate (check context for regional variations)
 - Numbers preceded by '$' are monetary values, not entities like age or account number
 - If classified as date_of_birth, verify context is appropriate; otherwise use date
+- The word "straight" rarely has the label "sexuality"; if the context doesn't absolutely imply "sexuality", drop this tag
+- If a tagged value is only part of a larger word, it almost always needs to be dropped. Example text: "Known for his calm demeanor". If any tagging notation captures only "dem" from "demeanor" and labels it as "political_view", drop that tag
+- The entity label "occupation" refers only to a specific paid job title or profession (e.g., "registered nurse", "software engineer", "retail salesperson", "teacher", "bartender"). Do NOT label generic roles, activities, or vague work-related nouns as occupations (e.g., "volunteer", "mentor", "guide", "partner", "supplier", "helper")
 - You MUST fill in a decision for EVERY entry in the template — do not skip any
 - Return ONLY the entries from the template — do not add new entries for entities not already in the template
 - Copy ids exactly as given; never modify entries

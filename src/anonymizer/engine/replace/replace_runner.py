@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
@@ -21,6 +22,8 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
 from anonymizer.engine.schemas import EntitiesSchema
+
+logger = logging.getLogger("anonymizer.replace")
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class ReplacementWorkflow:
         preview_num_records: int | None = None,
     ) -> ReplacementResult:
         working_df = _filter_entities_by_label(dataframe, replace_method.filter_labels)
+        logger.debug("replacement strategy: %s on %d records", type(replace_method).__name__, len(working_df))
 
         if isinstance(replace_method, (Annotate, Redact, Hash)):
             local_df = apply_local_replace_strategy(working_df, strategy=replace_method)

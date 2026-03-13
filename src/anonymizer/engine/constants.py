@@ -122,9 +122,9 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
     "fax_number": ["326-316-9410", "(512) 876-4321", "(212) 555-6789", "+1-800-555-0123"],
     "county": ["Los Angeles County", "Harris County", "Cook County", "Clark County"],
     "gender": ["female", "male", "transgender", "non-binary"],
-    "sexuality": ["straight", "gay", "lesbian", "bisexual"],
+    "sexuality": ["homosexual", "heterosexual", "gay", "lesbian"],
     "political_view": ["Republican", "Democrat", "Blue Dog Democrat", "Tea Party"],
-    "race_ethnicity": ["white", "Korean", "Hispanic", "Italian"],
+    "race_ethnicity": ["white", "African-American", "Korean", "Hispanic"],
     "religious_belief": ["Christian", "Protestant", "Church of England", "Buddhist"],
     "language": ["English", "Spanish", "Mandarin", "Tagalog"],
     "blood_type": ["A+", "B+", "O positive", "AB-"],
@@ -135,3 +135,13 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
 }
 
 DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
+
+
+# ---------------------------------------------------------------------------
+# Prompt utilities
+# ---------------------------------------------------------------------------
+
+
+def _jinja(col: str) -> str:
+    """Wrap a column name in Jinja2 template syntax for use in NDD prompts."""
+    return "{{ " + col + " }}"
