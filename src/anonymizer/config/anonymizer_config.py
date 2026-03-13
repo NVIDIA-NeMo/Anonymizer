@@ -47,7 +47,11 @@ class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
     entity_labels: list[str] | None = Field(
-        default=None, description="Additional entity labels to detect with GLiNER beyond the built-in set."
+        default=None,
+        description=(
+            "Labels to detect. None uses the built-in default detection label set. "
+            "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
+        ),
     )
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
@@ -58,7 +62,7 @@ class Detect(BaseModel):
     def validate_entity_labels(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
-        cleaned = [label.strip() for label in value if label.strip()]
+        cleaned = [label.strip().lower() for label in value if label.strip()]
         deduped = sorted(set(cleaned))
         if len(deduped) != len(cleaned):
             logger.warning("entity_labels contained duplicates, removed automatically.")

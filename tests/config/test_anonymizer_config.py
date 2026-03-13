@@ -62,22 +62,22 @@ def test_redact_allows_constant_template() -> None:
     assert strategy.replace(text="Alice", label="first_name") == "****"
 
 
-def test_filter_labels_defaults_to_none() -> None:
+def test_entity_labels_defaults_to_none() -> None:
     config = AnonymizerConfig(replace=Redact())
-    assert config.replace.filter_labels is None
+    assert config.detect.entity_labels is None
 
 
-def test_filter_labels_accepts_list() -> None:
-    config = AnonymizerConfig(replace=Redact(filter_labels=["FIRST_NAME", "email"]))
-    assert set(config.replace.filter_labels) == {"first_name", "email"}
+def test_entity_labels_accepts_list() -> None:
+    config = AnonymizerConfig(detect={"entity_labels": ["FIRST_NAME", "email"]}, replace=Redact())
+    assert set(config.detect.entity_labels) == {"first_name", "email"}
 
 
-def test_filter_labels_strips_whitespace() -> None:
-    config = AnonymizerConfig(replace=Redact(filter_labels=["  first_name ", "email"]))
-    assert "first_name" in config.replace.filter_labels
-    assert "email" in config.replace.filter_labels
+def test_entity_labels_strips_whitespace() -> None:
+    config = AnonymizerConfig(detect={"entity_labels": ["  first_name ", "email"]}, replace=Redact())
+    assert "first_name" in config.detect.entity_labels
+    assert "email" in config.detect.entity_labels
 
 
-def test_filter_labels_deduplicates() -> None:
-    config = AnonymizerConfig(replace=Redact(filter_labels=["email", "email"]))
-    assert config.replace.filter_labels == ["email"]
+def test_entity_labels_deduplicates() -> None:
+    config = AnonymizerConfig(detect={"entity_labels": ["email", "email"]}, replace=Redact())
+    assert config.detect.entity_labels == ["email"]
