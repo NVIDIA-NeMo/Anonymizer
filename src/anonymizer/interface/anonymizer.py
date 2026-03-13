@@ -165,6 +165,12 @@ class Anonymizer:
                 config.detect.entity_labels
                 or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
             )
+        else:
+            logger.info(
+                "detection labels in scope: %s",
+                config.detect.entity_labels
+                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
+            )
 
         effective_records = num_records
         if preview_num_records is not None:
