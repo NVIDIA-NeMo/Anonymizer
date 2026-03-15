@@ -29,9 +29,9 @@ class RewriteModelSelection(BaseModel):
     meaning_extractor: str
     qa_generator: str
     rewriter: str
-    evaluator: str  # QA re-answering on rewritten text (reading comprehension)
-    repairer: str  # targeted repair when privacy leakage is detected (generation)
-    judge: str  # final holistic evaluation: privacy + quality + naturalness
+    evaluator: str
+    repairer: str
+    judge: str
 
 
 class ModelSelection(BaseModel):
