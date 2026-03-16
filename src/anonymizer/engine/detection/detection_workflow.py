@@ -347,9 +347,9 @@ What to DROP:
 - Filenames that are system executables or binaries (e.g., ending in .exe, .dll, .sys).
 
 PARTIAL-TOKEN RULE (HARD DROP):
-- If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore, hyphen with no whitespace boundary), DROP it.
-- A contiguous token means adjacent letters, digits, underscore, or hyphen with no whitespace boundary.
-- If characters immediately before or after the tagged span are alphanumeric, underscore, or hyphen, the tag is a partial token and must be dropped.
+- If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore with no whitespace boundary), DROP it.
+- A contiguous token means adjacent letters, digits, or underscore with no whitespace boundary.
+- If characters immediately before or after the tagged span are alphanumeric, or underscore, the tag is a partial token and must be dropped.
 - Example:
     {%- if <<TAG_NOTATION>> == "xml" -%}
     "internal_<unique_id>procID</unique_id>_id" → drop, because "procID" is inside "internal_procID_id"
