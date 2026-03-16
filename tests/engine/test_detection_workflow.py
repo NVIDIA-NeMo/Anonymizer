@@ -358,7 +358,8 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "You MUST fill in a decision for EVERY entry in the template" in prompt
     assert "Return ONLY the entries from the template" in prompt
     assert 'The word "straight" rarely has the label "sexuality"' in prompt
-    assert 'If any tagging notation captures only "dem" from "demeanor"' in prompt
+    assert "PARTIAL-TOKEN RULE (HARD DROP):" in prompt
+    assert '"((SENSITIVE:political_view|dem))eanor" → drop, because "dem" is inside "demeanor"' in prompt
     assert 'The entity label "occupation" refers only to a specific paid job title or profession' in prompt
 
 

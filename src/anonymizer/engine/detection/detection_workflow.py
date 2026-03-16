@@ -344,6 +344,33 @@ What to DROP:
 - Syntax/metadata in structured formats (field names, column headers, keywords)
 - Generic time references that are not specific dates (e.g., "today", "now", "soon")
 - Kinship and family-role terms used as relationship descriptors are not quasi-identifiers.
+- Filenames that are system executables or binaries (e.g., ending in .exe, .dll, .sys).
+
+PARTIAL-TOKEN RULE (HARD DROP):
+- If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore with no whitespace boundary), DROP it.
+- A contiguous token means adjacent letters, digits, or underscore with no whitespace boundary.
+- If characters immediately before or after the tagged span are alphanumeric, or underscore, the tag is a partial token and must be dropped.
+- Example:
+    {%- if <<TAG_NOTATION>> == "xml" -%}
+    "internal_<unique_id>procID</unique_id>_id" → drop, because "procID" is inside "internal_procID_id"
+    {%- elif <<TAG_NOTATION>> == "bracket" -%}
+    "internal_[[procID|unique_id]]_id" → drop, because "procID" is inside "internal_procID_id"
+    {%- elif <<TAG_NOTATION>> == "paren" -%}
+    "internal_((SENSITIVE:unique_id|procID))_id" → drop, because "procID" is inside "internal_procID_id"
+    {%- else -%}
+    "internal_<<SENSITIVE:unique_id>>procID<</SENSITIVE:unique_id>>_id" → drop, because "procID" is inside "internal_procID_id"
+    {%- endif -%}
+- Example:
+    {%- if <<TAG_NOTATION>> == "xml" -%}
+    "<political_view>dem</political_view>eanor" → drop, because "dem" is inside "demeanor"
+    {%- elif <<TAG_NOTATION>> == "bracket" -%}
+    "[[dem|political_view]]eanor" → drop, because "dem" is inside "demeanor"
+    {%- elif <<TAG_NOTATION>> == "paren" -%}
+    "((SENSITIVE:political_view|dem))eanor" → drop, because "dem" is inside "demeanor"
+    {%- else -%}
+    "<<SENSITIVE:political_view>>dem<</SENSITIVE:political_view>>eanor" → drop, because "dem" is inside "demeanor"
+    {%- endif -%}
+- Apply this even if the substring itself looks privacy-relevant.
 
 Additional rules:
 - Check context matches label (not just format)
@@ -353,7 +380,6 @@ Additional rules:
 - Numbers preceded by '$' are monetary values, not entities like age or account number
 - If classified as date_of_birth, verify context is appropriate; otherwise use date
 - The word "straight" rarely has the label "sexuality"; if the context doesn't absolutely imply "sexuality", drop this tag
-- If a tagged value is only part of a larger word, it almost always needs to be dropped. Example text: "Known for his calm demeanor". If any tagging notation captures only "dem" from "demeanor" and labels it as "political_view", drop that tag
 - The entity label "occupation" refers only to a specific paid job title or profession (e.g., "registered nurse", "software engineer", "retail salesperson", "teacher", "bartender"). Do NOT label generic roles, activities, or vague work-related nouns as occupations (e.g., "volunteer", "mentor", "guide", "partner", "supplier", "helper")
 - You MUST fill in a decision for EVERY entry in the template — do not skip any
 - Return ONLY the entries from the template — do not add new entries for entities not already in the template
@@ -365,9 +391,9 @@ Input text: My <first_name>name</first_name> is <first_name>Amy</first_name>, <a
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
 Input text: My [[name|first_name]] is [[Amy|first_name]], [[35|age]] in [[San Diego|country]], [[California|state]].
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: My ((PII:first_name|name)) is ((PII:first_name|Amy)), ((PII:age|35)) in ((PII:country|San Diego)), ((PII:state|California)).
+Input text: My ((SENSITIVE:first_name|name)) is ((SENSITIVE:first_name|Amy)), ((SENSITIVE:age|35)) in ((SENSITIVE:country|San Diego)), ((SENSITIVE:state|California)).
 {%- else -%}
-Input text: My <<PII:first_name>>name<</PII:first_name>> is <<PII:first_name>>Amy<</PII:first_name>>, <<PII:age>>35<</PII:age>> in <<PII:country>>San Diego<</PII:country>>, <<PII:state>>California<</PII:state>>.
+Input text: My <<SENSITIVE:first_name>>name<</SENSITIVE:first_name>> is <<SENSITIVE:first_name>>Amy<</SENSITIVE:first_name>>, <<SENSITIVE:age>>35<</SENSITIVE:age>> in <<SENSITIVE:country>>San Diego<</SENSITIVE:country>>, <<SENSITIVE:state>>California<</SENSITIVE:state>>.
 {%- endif -%}
 Template: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "age_16_18", "value": "35", "label": "age", "decision": null, "proposed_label": null, "reason": null}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": null, "proposed_label": null, "reason": null}, {"id": "state_33_43", "value": "California", "label": "state", "decision": null, "proposed_label": null, "reason": null}]}
 Output: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": "keep", "proposed_label": "", "reason": "real first name"}, {"id": "age_16_18", "value": "35", "label": "age", "decision": "keep", "proposed_label": "", "reason": "age quasi-identifier"}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "state_33_43", "value": "California", "label": "state", "decision": "keep", "proposed_label": "", "reason": "state quasi-identifier"}]}
@@ -394,7 +420,7 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
 
 We have the following type of data: <<DATA_SUMMARY>>
 
-Here are the known entity classes. Prefer labels from this list when they fit:
+Here are the known entity classes. Strongly prefer labels from this list when they fit:
 <<VALID_CLASSES>>
 
 If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id).
@@ -407,15 +433,21 @@ Rules:
   - Data: assigned values, cell contents, literals, user input
   Only tag data, never syntax
 
+Other information:
+- unique_id rules: unique_id's are never only one character long (ex: "6" is not a unique_id). They are never event names or real words all strung together (ex: "ProcessManagementEvent" is NOT a unique_id).
+- ipv4 label: This includes specific IP addresses as well as internal IP subnet ranges (ex: subnet=[224.0.0.0/4, 10.0.0.0/8]).
+- Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports (e.g., .pdf, .xlsx, .csv, .txt).
+- Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. Treat these extensions as non-sensitive system identifiers.
+
 Example:
 {%- if <<TAG_NOTATION>> == "xml" -%}
 Input text: My name is Amy Steier in <city>San Diego</city>.
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
 Input text: My name is Amy Steier in [[San Diego|city]].
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: My name is Amy Steier in ((PII:city|San Diego)).
+Input text: My name is Amy Steier in ((SENSITIVE:city|San Diego)).
 {%- else -%}
-Input text: My name is Amy Steier in <<PII:city>>San Diego<</PII:city>>.
+Input text: My name is Amy Steier in <<SENSITIVE:city>>San Diego<</SENSITIVE:city>>.
 {%- endif -%}
 Already-detected entities: [{"value": "San Diego", "label": "city"}]
 Output: {"entities": [{"value": "Amy", "label": "first_name", "reason": "first name"}, {"value": "Steier", "label": "last_name", "reason": "last name"}]}
@@ -481,9 +513,9 @@ Rules (strict)
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
    - Do NOT repeat any already-tagged entities, e.g., [[Alex|first_name]].
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-   - Do NOT repeat any already-tagged entities, e.g., ((PII:first_name|Alex)).
+   - Do NOT repeat any already-tagged entities, e.g., ((SENSITIVE:first_name|Alex)).
 {%- else -%}
-   - Do NOT repeat any already-tagged entities, e.g., <<PII:first_name>>Alex<</PII:first_name>>.
+   - Do NOT repeat any already-tagged entities, e.g., <<SENSITIVE:first_name>>Alex<</SENSITIVE:first_name>>.
 {%- endif -%}
    - Do NOT output verbatim spans from the text.
    - You MAY output structured attributes that are logically implied by the text,

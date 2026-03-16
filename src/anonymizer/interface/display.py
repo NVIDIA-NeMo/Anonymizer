@@ -94,9 +94,8 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
 
 def _resolve_display_entities(row: pd.Series) -> list[EntitySchema]:
     """Prefer the final entity set so preview matches replacement behavior."""
-    final_entities = EntitiesSchema.from_raw(row.get(COL_FINAL_ENTITIES, {})).entities
-    if final_entities:
-        return final_entities
+    if COL_FINAL_ENTITIES in row:
+        return EntitiesSchema.from_raw(row.get(COL_FINAL_ENTITIES, {})).entities
     return EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES, {})).entities
 
 
