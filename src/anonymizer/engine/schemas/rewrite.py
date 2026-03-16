@@ -41,7 +41,6 @@ Utility: generate_privacy_qa_from_disposition — template-based, no LLM require
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -357,36 +356,3 @@ class JudgeEvaluationSchema(BaseModel):
     privacy: JudgeScoreSchema
     quality: JudgeScoreSchema
     naturalness: JudgeScoreSchema
-
-
-# ---------------------------------------------------------------------------
-# Utility: template-based privacy QA generation (no LLM required)
-# TODO(#32): move to engine/rewrite/qa_generation.py once that workflow owns it
-# ---------------------------------------------------------------------------
-
-
-def generate_privacy_qa_from_disposition(
-    sensitivity_disposition: SensitivityDispositionSchema | dict[str, Any],
-) -> PrivacyQAPairsSchema:
-    """Generate privacy QA questions from sensitivity disposition without an LLM call.
-
-    Produces one question per entity that needs protection:
-        "Can the {entity_label} '{entity_value}' be deduced from the rewritten text?"
-    All questions expect the answer "no" — a "yes" answer indicates a privacy leak.
-    """
-    if isinstance(sensitivity_disposition, dict):
-        sensitivity_disposition = SensitivityDispositionSchema.model_validate(sensitivity_disposition)
-
-    questions = []
-    for idx, entity in enumerate(sensitivity_disposition.protected_entities, start=1):
-        questions.append(
-            PrivacyQuestionSchema(
-                id=idx,
-                question=f"Can the {entity.entity_label} '{entity.entity_value}' be deduced from the rewritten text?",
-                sensitivity=SensitivityLevel(entity.sensitivity),
-                entity_label=entity.entity_label,
-                entity_value=entity.entity_value,
-                category=EntityCategory(entity.category),
-            )
-        )
-    return PrivacyQAPairsSchema(items=questions)
