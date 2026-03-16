@@ -289,6 +289,28 @@ def test_render_record_html_prefers_final_entities_for_filtered_replace_preview(
     assert "| city" not in result
 
 
+def test_render_record_html_does_not_fallback_to_detected_when_final_entities_empty() -> None:
+    row = pd.Series(
+        {
+            "text": "BackupAgent config_path=/opt/app/config.yaml",
+            "text_replaced": "BackupAgent config_path=/opt/app/config.yaml",
+            COL_DETECTED_ENTITIES: {
+                "entities": [
+                    {"value": "BackupAgent", "label": "process_name", "start_position": 0, "end_position": 11},
+                    {"value": "/opt/app/config.yaml", "label": "file_path", "start_position": 24, "end_position": 44},
+                ]
+            },
+            COL_FINAL_ENTITIES: {"entities": []},
+            COL_REPLACEMENT_MAP: {"replacements": []},
+        }
+    )
+
+    result = render_record_html(row)
+
+    assert "| process_name" not in result
+    assert "| file_path" not in result
+
+
 def test_render_record_html_replaced_tags_positioned_correctly_with_case_mismatch() -> None:
     """Tags in replaced text must not drift when entity value case differs from actual text."""
     row = pd.Series(

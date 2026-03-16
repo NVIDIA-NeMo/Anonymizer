@@ -17,11 +17,9 @@ from anonymizer.config.replace_strategies import (
     ReplaceMethod,
     Substitute,
 )
-from anonymizer.engine.constants import COL_FINAL_ENTITIES
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
-from anonymizer.engine.schemas import EntitiesSchema
 
 logger = logging.getLogger("anonymizer.replace")
 
@@ -49,18 +47,17 @@ class ReplacementWorkflow:
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
     ) -> ReplacementResult:
-        working_df = _filter_entities_by_label(dataframe, replace_method.filter_labels)
-        logger.debug("replacement strategy: %s on %d records", type(replace_method).__name__, len(working_df))
+        logger.debug("replacement strategy: %s on %d records", type(replace_method).__name__, len(dataframe))
 
         if isinstance(replace_method, (Annotate, Redact, Hash)):
-            local_df = apply_local_replace_strategy(working_df, strategy=replace_method)
+            local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
             return ReplacementResult(dataframe=local_df, failed_records=[])
 
         if isinstance(replace_method, Substitute):
             if self._llm_workflow is None:
                 raise ValueError("Substitute requires an llm_workflow, but none was provided.")
             map_result = self._llm_workflow.generate_map_only(
-                working_df,
+                dataframe,
                 model_configs=model_configs,
                 selected_models=selected_models,
                 instructions=replace_method.instructions,
@@ -70,23 +67,3 @@ class ReplacementWorkflow:
             return ReplacementResult(dataframe=replaced_df, failed_records=map_result.failed_records)
 
         raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
-
-
-def _filter_entities_by_label(
-    dataframe: pd.DataFrame,
-    filter_labels: list[str] | None,
-    entities_column: str = COL_FINAL_ENTITIES,
-) -> pd.DataFrame:
-    """Keep only entities whose label is in filter_labels. No-op when filter_labels is None."""
-    if filter_labels is None:
-        return dataframe
-    allowed = {label.lower() for label in filter_labels}
-    filtered = dataframe.copy()
-    filtered[entities_column] = filtered[entities_column].apply(
-        lambda raw: _filter_entities(EntitiesSchema.from_raw(raw), allowed).model_dump()
-    )
-    return filtered
-
-
-def _filter_entities(entities: EntitiesSchema, allowed: set[str]) -> EntitiesSchema:
-    return EntitiesSchema(entities=[e for e in entities.entities if e.label.lower() in allowed])

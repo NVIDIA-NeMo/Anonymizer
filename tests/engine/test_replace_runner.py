@@ -15,7 +15,7 @@ from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
-from anonymizer.engine.replace.replace_runner import ReplacementWorkflow, _filter_entities_by_label
+from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.replace.strategies import apply_replacement_map
 from anonymizer.engine.schemas import EntitiesSchema
 
@@ -176,27 +176,7 @@ def test_hash_strategy_executes(
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"
 
 
-# --- filter_labels ---
-
-
-def test_filter_labels_filters_to_matching_entities(
-    stub_dataframe_with_entities: pd.DataFrame,
-    stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
-) -> None:
-    runner = ReplacementWorkflow()
-    result = runner.run(
-        stub_dataframe_with_entities,
-        replace_method=Redact(filter_labels=["first_name"]),
-        model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
-    )
-    replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
-    assert "[REDACTED_FIRST_NAME]" in replaced
-    assert "Acme" in replaced
-
-
-def test_filter_labels_none_replaces_all(
+def test_redact_none_replaces_all(
     stub_dataframe_with_entities: pd.DataFrame,
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
@@ -211,64 +191,6 @@ def test_filter_labels_none_replaces_all(
     replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
     assert "Alice" not in replaced
     assert "Acme" not in replaced
-
-
-def test_filter_labels_case_insensitive(
-    stub_dataframe_with_entities: pd.DataFrame,
-    stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
-) -> None:
-    runner = ReplacementWorkflow()
-    result = runner.run(
-        stub_dataframe_with_entities,
-        replace_method=Redact(filter_labels=["FIRST_NAME"]),
-        model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
-    )
-    replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
-    assert "[REDACTED_FIRST_NAME]" in replaced
-    assert "Acme" in replaced
-
-
-def test_filter_labels_no_match_leaves_text_unchanged(
-    stub_dataframe_with_entities: pd.DataFrame,
-    stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
-) -> None:
-    runner = ReplacementWorkflow()
-    result = runner.run(
-        stub_dataframe_with_entities,
-        replace_method=Redact(filter_labels=["email"]),
-        model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
-    )
-    replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
-    assert replaced == "Alice works at Acme"
-
-
-def test_filter_entities_preserves_original_column() -> None:
-    """Full detection trace must not be mutated."""
-    entities = [
-        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
-    ]
-    input_df = pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": entities}]})
-    filtered_df = _filter_entities_by_label(input_df, filter_labels=["first_name"])
-    assert len(filtered_df[COL_FINAL_ENTITIES].iloc[0]["entities"]) == 1
-    assert len(input_df[COL_FINAL_ENTITIES].iloc[0]["entities"]) == 2
-
-
-def test_filter_entities_bare_list_is_treated_as_empty() -> None:
-    """Bare list payloads are non-canonical and ignored."""
-    entities = [
-        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-        {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
-    ]
-    input_df = pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [entities]})
-    filtered_df = _filter_entities_by_label(input_df, filter_labels=["first_name"])
-    result = filtered_df[COL_FINAL_ENTITIES].iloc[0]
-    assert isinstance(result, dict)
-    assert result["entities"] == []
 
 
 # --- detection → replace integration ---

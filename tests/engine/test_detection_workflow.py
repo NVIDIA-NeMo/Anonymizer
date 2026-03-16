@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_LATENT_ENTITIES,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
@@ -26,7 +27,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_augment_prompt,
     _get_latent_prompt,
     _get_validation_prompt,
-    _merge_labels,
+    _resolve_detection_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import load_default_model_selection, resolve_model_alias
@@ -322,10 +323,20 @@ def test_resolve_model_alias_reads_from_selection_model() -> None:
     assert resolve_model_alias("entity_validator", selection) == defaults.entity_validator
 
 
-def test_merge_labels_normalizes_and_deduplicates_custom_labels() -> None:
-    merged = _merge_labels(["  custom_label  ", "CUSTOM_LABEL", "custom_label"])
-    assert "custom_label" in merged
-    assert merged.count("custom_label") == 1
+def test_resolve_detection_labels_none_uses_defaults() -> None:
+    merged = _resolve_detection_labels(None)
+    assert merged == DEFAULT_ENTITY_LABELS
+
+
+def test_resolve_detection_labels_does_not_append_defaults_when_custom_labels_provided() -> None:
+    merged = _resolve_detection_labels(["custom_label"])
+    assert merged == ["custom_label"]
+
+
+def test_resolve_detection_labels_preserves_provided_labels_as_is() -> None:
+    # cleaning of whitespace and case normalization occur during config validation
+    labels = ["FIRST_NAME", " email "]
+    assert _resolve_detection_labels(labels) == labels
 
 
 def test_latent_prompt_uses_not_provided_defaults() -> None:
@@ -358,7 +369,8 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "You MUST fill in a decision for EVERY entry in the template" in prompt
     assert "Return ONLY the entries from the template" in prompt
     assert 'The word "straight" rarely has the label "sexuality"' in prompt
-    assert 'If any tagging notation captures only "dem" from "demeanor"' in prompt
+    assert "PARTIAL-TOKEN RULE (HARD DROP):" in prompt
+    assert '"((SENSITIVE:political_view|dem))eanor" → drop, because "dem" is inside "demeanor"' in prompt
     assert 'The entity label "occupation" refers only to a specific paid job title or profession' in prompt
 
 

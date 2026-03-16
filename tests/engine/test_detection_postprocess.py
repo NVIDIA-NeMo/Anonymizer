@@ -513,11 +513,11 @@ def test_build_tagged_text_uses_paren_notation_when_xml_and_bracket_conflict() -
 
 
 def test_build_tagged_text_uses_sentinel_notation_when_others_conflict() -> None:
-    text = "<div>[[Alice]] ((PII:first_name|Alice)) is here</div>"
+    text = "<div>[[Alice]] ((SENSITIVE:first_name|Alice)) is here</div>"
     entities = [EntitySpan("id1", "Alice", "first_name", 7, 12, 1.0, "detector")]
     tagged = build_tagged_text(text=text, entities=entities)
-    assert "<<PII:first_name>>Alice<</PII:first_name>>" in tagged
-    assert tagged.startswith("<div>[[<<PII:first_name>>Alice<</PII:first_name>>]]")
+    assert "<<SENSITIVE:first_name>>Alice<</SENSITIVE:first_name>>" in tagged
+    assert tagged.startswith("<div>[[<<SENSITIVE:first_name>>Alice<</SENSITIVE:first_name>>]]")
     assert "<first_name>Alice</first_name>" not in tagged
     assert "[[Alice|first_name]]" not in tagged
 
