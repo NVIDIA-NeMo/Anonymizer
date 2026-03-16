@@ -42,18 +42,35 @@ class LlmReplaceWorkflow:
         replace_alias = resolve_model_alias("replacement_generator", selected_models)
 
         working_df = dataframe.copy()
-        working_df["_entity_examples"] = working_df.apply(
-            lambda row: _create_entity_examples(EntitiesByValueSchema.from_raw(row.get(entities_column, {}))),
-            axis=1,
-        )
-        working_df["_entities_for_replace"] = working_df.apply(
-            lambda row: _enrich_entities_for_template(EntitiesByValueSchema.from_raw(row.get(entities_column, {}))),
-            axis=1,
-        )
+        working_df["_anonymizer_row_order"] = range(len(working_df))
+
+        # Parse the per-row entity payload once, then reuse it for prompt inputs.
+        parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
+        working_df["_entity_examples"] = parsed_entities.apply(_create_entity_examples)
+        working_df["_entities_for_replace"] = parsed_entities.apply(_enrich_entities_for_template)
         working_df["_entities_for_replace_json"] = working_df["_entities_for_replace"].apply(json.dumps)
 
+        # Rows with an empty entity list should bypass replacement-map generation.
+        has_entities_mask = working_df["_entities_for_replace"].apply(bool)
+
+        # Passthrough rows get an empty replacement map immediately.
+        passthrough_rows = working_df[~has_entities_mask].copy()
+        passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
+
+        if not has_entities_mask.any():
+            passthrough_rows = (
+                passthrough_rows.sort_values("_anonymizer_row_order")
+                .drop(columns="_anonymizer_row_order")
+                .reset_index(drop=True)
+            )
+            passthrough_rows.attrs = {**dataframe.attrs}
+            return LlmReplaceResult(dataframe=passthrough_rows, failed_records=[])
+
+        # Only rows with actual entities are sent to the LLM.
+        entity_rows = working_df[has_entities_mask].copy()
+
         run_result = self._adapter.run_workflow(
-            working_df,
+            entity_rows,
             model_configs=model_configs,
             columns=[
                 LLMStructuredColumnConfig(
@@ -70,6 +87,22 @@ class LlmReplaceWorkflow:
             preview_num_records=preview_num_records,
         )
         output_df = run_result.dataframe.copy()
+        # Drop any LLM-returned replacements that were not requested for this row.
+        output_df[COL_REPLACEMENT_MAP] = output_df.apply(
+            lambda row: _filter_replacement_map_to_input_entities(
+                raw_map=row.get(COL_REPLACEMENT_MAP, {"replacements": []}),
+                parsed_entities=EntitiesByValueSchema.from_raw(row.get(entities_column, {})),
+            ),
+            axis=1,
+        )
+
+        # Recombine LLM-processed rows with passthrough rows in original order.
+        output_df = (
+            pd.concat([output_df, passthrough_rows], axis=0)
+            .sort_values("_anonymizer_row_order")
+            .drop(columns="_anonymizer_row_order")
+            .reset_index(drop=True)
+        )
         # Carry pipeline metadata (e.g. original_text_column) through to downstream steps.
         # pandas .attrs is experimental and not preserved through merge/concat/groupby,
         # but is preserved through copy which is all we do here.
@@ -93,6 +126,36 @@ def _create_entity_examples(parsed: EntitiesByValueSchema) -> str:
         label: _EXAMPLE_LOOKUP.get(label, "(generate realistic synthetic replacement)") for label in sorted(labels)
     }
     return json.dumps(examples, ensure_ascii=True)
+
+
+def _filter_replacement_map_to_input_entities(
+    *,
+    raw_map: object,
+    parsed_entities: EntitiesByValueSchema,
+) -> dict[str, list[dict[str, str]]]:
+    """Keep only replacement entries that correspond to actual requested entities."""
+    if hasattr(raw_map, "model_dump"):
+        raw_map = raw_map.model_dump(mode="python")
+    if not isinstance(raw_map, dict):
+        return {"replacements": []}
+
+    parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
+
+    allowed_pairs = {
+        (entity.value, label)
+        for entity in parsed_entities.entities_by_value
+        for label in entity.labels
+        if entity.value and label
+    }
+    filtered: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for replacement in parsed_map.replacements:
+        key = (replacement.original, replacement.label)
+        if key not in allowed_pairs or key in seen:
+            continue
+        seen.add(key)
+        filtered.append(replacement.model_dump())
+    return {"replacements": filtered}
 
 
 def _get_replacement_mapping_prompt(*, entities_column: str, instructions: str | None = None) -> str:
