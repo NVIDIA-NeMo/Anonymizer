@@ -24,6 +24,7 @@ def test_generate_map_only_preserves_input_attrs(
             {
                 "text": ["Alice works at Acme"],
                 COL_REPLACEMENT_MAP: [{"replacements": []}],
+                "_anonymizer_row_order": [0],
             }
         ),
         failed_records=[],
@@ -84,6 +85,7 @@ def test_generate_map_only_filters_hallucinated_replacements(
                 COL_TEXT: ["Alice works at Acme"],
                 COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
                 "tagged_text": ["<<PII:first_name>>Alice<</PII:first_name>> works at Acme"],
+                "_anonymizer_row_order": [0],
                 COL_REPLACEMENT_MAP: [
                     {
                         "replacements": [
@@ -117,7 +119,7 @@ def test_generate_map_only_filters_hallucinated_replacements(
     }
 
 
-def test_generate_map_only_preserves_original_row_order_with_mixed_rows(
+def test_generate_map_only_preserves_original_anonymizer_row_order_with_mixed_rows(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
@@ -128,7 +130,7 @@ def test_generate_map_only_preserves_original_row_order_with_mixed_rows(
                 COL_TEXT: ["Alice works at Acme"],
                 COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
                 "tagged_text": ["<<PII:first_name>>Alice<</PII:first_name>> works at Acme"],
-                "_row_order": [1],
+                "_anonymizer_row_order": [1],
                 COL_REPLACEMENT_MAP: [
                     {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
                 ],

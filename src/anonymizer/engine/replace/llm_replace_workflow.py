@@ -42,7 +42,7 @@ class LlmReplaceWorkflow:
         replace_alias = resolve_model_alias("replacement_generator", selected_models)
 
         working_df = dataframe.copy()
-        working_df["_row_order"] = range(len(working_df))
+        working_df["_anonymizer_row_order"] = range(len(working_df))
 
         # Parse the per-row entity payload once, then reuse it for prompt inputs.
         parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
@@ -57,14 +57,17 @@ class LlmReplaceWorkflow:
         passthrough_rows = working_df[~has_entities_mask].copy()
         passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
 
-        # Only rows with actual entities are sent to the LLM.
-        entity_rows = working_df[has_entities_mask].copy()
-        if entity_rows.empty:
+        if not has_entities_mask.any():
             passthrough_rows = (
-                passthrough_rows.sort_values("_row_order").drop(columns="_row_order").reset_index(drop=True)
+                passthrough_rows.sort_values("_anonymizer_row_order")
+                .drop(columns="_anonymizer_row_order")
+                .reset_index(drop=True)
             )
             passthrough_rows.attrs = {**dataframe.attrs}
             return LlmReplaceResult(dataframe=passthrough_rows, failed_records=[])
+
+        # Only rows with actual entities are sent to the LLM.
+        entity_rows = working_df[has_entities_mask].copy()
 
         run_result = self._adapter.run_workflow(
             entity_rows,
@@ -96,8 +99,8 @@ class LlmReplaceWorkflow:
         # Recombine LLM-processed rows with passthrough rows in original order.
         output_df = (
             pd.concat([output_df, passthrough_rows], axis=0)
-            .sort_values("_row_order")
-            .drop(columns="_row_order")
+            .sort_values("_anonymizer_row_order")
+            .drop(columns="_anonymizer_row_order")
             .reset_index(drop=True)
         )
         # Carry pipeline metadata (e.g. original_text_column) through to downstream steps.
@@ -136,10 +139,7 @@ def _filter_replacement_map_to_input_entities(
     if not isinstance(raw_map, dict):
         return {"replacements": []}
 
-    try:
-        parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
-    except Exception:
-        return {"replacements": []}
+    parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
 
     allowed_pairs = {
         (entity.value, label)
