@@ -63,6 +63,8 @@ class Detect(BaseModel):
         if value is None:
             return value
         cleaned = [label.strip().lower() for label in value if label.strip()]
+        if not cleaned:
+            raise ValueError("entity_labels must not be empty. Use None to detect all default labels.")
         deduped = sorted(set(cleaned))
         if len(deduped) != len(cleaned):
             logger.warning("entity_labels contained duplicates, removed automatically.")

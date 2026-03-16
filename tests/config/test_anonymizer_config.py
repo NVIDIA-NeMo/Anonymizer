@@ -81,3 +81,13 @@ def test_entity_labels_strips_whitespace() -> None:
 def test_entity_labels_deduplicates() -> None:
     config = AnonymizerConfig(detect={"entity_labels": ["email", "email"]}, replace=Redact())
     assert config.detect.entity_labels == ["email"]
+
+
+def test_entity_labels_empty_list_raises() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        AnonymizerConfig(detect={"entity_labels": []}, replace=Redact())
+
+
+def test_entity_labels_whitespace_only_raises() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        AnonymizerConfig(detect={"entity_labels": ["  ", ""]}, replace=Redact())
