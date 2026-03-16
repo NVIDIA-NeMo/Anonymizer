@@ -88,7 +88,7 @@ class EntityDetectionWorkflow:
         entities the detector may have missed, and produces final standoff
         entity spans with overlap resolution.
         """
-        labels = _merge_labels(entity_labels)
+        labels = _resolve_detection_labels(entity_labels)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -181,7 +181,7 @@ class EntityDetectionWorkflow:
         Runs after ``detect_and_validate_entities`` when rewrite mode is
         enabled. Uses an LLM to identify entities inferable from context.
         """
-        labels = _merge_labels(entity_labels)
+        labels = _resolve_detection_labels(entity_labels)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -294,13 +294,10 @@ class EntityDetectionWorkflow:
         return resolved
 
 
-def _merge_labels(entity_labels: list[str] | None) -> list[str]:
-    merged = list(DEFAULT_ENTITY_LABELS)
-    for label in entity_labels or []:
-        cleaned = label.strip().lower()
-        if cleaned and cleaned not in merged:
-            merged.append(cleaned)
-    return merged
+def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
+    if entity_labels is None:
+        return list(DEFAULT_ENTITY_LABELS)
+    return list(entity_labels)
 
 
 def _format_label_examples(labels: list[str]) -> str:

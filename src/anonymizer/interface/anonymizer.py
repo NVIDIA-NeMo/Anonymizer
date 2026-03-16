@@ -18,7 +18,13 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerInput,
 )
 from anonymizer.config.replace_strategies import Substitute
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_REPLACED_TEXT, COL_TAGGED_TEXT, COL_TEXT
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_REPLACED_TEXT,
+    COL_TAGGED_TEXT,
+    COL_TEXT,
+    DEFAULT_ENTITY_LABELS,
+)
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
@@ -156,7 +162,14 @@ class Anonymizer:
             logger.debug(
                 "detection config: threshold=%.2f, labels=%s",
                 config.detect.gliner_threshold,
-                config.detect.entity_labels or "(default)",
+                config.detect.entity_labels
+                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
+            )
+        else:
+            logger.info(
+                "detection labels in scope: %s",
+                config.detect.entity_labels
+                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
             )
 
         effective_records = num_records

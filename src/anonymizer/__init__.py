@@ -7,6 +7,7 @@ __version__ = "0.1.0"
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS as _DEFAULT_ENTITY_LABELS
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import (
     AnonymizerError,
@@ -16,6 +17,10 @@ from anonymizer.interface.errors import (
 )
 from anonymizer.logging import LoggingConfig, configure_logging
 
+# Export as an immutable public constant so callers can inspect defaults
+# without mutating the internal source-of-truth list.
+DEFAULT_ENTITY_LABELS: tuple[str, ...] = tuple(_DEFAULT_ENTITY_LABELS)
+
 __all__ = [
     "Anonymizer",
     "AnonymizerConfig",
@@ -23,6 +28,7 @@ __all__ = [
     "AnonymizerInput",
     "AnonymizerIOError",
     "Annotate",
+    "DEFAULT_ENTITY_LABELS",
     "Detect",
     "Hash",
     "InvalidConfigError",
