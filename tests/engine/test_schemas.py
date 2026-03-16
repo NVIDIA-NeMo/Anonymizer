@@ -298,7 +298,6 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_all_low()
     assert schema.format_for_rewrite_context() == "No medium or high sensitivity entities identified."
 
 
-
 def test_quality_answers_use_integer_ids() -> None:
     answers = QualityAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "A concise answer"}]})
     assert answers.answers[0].id == 1
