@@ -53,11 +53,8 @@ COL_FINAL_ENTITIES = "final_entities"
 
 COL_DOMAIN = "_domain"
 COL_DOMAIN_CONFIDENCE = "_domain_confidence"
-COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
-COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
 COL_MEANING_UNITS = "_meaning_units"
-COL_MEANING_UNITS_SERIALIZED = "_meaning_units_serialized"
 COL_QUALITY_QA = "_quality_qa"
 COL_PRIVACY_QA = "_privacy_qa"
 COL_REWRITTEN_TEXT = "_rewritten_text"  # pre-repair intermediate; renamed to {text_col}_rewritten in user output
