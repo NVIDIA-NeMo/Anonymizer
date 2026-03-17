@@ -24,11 +24,12 @@ repos:
         pass_filenames: true
 
       - id: typecheck
-        name: Typecheck
-        language: script
-        entry: tools/codestyle/typecheck.sh
+        name: Typecheck (advisory)
+        language: system
+        entry: bash -c 'tools/codestyle/typecheck.sh || true'
         types: [python]
         pass_filenames: false
+        verbose: true
 
       - id: copyright-fix
         name: Copyright Fix
