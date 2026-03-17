@@ -54,6 +54,9 @@ COL_FINAL_ENTITIES = "final_entities"
 COL_DOMAIN = "_domain"
 COL_DOMAIN_CONFIDENCE = "_domain_confidence"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
+COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
+COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
+COL_FULL_REWRITE = "_full_rewrite"
 COL_MEANING_UNITS = "_meaning_units"
 COL_QUALITY_QA = "_quality_qa"
 COL_PRIVACY_QA = "_privacy_qa"
@@ -68,6 +71,7 @@ COL_UTILITY_SCORE = "utility_score"
 COL_LEAKAGE_MASS = "leakage_mass"
 COL_ANY_HIGH_LEAKED = "any_high_leaked"
 COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
+COL_REWRITE_GENERATION_ROW_ORDER = "_rewrite_generation_row_order"
 
 # ---------------------------------------------------------------------------
 # Entity labels and examples
@@ -142,6 +146,11 @@ DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
 # ---------------------------------------------------------------------------
 
 
-def _jinja(col: str) -> str:
-    """Wrap a column name in Jinja2 template syntax for use in NDD prompts."""
-    return "{{ " + col + " }}"
+def _jinja(col: str, *, key: str | None = None) -> str:
+    """Wrap a column name in Jinja2 template syntax for use in NDD prompts.
+
+    When *key* is given the expression becomes ``{{ col['key'] }}``,
+    providing a single grep-able call site for nested schema access.
+    """
+    expr = col if key is None else f"{col}['{key}']"
+    return "{{ " + expr + " }}"
