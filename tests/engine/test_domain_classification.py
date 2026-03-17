@@ -10,6 +10,7 @@ from anonymizer.engine.constants import COL_DOMAIN, COL_DOMAIN_SUPPLEMENT, COL_T
 from anonymizer.engine.rewrite.domain_classification import (
     DOMAIN_SUPPLEMENT_MAP,
     DomainClassificationWorkflow,
+    _DOMAIN_LIST,
     _enrich_domain,
     _get_domain_classification_prompt,
 )
@@ -39,6 +40,15 @@ def test_enrich_domain_accepts_schema_instance() -> None:
     assert result[COL_DOMAIN_SUPPLEMENT] == DOMAIN_SUPPLEMENT_MAP[Domain.BIOGRAPHY]
 
 
+def test_enrich_domain_requires_domain_column() -> None:
+    try:
+        _enrich_domain({})
+    except KeyError as exc:
+        assert exc.args == (COL_DOMAIN,)
+    else:
+        raise AssertionError("Expected KeyError when COL_DOMAIN is missing")
+
+
 def test_domain_classification_prompt_includes_text_jinja_placeholder() -> None:
     prompt = _get_domain_classification_prompt()
     assert _jinja(COL_TEXT) in prompt
@@ -59,3 +69,8 @@ def test_domain_classification_prompt_omits_data_context_when_none() -> None:
 def test_domain_supplement_map_covers_all_domains() -> None:
     for domain in Domain:
         assert domain in DOMAIN_SUPPLEMENT_MAP, f"Missing supplement for domain: {domain}"
+
+
+def test_domain_list_covers_all_domains() -> None:
+    listed_domains = {domain for domain, _desc in _DOMAIN_LIST}
+    assert listed_domains == set(Domain)

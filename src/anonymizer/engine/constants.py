@@ -52,7 +52,6 @@ COL_FINAL_ENTITIES = "final_entities"
 # ---------------------------------------------------------------------------
 
 COL_DOMAIN = "_domain"
-COL_DOMAIN_CONFIDENCE = "_domain_confidence"
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
 COL_MEANING_UNITS = "_meaning_units"
