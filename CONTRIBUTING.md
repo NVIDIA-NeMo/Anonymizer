@@ -24,9 +24,10 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 
 - Python 3.11+
 - Git
+- [uv](https://docs.astral.sh/uv/) - Python package manager
 - [gh](https://cli.github.com/) - GitHub CLI (optional, for PR workflows)
 
-> **Note:** Other tools like [uv](https://docs.astral.sh/uv/), [ruff](https://docs.astral.sh/ruff/), and [ty](https://github.com/astral-sh/ty) are installed automatically by `make bootstrap-tools`.
+> **Note:** Dev tools like [ruff](https://docs.astral.sh/ruff/) and [ty](https://github.com/astral-sh/ty) are installed automatically by `uv sync --group dev`.
 
 ### Setup
 
@@ -38,12 +39,12 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
   ```
 3. Set up the development environment:
   ```bash
-   # Install development tools (uv, ruff, ty, yq, etc.)
-   make bootstrap-tools
+   # Install Python dependencies (includes ruff, ty, pre-commit, pytest)
+   make bootstrap           # dev dependencies
+   make install-dev-docs    # dev + docs dependencies (needed for make docs-serve)
 
-   # Install Python dependencies (choose one)
-   make bootstrap        # Full dependencies
-   make bootstrap dev    # Minimal dev dependencies only
+   # Install pre-commit hooks
+   make install-pre-commit
   ```
 4. Add the upstream remote:
   ```bash
@@ -252,17 +253,17 @@ See the full [DCO](DCO) file for details.
 ### Running Tests
 
 ```bash
-# Run unit tests (excludes slow and e2e)
+# Run unit tests
 make test
 
-# Run all tests including slow tests (excludes e2e)
-make test-slow
+# Run tests with coverage report
+make coverage
 
 # Run end-to-end tests
 make test-e2e
 
-# Run specific test files directly
-uv run pytest tests/test_example.py
+# Run a specific test file
+uv run pytest tests/engine/test_detection_workflow.py
 ```
 
 ### Test Requirements
@@ -275,22 +276,22 @@ Before submitting a PR:
 
 ## Code Style
 
-### Formatting
+### Formatting and Checks
 
-We use [Ruff](https://docs.astral.sh/ruff/) for code formatting and import sorting. The formatter runs on changed files against the `main` branch.
+We use [Ruff](https://docs.astral.sh/ruff/) for code formatting and import sorting, and [ty](https://github.com/astral-sh/ty) for type checking. Both run on changed files against `main`.
 
 ```bash
-# Format code and sort imports
+# Format code and sort imports (auto-fixes in place)
 make format
-```
 
-### Linting and Type Checking
+# Check formatting without modifying files (used in CI)
+make format-check
 
-We use [Ruff](https://docs.astral.sh/ruff/) for linting and [ty](https://github.com/astral-sh/ty) for type checking. Both run on changed files against `main`.
+# Type check with ty (advisory, non-blocking)
+make typecheck
 
-```bash
-# Run ruff linter (with auto-fix) and ty type checker
-make lint
+# Run all read-only checks (format-check + typecheck + lock-check)
+make check
 ```
 
 ### Pre-commit Hooks
@@ -298,10 +299,23 @@ make lint
 We recommend setting up pre-commit hooks to catch formatting, linting, and type issues before committing:
 
 ```bash
-pre-commit install
+make install-pre-commit
 ```
 
 This installs hooks that run Ruff (format + lint), ty type checking, and uv lock verification on each commit.
+
+> **Note:** If `pyproject.toml` changes and `uv.lock` is stale, the uv-lock hook regenerates `uv.lock` and then fails the commit. Run `git add uv.lock` and retry.
+
+### Documentation
+
+```bash
+# Start local docs server with live-reload
+make install-dev-docs    # first time only
+make docs-serve          # visit http://127.0.0.1:8000
+
+# Build docs locally (strict mode catches broken links)
+make docs-build
+```
 
 ---
 
