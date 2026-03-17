@@ -8,9 +8,9 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import COL_DOMAIN, COL_DOMAIN_SUPPLEMENT, COL_TEXT, _jinja
 from anonymizer.engine.rewrite.domain_classification import (
+    _DOMAIN_LIST,
     DOMAIN_SUPPLEMENT_MAP,
     DomainClassificationWorkflow,
-    _DOMAIN_LIST,
     _enrich_domain,
     _get_domain_classification_prompt,
 )
