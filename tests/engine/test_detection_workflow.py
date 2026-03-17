@@ -361,7 +361,7 @@ def test_format_label_examples_handles_custom_labels_without_examples() -> None:
 
 
 def test_validation_prompt_includes_label_examples() -> None:
-    prompt = _get_validation_prompt(data_summary=None, labels=["email", "city", "sexuality"])
+    prompt = _get_validation_prompt(data_summary=None, labels=["email", "city", "sexuality", "age", "first_name"])
     assert "Here are all the valid entity classes with examples" in prompt
     assert "- email: derez_lester94@icloud.com" in prompt
     assert "- city: Houston, San Diego, Doha, Lahore" in prompt
@@ -372,6 +372,9 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "PARTIAL-TOKEN RULE (HARD DROP):" in prompt
     assert '"((SENSITIVE:political_view|dem))eanor" → drop, because "dem" is inside "demeanor"' in prompt
     assert 'The entity label "occupation" refers only to a specific paid job title or profession' in prompt
+    assert "AGE RULE:" in prompt
+    assert "indicate duration, not age" in prompt
+    assert "tagged as a first_name but is not followed by a last_name, drop it" in prompt
 
 
 def test_validation_prompt_includes_data_summary() -> None:
