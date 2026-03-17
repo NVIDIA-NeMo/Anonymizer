@@ -154,7 +154,7 @@ QUALITY REQUIREMENTS:
 </output_requirements>"""
     return (
         prompt.replace("<<PRIVACY_GOAL>>", privacy_goal_str)
-        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN + "['domain']"))
+        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN, key="domain"))
         .replace("<<DATA_SUMMARY>>", data_summary_line)
         .replace("<<DOMAIN_SUPPLEMENT>>", _jinja(COL_DOMAIN_SUPPLEMENT))
         .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))

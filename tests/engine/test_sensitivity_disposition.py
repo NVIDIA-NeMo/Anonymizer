@@ -63,3 +63,4 @@ def test_prompt_references_required_columns() -> None:
     assert _jinja(COL_FINAL_ENTITIES) in prompt
     assert _jinja(COL_LATENT_ENTITIES) in prompt
     assert _jinja(COL_DOMAIN_SUPPLEMENT) in prompt
+    assert _jinja("_domain", key="domain") in prompt

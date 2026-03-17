@@ -417,8 +417,8 @@ Choose the domain that best reflects how the text is meant to be used or interpr
 @custom_column_generator(required_columns=[COL_DOMAIN])
 def _enrich_domain(row: dict[str, Any]) -> dict[str, Any]:
     """Look up domain-specific guidance from DOMAIN_SUPPLEMENT_MAP."""
-    domain = row[COL_DOMAIN].domain
-    row[COL_DOMAIN_SUPPLEMENT] = DOMAIN_SUPPLEMENT_MAP[domain]
+    parsed_domain = DomainClassificationSchema.model_validate(row.get(COL_DOMAIN, {}))
+    row[COL_DOMAIN_SUPPLEMENT] = DOMAIN_SUPPLEMENT_MAP[parsed_domain.domain]
     return row
 
 

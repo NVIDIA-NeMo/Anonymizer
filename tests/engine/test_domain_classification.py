@@ -29,6 +29,11 @@ def test_columns_returns_exactly_two_in_order(
 
 
 def test_enrich_domain_populates_supplement_for_known_domain() -> None:
+    result = _enrich_domain({COL_DOMAIN: {"domain": Domain.BIOGRAPHY, "domain_confidence": 0.9}})
+    assert result[COL_DOMAIN_SUPPLEMENT] == DOMAIN_SUPPLEMENT_MAP[Domain.BIOGRAPHY]
+
+
+def test_enrich_domain_accepts_schema_instance() -> None:
     domain_obj = DomainClassificationSchema(domain=Domain.BIOGRAPHY, domain_confidence=0.9)
     result = _enrich_domain({COL_DOMAIN: domain_obj})
     assert result[COL_DOMAIN_SUPPLEMENT] == DOMAIN_SUPPLEMENT_MAP[Domain.BIOGRAPHY]
