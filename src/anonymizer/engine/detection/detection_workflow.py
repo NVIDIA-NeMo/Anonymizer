@@ -143,7 +143,9 @@ class EntityDetectionWorkflow:
                 ),
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
-                    prompt=_get_augment_prompt(data_summary=data_summary, labels=labels),
+                    prompt=_get_augment_prompt(
+                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                    ),
                     model_alias=augmenter_alias,
                     output_format=AugmentedEntitiesSchema,
                 ),
@@ -260,9 +262,14 @@ class EntityDetectionWorkflow:
             final_df = detected_result.dataframe.copy()
             final_failures = detected_result.failed_records
 
+        # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
+        # the augmenter is strict and out-of-scope labels are filtered.
+        # entity_labels=None is the only way to get permissive augmentation.
+        # TODO(docs): document this None-vs-explicit contract in user-facing docs.
         if COL_DETECTED_ENTITIES in final_df.columns:
-            final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                lambda x: EntitiesSchema.from_raw(x).model_dump()
+            allowed = set(entity_labels) if entity_labels is not None else None
+            final_df[COL_FINAL_ENTITIES] = final_df.apply(
+                lambda row: _materialize_final_entities(row, allowed_labels=allowed), axis=1
             )
         if "original_text_column" in dataframe.attrs:
             final_df.attrs["original_text_column"] = dataframe.attrs["original_text_column"]
@@ -298,6 +305,15 @@ def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
     if entity_labels is None:
         return list(DEFAULT_ENTITY_LABELS)
     return list(entity_labels)
+
+
+def _materialize_final_entities(row: pd.Series, *, allowed_labels: set[str] | None) -> dict:
+    """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels*."""
+    parsed = EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES, {}))
+    if allowed_labels is None:
+        return parsed.model_dump()
+    kept = [e for e in parsed.entities if e.label in allowed_labels]
+    return EntitiesSchema(entities=[e.model_dump() for e in kept]).model_dump()
 
 
 def _format_label_examples(labels: list[str]) -> str:
@@ -409,7 +425,20 @@ Template: <<VALIDATION_SKELETON>>
     return prompt.replace("<<DATA_SUMMARY>>", context_section)
 
 
-def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
+def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool = False) -> str:
+    if strict_labels:
+        label_block = (
+            "Here are the allowed entity classes. Use ONLY labels from this list:\n"
+            "<<VALID_CLASSES>>\n\n"
+            "Do not create new labels. If an entity does not fit any label in the list, skip it."
+        )
+    else:
+        label_block = (
+            "Here are the known entity classes. Strongly prefer labels from this list when they fit:\n"
+            "<<VALID_CLASSES>>\n\n"
+            "If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id)."
+        )
+
     prompt = """Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
 - Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
@@ -417,10 +446,7 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
 
 We have the following type of data: <<DATA_SUMMARY>>
 
-Here are the known entity classes. Strongly prefer labels from this list when they fit:
-<<VALID_CLASSES>>
-
-If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id).
+<<LABEL_BLOCK>>
 
 Rules:
 - Tag actual values, not placeholders
@@ -457,6 +483,7 @@ Already-detected entities: <<SEED_ENTITIES>>
         prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_INITIAL_TAGGED_TEXT))
         .replace("<<SEED_ENTITIES>>", _jinja(COL_SEED_ENTITIES_JSON))
+        .replace("<<LABEL_BLOCK>>", label_block)
         .replace("<<VALID_CLASSES>>", ", ".join(labels))
     )
     context_section = data_summary if data_summary else "Not provided"
