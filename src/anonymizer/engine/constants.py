@@ -52,7 +52,7 @@ COL_FINAL_ENTITIES = "final_entities"
 # ---------------------------------------------------------------------------
 
 COL_DOMAIN = "_domain"
-COL_DOMAIN_CONFIDENCE = "_domain_confidence"
+COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
 COL_MEANING_UNITS = "_meaning_units"
 COL_QUALITY_QA = "_quality_qa"
@@ -142,6 +142,11 @@ DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
 # ---------------------------------------------------------------------------
 
 
-def _jinja(col: str) -> str:
-    """Wrap a column name in Jinja2 template syntax for use in NDD prompts."""
-    return "{{ " + col + " }}"
+def _jinja(col: str, *, key: str | None = None) -> str:
+    """Wrap a column name in Jinja2 template syntax for use in NDD prompts.
+
+    When *key* is given the expression becomes ``{{ col['key'] }}``,
+    providing a single grep-able call site for nested schema access.
+    """
+    expr = col if key is None else f"{col}['{key}']"
+    return "{{ " + expr + " }}"
