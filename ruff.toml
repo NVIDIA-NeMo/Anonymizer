@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+exclude = [".bzr", ".direnv", ".eggs", ".git", ".hg", ".ipynb_checkpoints",
+           ".mypy_cache", ".nox", ".pytest_cache", ".ruff_cache", ".tox",
+           ".venv", ".vscode", "__pypackages__", "_build", "dist", "venv"]
+
+line-length = 120
+indent-width = 4
+target-version = "py311"
+
+[lint]
+select = [
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "ICN",   # flake8-import-conventions
+    "PIE",   # flake8-pie
+    "TID",   # flake8-tidy-imports (bans relative imports)
+    "UP006", # List[A] -> list[A]
+    "UP007", # Union[A, B] -> A | B
+    "UP045", # Optional[A] -> A | None
+    # TODO: enable these rules:
+    # "B006",  # mutable default argument
+    # "T201",  # no print() in non-test code
+    # "D",     # pydocstyle -- Google-style docstrings (add convention = "google" under [lint.pydocstyle])
+    # "E4",    # pycodestyle import errors
+    # "E7",    # pycodestyle statement errors
+    # "E9",    # pycodestyle runtime errors
+]
+ignore = []
+
+fixable = ["ALL"]
+unfixable = []
+
+[lint.isort]
+known-first-party = ["anonymizer"]
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.per-file-ignores]
+# "tests/**" = ["T201"]  # uncomment when T201 is enabled
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
