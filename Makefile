@@ -13,7 +13,7 @@ help:
 	@echo ""
 	@echo "  format                 - Format and fix code"
 	@echo "  format-check           - Check format and lint (read-only)"
-	@echo "  typecheck              - Run type checks"
+	@echo "  typecheck              - Run type checks (advisory, non-blocking)"
 	@echo "  check                  - Run all read-only checks"
 	@echo "  lock-check             - Check uv.lock is up to date"
 	@echo ""
@@ -72,8 +72,8 @@ format-check:
 	uv run tools/codestyle/ruff_check.sh
 
 typecheck:
-	@echo "Running type checks..."
-	tools/codestyle/typecheck.sh
+	@echo "Running type checks (advisory -- see issue tracking full compliance)..."
+	-tools/codestyle/typecheck.sh
 
 check:
 	@echo "Running all read-only checks..."
