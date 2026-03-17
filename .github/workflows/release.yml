@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: "Release NeMo Anonymizer"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-ref:
+        description: Full SHA (not short) or tag of the commit to build
+        required: true
+        type: string
+      dry-run:
+        description: "Dry Run: only publish to test PyPI"
+        required: true
+        default: true
+        type: boolean
+      create-gh-release:
+        description: Create a GitHub release
+        required: true
+        default: true
+        type: boolean
+      version-bump-branch:
+        description: Branch to push the version bump
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.78.0
+    with:
+      release-ref: ${{ inputs.release-ref }}
+      python-package: anonymizer
+      library-name: NeMo Anonymizer
+      dry-run: ${{ inputs.dry-run }}
+      version-bump-branch: ${{ inputs.version-bump-branch }}
+      create-gh-release: ${{ inputs.create-gh-release }}
+      packaging: uv
+      has-src-dir: true
+      app-id: ${{ vars.BOT_ID }}
+    secrets:
+      TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
+      TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
+      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
+      PAT: ${{ secrets.PAT }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_PWD: ${{ secrets.SSH_PWD }}
+      BOT_KEY: ${{ secrets.BOT_KEY }}
