@@ -123,6 +123,14 @@ def test_format_disposition_block_produces_valid_json() -> None:
     assert block[1]["needs_protection"] is False
 
 
+def test_format_disposition_block_accepts_dict_payload() -> None:
+    row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION.model_dump(mode="python")}
+    result = _format_disposition_block(row)
+    block = json.loads(result[COL_SENSITIVITY_DISPOSITION_BLOCK])
+    assert len(block) == 2
+    assert block[0]["entity_value"] == "Alice"
+
+
 def test_serialize_meaning_units_produces_valid_json() -> None:
     row = {COL_MEANING_UNITS: _STUB_MEANING_UNITS}
     result = _serialize_meaning_units(row)
@@ -131,6 +139,14 @@ def test_serialize_meaning_units_produces_valid_json() -> None:
     assert serialized[0]["id"] == 1
     assert serialized[0]["aspect"] == "role"
     assert "software engineer" in serialized[0]["unit"]
+
+
+def test_serialize_meaning_units_accepts_dict_payload() -> None:
+    row = {COL_MEANING_UNITS: _STUB_MEANING_UNITS.model_dump(mode="python")}
+    result = _serialize_meaning_units(row)
+    serialized = json.loads(result[COL_MEANING_UNITS_SERIALIZED])
+    assert len(serialized) == 2
+    assert serialized[1]["id"] == 2
 
 
 def test_generate_privacy_qa_column_only_protected_entities() -> None:
@@ -142,6 +158,14 @@ def test_generate_privacy_qa_column_only_protected_entities() -> None:
     assert "Alice" in qa.items[0].question
     assert qa.items[0].entity_label == "first_name"
     assert qa.items[0].sensitivity == SensitivityLevel.high
+
+
+def test_generate_privacy_qa_column_accepts_dict_payload() -> None:
+    row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION.model_dump(mode="python")}
+    result = _generate_privacy_qa_column(row)
+    qa: PrivacyQAPairsSchema = result[COL_PRIVACY_QA]
+    assert len(qa.items) == 1
+    assert qa.items[0].entity_value == "Alice"
 
 
 def test_generate_privacy_qa_column_no_protected_entities() -> None:

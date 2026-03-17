@@ -47,7 +47,7 @@ _DOMAIN_KEY = next(name for name, info in DomainClassificationSchema.model_field
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Serialize sensitivity disposition into a JSON block for the meaning unit extraction prompt."""
-    disposition: SensitivityDispositionSchema = row[COL_SENSITIVITY_DISPOSITION]
+    disposition = SensitivityDispositionSchema.model_validate(row.get(COL_SENSITIVITY_DISPOSITION, {}))
     block = [
         {
             "entity_value": e.entity_value,
@@ -173,7 +173,7 @@ Original text:
 @custom_column_generator(required_columns=[COL_MEANING_UNITS])
 def _serialize_meaning_units(row: dict[str, Any]) -> dict[str, Any]:
     """Serialize MeaningUnitsSchema to a JSON string for injection into the QA generation prompt."""
-    meaning_units: MeaningUnitsSchema = row[COL_MEANING_UNITS]
+    meaning_units = MeaningUnitsSchema.model_validate(row.get(COL_MEANING_UNITS, {}))
     row[COL_MEANING_UNITS_SERIALIZED] = json.dumps([u.model_dump() for u in meaning_units.units], ensure_ascii=False)
     return row
 
@@ -258,7 +258,7 @@ def generate_privacy_qa_from_disposition(
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _generate_privacy_qa_column(row: dict[str, Any]) -> dict[str, Any]:
     """Generate privacy QA questions from sensitivity disposition without an LLM call."""
-    disposition: SensitivityDispositionSchema = row[COL_SENSITIVITY_DISPOSITION]
+    disposition = SensitivityDispositionSchema.model_validate(row.get(COL_SENSITIVITY_DISPOSITION, {}))
     row[COL_PRIVACY_QA] = generate_privacy_qa_from_disposition(disposition)
     return row
 
