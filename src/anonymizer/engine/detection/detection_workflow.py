@@ -309,7 +309,7 @@ def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
 
 def _materialize_final_entities(row: pd.Series, *, allowed_labels: set[str] | None) -> dict:
     """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels*."""
-    parsed = EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES, {}))
+    parsed = EntitiesSchema.from_raw(row[COL_DETECTED_ENTITIES])
     if allowed_labels is None:
         return parsed.model_dump()
     kept = [e for e in parsed.entities if e.label in allowed_labels]
