@@ -1,5 +1,6 @@
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
-  # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -13,10 +14,40 @@ repos:
       - id: debug-statements
       - id: mixed-line-ending
 
-  # Ruff - linting and formatting (uses pyproject.toml [tool.ruff])
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.3
+  - repo: local
     hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
+      - id: format
+        name: Format
+        language: system
+        entry: uv run tools/codestyle/format.sh
+        types: [python]
+        pass_filenames: true
+
+      - id: typecheck
+        name: Typecheck
+        language: script
+        entry: tools/codestyle/typecheck.sh
+        types: [python]
+        pass_filenames: false
+
+      - id: copyright-fix
+        name: Copyright Fix
+        language: system
+        entry: uv run --script tools/codestyle/copyright_fixer.py
+        types_or: [python, shell]
+        pass_filenames: true
+
+      - id: uv-lock
+        name: uv lock check
+        language: system
+        entry: bash -c 'uv lock && git diff --exit-code uv.lock'
+        files: pyproject.toml
+        stages: [pre-commit]
+        pass_filenames: false
+
+      - id: check-signoff
+        name: Check commit is signed off (DCO)
+        entry: "grep -qE '^Signed-off-by: .+ <.+>'"
+        language: system
+        stages: [commit-msg]
+        always_run: true
