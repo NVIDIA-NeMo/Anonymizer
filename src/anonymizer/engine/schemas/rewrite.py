@@ -34,8 +34,6 @@ Each schema group corresponds to one pipeline step:
 
 Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
                   ProtectionMethod, CombinedRiskLevel, MeaningUnitAspect, PrivacyAnswer
-
-Utility: generate_privacy_qa_from_disposition — template-based, no LLM required.
 """
 
 from __future__ import annotations

@@ -25,6 +25,8 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.schemas import (
+    Domain,
+    DomainClassificationSchema,
     EntityCategory,
     MeaningUnitsSchema,
     PrivacyQAPairsSchema,
@@ -33,6 +35,9 @@ from anonymizer.engine.schemas import (
     SensitivityDispositionSchema,
     SensitivityLevel,
 )
+
+# Derived from the schema so the Jinja key stays in sync with the field name.
+_DOMAIN_KEY = next(name for name, info in DomainClassificationSchema.model_fields.items() if info.annotation is Domain)
 
 # ---------------------------------------------------------------------------
 # Stage 1 pre-step: format disposition → disposition block
@@ -47,7 +52,7 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
         {
             "entity_value": e.entity_value,
             "needs_protection": e.needs_protection,
-            "protection_method": e.protection_method_suggestion,
+            "protection_method": e.protection_method_suggestion,  # shortened key for prompt brevity
             "category": e.category,
         }
         for e in disposition.sensitivity_disposition
@@ -154,7 +159,7 @@ Original text:
 </input>"""
     return (
         prompt.replace("<<ENTITY_PROTECTION_BLOCK>>", _jinja(COL_SENSITIVITY_DISPOSITION_BLOCK))
-        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN + "['domain']"))
+        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN, key=_DOMAIN_KEY))
         .replace("<<DOMAIN_SUPPLEMENT>>", _jinja(COL_DOMAIN_SUPPLEMENT))
         .replace("<<TEXT>>", _jinja(COL_TEXT))
     )

@@ -9,6 +9,7 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
+    COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
     COL_MEANING_UNITS,
     COL_MEANING_UNITS_SERIALIZED,
@@ -20,6 +21,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.rewrite.qa_generation import (
+    _DOMAIN_KEY,
     QAGenerationWorkflow,
     _format_disposition_block,
     _generate_privacy_qa_column,
@@ -229,6 +231,7 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
 def test_meaning_unit_prompt_references_required_columns() -> None:
     prompt = _get_meaning_unit_extraction_prompt()
     assert _jinja(COL_SENSITIVITY_DISPOSITION_BLOCK) in prompt
+    assert _jinja(COL_DOMAIN, key=_DOMAIN_KEY) in prompt
     assert _jinja(COL_DOMAIN_SUPPLEMENT) in prompt
     assert _jinja(COL_TEXT) in prompt
 
