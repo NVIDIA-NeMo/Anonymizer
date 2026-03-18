@@ -408,7 +408,7 @@ def test_augment_prompt_strict_when_custom_labels_provided() -> None:
     assert "employment_status is NOT in the allowed list" in prompt
     assert "employment_status" not in prompt.split("Output:")[1]
 
-å
+
 def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
     _detection_with_novel_augmented_label: tuple[
         EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
