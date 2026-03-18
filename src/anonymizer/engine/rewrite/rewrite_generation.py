@@ -162,7 +162,9 @@ def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
     raw_map = row.get(COL_REPLACEMENT_MAP)
     if raw_map is None:
         if replace_values:
-            logger.warning("COL_REPLACEMENT_MAP is None but entities require replacement; prompt will have no replacements.")
+            logger.warning(
+                "COL_REPLACEMENT_MAP is None but entities require replacement; prompt will have no replacements."
+            )
         row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": []}
         return row
     if hasattr(raw_map, "model_dump"):
@@ -279,11 +281,7 @@ class RewriteGenerationWorkflow:
         all_failed: list[FailedRecord] = []
 
         if entity_rows.empty:
-            combined = (
-                passthrough_rows.sort_values("_row_order")
-                .drop(columns=["_row_order"])
-                .reset_index(drop=True)
-            )
+            combined = passthrough_rows.sort_values("_row_order").drop(columns=["_row_order"]).reset_index(drop=True)
             combined.attrs = {**dataframe.attrs}
             return RewriteGenerationResult(dataframe=combined, failed_records=all_failed)
 
