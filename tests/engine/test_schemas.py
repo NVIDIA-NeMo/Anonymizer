@@ -21,7 +21,7 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, generate_privacy_qa_from_disposition
+from anonymizer.engine.schemas.rewrite import EntityDispositionSchema
 
 
 def test_entities_payload_from_raw_dict() -> None:
@@ -296,54 +296,6 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_all_low()
         }
     )
     assert schema.format_for_rewrite_context() == "No medium or high sensitivity entities identified."
-
-
-# generate_privacy_qa_from_disposition
-
-
-def test_generate_privacy_qa_from_schema_only_protected_entities(
-    mixed_disposition: SensitivityDispositionSchema,
-) -> None:
-    qa = generate_privacy_qa_from_disposition(mixed_disposition)
-    assert len(qa.items) == 1
-    assert "Alice" in qa.items[0].question
-
-
-def test_generate_privacy_qa_from_dict_input(mixed_disposition: SensitivityDispositionSchema) -> None:
-    qa = generate_privacy_qa_from_disposition(mixed_disposition.model_dump())
-    assert len(qa.items) == 1
-    assert "Alice" in qa.items[0].question
-
-
-def test_generate_privacy_qa_from_invalid_dict_raises_validation_error() -> None:
-    bad_entity = _make_entity()
-    del bad_entity["entity_label"]
-    with pytest.raises(ValidationError):
-        generate_privacy_qa_from_disposition({"sensitivity_disposition": [bad_entity]})
-
-
-def test_generate_privacy_qa_empty_when_nothing_to_protect() -> None:
-    schema = SensitivityDispositionSchema.model_validate(
-        {
-            "sensitivity_disposition": [
-                _make_entity(id=1, needs_protection=False, protection_method_suggestion="left_as_is")
-            ]
-        }
-    )
-    assert generate_privacy_qa_from_disposition(schema).items == []
-
-
-def test_generate_privacy_qa_ids_are_sequential() -> None:
-    schema = SensitivityDispositionSchema.model_validate(
-        {
-            "sensitivity_disposition": [
-                _make_entity(id=1),
-                _make_entity(id=2, entity_label="last_name", entity_value="Smith"),
-            ],
-        }
-    )
-    qa = generate_privacy_qa_from_disposition(schema)
-    assert [item.id for item in qa.items] == [1, 2]
 
 
 def test_quality_answers_use_integer_ids() -> None:
