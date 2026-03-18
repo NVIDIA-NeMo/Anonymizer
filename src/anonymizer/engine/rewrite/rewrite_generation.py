@@ -169,7 +169,7 @@ def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
         return row
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
-    parsed_map = EntityReplacementMapSchema.model_validate(raw_map if isinstance(raw_map, dict) else {})
+    parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
     filtered = [
         replacement.model_dump() for replacement in parsed_map.replacements if replacement.original in replace_values
     ]
