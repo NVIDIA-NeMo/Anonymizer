@@ -69,6 +69,9 @@ class LlmReplaceWorkflow:
         # Only rows with actual entities are sent to the LLM.
         entity_rows = working_df[has_entities_mask].copy()
 
+        effective_preview_num_records = (
+            min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
+        )
         run_result = self._adapter.run_workflow(
             entity_rows,
             model_configs=model_configs,
@@ -84,7 +87,7 @@ class LlmReplaceWorkflow:
                 )
             ],
             workflow_name="replace-map-generation",
-            preview_num_records=preview_num_records,
+            preview_num_records=effective_preview_num_records,
         )
         output_df = run_result.dataframe.copy()
         # Drop any LLM-returned replacements that were not requested for this row.
