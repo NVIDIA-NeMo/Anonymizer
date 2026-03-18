@@ -182,7 +182,6 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
             {
                 COL_TEXT: ["Alice works in Seattle"],
                 COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             }
         ),
         failed_records=[],
@@ -194,7 +193,6 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=False,
-        privacy_goal=None,
         compute_grouped_entities=False,
     )
     assert COL_ENTITIES_BY_VALUE not in result.dataframe.columns
@@ -267,32 +265,6 @@ def test_run_with_latent_detection_merges_failures_in_order(
         ),
     )
     assert [item.record_id for item in result.failed_records] == ["d1", "l1"]
-
-
-def test_detect_and_validate_entities_drops_grouped_when_compute_grouped_false(
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
-            }
-        ),
-        failed_records=[],
-    )
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    result = workflow.detect_and_validate_entities(
-        pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        compute_grouped=False,
-    )
-    assert COL_ENTITIES_BY_VALUE not in result.dataframe.columns
 
 
 def test_run_requires_privacy_goal_for_latent_path(
@@ -451,6 +423,10 @@ def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
     final_labels = {e.label for e in final.entities}
     assert final_labels == {"hostname", "ipv4"}
     assert "server_name" not in final_labels
+
+    ebv = result.dataframe[COL_ENTITIES_BY_VALUE].iloc[0]
+    ebv_values = {e["value"] for e in ebv["entities_by_value"]}
+    assert "srv01" not in ebv_values
 
     detected = EntitiesSchema.from_raw(result.dataframe[COL_DETECTED_ENTITIES].iloc[0])
     assert "server_name" in {e.label for e in detected.entities}

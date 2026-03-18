@@ -45,10 +45,12 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
+from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.schemas import (
     AugmentedEntitiesSchema,
+    EntitiesByValueSchema,
     EntitiesSchema,
     LatentEntitiesSchema,
     ValidationDecisionsSchema,
@@ -78,7 +80,6 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
-        compute_grouped: bool = True,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
@@ -162,8 +163,6 @@ class EntityDetectionWorkflow:
             preview_num_records=preview_num_records,
         )
         detected_df = detection_result.dataframe.copy()
-        if not compute_grouped and COL_ENTITIES_BY_VALUE in detected_df.columns:
-            detected_df = detected_df.drop(columns=[COL_ENTITIES_BY_VALUE])
         return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
 
     def identify_latent_entities(
@@ -241,7 +240,6 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
             entity_labels=entity_labels,
             data_summary=data_summary,
-            compute_grouped=compute_grouped,
             preview_num_records=preview_num_records,
         )
 
@@ -271,6 +269,8 @@ class EntityDetectionWorkflow:
             final_df[COL_FINAL_ENTITIES] = final_df.apply(
                 lambda row: _materialize_final_entities(row, allowed_labels=allowed), axis=1
             )
+            if compute_grouped:
+                final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
         if "original_text_column" in dataframe.attrs:
             final_df.attrs["original_text_column"] = dataframe.attrs["original_text_column"]
         return EntityDetectionResult(
@@ -314,6 +314,24 @@ def _materialize_final_entities(row: pd.Series, *, allowed_labels: set[str] | No
         return parsed.model_dump()
     kept = [e for e in parsed.entities if e.label in allowed_labels]
     return EntitiesSchema(entities=[e.model_dump() for e in kept]).model_dump()
+
+
+def _build_entities_by_value(final_entities_raw: object) -> dict:
+    """Derive COL_ENTITIES_BY_VALUE from COL_FINAL_ENTITIES."""
+    parsed = EntitiesSchema.from_raw(final_entities_raw)
+    spans = [
+        EntitySpan(
+            entity_id=e.id,
+            value=e.value,
+            label=e.label,
+            start_position=e.start_position,
+            end_position=e.end_position,
+            score=e.score,
+            source=e.source,
+        )
+        for e in parsed.entities
+    ]
+    return EntitiesByValueSchema(entities_by_value=group_entities_by_value(entities=spans)).model_dump(mode="json")
 
 
 def _format_label_examples(labels: list[str]) -> str:
