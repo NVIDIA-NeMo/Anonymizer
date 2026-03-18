@@ -395,6 +395,7 @@ def test_augment_prompt_permissive_when_using_defaults() -> None:
     assert "Strongly prefer labels from this list when they fit" in prompt
     assert "phone_number, age" in prompt
     assert "If no known label fits, create a concise snake_case label" in prompt
+    assert "employment_status" in prompt
 
 
 def test_augment_prompt_strict_when_custom_labels_provided() -> None:
@@ -404,9 +405,10 @@ def test_augment_prompt_strict_when_custom_labels_provided() -> None:
     assert "Do not create new labels" in prompt
     assert "Strongly prefer" not in prompt
     assert "create a concise snake_case label" not in prompt
-    assert "all in the allowed label list" in prompt
+    assert "employment_status is NOT in the allowed list" in prompt
+    assert "employment_status" not in prompt.split("Output:")[1]
 
-
+å
 def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
     _detection_with_novel_augmented_label: tuple[
         EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection

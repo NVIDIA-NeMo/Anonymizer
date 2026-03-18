@@ -458,14 +458,39 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_l
             "<<VALID_CLASSES>>\n\n"
             "Do not create new labels. If an entity does not fit any label in the list, skip it."
         )
-        strict_example_note = "\nfirst_name, last_name, and city are all in the allowed label list."
+        example_block = """\
+Example (allowed labels: first_name, last_name, city — note that employment_status is NOT in the allowed list):
+{%- if <<TAG_NOTATION>> == "xml" -%}
+Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
+{%- elif <<TAG_NOTATION>> == "bracket" -%}
+Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
+{%- elif <<TAG_NOTATION>> == "paren" -%}
+Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
+{%- else -%}
+Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
+{%- endif -%}
+Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
+Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}]}"""
+
     else:
         label_block = (
             "Here are the known entity classes. Strongly prefer labels from this list when they fit:\n"
             "<<VALID_CLASSES>>\n\n"
             "If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id)."
         )
-        strict_example_note = ""
+        example_block = """\
+Example:
+{%- if <<TAG_NOTATION>> == "xml" -%}
+Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
+{%- elif <<TAG_NOTATION>> == "bracket" -%}
+Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
+{%- elif <<TAG_NOTATION>> == "paren" -%}
+Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
+{%- else -%}
+Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
+{%- endif -%}
+Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
+Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
 
     prompt = """Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
 - Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
@@ -490,18 +515,7 @@ Other information:
 - Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports (e.g., .pdf, .xlsx, .csv, .txt).
 - Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. Treat these extensions as non-sensitive system identifiers.
 
-Example:<<STRICT_EXAMPLE_NOTE>>
-{%- if <<TAG_NOTATION>> == "xml" -%}
-Input text: Jane Doe lives in <city>Santa Clara</city>.
-{%- elif <<TAG_NOTATION>> == "bracket" -%}
-Input text: Jane Doe lives in [[Santa Clara|city]].
-{%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)).
-{%- else -%}
-Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>.
-{%- endif -%}
-Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
-Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}]}
+<<EXAMPLE_BLOCK>>
 
 ---
 Input text: <<TAGGED_TEXT>>
@@ -509,7 +523,7 @@ Already-detected entities: <<SEED_ENTITIES>>
 """
     prompt = (
         prompt.replace("<<LABEL_BLOCK>>", label_block)
-        .replace("<<STRICT_EXAMPLE_NOTE>>", strict_example_note)
+        .replace("<<EXAMPLE_BLOCK>>", example_block)
         .replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_INITIAL_TAGGED_TEXT))
         .replace("<<SEED_ENTITIES>>", _jinja(COL_SEED_ENTITIES_JSON))
