@@ -12,7 +12,7 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
-from anonymizer.config.replace_strategies import Substitute
+from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_FINAL_ENTITIES,
@@ -95,6 +95,15 @@ def test_run_disables_latent_detection_without_rewrite(
     anonymizer.run(config=stub_anonymizer_config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is False
+
+
+def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(detect={"entity_labels": ["server_name"]}, replace=Redact())
+    anonymizer, detection_wf, _ = _make_anonymizer()
+
+    anonymizer.run(config=config, data=stub_input)
+
+    assert detection_wf.run.call_args.kwargs["entity_labels"] == ["server_name"]
 
 
 def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:

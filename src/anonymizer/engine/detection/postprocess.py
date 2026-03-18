@@ -389,8 +389,8 @@ def _choose_tag_notation(text: str) -> TagNotation:
     candidates: tuple[tuple[TagNotation, tuple[str, ...]], ...] = (
         (TagNotation.xml, ("<", "</")),
         (TagNotation.bracket, ("[[", "]]")),
-        (TagNotation.paren, ("((PII:", "))")),
-        (TagNotation.sentinel, ("<<PII:", "<</PII:")),
+        (TagNotation.paren, ("((SENSITIVE:", "))")),
+        (TagNotation.sentinel, ("<<SENSITIVE:", "<</SENSITIVE:")),
     )
     scored = sorted(
         ((sum(text.count(marker) for marker in markers), notation) for notation, markers in candidates),
@@ -405,5 +405,5 @@ def _format_entity_tag(*, value: str, label: str, notation: TagNotation) -> str:
     if notation == TagNotation.bracket:
         return f"[[{value}|{label}]]"
     if notation == TagNotation.paren:
-        return f"((PII:{label}|{value}))"
-    return f"<<PII:{label}>>{value}<</PII:{label}>>"
+        return f"((SENSITIVE:{label}|{value}))"
+    return f"<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
