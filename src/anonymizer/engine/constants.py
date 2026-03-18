@@ -71,7 +71,6 @@ COL_UTILITY_SCORE = "utility_score"
 COL_LEAKAGE_MASS = "leakage_mass"
 COL_ANY_HIGH_LEAKED = "any_high_leaked"
 COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
-COL_REWRITE_GENERATION_ROW_ORDER = "_rewrite_generation_row_order"
 
 # ---------------------------------------------------------------------------
 # Entity labels and examples

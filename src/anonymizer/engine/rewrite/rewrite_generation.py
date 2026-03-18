@@ -21,7 +21,6 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
-    COL_REWRITE_GENERATION_ROW_ORDER,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
@@ -160,7 +159,12 @@ def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
     replace_values = {
         e["entity_value"] for e in disposition_block if e.get("protection_method_suggestion") == "replace"
     }
-    raw_map = row.get(COL_REPLACEMENT_MAP, {})
+    raw_map = row.get(COL_REPLACEMENT_MAP)
+    if raw_map is None:
+        if replace_values:
+            logger.warning("COL_REPLACEMENT_MAP is None but entities require replacement; prompt will have no replacements.")
+        row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": []}
+        return row
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map if isinstance(raw_map, dict) else {})
@@ -173,18 +177,30 @@ def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
 
 @custom_column_generator(required_columns=[COL_FULL_REWRITE])
 def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
-    """Extract rewritten_text from the LLM structured output, falling back to original on failure."""
+    """Extract rewritten_text from the LLM structured output.
+
+    Sets ``COL_REWRITTEN_TEXT`` to ``None`` on failure or blank output so
+    downstream steps (repair, judge, human-review flagging) can distinguish
+    a failed rewrite from a valid one.
+
+    TODO: (potentially) replace ``None`` with a ``RewriteStatus`` enum + ``COL_REWRITE_STATUS``
+    column so downstream steps can distinguish failure reasons (blank_output,
+    extraction_failed) and the repair loop can add its own statuses (repaired,
+    repair_failed).
+    """
     try:
         full_rewrite = row[COL_FULL_REWRITE]
         if hasattr(full_rewrite, "model_dump"):
             full_rewrite = full_rewrite.model_dump(mode="python")
-        if isinstance(full_rewrite, dict):
-            row[COL_REWRITTEN_TEXT] = str(full_rewrite["rewritten_text"])
+        text = str(full_rewrite["rewritten_text"])
+        if not text.strip():
+            logger.warning("LLM returned blank rewritten_text; marking as unavailable.")
+            row[COL_REWRITTEN_TEXT] = None
         else:
-            row[COL_REWRITTEN_TEXT] = str(full_rewrite.rewritten_text)
+            row[COL_REWRITTEN_TEXT] = text
     except Exception:
-        logger.warning("Failed to extract rewritten_text from COL_FULL_REWRITE; falling back to original text.")
-        row[COL_REWRITTEN_TEXT] = row.get(COL_TEXT, "")
+        logger.warning("Failed to extract rewritten_text from COL_FULL_REWRITE; marking as unavailable.")
+        row[COL_REWRITTEN_TEXT] = None
     return row
 
 
@@ -252,7 +268,7 @@ class RewriteGenerationWorkflow:
         the disposition-block + rewrite + text-extraction column pipeline.
         """
         working_df = dataframe.copy()
-        working_df[COL_REWRITE_GENERATION_ROW_ORDER] = range(len(working_df))
+        working_df["_row_order"] = range(len(working_df))
 
         has_entities_mask = working_df[COL_ENTITIES_BY_VALUE].apply(_has_entities)
         entity_rows = working_df[has_entities_mask].copy()
@@ -264,8 +280,8 @@ class RewriteGenerationWorkflow:
 
         if entity_rows.empty:
             combined = (
-                passthrough_rows.sort_values(COL_REWRITE_GENERATION_ROW_ORDER)
-                .drop(columns=[COL_REWRITE_GENERATION_ROW_ORDER])
+                passthrough_rows.sort_values("_row_order")
+                .drop(columns=["_row_order"])
                 .reset_index(drop=True)
             )
             combined.attrs = {**dataframe.attrs}
@@ -301,8 +317,8 @@ class RewriteGenerationWorkflow:
 
         combined = (
             pd.concat([rewrite_df, passthrough_rows], ignore_index=True)
-            .sort_values(COL_REWRITE_GENERATION_ROW_ORDER)
-            .drop(columns=[COL_REWRITE_GENERATION_ROW_ORDER])
+            .sort_values("_row_order")
+            .drop(columns=["_row_order"])
             .reset_index(drop=True)
         )
         combined.attrs = {**run_result.dataframe.attrs, **dataframe.attrs}

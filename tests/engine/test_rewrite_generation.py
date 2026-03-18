@@ -18,7 +18,6 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
-    COL_REWRITE_GENERATION_ROW_ORDER,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
@@ -331,16 +330,22 @@ def test_extract_rewritten_text_from_dict_payload() -> None:
     assert result[COL_REWRITTEN_TEXT] == "Maria works at TechCorp"
 
 
-def test_extract_rewritten_text_falls_back_to_original_on_failure() -> None:
+def test_extract_rewritten_text_returns_none_on_failure() -> None:
     row: dict = {COL_FULL_REWRITE: None, COL_TEXT: "original text"}
     result = _extract_rewritten_text(row)
-    assert result[COL_REWRITTEN_TEXT] == "original text"
+    assert result[COL_REWRITTEN_TEXT] is None
 
 
-def test_extract_rewritten_text_falls_back_on_missing_key() -> None:
+def test_extract_rewritten_text_returns_none_on_missing_key() -> None:
     row: dict = {COL_FULL_REWRITE: {"wrong_key": "value"}, COL_TEXT: "original text"}
     result = _extract_rewritten_text(row)
-    assert result[COL_REWRITTEN_TEXT] == "original text"
+    assert result[COL_REWRITTEN_TEXT] is None
+
+
+def test_extract_rewritten_text_returns_none_on_blank_output() -> None:
+    row: dict = {COL_FULL_REWRITE: {"rewritten_text": "   "}, COL_TEXT: "original text"}
+    result = _extract_rewritten_text(row)
+    assert result[COL_REWRITTEN_TEXT] is None
 
 
 # ---------------------------------------------------------------------------
@@ -527,11 +532,11 @@ def test_run_output_length_equals_input_length_mixed(
             COL_ENTITIES_BY_VALUE: [stub_entities_by_value_with_entities],
             COL_SENSITIVITY_DISPOSITION: [stub_sensitivity_disposition],
             COL_REPLACEMENT_MAP: [stub_replacement_map],
+            "_row_order": [0],
         }
     )
 
     rewrite_result_df = replace_result_df.copy()
-    rewrite_result_df[COL_REWRITE_GENERATION_ROW_ORDER] = [0]
     rewrite_result_df[COL_FULL_REWRITE] = [RewriteOutputSchema(rewritten_text="Maria works here")]
     rewrite_result_df[COL_REWRITTEN_TEXT] = ["Maria works here"]
 
@@ -587,7 +592,7 @@ def test_run_preserves_original_row_order_with_mixed_entity_and_passthrough_rows
             COL_ENTITIES_BY_VALUE: [stub_entities_by_value_with_entities],
             COL_SENSITIVITY_DISPOSITION: [stub_sensitivity_disposition],
             COL_REPLACEMENT_MAP: [stub_replacement_map],
-            COL_REWRITE_GENERATION_ROW_ORDER: [1],
+            "_row_order": [1],
         }
     )
 
@@ -657,11 +662,11 @@ def test_run_collects_failed_records_from_replace_and_rewrite(
             COL_ENTITIES_BY_VALUE: [stub_entities_by_value_with_entities],
             COL_SENSITIVITY_DISPOSITION: [stub_sensitivity_disposition],
             COL_REPLACEMENT_MAP: [stub_replacement_map],
+            "_row_order": [0],
         }
     )
 
     rewrite_result_df = replace_result_df.copy()
-    rewrite_result_df[COL_REWRITE_GENERATION_ROW_ORDER] = [0]
     rewrite_result_df[COL_REWRITTEN_TEXT] = ["Maria works at TechCorp"]
 
     failed_replace = FailedRecord(record_id="abc", step="replace-map-generation", reason="timeout")
