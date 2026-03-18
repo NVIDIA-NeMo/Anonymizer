@@ -401,6 +401,7 @@ def test_augment_prompt_strict_when_custom_labels_provided() -> None:
     assert "Do not create new labels" in prompt
     assert "Strongly prefer" not in prompt
     assert "create a concise snake_case label" not in prompt
+    assert "all in the allowed label list" in prompt
 
 
 def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
