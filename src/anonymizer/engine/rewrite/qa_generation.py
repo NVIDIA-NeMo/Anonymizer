@@ -37,7 +37,12 @@ from anonymizer.engine.schemas import (
 )
 
 # Derived from the schema so the Jinja key stays in sync with the field name.
-_DOMAIN_KEY = next(name for name, info in DomainClassificationSchema.model_fields.items() if info.annotation is Domain)
+_DOMAIN_KEY = next(
+    (name for name, info in DomainClassificationSchema.model_fields.items() if info.annotation is Domain),
+    None,
+)
+if _DOMAIN_KEY is None:
+    raise RuntimeError("DomainClassificationSchema must define a field annotated with Domain")
 
 # ---------------------------------------------------------------------------
 # Stage 1 pre-step: format disposition → disposition block
@@ -51,8 +56,8 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     block = [
         {
             "entity_value": e.entity_value,
-            "needs_protection": e.needs_protection,
-            "protection_method": e.protection_method_suggestion,  # shortened key for prompt brevity
+            "does_need_protection": e.needs_protection,
+            "protection_method_suggestion": e.protection_method_suggestion,
             "category": e.category,
         }
         for e in disposition.sensitivity_disposition
@@ -69,52 +74,68 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
 def _get_meaning_unit_extraction_prompt() -> str:
     prompt = """You are extracting IMPORTANT MEANING UNITS from a text to evaluate anonymization quality.
 The original text may contain sensitive entities; a separate system will rewrite it.
-Your job is to capture the core informational content that MUST be preserved for the text to remain
-useful, while avoiding unsafe disclosure of identifying details.
+Your job is to capture the core informational content that MUST be preserved for the text to remain useful,
+while avoiding unsafe disclosure of identifying details.
+
+You are given:
+- The ORIGINAL TEXT.
+- A SENSITIVITY DISPOSITION BLOCK (entities with protection decisions).
+- A PRIMARY DOMAIN and DOMAIN-SPECIFIC GUIDANCE.
+
+Your output will be a JSON array of meaning units. Each unit is a short statement
+that captures ONE important fact, process, value, or relationship that should
+remain true after anonymization.
 
 <entity_protection_rules>
-You are given an ENTITY PROTECTION BLOCK — a JSON array where each entity has an "entity_value" string
-(e.g., a name, address, occupation, city, diagnosis). Treat every entity_value where needs_protection=true
-as a BANNED SURFACE FORM:
+You are given a SENSITIVITY DISPOSITION BLOCK, which contains entries like:
+- entity_value (surface form from the original text)
+- does_need_protection (True/False)
+- protection_method_suggestion (replace/remove/generalize/paraphrase/left_as_is)
+- category (direct_identifier/quasi_identifier/sensitive_attribute/latent_identifier/etc.)
 
-- None of these entity_value strings may appear anywhere in any "unit".
-- If a unit would require using one of these exact strings, you MUST either:
-  - rewrite it in more abstract terms that do NOT contain that value, OR
-  - DROP that unit if it cannot be expressed safely.
+Use it as follows:
 
-Apply this by type:
+A) HARD BANS (must not appear in meaning units)
+If an entry has:
+  - does_need_protection = True
+  AND protection_method_suggestion is "replace" OR "remove"
+Then treat its entity_value as a BANNED SURFACE FORM:
+  - Do NOT include that exact string anywhere in any unit.
+  - Also do NOT include near-verbatim variants that obviously preserve the same identifier.
+  - If the underlying fact is important, express it WITHOUT that value using abstraction
+    (roles, relationships, high-level descriptions).
+  - If it cannot be expressed safely without carrying identifying detail, DROP the unit.
 
-1. DIRECT IDENTIFIERS (names, exact addresses, exact ages, record numbers)
-   - NEVER include them.
-   - Keep only abstract roles or relations (e.g., "the individual",
-     "a close family member", "a colleague").
-   - If the idea is only interesting because of the specific identity,
-     drop it.
+B) TRANSFORM-ALLOWED (allowed only if generalized/paraphrased)
+If an entry has:
+  - does_need_protection = True
+  AND protection_method_suggestion is "generalize" OR "paraphrase"
+Then you MAY still capture the meaning, BUT you must NOT use the entity_value itself.
+Instead: preserve the semantic role while moving to a broader, less identifying level of abstraction.
+This may include:
 
-2. QUASI-IDENTIFIERS (occupation, city, school, degree, event names, etc.)
-   - Keep the KIND of information, but generalize so the original value
-     is not recoverable.
-   - DO NOT repeat the exact value text from the sensitive block.
-   - Use broader or paraphrased categories (e.g., "a medical specialist",
-     "a higher-education program", "a local community event", "a city").
+  • Geographic hierarchy: city → state → region → country
+  • Institutional hierarchy: named organization → organization type
+  • Role hierarchy: specific specialty → broader profession
+  • Temporal abstraction: exact date → approximate period
+  • Quantitative abstraction: exact number → rough scale
+  • Named program/product → generic descriptive category
 
-3. LATENT / HIGHLY SENSITIVE ATTRIBUTES (medical_condition, family_death,
-   religion, etc.)
-   - If not essential to the meaning, DROP them.
-   - If essential (e.g., motivation, history), describe them in softened,
-     high-level form (e.g., "a health difficulty", "a personal loss")
-     and NEVER use the exact value string.
+The generalized phrasing must prevent recovery or lookup of the original entity_value while
+still preserving the meaning needed for usefulness.
 
-4. GENERALIZATION AND SAFETY
-   - Prefer abstract phrases like "the individual", "a family member",
-     "a local area", "a professional setting", "a long-term challenge".
-   - Avoid precise times, counts, and locations when they combine with
-     other details to make someone easy to identify.
-   - When in doubt, DROP the detail rather than risk leaking a sensitive value.
+C) SAFE / LEFT-AS-IS (no special avoidance required)
+If an entry has:
+  - does_need_protection = False
+Then you do NOT need to avoid it for privacy reasons in meaning units.
+However:
+  - still prefer concise phrasing and avoid unnecessary precision
+  - avoid adding extra identifying detail beyond what is needed for meaning
 </entity_protection_rules>
 
 <importance_criteria>
-KEEP a detail if removing it would significantly weaken understanding of:
+KEEP a detail as a meaning unit if removing it would significantly weaken
+understanding of:
 - The main roles or functions of the key actors.
 - Core processes, workflows, decisions, or events.
 - Key outputs, products, or creative/technical results.
@@ -140,22 +161,29 @@ Each meaning unit must contain only the information required to support a single
 <domain_context>
 Primary domain: <<DOMAIN>>
 
-Domain-specific guidance:
----
+DOMAIN-SPECIFIC GUIDANCE (CONTEXT):
+
 <<DOMAIN_SUPPLEMENT>>
----
+
+Use this guidance to decide what is "important" versus "nice-to-have" in this text.
+For example:
+- In LEGAL/POLICY, obligations, conditions, exceptions, and remedies are critical.
+- In CLINICAL/EHR, symptoms, diagnoses, interventions, and timelines of care are critical.
+- In TECHNICAL, inputs/outputs, requirements, constraints, and failure modes are critical.
+- In CHAT/EMAIL/CSAT, the problem, key actions, decisions, and resolutions are critical.
+But always apply this in context of the actual text, not blindly.
 </domain_context>
 
 <input>
-Entity protection block:
----
-<<ENTITY_PROTECTION_BLOCK>>
----
-
 Original text:
----
+<<<
 <<TEXT>>
----
+>>>
+
+Sensitivity disposition:
+<<<
+<<ENTITY_PROTECTION_BLOCK>>
+>>>
 </input>"""
     return (
         prompt.replace("<<ENTITY_PROTECTION_BLOCK>>", _jinja(COL_SENSITIVITY_DISPOSITION_BLOCK))

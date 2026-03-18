@@ -117,10 +117,10 @@ def test_format_disposition_block_produces_valid_json() -> None:
     block = json.loads(result[COL_SENSITIVITY_DISPOSITION_BLOCK])
     assert len(block) == 2
     assert block[0]["entity_value"] == "Alice"
-    assert block[0]["needs_protection"] is True
-    assert block[0]["protection_method"] == "replace"
+    assert block[0]["does_need_protection"] is True
+    assert block[0]["protection_method_suggestion"] == "replace"
     assert block[1]["entity_value"] == "Portland"
-    assert block[1]["needs_protection"] is False
+    assert block[1]["does_need_protection"] is False
 
 
 def test_format_disposition_block_accepts_dict_payload() -> None:
@@ -258,6 +258,23 @@ def test_meaning_unit_prompt_references_required_columns() -> None:
     assert _jinja(COL_DOMAIN, key=_DOMAIN_KEY) in prompt
     assert _jinja(COL_DOMAIN_SUPPLEMENT) in prompt
     assert _jinja(COL_TEXT) in prompt
+
+
+def test_meaning_unit_prompt_preserves_gitlab_protection_branches() -> None:
+    prompt = _get_meaning_unit_extraction_prompt()
+    assert "does_need_protection = True" in prompt
+    assert 'protection_method_suggestion is "replace" OR "remove"' in prompt
+    assert 'protection_method_suggestion is "generalize" OR "paraphrase"' in prompt
+    assert "does_need_protection = False" in prompt
+
+
+def test_meaning_unit_prompt_keeps_xml_style_blocks() -> None:
+    prompt = _get_meaning_unit_extraction_prompt()
+    assert "<entity_protection_rules>" in prompt
+    assert "<importance_criteria>" in prompt
+    assert "<segmentation_rules>" in prompt
+    assert "<domain_context>" in prompt
+    assert "<input>" in prompt
 
 
 def test_quality_qa_prompt_references_meaning_units_serialized() -> None:
