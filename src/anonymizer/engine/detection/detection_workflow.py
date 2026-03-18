@@ -342,6 +342,7 @@ What to DROP:
 - Generic time references that are not specific dates (e.g., "today", "now", "soon")
 - Kinship and family-role terms used as relationship descriptors are not quasi-identifiers.
 - Filenames that are system executables or binaries (e.g., ending in .exe, .dll, .sys).
+- If a single abbreviated letter (e.g. "A.") is tagged as a first_name but is not followed by a last_name, drop it.
 
 PARTIAL-TOKEN RULE (HARD DROP):
 - If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore with no whitespace boundary), DROP it.
@@ -368,6 +369,13 @@ PARTIAL-TOKEN RULE (HARD DROP):
     "<<SENSITIVE:political_view>>dem<</SENSITIVE:political_view>>eanor" → drop, because "dem" is inside "demeanor"
     {%- endif -%}
 - Apply this even if the substring itself looks privacy-relevant.
+
+AGE RULE:
+- Keep "age" only when the number clearly refers to a person's age (e.g., "35 years old", "35-year-old", "aged 35", "John, 35, ...")
+- Patterns like "X years", "X months", or "X days" describing how long something happened indicate duration, not age.
+- If the number refers to time, duration, counts, prices, measurements, codes, or dates — it is NOT age.
+- If unclear, drop the tag.
+
 
 Additional rules:
 - Check context matches label (not just format)

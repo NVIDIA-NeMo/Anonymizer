@@ -52,7 +52,7 @@ COL_FINAL_ENTITIES = "final_entities"
 # ---------------------------------------------------------------------------
 
 COL_DOMAIN = "_domain"
-COL_DOMAIN_CONFIDENCE = "_domain_confidence"
+COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
