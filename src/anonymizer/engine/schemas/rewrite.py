@@ -159,6 +159,10 @@ class SensitivityDispositionSchema(BaseModel):
 
     Validates that entity IDs are sequential from 1 and that each entity's
     ``needs_protection`` flag is consistent with its ``protection_method_suggestion``.
+
+    ``sensitivity_disposition`` requires at least one entry (``min_length=1``).
+    The orchestrator short-circuits before this step when detection finds no
+    entities, so an empty list here indicates a pipeline bug.
     """
 
     # Non-empty by design: the rewrite workflow only runs when entities were detected.
