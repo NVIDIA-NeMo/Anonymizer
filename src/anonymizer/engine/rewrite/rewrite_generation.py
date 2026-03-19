@@ -32,7 +32,6 @@ from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.schemas import (
-    EntitiesByValueSchema,
     EntityReplacementMapSchema,
     RewriteOutputSchema,
     SensitivityDispositionSchema,
@@ -213,13 +212,13 @@ def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
 
 def _has_entities(entities_by_value: object) -> bool:
     """Return True if this record has at least one detected entity."""
-    if not entities_by_value:
+    if not entities_by_value or not isinstance(entities_by_value, dict):
         return False
-    try:
-        parsed = EntitiesByValueSchema.from_raw(entities_by_value)
-        return len(parsed.entities_by_value) > 0
-    except Exception:
+    items = entities_by_value.get("entities_by_value")
+    if not isinstance(items, list):
+        logger.debug("Unexpected entities_by_value structure: %s", type(entities_by_value).__name__)
         return False
+    return len(items) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +267,10 @@ class RewriteGenerationWorkflow:
         Records with no entities are passed through immediately; records
         with entities go through LLM replacement-map generation followed by
         the disposition-block + rewrite + text-extraction column pipeline.
+
+        TODO: when wiring this into the orchestrator, ensure ``compute_grouped_entities=True``
+        covers ``config.rewrite`` (not just ``config.replace``), otherwise ``COL_ENTITIES_BY_VALUE``
+        will be missing and raise ``KeyError``.
         """
         working_df = dataframe.copy()
         working_df["_row_order"] = range(len(working_df))
