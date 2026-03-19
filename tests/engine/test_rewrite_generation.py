@@ -532,7 +532,7 @@ def test_run_output_length_equals_input_length_mixed(
             COL_ENTITIES_BY_VALUE: [stub_entities_by_value_with_entities],
             COL_SENSITIVITY_DISPOSITION: [stub_sensitivity_disposition],
             COL_REPLACEMENT_MAP: [stub_replacement_map],
-            "_row_order": [0],
+            "_anonymizer_row_order": [0],
         }
     )
 
@@ -592,7 +592,7 @@ def test_run_preserves_original_row_order_with_mixed_entity_and_passthrough_rows
             COL_ENTITIES_BY_VALUE: [stub_entities_by_value_with_entities],
             COL_SENSITIVITY_DISPOSITION: [stub_sensitivity_disposition],
             COL_REPLACEMENT_MAP: [stub_replacement_map],
-            "_row_order": [1],
+            "_anonymizer_row_order": [1],
         }
     )
 
@@ -662,7 +662,7 @@ def test_run_collects_failed_records_from_replace_and_rewrite(
             COL_ENTITIES_BY_VALUE: [stub_entities_by_value_with_entities],
             COL_SENSITIVITY_DISPOSITION: [stub_sensitivity_disposition],
             COL_REPLACEMENT_MAP: [stub_replacement_map],
-            "_row_order": [0],
+            "_anonymizer_row_order": [0],
         }
     )
 

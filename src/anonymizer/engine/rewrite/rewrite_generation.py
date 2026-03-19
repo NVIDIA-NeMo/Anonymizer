@@ -273,7 +273,7 @@ class RewriteGenerationWorkflow:
         will be missing and raise ``KeyError``.
         """
         working_df = dataframe.copy()
-        working_df["_row_order"] = range(len(working_df))
+        working_df["_anonymizer_row_order"] = range(len(working_df))
 
         has_entities_mask = working_df[COL_ENTITIES_BY_VALUE].apply(_has_entities)
         entity_rows = working_df[has_entities_mask].copy()
@@ -284,7 +284,11 @@ class RewriteGenerationWorkflow:
         all_failed: list[FailedRecord] = []
 
         if entity_rows.empty:
-            combined = passthrough_rows.sort_values("_row_order").drop(columns=["_row_order"]).reset_index(drop=True)
+            combined = (
+                passthrough_rows.sort_values("_anonymizer_row_order")
+                .drop(columns=["_anonymizer_row_order"])
+                .reset_index(drop=True)
+            )
             combined.attrs = {**dataframe.attrs}
             return RewriteGenerationResult(dataframe=combined, failed_records=all_failed)
 
@@ -318,8 +322,8 @@ class RewriteGenerationWorkflow:
 
         combined = (
             pd.concat([rewrite_df, passthrough_rows], ignore_index=True)
-            .sort_values("_row_order")
-            .drop(columns=["_row_order"])
+            .sort_values("_anonymizer_row_order")
+            .drop(columns=["_anonymizer_row_order"])
             .reset_index(drop=True)
         )
         combined.attrs = {**run_result.dataframe.attrs, **dataframe.attrs}
