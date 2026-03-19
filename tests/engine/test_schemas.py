@@ -285,7 +285,7 @@ def test_sensitivity_disposition_format_for_rewrite_context(mixed_disposition: S
     assert "→ replace" in context
 
 
-def test_sensitivity_disposition_format_for_rewrite_context_empty_when_all_low() -> None:
+def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protection() -> None:
     schema = SensitivityDispositionSchema.model_validate(
         {
             "sensitivity_disposition": [
@@ -295,7 +295,30 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_all_low()
             ]
         }
     )
-    assert schema.format_for_rewrite_context() == "No medium or high sensitivity entities identified."
+    assert schema.format_for_rewrite_context() == "No entities needing protection."
+
+
+def test_sensitivity_disposition_format_for_rewrite_context_includes_low_when_protected() -> None:
+    schema = SensitivityDispositionSchema.model_validate(
+        {
+            "sensitivity_disposition": [
+                _make_entity(
+                    id=1,
+                    sensitivity="low",
+                    entity_label="city",
+                    entity_value="Portland",
+                    needs_protection=True,
+                    protection_method_suggestion="generalize",
+                    combined_risk_level="medium",
+                    protection_reason="City combined with other quasi-identifiers enables re-identification",
+                ),
+            ]
+        }
+    )
+    context = schema.format_for_rewrite_context()
+    assert "[LOW]" in context
+    assert "Portland" in context
+    assert "→ generalize" in context
 
 
 def test_quality_answers_use_integer_ids() -> None:

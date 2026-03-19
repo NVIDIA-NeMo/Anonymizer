@@ -199,10 +199,10 @@ class SensitivityDispositionSchema(BaseModel):
         return [e for e in self.sensitivity_disposition if e.protection_method_suggestion == method]
 
     def format_for_rewrite_context(self) -> str:
-        """Format disposition for injection into rewrite prompts — medium and high sensitivity entities only."""
-        entities = self.medium_and_high_sensitivity_entities
+        """Format disposition for injection into rewrite prompts — all entities needing protection."""
+        entities = self.protected_entities
         if not entities:
-            return "No medium or high sensitivity entities identified."
+            return "No entities needing protection."
         lines = []
         for e in entities:
             lines.append(
