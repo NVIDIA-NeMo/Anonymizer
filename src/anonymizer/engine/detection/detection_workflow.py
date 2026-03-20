@@ -266,8 +266,8 @@ class EntityDetectionWorkflow:
         # TODO(docs): document this None-vs-explicit contract in user-facing docs.
         if COL_DETECTED_ENTITIES in final_df.columns:
             allowed = set(entity_labels) if entity_labels is not None else None
-            final_df[COL_FINAL_ENTITIES] = final_df.apply(
-                lambda row: _materialize_final_entities(row, allowed_labels=allowed), axis=1
+            final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
+                lambda raw: _materialize_final_entities(raw, allowed_labels=allowed)
             )
             if compute_grouped:
                 final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
@@ -307,13 +307,13 @@ def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
     return list(entity_labels)
 
 
-def _materialize_final_entities(row: pd.Series, *, allowed_labels: set[str] | None) -> dict:
+def _materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:
     """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels*."""
-    parsed = EntitiesSchema.from_raw(row[COL_DETECTED_ENTITIES])
+    parsed = EntitiesSchema.from_raw(raw)
     if allowed_labels is None:
         return parsed.model_dump()
     kept = [e for e in parsed.entities if e.label in allowed_labels]
-    return EntitiesSchema(entities=[e.model_dump() for e in kept]).model_dump()
+    return EntitiesSchema(entities=kept).model_dump()
 
 
 def _build_entities_by_value(final_entities_raw: object) -> dict:
