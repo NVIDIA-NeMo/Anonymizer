@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -18,7 +19,7 @@ from anonymizer.engine.constants import (
     COL_LEAKAGE_MASS,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
-    COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
@@ -35,6 +36,8 @@ from anonymizer.engine.schemas.rewrite import (
     RewriteOutputSchema,
     SensitivityDispositionSchema,
 )
+
+logger = logging.getLogger("anonymizer.rewrite.repair")
 
 _COL_LEAKED_PRIVACY_ITEMS = "_leaked_privacy_items"
 
@@ -122,6 +125,17 @@ def _format_protection_block(row: dict[str, Any]) -> str:
 
 def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
     """Build the repair prompt from row values (no Jinja2)."""
+    disposition = _parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
+    has_replace_entities = any(
+        e.protection_method_suggestion == "replace" and e.needs_protection for e in disposition.sensitivity_disposition
+    )
+    raw_map = row.get(COL_REPLACEMENT_MAP_FOR_PROMPT)
+    if has_replace_entities and (not raw_map or raw_map == {"replacements": []}):
+        logger.warning(
+            "Repair prompt has entities requiring replacement but COL_REPLACEMENT_MAP_FOR_PROMPT is empty; "
+            "the LLM will have no synthetic values to use."
+        )
+
     prompt = """You are helping to rewrite text for privacy protection.
 
 <privacy_goal>
@@ -162,14 +176,13 @@ Maintain content quality (utility score: <<UTILITY_SCORE>>), consistency, and na
 Provide ONLY the rewritten text. Do not include explanations, comments, or markdown formatting.
 </task>
 """
-    # TODO(#49): swap COL_REPLACEMENT_MAP for COL_REPLACEMENT_MAP_FOR_PROMPT after rebase
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
         "<<PROTECTION_BLOCK>>": _format_protection_block(row),
         "<<ORIGINAL_TEXT>>": str(row.get(COL_TEXT, "")),
         "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
-        "<<REPLACEMENT_MAP>>": str(row.get(COL_REPLACEMENT_MAP, "")),
+        "<<REPLACEMENT_MAP>>": str(row.get(COL_REPLACEMENT_MAP_FOR_PROMPT, "")),
         "<<LEAKAGE_MASS>>": str(row.get(COL_LEAKAGE_MASS, 0.0)),
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
         if row.get(COL_ANY_HIGH_LEAKED)
