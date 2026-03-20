@@ -9,7 +9,7 @@
 #
 # Provides:
 #   REPO_ROOT                    -- absolute path to the repo root
-#   require_tool <name>          -- die if <name> is not on PATH; warn on version mismatch
+#   require_tool <name>          -- die if <name> is not on PATH
 #   collect_py_files "$@"        -- populate PY_FILES array and CHECK_MODE
 #
 # collect_py_files recognises --check and exports CHECK_MODE=true/false
@@ -24,39 +24,15 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 # ---------------------------------------------------------------------------
-# check_tool_version -- warn when installed version differs from tools.yaml
-# ---------------------------------------------------------------------------
-check_tool_version() {
-    local name="$1"
-    local tools_yaml="$REPO_ROOT/tools/binaries/tools.yaml"
-    [[ ! -f "$tools_yaml" ]] && return 0
-    command -v yq >/dev/null 2>&1 || return 0
-
-    local expected
-    expected=$(yq ".tools.${name}.version" "$tools_yaml" 2>/dev/null)
-    [[ -z "$expected" || "$expected" == "null" ]] && return 0
-
-    local actual
-    actual=$("$name" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[^ ]*' | head -1)
-    [[ -z "$actual" ]] && return 0
-
-    if [[ "$actual" != "$expected" ]]; then
-        echo "WARNING: $name version $actual differs from expected $expected (from tools.yaml)" >&2
-        echo "         Run: make bootstrap-tools && export PATH=\"\$HOME/.local/bin:\$PATH\"" >&2
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# require_tool -- die if tool is missing; warn on version mismatch
+# require_tool -- die if tool is missing
 # ---------------------------------------------------------------------------
 require_tool() {
     local name="$1"
     if ! command -v "$name" >/dev/null 2>&1; then
         echo "ERROR: $name not found on PATH." >&2
-        echo "       Run: make bootstrap-tools && export PATH=\"\$HOME/.local/bin:\$PATH\"" >&2
+        echo "       Run: uv sync --group dev" >&2
         exit 1
     fi
-    check_tool_version "$name"
 }
 
 # ---------------------------------------------------------------------------

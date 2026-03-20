@@ -26,7 +26,7 @@ repos:
       - id: typecheck
         name: Typecheck (advisory)
         language: system
-        entry: bash -c 'tools/codestyle/typecheck.sh || true'
+        entry: bash -c 'uv run tools/codestyle/typecheck.sh || true'
         types: [python]
         pass_filenames: false
         verbose: true

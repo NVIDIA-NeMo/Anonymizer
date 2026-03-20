@@ -1,5 +1,0 @@
-{
-    "terminal.integrated.env.linux": {
-        "PATH": "${env:HOME}/.local/bin:${env:PATH}"
-    }
-}
