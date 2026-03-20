@@ -19,7 +19,6 @@ from data_designer.config import custom_column_generator
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
-    COL_ENTITIES_BY_VALUE,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
@@ -42,11 +41,9 @@ from anonymizer.engine.detection.postprocess import (
     build_validation_candidates,
     expand_entity_occurrences,
     get_tag_notation,
-    group_entities_by_value,
     parse_raw_entities,
 )
 from anonymizer.engine.schemas import (
-    EntitiesByValueSchema,
     EntitiesSchema,
     RawValidationDecisionsSchema,
     ValidatedDecisionSchema,
@@ -181,7 +178,7 @@ def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
 
 @custom_column_generator(
     required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
-    side_effect_columns=[COL_TAGGED_TEXT, COL_ENTITIES_BY_VALUE],
+    side_effect_columns=[COL_TAGGED_TEXT],
 )
 def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
     """Apply keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
@@ -196,9 +193,6 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
         mode="json"
     )
     row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=expanded)
-    row[COL_ENTITIES_BY_VALUE] = EntitiesByValueSchema(
-        entities_by_value=group_entities_by_value(entities=expanded)
-    ).model_dump(mode="json")
     return row
 
 

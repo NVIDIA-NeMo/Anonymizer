@@ -16,7 +16,6 @@ from typing import Any
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
-    COL_ENTITIES_BY_VALUE,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
@@ -197,30 +196,6 @@ def test_build_validation_skeleton_handles_candidates_with_missing_keys() -> Non
     assert skeleton["decisions"][1]["value"] == "Alice"
 
 
-def test_apply_validation_and_finalize_writes_schema_shaped_entities_by_value() -> None:
-    row: dict[str, Any] = {
-        COL_TEXT: "Alice works at Acme.",
-        COL_MERGED_ENTITIES: {
-            "entities": [
-                {
-                    "id": "first_name_0_5",
-                    "value": "Alice",
-                    "label": "first_name",
-                    "start_position": 0,
-                    "end_position": 5,
-                    "score": 0.95,
-                    "source": "detector",
-                }
-            ]
-        },
-        COL_VALIDATED_ENTITIES: {"decisions": []},
-    }
-
-    result = apply_validation_and_finalize(row)
-    assert "entities_by_value" in result[COL_ENTITIES_BY_VALUE]
-    assert isinstance(result[COL_ENTITIES_BY_VALUE]["entities_by_value"], list)
-
-
 def test_apply_validation_and_finalize_handles_malformed_merged_entities() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "Alice works at Acme.",
@@ -230,4 +205,3 @@ def test_apply_validation_and_finalize_handles_malformed_merged_entities() -> No
 
     result = apply_validation_and_finalize(row)
     assert result[COL_DETECTED_ENTITIES] == {"entities": []}
-    assert result[COL_ENTITIES_BY_VALUE] == {"entities_by_value": []}

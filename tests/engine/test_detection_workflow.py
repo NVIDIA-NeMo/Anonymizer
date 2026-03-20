@@ -31,6 +31,40 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import load_default_model_selection, resolve_model_alias
+from anonymizer.engine.schemas import EntitiesSchema
+
+
+@pytest.fixture
+def _detection_with_novel_augmented_label(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> tuple[EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection]:
+    """Workflow whose detector returns an entity with a label (server_name) outside the user's list."""
+    input_df = pd.DataFrame({COL_TEXT: ["Connect to srv01.internal on 10.0.0.5"]})
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Connect to srv01.internal on 10.0.0.5"],
+                COL_DETECTED_ENTITIES: [
+                    {
+                        "entities": [
+                            {"value": "srv01.internal", "label": "hostname", "start_position": 11, "end_position": 25},
+                            {"value": "10.0.0.5", "label": "ipv4", "start_position": 29, "end_position": 37},
+                            {"value": "srv01", "label": "server_name", "start_position": 11, "end_position": 16},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    return (
+        EntityDetectionWorkflow(adapter=adapter),
+        input_df,
+        stub_detector_model_configs,
+        stub_detection_model_selection,
+    )
 
 
 def test_run_with_latent_detection_calls_second_workflow(
@@ -148,7 +182,6 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
             {
                 COL_TEXT: ["Alice works in Seattle"],
                 COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             }
         ),
         failed_records=[],
@@ -160,7 +193,6 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         tag_latent_entities=False,
-        privacy_goal=None,
         compute_grouped_entities=False,
     )
     assert COL_ENTITIES_BY_VALUE not in result.dataframe.columns
@@ -233,32 +265,6 @@ def test_run_with_latent_detection_merges_failures_in_order(
         ),
     )
     assert [item.record_id for item in result.failed_records] == ["d1", "l1"]
-
-
-def test_detect_and_validate_entities_drops_grouped_when_compute_grouped_false(
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
-            }
-        ),
-        failed_records=[],
-    )
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    result = workflow.detect_and_validate_entities(
-        pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        compute_grouped=False,
-    )
-    assert COL_ENTITIES_BY_VALUE not in result.dataframe.columns
 
 
 def test_run_requires_privacy_goal_for_latent_path(
@@ -382,8 +388,73 @@ def test_validation_prompt_includes_data_summary() -> None:
     assert "Data context: Medical records" in prompt
 
 
-def test_augment_prompt_includes_label_names() -> None:
-    prompt = _get_augment_prompt(data_summary=None, labels=["phone_number", "age"])
-    assert "Here are the known entity classes" in prompt
+def test_augment_prompt_permissive_when_using_defaults() -> None:
+    """In practice strict_labels=False only fires with DEFAULT_ENTITY_LABELS (entity_labels=None).
+    We pass a small list here to verify the permissive prompt text in isolation."""
+    prompt = _get_augment_prompt(data_summary=None, labels=["phone_number", "age"], strict_labels=False)
+    assert "Strongly prefer labels from this list when they fit" in prompt
     assert "phone_number, age" in prompt
     assert "If no known label fits, create a concise snake_case label" in prompt
+    assert "employment_status" in prompt
+
+
+def test_augment_prompt_strict_when_custom_labels_provided() -> None:
+    prompt = _get_augment_prompt(data_summary=None, labels=["hostname", "ipv4"], strict_labels=True)
+    assert "Use ONLY labels from this list" in prompt
+    assert "hostname, ipv4" in prompt
+    assert "Do not create new labels" in prompt
+    assert "Strongly prefer" not in prompt
+    assert "create a concise snake_case label" not in prompt
+    assert "employment_status is NOT in the allowed list" in prompt
+    assert "employment_status" not in prompt.split("Output:")[1]
+
+
+def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
+    _detection_with_novel_augmented_label: tuple[
+        EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
+    ],
+) -> None:
+    """Augmented entities with labels outside entity_labels must be stripped from final_entities."""
+    workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
+    result = workflow.run(
+        input_df,
+        model_configs=model_configs,
+        selected_models=selected_models,
+        gliner_detection_threshold=0.5,
+        entity_labels=["hostname", "ipv4"],
+        tag_latent_entities=False,
+    )
+
+    final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
+    final_labels = {e.label for e in final.entities}
+    assert final_labels == {"hostname", "ipv4"}
+    assert "server_name" not in final_labels
+
+    ebv = result.dataframe[COL_ENTITIES_BY_VALUE].iloc[0]
+    ebv_values = {e["value"] for e in ebv["entities_by_value"]}
+    assert "srv01" not in ebv_values
+
+    detected = EntitiesSchema.from_raw(result.dataframe[COL_DETECTED_ENTITIES].iloc[0])
+    assert "server_name" in {e.label for e in detected.entities}
+
+
+def test_default_entity_labels_preserves_novel_augmented_entities(
+    _detection_with_novel_augmented_label: tuple[
+        EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
+    ],
+) -> None:
+    """When entity_labels=None, augmented entities with novel labels must be preserved."""
+    workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
+    result = workflow.run(
+        input_df,
+        model_configs=model_configs,
+        selected_models=selected_models,
+        gliner_detection_threshold=0.5,
+        tag_latent_entities=False,
+    )
+
+    final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
+    final_labels = {e.label for e in final.entities}
+    assert "server_name" in final_labels
+    assert "hostname" in final_labels
+    assert "ipv4" in final_labels

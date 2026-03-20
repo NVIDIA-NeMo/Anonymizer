@@ -45,10 +45,12 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
+from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.schemas import (
     AugmentedEntitiesSchema,
+    EntitiesByValueSchema,
     EntitiesSchema,
     LatentEntitiesSchema,
     ValidationDecisionsSchema,
@@ -78,7 +80,6 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
-        compute_grouped: bool = True,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
@@ -143,7 +144,9 @@ class EntityDetectionWorkflow:
                 ),
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
-                    prompt=_get_augment_prompt(data_summary=data_summary, labels=labels),
+                    prompt=_get_augment_prompt(
+                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                    ),
                     model_alias=augmenter_alias,
                     output_format=AugmentedEntitiesSchema,
                 ),
@@ -160,8 +163,6 @@ class EntityDetectionWorkflow:
             preview_num_records=preview_num_records,
         )
         detected_df = detection_result.dataframe.copy()
-        if not compute_grouped and COL_ENTITIES_BY_VALUE in detected_df.columns:
-            detected_df = detected_df.drop(columns=[COL_ENTITIES_BY_VALUE])
         return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
 
     def identify_latent_entities(
@@ -239,7 +240,6 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
             entity_labels=entity_labels,
             data_summary=data_summary,
-            compute_grouped=compute_grouped,
             preview_num_records=preview_num_records,
         )
 
@@ -260,10 +260,17 @@ class EntityDetectionWorkflow:
             final_df = detected_result.dataframe.copy()
             final_failures = detected_result.failed_records
 
+        # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
+        # the augmenter is strict and out-of-scope labels are filtered.
+        # entity_labels=None is the only way to get permissive augmentation.
+        # TODO(docs): document this None-vs-explicit contract in user-facing docs.
         if COL_DETECTED_ENTITIES in final_df.columns:
+            allowed = set(entity_labels) if entity_labels is not None else None
             final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                lambda x: EntitiesSchema.from_raw(x).model_dump()
+                lambda raw: _materialize_final_entities(raw, allowed_labels=allowed)
             )
+            if compute_grouped:
+                final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
         if "original_text_column" in dataframe.attrs:
             final_df.attrs["original_text_column"] = dataframe.attrs["original_text_column"]
         return EntityDetectionResult(
@@ -298,6 +305,33 @@ def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
     if entity_labels is None:
         return list(DEFAULT_ENTITY_LABELS)
     return list(entity_labels)
+
+
+def _materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:
+    """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels*."""
+    parsed = EntitiesSchema.from_raw(raw)
+    if allowed_labels is None:
+        return parsed.model_dump()
+    kept = [e for e in parsed.entities if e.label in allowed_labels]
+    return EntitiesSchema(entities=kept).model_dump()
+
+
+def _build_entities_by_value(final_entities_raw: object) -> dict:
+    """Derive COL_ENTITIES_BY_VALUE from COL_FINAL_ENTITIES."""
+    parsed = EntitiesSchema.from_raw(final_entities_raw)
+    spans = [
+        EntitySpan(
+            entity_id=e.id,
+            value=e.value,
+            label=e.label,
+            start_position=e.start_position,
+            end_position=e.end_position,
+            score=e.score,
+            source=e.source,
+        )
+        for e in parsed.entities
+    ]
+    return EntitiesByValueSchema(entities_by_value=group_entities_by_value(entities=spans)).model_dump(mode="json")
 
 
 def _format_label_examples(labels: list[str]) -> str:
@@ -417,7 +451,47 @@ Template: <<VALIDATION_SKELETON>>
     return prompt.replace("<<DATA_SUMMARY>>", context_section)
 
 
-def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
+def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool = False) -> str:
+    if strict_labels:
+        label_block = (
+            "Here are the allowed entity classes. Use ONLY labels from this list:\n"
+            "<<VALID_CLASSES>>\n\n"
+            "Do not create new labels. If an entity does not fit any label in the list, skip it."
+        )
+        example_block = """\
+Example (allowed labels: first_name, last_name, city — note that employment_status is NOT in the allowed list):
+{%- if <<TAG_NOTATION>> == "xml" -%}
+Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
+{%- elif <<TAG_NOTATION>> == "bracket" -%}
+Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
+{%- elif <<TAG_NOTATION>> == "paren" -%}
+Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
+{%- else -%}
+Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
+{%- endif -%}
+Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
+Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}]}"""
+
+    else:
+        label_block = (
+            "Here are the known entity classes. Strongly prefer labels from this list when they fit:\n"
+            "<<VALID_CLASSES>>\n\n"
+            "If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id)."
+        )
+        example_block = """\
+Example:
+{%- if <<TAG_NOTATION>> == "xml" -%}
+Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
+{%- elif <<TAG_NOTATION>> == "bracket" -%}
+Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
+{%- elif <<TAG_NOTATION>> == "paren" -%}
+Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
+{%- else -%}
+Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
+{%- endif -%}
+Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
+Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
+
     prompt = """Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
 - Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
@@ -425,10 +499,7 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str]) -> str:
 
 We have the following type of data: <<DATA_SUMMARY>>
 
-Here are the known entity classes. Strongly prefer labels from this list when they fit:
-<<VALID_CLASSES>>
-
-If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id).
+<<LABEL_BLOCK>>
 
 Rules:
 - Tag actual values, not placeholders
@@ -444,25 +515,16 @@ Other information:
 - Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports (e.g., .pdf, .xlsx, .csv, .txt).
 - Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. Treat these extensions as non-sensitive system identifiers.
 
-Example:
-{%- if <<TAG_NOTATION>> == "xml" -%}
-Input text: My name is Amy Steier in <city>San Diego</city>.
-{%- elif <<TAG_NOTATION>> == "bracket" -%}
-Input text: My name is Amy Steier in [[San Diego|city]].
-{%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: My name is Amy Steier in ((SENSITIVE:city|San Diego)).
-{%- else -%}
-Input text: My name is Amy Steier in <<SENSITIVE:city>>San Diego<</SENSITIVE:city>>.
-{%- endif -%}
-Already-detected entities: [{"value": "San Diego", "label": "city"}]
-Output: {"entities": [{"value": "Amy", "label": "first_name", "reason": "first name"}, {"value": "Steier", "label": "last_name", "reason": "last name"}]}
+<<EXAMPLE_BLOCK>>
 
 ---
 Input text: <<TAGGED_TEXT>>
 Already-detected entities: <<SEED_ENTITIES>>
 """
     prompt = (
-        prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
+        prompt.replace("<<LABEL_BLOCK>>", label_block)
+        .replace("<<EXAMPLE_BLOCK>>", example_block)
+        .replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
         .replace("<<TAGGED_TEXT>>", _jinja(COL_INITIAL_TAGGED_TEXT))
         .replace("<<SEED_ENTITIES>>", _jinja(COL_SEED_ENTITIES_JSON))
         .replace("<<VALID_CLASSES>>", ", ".join(labels))
