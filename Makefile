@@ -3,8 +3,6 @@ help:
 	@echo "Anonymizer Makefile"
 	@echo "==================="
 	@echo ""
-	@echo "  bootstrap-tools        - Install standalone dev tools (uv, ty, yq, gh)"
-	@echo "  bootstrap-tools-ci     - Install CI tools (non-interactive)"
 	@echo "  bootstrap              - Install Python dependencies (dev group)"
 	@echo "  install                - Install project dependencies with uv"
 	@echo "  install-dev            - Install project with dev dependencies"
@@ -18,26 +16,19 @@ help:
 	@echo "  lock-check             - Check uv.lock is up to date"
 	@echo ""
 	@echo "  test                   - Run all unit tests"
-	@echo "  test-slow              - Run slow tests"
 	@echo "  test-e2e               - Run end-to-end tests"
 	@echo "  coverage               - Run tests with coverage report"
 	@echo ""
 	@echo "  build-wheel            - Build wheel (version from git tag)"
-	@echo "  publish-internal       - Publish wheel to NVIDIA Artifactory"
 	@echo "  publish-pypi           - Publish wheel to PyPI"
-	@echo "  test-container         - Run container smoke test"
+	@echo ""
+	@echo "  install-dev-docs       - Install dev + docs dependencies"
+	@echo "  docs-serve             - Start docs dev server (live-reload)"
+	@echo "  docs-build             - Build docs site (strict mode)"
 	@echo ""
 	@echo "  clean                  - Remove coverage reports and cache files"
 	@echo "  clean-merged-branches  - Checkout main, fetch --prune, delete local branches merged into main"
 	@echo ""
-
-bootstrap-tools:
-	@echo "Installing development tools (uv, ty, yq, gh)..."
-	tools/binaries/bootstrap_tools.sh
-
-bootstrap-tools-ci:
-	@echo "Installing CI tools (non-interactive)..."
-	BOOTSTRAP_NON_INTERACTIVE=1 tools/binaries/bootstrap_tools.sh
 
 bootstrap:
 	@echo "Installing Python dependencies (dev group)..."
@@ -69,11 +60,12 @@ format:
 
 format-check:
 	@echo "Checking format and lint (read-only)..."
+	uv run tools/codestyle/format.sh --check
 	uv run tools/codestyle/ruff_check.sh
 
 typecheck:
 	@echo "Running type checks (advisory -- see issue tracking full compliance)..."
-	-tools/codestyle/typecheck.sh
+	-uv run tools/codestyle/typecheck.sh
 
 check:
 	@echo "Running all read-only checks..."
@@ -86,10 +78,6 @@ lock-check:
 test:
 	@echo "Running unit tests..."
 	uv run --group dev pytest
-
-test-slow:
-	@echo "Running slow tests..."
-	uv run --group dev pytest -m slow
 
 test-e2e:
 	@echo "Running end-to-end tests..."
@@ -105,16 +93,6 @@ build-wheel:
 	rm -rf dist/
 	uv build --wheel
 
-publish-internal: build-wheel
-	@echo "Publishing wheel to NVIDIA Artifactory..."
-	uvx twine upload \
-	  --repository-url "$$TWINE_REPOSITORY_URL" \
-	  --username "$$TWINE_USERNAME" \
-	  --password "$$TWINE_PASSWORD" \
-	  --non-interactive \
-	  dist/*.whl
-	@echo "published: $$(ls dist/*.whl)"
-
 publish-pypi: build-wheel
 	@echo "Publishing wheel to PyPI..."
 	uvx twine upload \
@@ -124,9 +102,17 @@ publish-pypi: build-wheel
 	  dist/*.whl
 	@echo "published: $$(ls dist/*.whl)"
 
-test-container:
-	@echo "Running container smoke test..."
-	bash tools/binaries/test_tool_install.sh
+install-dev-docs:
+	@echo "Installing dev + docs dependencies..."
+	uv sync --group dev --group docs
+
+docs-serve:
+	@echo "Starting docs dev server (live-reload)..."
+	uv run --group docs mkdocs serve
+
+docs-build:
+	@echo "Building docs site..."
+	uv run --group docs mkdocs build --strict
 
 clean-pycache:
 	@echo "Cleaning Python cache files..."
@@ -142,4 +128,4 @@ clean-merged-branches:
 	git checkout main && git fetch --prune && git branch --merged | grep -v '^\*\|main' | xargs -n 1 git branch -d || true
 	@echo "Done!"
 
-.PHONY: help bootstrap-tools bootstrap-tools-ci bootstrap install install-dev install-dev-notebooks install-pre-commit format format-check typecheck check lock-check test test-slow test-e2e coverage build-wheel publish-internal publish-pypi test-container clean clean-pycache clean-merged-branches
+.PHONY: help bootstrap install install-dev install-dev-notebooks install-pre-commit format format-check typecheck check lock-check test test-e2e coverage build-wheel publish-pypi install-dev-docs docs-serve docs-build clean clean-pycache clean-merged-branches
