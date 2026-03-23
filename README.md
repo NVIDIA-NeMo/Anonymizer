@@ -35,6 +35,23 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 
 ### 3. Anonymize text
 
+#### CLI
+
+```bash
+# Preview on a small sample
+anonymizer preview --data.source data.csv config.replace:redact
+
+# Full run with output file
+anonymizer run --data.source data.csv --output result.csv config.replace:redact
+
+# Validate config without running
+anonymizer validate --data.source data.csv config.replace:hash
+```
+
+Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
+
+#### Python API
+
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
 
@@ -98,6 +115,7 @@ make install-dev          # Install with dev dependencies
 make test                 # Run tests
 make coverage             # Run with coverage report
 make check-all            # Lint + format check
+anonymizer --help         # CLI usage
 make install-pre-commit   # Install pre-commit hooks
 ```
 
