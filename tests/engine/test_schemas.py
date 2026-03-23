@@ -10,8 +10,6 @@ from pydantic import ValidationError
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     EntitiesSchema,
-    JudgeEvaluationSchema,
-    JudgeScoreSchema,
     PrivacyAnswersSchema,
     QACompareResultsSchema,
     QualityAnswersSchema,
@@ -334,22 +332,3 @@ def test_privacy_answers_reject_unknown_and_use_integer_ids() -> None:
 def test_qa_compare_results_use_integer_ids() -> None:
     results = QACompareResultsSchema.model_validate({"per_item": [{"id": 1, "score": 0.8, "reason": "close match"}]})
     assert results.per_item[0].id == 1
-
-
-# JudgeEvaluationSchema
-
-
-def test_judge_evaluation_parses_all_rubrics() -> None:
-    judge = JudgeEvaluationSchema(
-        privacy=JudgeScoreSchema(score=8, reason="good"),
-        quality=JudgeScoreSchema(score=7, reason="acceptable"),
-        naturalness=JudgeScoreSchema(score=9, reason="fluent"),
-    )
-    assert judge.privacy.score == 8
-    assert judge.quality.score == 7
-    assert judge.naturalness.score == 9
-
-
-def test_judge_evaluation_requires_all_rubrics() -> None:
-    with pytest.raises(ValidationError):
-        JudgeEvaluationSchema(privacy=JudgeScoreSchema(score=8, reason="good"))
