@@ -27,28 +27,29 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.rewrite.parsers import (
+    field,
+    parse_privacy_answers,
+    parse_privacy_qa,
+    parse_sensitivity_disposition,
+)
 from anonymizer.engine.schemas.rewrite import (
     EntityDispositionSchema,
     PrivacyAnswer,
     PrivacyAnswerItemSchema,
-    PrivacyAnswersSchema,
     PrivacyQAPairsSchema,
     RewriteOutputSchema,
-    SensitivityDispositionSchema,
 )
 
 logger = logging.getLogger("anonymizer.rewrite.repair")
 
 _COL_LEAKED_PRIVACY_ITEMS = "_leaked_privacy_items"
 
-# Schema field names validated at import time.
-_F_NEEDS_PROTECTION = EntityDispositionSchema.model_fields["needs_protection"] and "needs_protection"
-_F_ENTITY_LABEL = EntityDispositionSchema.model_fields["entity_label"] and "entity_label"
-_F_ENTITY_VALUE = EntityDispositionSchema.model_fields["entity_value"] and "entity_value"
-_F_PROTECTION_METHOD = (
-    EntityDispositionSchema.model_fields["protection_method_suggestion"] and "protection_method_suggestion"
-)
-_F_PROTECTION_REASON = EntityDispositionSchema.model_fields["protection_reason"] and "protection_reason"
+_F_NEEDS_PROTECTION = field(EntityDispositionSchema, "needs_protection")
+_F_ENTITY_LABEL = field(EntityDispositionSchema, "entity_label")
+_F_ENTITY_VALUE = field(EntityDispositionSchema, "entity_value")
+_F_PROTECTION_METHOD = field(EntityDispositionSchema, "protection_method_suggestion")
+_F_PROTECTION_REASON = field(EntityDispositionSchema, "protection_reason")
 
 
 # ---------------------------------------------------------------------------
@@ -59,35 +60,6 @@ _F_PROTECTION_REASON = EntityDispositionSchema.model_fields["protection_reason"]
 class RepairParams(BaseModel):
     privacy_goal_str: str
     max_privacy_leak: float
-
-
-# ---------------------------------------------------------------------------
-# Parse helpers
-# ---------------------------------------------------------------------------
-
-
-def _parse_privacy_answers(raw: Any) -> list[PrivacyAnswerItemSchema]:
-    if isinstance(raw, PrivacyAnswersSchema):
-        return raw.answers
-    if isinstance(raw, dict):
-        return PrivacyAnswersSchema.model_validate(raw).answers
-    raise TypeError(f"Expected PrivacyAnswersSchema or dict, got {type(raw).__name__}")
-
-
-def _parse_privacy_qa(raw: Any) -> PrivacyQAPairsSchema:
-    if isinstance(raw, PrivacyQAPairsSchema):
-        return raw
-    if isinstance(raw, dict):
-        return PrivacyQAPairsSchema.model_validate(raw)
-    raise TypeError(f"Expected PrivacyQAPairsSchema or dict, got {type(raw).__name__}")
-
-
-def _parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema:
-    if isinstance(raw, SensitivityDispositionSchema):
-        return raw
-    if isinstance(raw, dict):
-        return SensitivityDispositionSchema.model_validate(raw)
-    raise ValueError(f"Cannot parse sensitivity disposition from {type(raw)}")
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +86,7 @@ def _leaked_items_text(
 
 def _format_protection_block(row: dict[str, Any]) -> str:
     """Format the protection decisions section of the repair prompt."""
-    disposition = _parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
+    disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
     lines = [
         f'- {e.entity_label}: "{e.entity_value}" -> {e.protection_method_suggestion}\n  Reason: {e.protection_reason}'
         for e in disposition.sensitivity_disposition
@@ -125,7 +97,7 @@ def _format_protection_block(row: dict[str, Any]) -> str:
 
 def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
     """Build the repair prompt from row values (no Jinja2)."""
-    disposition = _parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
+    disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
     has_replace_entities = any(
         e.protection_method_suggestion == "replace" and e.needs_protection for e in disposition.sensitivity_disposition
     )
@@ -203,8 +175,8 @@ Provide ONLY the rewritten text. Do not include explanations, comments, or markd
 @custom_column_generator(required_columns=[COL_PRIVACY_QA_REANSWER, COL_PRIVACY_QA])
 def _inject_leaked_items_column(row: dict[str, Any]) -> dict[str, Any]:
     """Format leaked privacy items into a text block for the repair prompt."""
-    privacy_answers = _parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
-    privacy_qa = _parse_privacy_qa(row.get(COL_PRIVACY_QA))
+    privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
+    privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
     row[_COL_LEAKED_PRIVACY_ITEMS] = _leaked_items_text(privacy_answers, privacy_qa)
     return row
 

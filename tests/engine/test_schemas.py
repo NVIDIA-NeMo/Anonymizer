@@ -353,3 +353,43 @@ def test_judge_evaluation_parses_all_rubrics() -> None:
 def test_judge_evaluation_requires_all_rubrics() -> None:
     with pytest.raises(ValidationError):
         JudgeEvaluationSchema(privacy=JudgeScoreSchema(score=8, reason="good"))
+
+
+# Context-validated answer coverage
+
+
+def test_quality_answers_reject_missing_ids_with_context() -> None:
+    with pytest.raises(ValidationError, match="Missing answer IDs"):
+        QualityAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "yes"}]},
+            context={"expected_ids": [1, 2]},
+        )
+
+
+def test_quality_answers_accept_complete_with_context() -> None:
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    assert len(result.answers) == 2
+
+
+def test_quality_answers_no_enforcement_without_context() -> None:
+    result = QualityAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "yes"}]})
+    assert len(result.answers) == 1
+
+
+def test_privacy_answers_reject_missing_ids_with_context() -> None:
+    with pytest.raises(ValidationError, match="Missing answer IDs"):
+        PrivacyAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "no"}]},
+            context={"expected_ids": [1, 2]},
+        )
+
+
+def test_qa_compare_reject_missing_ids_with_context() -> None:
+    with pytest.raises(ValidationError, match="Missing compare IDs"):
+        QACompareResultsSchema.model_validate(
+            {"per_item": [{"id": 1, "score": 0.9}]},
+            context={"expected_ids": [1, 2]},
+        )

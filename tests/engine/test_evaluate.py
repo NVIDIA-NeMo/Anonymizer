@@ -6,17 +6,12 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import SENSITIVITY_WEIGHTS, EvaluationCriteria
-from anonymizer.engine.constants import (
-    COL_PRIVACY_QA_REANSWER,
-    COL_QUALITY_QA_COMPARE,
-    COL_QUALITY_QA_REANSWER,
-    COL_UTILITY_SCORE,
-)
+from anonymizer.engine.constants import COL_UTILITY_SCORE
 from anonymizer.engine.rewrite.evaluate import (
     EvaluateWorkflow,
     compute_any_high_leaked,
@@ -219,14 +214,7 @@ def test_evaluate_columns_pipeline(
         evaluation=EvaluationCriteria(),
     )
 
-    assert len(cols) == 6
-    assert isinstance(cols[0], LLMStructuredColumnConfig)
-    assert cols[0].name == COL_QUALITY_QA_REANSWER
-    assert isinstance(cols[1], LLMStructuredColumnConfig)
-    assert cols[1].name == COL_PRIVACY_QA_REANSWER
-    assert isinstance(cols[2], CustomColumnConfig)
-    assert isinstance(cols[3], LLMStructuredColumnConfig)
-    assert cols[3].name == COL_QUALITY_QA_COMPARE
-    assert isinstance(cols[4], CustomColumnConfig)
-    assert cols[4].name == COL_UTILITY_SCORE
-    assert isinstance(cols[5], CustomColumnConfig)
+    assert len(cols) == 5
+    for col in cols:
+        assert isinstance(col, CustomColumnConfig)
+    assert cols[3].name == COL_UTILITY_SCORE
