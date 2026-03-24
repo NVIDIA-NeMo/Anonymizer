@@ -3,35 +3,13 @@
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 import pandas as pd
 import pytest
-import tyro
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
-
-# ---------------------------------------------------------------------------
-# Shared mirror dataclasses used to test arg parsing independently of the CLI
-# wiring in main.py.  These mirror what the run/preview subcommand functions
-# accept, so the same tyro parsing logic is exercised.
-# ---------------------------------------------------------------------------
-
-
-@dataclasses.dataclass
-class _RunArgs:
-    config: AnonymizerConfig
-    data: AnonymizerInput
-    output: str | None = None
-
-
-@dataclasses.dataclass
-class _PreviewArgs:
-    config: AnonymizerConfig
-    data: AnonymizerInput
-    num_records: int = 10
+from anonymizer.interface.cli.main import _build_anonymizer_config, _build_anonymizer_input
 
 
 # ---------------------------------------------------------------------------
@@ -62,143 +40,74 @@ def body_csv_file(tmp_path: Path) -> Path:
 
 def test_parse_redact_defaults(csv_file: Path) -> None:
     """Redact with all defaults produces a valid AnonymizerConfig."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "config.replace:redact",
-        ],
-    )
-    assert isinstance(result.config.replace, Redact)
-    assert result.config.replace.format_template == "[REDACTED_{label}]"
-    assert result.config.replace.normalize_label is True
-    assert result.config.rewrite is None
-    assert result.data.source == str(csv_file)
+    config = _build_anonymizer_config(replace="redact")
+    data = _build_anonymizer_input(source=str(csv_file))
+    assert isinstance(config.replace, Redact)
+    assert config.replace.format_template == "[REDACTED_{label}]"
+    assert config.replace.normalize_label is True
+    assert config.rewrite is None
+    assert data.source == str(csv_file)
 
 
-def test_parse_hash_custom_params(csv_file: Path) -> None:
+def test_parse_hash_custom_params() -> None:
     """Hash with algorithm=md5 and digest_length=8."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "config.replace:hash",
-            "--config.replace.algorithm",
-            "md5",
-            "--config.replace.digest-length",
-            "8",
-        ],
-    )
-    assert isinstance(result.config.replace, Hash)
-    assert result.config.replace.algorithm == "md5"
-    assert result.config.replace.digest_length == 8
+    config = _build_anonymizer_config(replace="hash", algorithm="md5", digest_length=8)
+    assert isinstance(config.replace, Hash)
+    assert config.replace.algorithm == "md5"
+    assert config.replace.digest_length == 8
 
 
-def test_parse_annotate_template(csv_file: Path) -> None:
+def test_parse_annotate_template() -> None:
     """Annotate with a custom format_template."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "config.replace:annotate",
-            "--config.replace.format-template",
-            "[{label}: {text}]",
-        ],
-    )
-    assert isinstance(result.config.replace, Annotate)
-    assert result.config.replace.format_template == "[{label}: {text}]"
+    config = _build_anonymizer_config(replace="annotate", format_template="[{label}: {text}]")
+    assert isinstance(config.replace, Annotate)
+    assert config.replace.format_template == "[{label}: {text}]"
 
 
-def test_parse_substitute(csv_file: Path) -> None:
+def test_parse_substitute() -> None:
     """Substitute strategy is parsed without extra flags."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "config.replace:substitute",
-        ],
-    )
-    assert isinstance(result.config.replace, Substitute)
+    config = _build_anonymizer_config(replace="substitute")
+    assert isinstance(config.replace, Substitute)
 
 
 def test_parse_text_column_override(body_csv_file: Path) -> None:
-    """--data.text-column overrides the default 'text' column name."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(body_csv_file),
-            "--data.text-column",
-            "body",
-            "config.replace:redact",
-        ],
-    )
-    assert result.data.text_column == "body"
+    """--text-column overrides the default 'text' column name."""
+    data = _build_anonymizer_input(source=str(body_csv_file), text_column="body")
+    assert data.text_column == "body"
 
 
-def test_parse_entity_labels(csv_file: Path) -> None:
-    """list[str] | None entity_labels are parsed from space-separated tokens."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "--config.detect.entity-labels",
-            "person",
-            "org",
-            "config.replace:redact",
-        ],
-    )
-    labels = result.config.detect.entity_labels
+def test_parse_entity_labels() -> None:
+    """entity_labels list is forwarded to the Detect config."""
+    config = _build_anonymizer_config(replace="redact", entity_labels=["person", "org"])
+    labels = config.detect.entity_labels
     assert labels is not None
     assert "person" in labels
     assert "org" in labels
 
 
-def test_parse_threshold(csv_file: Path) -> None:
-    """gliner_threshold=0.7 is parsed as a float."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "--config.detect.gliner-threshold",
-            "0.7",
-            "config.replace:redact",
-        ],
-    )
-    assert abs(result.config.detect.gliner_threshold - 0.7) < 1e-9
+def test_parse_threshold() -> None:
+    """gliner_threshold=0.7 is stored as a float."""
+    config = _build_anonymizer_config(replace="redact", gliner_threshold=0.7)
+    assert abs(config.detect.gliner_threshold - 0.7) < 1e-9
 
 
 def test_parse_preview_num_records(csv_file: Path) -> None:
-    """--num-records is parsed as an integer for the preview command."""
-    result = tyro.cli(
-        _PreviewArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "--num-records",
-            "5",
-            "config.replace:redact",
-        ],
-    )
-    assert result.num_records == 5
+    """--num-records is passed as an integer to the preview command."""
+    import unittest.mock as mock
+
+    from anonymizer.interface.cli.main import app
+
+    with mock.patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+        mock_result = mock.MagicMock()
+        mock_result.dataframe = []
+        mock_result.failed_records = []
+        mock_cls.return_value.preview.return_value = mock_result
+        app(["preview", "--source", str(csv_file), "--replace", "redact", "--num-records", "5"])
+
+    assert mock_cls.return_value.preview.call_args.kwargs["num_records"] == 5
 
 
 def test_parse_data_summary(csv_file: Path) -> None:
-    """--data.data-summary sets the data_summary field on AnonymizerInput."""
-    result = tyro.cli(
-        _RunArgs,
-        args=[
-            "--data.source",
-            str(csv_file),
-            "--data.data-summary",
-            "customer support tickets",
-            "config.replace:redact",
-        ],
-    )
-    assert result.data.data_summary == "customer support tickets"
+    """--data-summary sets the data_summary field on AnonymizerInput."""
+    data = _build_anonymizer_input(source=str(csv_file), data_summary="customer support tickets")
+    assert data.data_summary == "customer support tickets"

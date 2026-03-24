@@ -9,7 +9,7 @@ license = "Apache-2.0"
 dependencies = [
     "data-designer==0.5.0",
     "pydantic>=2.9,<3",
-    "tyro>=0.9",
+    "cyclopts>=3",
 ]
 
 [project.scripts]

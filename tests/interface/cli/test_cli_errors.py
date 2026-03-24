@@ -3,43 +3,35 @@
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 import pandas as pd
 import pytest
-import tyro
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
-
-
-@dataclasses.dataclass
-class _RunArgs:
-    config: AnonymizerConfig
-    data: AnonymizerInput
-    output: str | None = None
+from anonymizer.config.anonymizer_config import AnonymizerConfig
+from anonymizer.config.replace_strategies import Redact
+from anonymizer.interface.cli.main import app
 
 
 def test_invalid_source_exits(tmp_path: Path) -> None:
     """A non-existent source path causes SystemExit due to Pydantic validation."""
-    with pytest.raises(SystemExit):
-        tyro.cli(
-            _RunArgs,
-            args=[
-                "--data.source",
+    with pytest.raises(SystemExit) as exc_info:
+        app(
+            [
+                "run",
+                "--source",
                 str(tmp_path / "nonexistent.csv"),
-                "config.replace:redact",
-            ],
+                "--replace",
+                "redact",
+            ]
         )
+    assert exc_info.value.code != 0
 
 
 def test_missing_required_args_exits() -> None:
-    """Omitting the required --data.source flag causes SystemExit."""
+    """Omitting the required --source flag causes SystemExit."""
     with pytest.raises(SystemExit):
-        tyro.cli(
-            _RunArgs,
-            args=["config.replace:redact"],
-        )
+        app(["run", "--replace", "redact"])
 
 
 def test_threshold_out_of_range_exits(tmp_path: Path) -> None:
@@ -47,35 +39,26 @@ def test_threshold_out_of_range_exits(tmp_path: Path) -> None:
     csv_file = tmp_path / "data.csv"
     pd.DataFrame({"text": ["hello"]}).to_csv(csv_file, index=False)
 
-    with pytest.raises(SystemExit):
-        tyro.cli(
-            _RunArgs,
-            args=[
-                "--data.source",
+    with pytest.raises(SystemExit) as exc_info:
+        app(
+            [
+                "run",
+                "--source",
                 str(csv_file),
-                "--config.detect.gliner-threshold",
+                "--replace",
+                "redact",
+                "--gliner-threshold",
                 "2.0",
-                "config.replace:redact",
-            ],
+            ]
         )
+    assert exc_info.value.code != 0
 
 
-def test_both_modes_set_exits(tmp_path: Path) -> None:
-    """Setting both replace and rewrite violates the model_validator → SystemExit."""
-    csv_file = tmp_path / "data.csv"
-    pd.DataFrame({"text": ["hello"]}).to_csv(csv_file, index=False)
+def test_both_modes_set_exits() -> None:
+    """Setting both replace and rewrite on AnonymizerConfig violates the model_validator."""
+    from pydantic import ValidationError as PydanticValidationError
 
-    with pytest.raises(SystemExit):
-        tyro.cli(
-            _RunArgs,
-            args=[
-                "--data.source",
-                str(csv_file),
-                "config.replace:redact",
-                "config.rewrite:rewrite",
-                "--config.rewrite.privacy-goal.protect",
-                "Direct identifiers and quasi-identifiers",
-                "--config.rewrite.privacy-goal.preserve",
-                "Semantic meaning and general utility",
-            ],
-        )
+    from anonymizer.config.anonymizer_config import Rewrite
+
+    with pytest.raises(PydanticValidationError):
+        AnonymizerConfig(replace=Redact(), rewrite=Rewrite())

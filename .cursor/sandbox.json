@@ -1,0 +1,12 @@
+{
+  "type": "workspace_readwrite",
+  "additionalReadwritePaths": [
+    "/tmp",
+    "/root/.local",
+    "/root/.cache",
+    "/root/.cursor"
+  ],
+  "networkPolicy": {
+    "default": "allow"
+  }
+}

@@ -6,9 +6,19 @@ from __future__ import annotations
 import hashlib
 import re
 from string import Formatter
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Discriminator, Field, Tag, field_validator
+
+
+def _resolve_replace_tag(v: Any) -> str | None:
+    """Callable discriminator: class name for instances, 'kind'/'type' key for dicts."""
+    if isinstance(v, BaseModel):
+        return type(v).__name__.lower()
+    if isinstance(v, dict):
+        raw = v.get("kind") or v.get("type") or ""
+        return raw.lower() if isinstance(raw, str) else None
+    return None
 
 
 class ReplaceMethodBase(BaseModel):
@@ -37,7 +47,6 @@ class ReplaceMethodBase(BaseModel):
 class Annotate(ReplaceMethodBase):
     """Tag each entity with a readable label token."""
 
-    kind: Literal["annotate"] = "annotate"
     format_template: str = Field(
         default="<{text}, {label}>", description="Template with {text} and {label} placeholders."
     )
@@ -63,7 +72,6 @@ class Annotate(ReplaceMethodBase):
 class Redact(ReplaceMethodBase):
     """Replace each entity with a configurable redaction template."""
 
-    kind: Literal["redact"] = "redact"
     format_template: str = Field(
         default="[REDACTED_{label}]", description="Template with optional {text} and {label} placeholders."
     )
@@ -91,7 +99,6 @@ class Redact(ReplaceMethodBase):
 class Hash(ReplaceMethodBase):
     """Replace each entity with a deterministic hash token."""
 
-    kind: Literal["hash"] = "hash"
     algorithm: Literal["sha256", "sha1", "md5"] = Field(default="sha256", description="Hash algorithm.")
     digest_length: int = Field(
         default=12, ge=6, le=64, description="Number of hex characters to keep from the hash digest."
@@ -123,20 +130,24 @@ class Hash(ReplaceMethodBase):
 class Substitute(ReplaceMethodBase):
     """Replace entities with LLM-generated synthetic values."""
 
-    kind: Literal["substitute"] = "substitute"
     instructions: str | None = Field(
         default=None, description="Additional instructions for the LLM replacement generator."
     )
 
 
 ReplaceMethod = Annotated[
-    Annotate | Redact | Hash | Substitute,
-    Field(discriminator="kind"),
+    Annotated[Annotate, Tag("annotate")]
+    | Annotated[Redact, Tag("redact")]
+    | Annotated[Hash, Tag("hash")]
+    | Annotated[Substitute, Tag("substitute")],
+    Discriminator(_resolve_replace_tag),
 ]
 
 LocalReplaceMethod = Annotated[
-    Annotate | Redact | Hash,
-    Field(discriminator="kind"),
+    Annotated[Annotate, Tag("annotate")]
+    | Annotated[Redact, Tag("redact")]
+    | Annotated[Hash, Tag("hash")],
+    Discriminator(_resolve_replace_tag),
 ]
 
 
