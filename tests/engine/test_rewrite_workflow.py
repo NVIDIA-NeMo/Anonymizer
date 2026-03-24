@@ -18,13 +18,13 @@ from anonymizer.engine.constants import (
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
     COL_REWRITTEN_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
-from anonymizer.engine.rewrite.evaluate import _COL_NEEDS_REPAIR
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 
@@ -95,7 +95,7 @@ def _make_workflow_result(
     """Build a WorkflowRunResult with optional extra columns."""
     result_df = df.copy()
     if add_needs_repair:
-        result_df[_COL_NEEDS_REPAIR] = needs_repair_value
+        result_df[COL_NEEDS_REPAIR] = needs_repair_value
     if add_eval_cols:
         result_df[COL_UTILITY_SCORE] = 0.9
         result_df[COL_LEAKAGE_MASS] = 0.1
@@ -213,7 +213,7 @@ class TestCallOrder:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_df = rewrite_gen_df.copy()
-        eval_df[_COL_NEEDS_REPAIR] = False
+        eval_df[COL_NEEDS_REPAIR] = False
         eval_df[COL_UTILITY_SCORE] = 0.9
         eval_df[COL_LEAKAGE_MASS] = 0.1
         eval_df[COL_ANY_HIGH_LEAKED] = False
@@ -283,7 +283,7 @@ class TestFailedRecords:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_df = rewrite_gen_df.copy()
-        eval_df[_COL_NEEDS_REPAIR] = False
+        eval_df[COL_NEEDS_REPAIR] = False
         eval_df[COL_UTILITY_SCORE] = 0.9
         eval_df[COL_LEAKAGE_MASS] = 0.1
         eval_df[COL_ANY_HIGH_LEAKED] = False
@@ -347,7 +347,7 @@ class TestAttrs:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_df = rewrite_gen_df.copy()
-        eval_df[_COL_NEEDS_REPAIR] = False
+        eval_df[COL_NEEDS_REPAIR] = False
         eval_df[COL_UTILITY_SCORE] = 0.9
         eval_df[COL_LEAKAGE_MASS] = 0.1
         eval_df[COL_ANY_HIGH_LEAKED] = False
@@ -402,7 +402,7 @@ class TestJudgeFailure:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_df = rewrite_gen_df.copy()
-        eval_df[_COL_NEEDS_REPAIR] = False
+        eval_df[COL_NEEDS_REPAIR] = False
         eval_df[COL_UTILITY_SCORE] = 0.9
         eval_df[COL_LEAKAGE_MASS] = 0.1
         eval_df[COL_ANY_HIGH_LEAKED] = False
@@ -455,7 +455,7 @@ class TestRepairLoop:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_df = rewrite_gen_df.copy()
-        eval_df[_COL_NEEDS_REPAIR] = False
+        eval_df[COL_NEEDS_REPAIR] = False
         eval_df[COL_UTILITY_SCORE] = 0.9
         eval_df[COL_LEAKAGE_MASS] = 0.1
         eval_df[COL_ANY_HIGH_LEAKED] = False
@@ -508,7 +508,7 @@ class TestRepairLoop:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_needs_repair = rewrite_gen_df.copy()
-        eval_needs_repair[_COL_NEEDS_REPAIR] = True
+        eval_needs_repair[COL_NEEDS_REPAIR] = True
         eval_needs_repair[COL_UTILITY_SCORE] = 0.9
         eval_needs_repair[COL_LEAKAGE_MASS] = 2.0
         eval_needs_repair[COL_ANY_HIGH_LEAKED] = True
@@ -582,17 +582,17 @@ class TestRepairLoop:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_df = rewrite_gen_df.copy()
-        eval_df[_COL_NEEDS_REPAIR] = [True, False]
+        eval_df[COL_NEEDS_REPAIR] = [True, False]
         eval_df[COL_UTILITY_SCORE] = [0.9, 0.9]
         eval_df[COL_LEAKAGE_MASS] = [2.0, 0.1]
         eval_df[COL_ANY_HIGH_LEAKED] = [True, False]
 
-        failing_row = eval_df[eval_df[_COL_NEEDS_REPAIR]].copy()
+        failing_row = eval_df[eval_df[COL_NEEDS_REPAIR]].copy()
         repaired_row = failing_row.copy()
         repaired_row[COL_REWRITTEN_TEXT] = "Repaired Maria"
 
         eval_after_repair = rewrite_gen_df.copy()
-        eval_after_repair[_COL_NEEDS_REPAIR] = False
+        eval_after_repair[COL_NEEDS_REPAIR] = False
         eval_after_repair[COL_UTILITY_SCORE] = 0.9
         eval_after_repair[COL_LEAKAGE_MASS] = 0.1
         eval_after_repair[COL_ANY_HIGH_LEAKED] = False
@@ -653,7 +653,7 @@ class TestRepairLoop:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_needs_repair = rewrite_gen_df.copy()
-        eval_needs_repair[_COL_NEEDS_REPAIR] = True
+        eval_needs_repair[COL_NEEDS_REPAIR] = True
         eval_needs_repair[COL_UTILITY_SCORE] = 0.9
         eval_needs_repair[COL_LEAKAGE_MASS] = 2.0
         eval_needs_repair[COL_ANY_HIGH_LEAKED] = True
@@ -662,7 +662,7 @@ class TestRepairLoop:
         repaired_df[COL_REWRITTEN_TEXT] = "Repaired text"
 
         eval_pass = rewrite_gen_df.copy()
-        eval_pass[_COL_NEEDS_REPAIR] = False
+        eval_pass[COL_NEEDS_REPAIR] = False
         eval_pass[COL_UTILITY_SCORE] = 0.9
         eval_pass[COL_LEAKAGE_MASS] = 0.1
         eval_pass[COL_ANY_HIGH_LEAKED] = False
@@ -730,7 +730,7 @@ class TestMixedRows:
         rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
 
         eval_df = rewrite_gen_df.copy()
-        eval_df[_COL_NEEDS_REPAIR] = False
+        eval_df[COL_NEEDS_REPAIR] = False
         eval_df[COL_UTILITY_SCORE] = 0.85
         eval_df[COL_LEAKAGE_MASS] = 0.3
         eval_df[COL_ANY_HIGH_LEAKED] = False

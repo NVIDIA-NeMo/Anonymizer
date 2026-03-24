@@ -68,6 +68,7 @@ COL_REWRITTEN_TEXT = "_rewritten_text"  # pre-repair intermediate; renamed to {t
 COL_QUALITY_QA_REANSWER = "_quality_qa_reanswer"
 COL_QUALITY_QA_COMPARE = "_quality_qa_compare"
 COL_PRIVACY_QA_REANSWER = "_privacy_qa_reanswer"
+COL_NEEDS_REPAIR = "_needs_repair"
 COL_REPAIR_ITERATIONS = "_repair_iterations"
 COL_JUDGE_EVALUATION = "_judge_evaluation"
 

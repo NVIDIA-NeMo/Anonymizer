@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -312,9 +312,23 @@ class QualityAnswerSchema(BaseModel):
 
 
 class QualityAnswersSchema(BaseModel):
-    """LLM output schema for quality QA re-answer step (on rewritten text)."""
+    """LLM output schema for quality QA re-answer step (on rewritten text).
+
+    When validated with ``context={"expected_ids": [1, 2, ...]}``,
+    raises if any expected ID is missing from the answers.
+    """
 
     answers: list[QualityAnswerSchema]
+
+    @model_validator(mode="after")
+    def _check_coverage(self, info: ValidationInfo) -> QualityAnswersSchema:
+        expected_ids = (info.context or {}).get("expected_ids")
+        if expected_ids is not None:
+            returned_ids = {a.id for a in self.answers}
+            missing = sorted(set(expected_ids) - returned_ids)
+            if missing:
+                raise ValueError(f"Missing answer IDs: {missing}")
+        return self
 
 
 class PrivacyAnswerItemSchema(BaseModel):
@@ -323,9 +337,23 @@ class PrivacyAnswerItemSchema(BaseModel):
 
 
 class PrivacyAnswersSchema(BaseModel):
-    """LLM output schema for privacy QA re-answer step (on rewritten text)."""
+    """LLM output schema for privacy QA re-answer step (on rewritten text).
+
+    When validated with ``context={"expected_ids": [1, 2, ...]}``,
+    raises if any expected ID is missing from the answers.
+    """
 
     answers: list[PrivacyAnswerItemSchema]
+
+    @model_validator(mode="after")
+    def _check_coverage(self, info: ValidationInfo) -> PrivacyAnswersSchema:
+        expected_ids = (info.context or {}).get("expected_ids")
+        if expected_ids is not None:
+            returned_ids = {a.id for a in self.answers}
+            missing = sorted(set(expected_ids) - returned_ids)
+            if missing:
+                raise ValueError(f"Missing answer IDs: {missing}")
+        return self
 
 
 class QACompareItemSchema(BaseModel):
@@ -335,6 +363,20 @@ class QACompareItemSchema(BaseModel):
 
 
 class QACompareResultsSchema(BaseModel):
-    """LLM output schema for quality QA comparison step."""
+    """LLM output schema for quality QA comparison step.
+
+    When validated with ``context={"expected_ids": [1, 2, ...]}``,
+    raises if any expected ID is missing from the results.
+    """
 
     per_item: list[QACompareItemSchema]
+
+    @model_validator(mode="after")
+    def _check_coverage(self, info: ValidationInfo) -> QACompareResultsSchema:
+        expected_ids = (info.context or {}).get("expected_ids")
+        if expected_ids is not None:
+            returned_ids = {a.id for a in self.per_item}
+            missing = sorted(set(expected_ids) - returned_ids)
+            if missing:
+                raise ValueError(f"Missing compare IDs: {missing}")
+        return self

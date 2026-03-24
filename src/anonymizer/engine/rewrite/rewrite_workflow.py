@@ -18,6 +18,7 @@ from anonymizer.engine.constants import (
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
     COL_REWRITTEN_TEXT,
     COL_TEXT,
@@ -25,7 +26,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
-from anonymizer.engine.rewrite.evaluate import _COL_NEEDS_REPAIR, EvaluateWorkflow
+from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
@@ -245,7 +246,7 @@ class RewriteWorkflow:
             df = eval_result.dataframe
             all_failed.extend(eval_result.failed_records)
 
-            needs_repair_mask = df[_COL_NEEDS_REPAIR].apply(bool)
+            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool)
             if not needs_repair_mask.any():
                 logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
                 break
