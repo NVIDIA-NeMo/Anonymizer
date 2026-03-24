@@ -42,7 +42,7 @@ anonymizer = Anonymizer()
 # %% [markdown]
 # ## Run
 #
-# Detection runs as part of any strategy. We use `RedactReplace` here since we only
+# Detection runs as part of any strategy. We use `Redact` here since we only
 # care about the detection columns. Set `data_summary` on the input to improve augmenter/validator accuracy.
 
 # %%

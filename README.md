@@ -39,13 +39,13 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 
 ```bash
 # Preview on a small sample
-anonymizer preview --data.source data.csv config.replace:redact
+anonymizer preview --source data.csv --replace redact
 
 # Full run with output file
-anonymizer run --data.source data.csv --output result.csv config.replace:redact
+anonymizer run --source data.csv --replace redact --output result.csv
 
 # Validate config without running
-anonymizer validate --data.source data.csv config.replace:hash
+anonymizer validate --source data.csv --replace hash
 ```
 
 Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
@@ -88,22 +88,22 @@ anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 
 | Strategy | Output for `"Alice"` (first_name) | Configurable |
 |----------|----------------------------------|-------------|
-| **RedactReplace** | `[REDACTED_FIRST_NAME]` | `format_template` |
-| **LabelReplace** | `<Alice, first_name>` | `format_template` |
-| **HashReplace** | `<HASH_FIRST_NAME_3bc51062973c>` | `format_template`, `algorithm`, `digest_length` |
-| **LLMReplace** | `Maya` | `instructions` |
+| **Redact** | `[REDACTED_FIRST_NAME]` | `format_template` |
+| **Annotate** | `<Alice, first_name>` | `format_template` |
+| **Hash** | `<HASH_FIRST_NAME_3bc51062973c>` | `format_template`, `algorithm`, `digest_length` |
+| **Substitute** | `Maya` | `instructions` |
 
 ```python
-from anonymizer import RedactReplace, LabelReplace, HashReplace, LLMReplace
+from anonymizer import Redact, Annotate, Hash, Substitute
 
 # Constant redaction
-AnonymizerConfig(replace=RedactReplace(format_template="****"))
+AnonymizerConfig(replace=Redact(format_template="****"))
 
 # Deterministic hash with short digest
-AnonymizerConfig(replace=HashReplace(algorithm="sha256", digest_length=8))
+AnonymizerConfig(replace=Hash(algorithm="sha256", digest_length=8))
 
 # LLM-generated contextual replacements
-AnonymizerConfig(replace=LLMReplace())
+AnonymizerConfig(replace=Substitute())
 ```
 
 ---

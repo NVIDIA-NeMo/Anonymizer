@@ -292,7 +292,7 @@ This installs hooks that run Ruff (format + lint) and uv lock verification on ea
 
 ### CLI
 
-Anonymizer ships a CLI entry point built with [tyro](https://brentyi.github.io/tyro/). After `make install-dev`, the `anonymizer` command is available:
+Anonymizer ships a CLI entry point built with [cyclopts](https://cyclopts.readthedocs.io/). After `make install-dev`, the `anonymizer` command is available:
 
 ```bash
 anonymizer --help               # top-level help
@@ -301,7 +301,7 @@ anonymizer preview --help       # quick sample run
 anonymizer validate --help      # config check
 ```
 
-The CLI source lives in `src/anonymizer/interface/cli/` with tests in `tests/interface/cli/`. Subcommands are registered via `tyro.extras.SubcommandApp` in `main.py`.
+The CLI source lives in `src/anonymizer/interface/cli/` with tests in `tests/interface/cli/`. Subcommands are registered via `@app.command` in `main.py`. The `AnonymizerInput` and `Detect` Pydantic models are passed directly as flattened parameters (`Parameter(name="*")`), so CLI flags like `--source`, `--text-column`, `--entity-labels`, and `--gliner-threshold` are derived from the model field definitions.
 
 ---
 
