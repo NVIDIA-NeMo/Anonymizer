@@ -89,8 +89,8 @@ Fill in the "answer" field for each item. Do not add or remove items.
 <<SKELETON>>
 </answer_template>
 """
-    return prompt.replace("<<REWRITTEN_TEXT>>", str(row.get(COL_REWRITTEN_TEXT, ""))).replace(
-        "<<SKELETON>>", json.dumps({"answers": skeleton}, indent=2)
+    return prompt.replace("<<SKELETON>>", json.dumps({"answers": skeleton}, indent=2)).replace(
+        "<<REWRITTEN_TEXT>>", str(row.get(COL_REWRITTEN_TEXT, ""))
     )
 
 
@@ -118,8 +118,8 @@ Fill in the "answer" field for each item with "yes" or "no". Do not add or remov
 <<SKELETON>>
 </answer_template>
 """
-    return prompt.replace("<<REWRITTEN_TEXT>>", str(row.get(COL_REWRITTEN_TEXT, ""))).replace(
-        "<<SKELETON>>", json.dumps({"answers": skeleton}, indent=2)
+    return prompt.replace("<<SKELETON>>", json.dumps({"answers": skeleton}, indent=2)).replace(
+        "<<REWRITTEN_TEXT>>", str(row.get(COL_REWRITTEN_TEXT, ""))
     )
 
 
@@ -278,7 +278,7 @@ def determine_repair_needs(
         return False
     if repair_any_high_leak and any_high_leaked:
         return True
-    return leakage_mass >= effective_threshold
+    return leakage_mass > effective_threshold
 
 
 # ---------------------------------------------------------------------------

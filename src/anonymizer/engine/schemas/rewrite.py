@@ -306,6 +306,24 @@ class RewriteOutputSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _validate_id_coverage(expected_ids: list[int], returned_ids: list[int], label: str) -> None:
+    """Enforce exact ID coverage: no missing, duplicate, or extra IDs."""
+    expected_set = set(expected_ids)
+    returned_set = set(returned_ids)
+
+    missing = sorted(expected_set - returned_set)
+    if missing:
+        raise ValueError(f"Missing {label} IDs: {missing}")
+
+    duplicates = sorted(id for id in returned_set if returned_ids.count(id) > 1)
+    if duplicates:
+        raise ValueError(f"Duplicate {label} IDs: {duplicates}")
+
+    extra = sorted(returned_set - expected_set)
+    if extra:
+        raise ValueError(f"Extra {label} IDs not in expected set: {extra}")
+
+
 class QualityAnswerSchema(BaseModel):
     id: int
     answer: str
@@ -315,7 +333,7 @@ class QualityAnswersSchema(BaseModel):
     """LLM output schema for quality QA re-answer step (on rewritten text).
 
     When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    raises if any expected ID is missing from the answers.
+    enforces exact coverage: no missing, duplicate, or extra IDs.
     """
 
     answers: list[QualityAnswerSchema]
@@ -324,10 +342,7 @@ class QualityAnswersSchema(BaseModel):
     def _check_coverage(self, info: ValidationInfo) -> QualityAnswersSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            returned_ids = {a.id for a in self.answers}
-            missing = sorted(set(expected_ids) - returned_ids)
-            if missing:
-                raise ValueError(f"Missing answer IDs: {missing}")
+            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
         return self
 
 
@@ -340,7 +355,7 @@ class PrivacyAnswersSchema(BaseModel):
     """LLM output schema for privacy QA re-answer step (on rewritten text).
 
     When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    raises if any expected ID is missing from the answers.
+    enforces exact coverage: no missing, duplicate, or extra IDs.
     """
 
     answers: list[PrivacyAnswerItemSchema]
@@ -349,10 +364,7 @@ class PrivacyAnswersSchema(BaseModel):
     def _check_coverage(self, info: ValidationInfo) -> PrivacyAnswersSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            returned_ids = {a.id for a in self.answers}
-            missing = sorted(set(expected_ids) - returned_ids)
-            if missing:
-                raise ValueError(f"Missing answer IDs: {missing}")
+            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
         return self
 
 
@@ -366,7 +378,7 @@ class QACompareResultsSchema(BaseModel):
     """LLM output schema for quality QA comparison step.
 
     When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    raises if any expected ID is missing from the results.
+    enforces exact coverage: no missing, duplicate, or extra IDs.
     """
 
     per_item: list[QACompareItemSchema]
@@ -375,8 +387,5 @@ class QACompareResultsSchema(BaseModel):
     def _check_coverage(self, info: ValidationInfo) -> QACompareResultsSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            returned_ids = {a.id for a in self.per_item}
-            missing = sorted(set(expected_ids) - returned_ids)
-            if missing:
-                raise ValueError(f"Missing compare IDs: {missing}")
+            _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
         return self

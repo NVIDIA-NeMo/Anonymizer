@@ -372,3 +372,19 @@ def test_qa_compare_reject_missing_ids_with_context() -> None:
             {"per_item": [{"id": 1, "score": 0.9}]},
             context={"expected_ids": [1, 2]},
         )
+
+
+def test_quality_answers_reject_duplicate_ids() -> None:
+    with pytest.raises(ValidationError, match="Duplicate answer IDs"):
+        QualityAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
+            context={"expected_ids": [1, 2]},
+        )
+
+
+def test_quality_answers_reject_extra_ids() -> None:
+    with pytest.raises(ValidationError, match="Extra answer IDs"):
+        QualityAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
+            context={"expected_ids": [1, 2]},
+        )
