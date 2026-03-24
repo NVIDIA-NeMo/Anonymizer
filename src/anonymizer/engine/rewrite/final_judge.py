@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -24,9 +23,6 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-
-logger = logging.getLogger("anonymizer.rewrite.final_judge")
-
 
 # ---------------------------------------------------------------------------
 # Generator params
