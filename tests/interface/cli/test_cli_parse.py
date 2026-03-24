@@ -7,10 +7,11 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
-from anonymizer.interface.cli.main import _build_anonymizer_config, _build_anonymizer_input
-
+from anonymizer.interface.cli.main import (
+    _build_anonymizer_config,
+    _build_anonymizer_input,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,7 +60,9 @@ def test_parse_hash_custom_params() -> None:
 
 def test_parse_annotate_template() -> None:
     """Annotate with a custom format_template."""
-    config = _build_anonymizer_config(replace="annotate", format_template="[{label}: {text}]")
+    config = _build_anonymizer_config(
+        replace="annotate", format_template="[{label}: {text}]"
+    )
     assert isinstance(config.replace, Annotate)
     assert config.replace.format_template == "[{label}: {text}]"
 
@@ -102,12 +105,26 @@ def test_parse_preview_num_records(csv_file: Path) -> None:
         mock_result.dataframe = []
         mock_result.failed_records = []
         mock_cls.return_value.preview.return_value = mock_result
-        app(["preview", "--source", str(csv_file), "--replace", "redact", "--num-records", "5"])
+        with pytest.raises(SystemExit) as exc:
+            app(
+                [
+                    "preview",
+                    "--source",
+                    str(csv_file),
+                    "--replace",
+                    "redact",
+                    "--num-records",
+                    "5",
+                ]
+            )
+        assert exc.value.code == 0
 
     assert mock_cls.return_value.preview.call_args.kwargs["num_records"] == 5
 
 
 def test_parse_data_summary(csv_file: Path) -> None:
     """--data-summary sets the data_summary field on AnonymizerInput."""
-    data = _build_anonymizer_input(source=str(csv_file), data_summary="customer support tickets")
+    data = _build_anonymizer_input(
+        source=str(csv_file), data_summary="customer support tickets"
+    )
     assert data.data_summary == "customer support tickets"

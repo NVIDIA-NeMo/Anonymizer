@@ -41,10 +41,7 @@ def _build_replace_strategy(
         case "substitute":
             return Substitute(instructions=instructions)
         case _:
-            raise ValueError(
-                f"Unknown replace strategy: {replace!r}. "
-                f"Choose from: {', '.join(_REPLACE_CHOICES)}"
-            )
+            raise ValueError(f"Unknown replace strategy: {replace!r}. Choose from: {', '.join(_REPLACE_CHOICES)}")
 
 
 def _build_anonymizer_config(

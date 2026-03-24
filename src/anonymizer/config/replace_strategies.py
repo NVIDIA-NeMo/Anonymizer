@@ -144,9 +144,7 @@ ReplaceMethod = Annotated[
 ]
 
 LocalReplaceMethod = Annotated[
-    Annotated[Annotate, Tag("annotate")]
-    | Annotated[Redact, Tag("redact")]
-    | Annotated[Hash, Tag("hash")],
+    Annotated[Annotate, Tag("annotate")] | Annotated[Redact, Tag("redact")] | Annotated[Hash, Tag("hash")],
     Discriminator(_resolve_replace_tag),
 ]
 

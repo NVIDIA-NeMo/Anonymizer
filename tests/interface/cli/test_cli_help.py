@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import pytest
-
 from anonymizer.interface.cli.main import app
 
 
@@ -12,5 +11,5 @@ from anonymizer.interface.cli.main import app
 def test_help_exits_zero(subcommand: str, capsys: pytest.CaptureFixture[str]) -> None:
     """Each subcommand prints help and exits 0."""
     with pytest.raises(SystemExit) as exc:
-        app.cli(args=[subcommand, "--help"])
+        app([subcommand, "--help"])
     assert exc.value.code == 0
