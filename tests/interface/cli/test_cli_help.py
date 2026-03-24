@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import pytest
+
 from anonymizer.interface.cli.main import app
 
 
