@@ -7,11 +7,10 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+
+from anonymizer.config.anonymizer_config import AnonymizerConfig, Detect
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
-from anonymizer.interface.cli.main import (
-    _build_anonymizer_config,
-    _build_anonymizer_input,
-)
+from anonymizer.interface.cli.main import _build_replace_strategy
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -35,63 +34,66 @@ def body_csv_file(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Replace strategy builder tests
 # ---------------------------------------------------------------------------
 
 
-def test_parse_redact_defaults(csv_file: Path) -> None:
-    """Redact with all defaults produces a valid AnonymizerConfig."""
-    config = _build_anonymizer_config(replace="redact")
-    data = _build_anonymizer_input(source=str(csv_file))
-    assert isinstance(config.replace, Redact)
-    assert config.replace.format_template == "[REDACTED_{label}]"
-    assert config.replace.normalize_label is True
+def test_parse_redact_defaults() -> None:
+    """Redact with all defaults produces a valid strategy and config."""
+    strategy = _build_replace_strategy("redact")
+    assert isinstance(strategy, Redact)
+    assert strategy.format_template == "[REDACTED_{label}]"
+    assert strategy.normalize_label is True
+    config = AnonymizerConfig(replace=strategy)
     assert config.rewrite is None
-    assert data.source == str(csv_file)
 
 
 def test_parse_hash_custom_params() -> None:
     """Hash with algorithm=md5 and digest_length=8."""
-    config = _build_anonymizer_config(replace="hash", algorithm="md5", digest_length=8)
-    assert isinstance(config.replace, Hash)
-    assert config.replace.algorithm == "md5"
-    assert config.replace.digest_length == 8
+    strategy = _build_replace_strategy("hash", algorithm="md5", digest_length=8)
+    assert isinstance(strategy, Hash)
+    assert strategy.algorithm == "md5"
+    assert strategy.digest_length == 8
 
 
 def test_parse_annotate_template() -> None:
     """Annotate with a custom format_template."""
-    config = _build_anonymizer_config(
-        replace="annotate", format_template="[{label}: {text}]"
-    )
-    assert isinstance(config.replace, Annotate)
-    assert config.replace.format_template == "[{label}: {text}]"
+    strategy = _build_replace_strategy("annotate", format_template="[{label}: {text}]")
+    assert isinstance(strategy, Annotate)
+    assert strategy.format_template == "[{label}: {text}]"
 
 
 def test_parse_substitute() -> None:
     """Substitute strategy is parsed without extra flags."""
-    config = _build_anonymizer_config(replace="substitute")
-    assert isinstance(config.replace, Substitute)
+    strategy = _build_replace_strategy("substitute")
+    assert isinstance(strategy, Substitute)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic model integration tests (cyclopts passes these directly)
+# ---------------------------------------------------------------------------
 
 
 def test_parse_text_column_override(body_csv_file: Path) -> None:
-    """--text-column overrides the default 'text' column name."""
-    data = _build_anonymizer_input(source=str(body_csv_file), text_column="body")
+    """AnonymizerInput accepts text_column override."""
+    from anonymizer.config.anonymizer_config import AnonymizerInput
+
+    data = AnonymizerInput(source=str(body_csv_file), text_column="body")
     assert data.text_column == "body"
 
 
 def test_parse_entity_labels() -> None:
-    """entity_labels list is forwarded to the Detect config."""
-    config = _build_anonymizer_config(replace="redact", entity_labels=["person", "org"])
-    labels = config.detect.entity_labels
-    assert labels is not None
-    assert "person" in labels
-    assert "org" in labels
+    """Detect model forwards entity_labels."""
+    detect = Detect(entity_labels=["person", "org"])
+    assert detect.entity_labels is not None
+    assert "person" in detect.entity_labels
+    assert "org" in detect.entity_labels
 
 
 def test_parse_threshold() -> None:
     """gliner_threshold=0.7 is stored as a float."""
-    config = _build_anonymizer_config(replace="redact", gliner_threshold=0.7)
-    assert abs(config.detect.gliner_threshold - 0.7) < 1e-9
+    detect = Detect(gliner_threshold=0.7)
+    assert abs(detect.gliner_threshold - 0.7) < 1e-9
 
 
 def test_parse_preview_num_records(csv_file: Path) -> None:
@@ -106,25 +108,15 @@ def test_parse_preview_num_records(csv_file: Path) -> None:
         mock_result.failed_records = []
         mock_cls.return_value.preview.return_value = mock_result
         with pytest.raises(SystemExit) as exc:
-            app(
-                [
-                    "preview",
-                    "--source",
-                    str(csv_file),
-                    "--replace",
-                    "redact",
-                    "--num-records",
-                    "5",
-                ]
-            )
+            app(["preview", "--source", str(csv_file), "--replace", "redact", "--num-records", "5"])
         assert exc.value.code == 0
 
     assert mock_cls.return_value.preview.call_args.kwargs["num_records"] == 5
 
 
 def test_parse_data_summary(csv_file: Path) -> None:
-    """--data-summary sets the data_summary field on AnonymizerInput."""
-    data = _build_anonymizer_input(
-        source=str(csv_file), data_summary="customer support tickets"
-    )
+    """AnonymizerInput accepts data_summary."""
+    from anonymizer.config.anonymizer_config import AnonymizerInput
+
+    data = AnonymizerInput(source=str(csv_file), data_summary="customer support tickets")
     assert data.data_summary == "customer support tickets"
