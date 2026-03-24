@@ -185,7 +185,16 @@ def _make_repair_column(repairer_alias: str) -> Any:
     """Factory that creates a repair column generator bound to a resolved model alias."""
 
     @custom_column_generator(
-        required_columns=[_COL_LEAKED_PRIVACY_ITEMS, COL_REWRITTEN_TEXT],
+        required_columns=[
+            _COL_LEAKED_PRIVACY_ITEMS,
+            COL_REWRITTEN_TEXT,
+            COL_SENSITIVITY_DISPOSITION,
+            COL_TEXT,
+            COL_REPLACEMENT_MAP_FOR_PROMPT,
+            COL_LEAKAGE_MASS,
+            COL_ANY_HIGH_LEAKED,
+            COL_UTILITY_SCORE,
+        ],
         model_aliases=[repairer_alias],
     )
     def _repair_column(row: dict[str, Any], generator_params: RepairParams, models: dict) -> dict[str, Any]:
