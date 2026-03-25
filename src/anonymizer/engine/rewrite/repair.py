@@ -32,6 +32,7 @@ from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
     parse_privacy_qa,
     parse_sensitivity_disposition,
+    render_template,
 )
 from anonymizer.engine.schemas.rewrite import (
     EntityDispositionSchema,
@@ -162,9 +163,7 @@ Provide ONLY the rewritten text. Do not include explanations, comments, or markd
         "<<LEAKED_ITEMS>>": str(row.get(_COL_LEAKED_PRIVACY_ITEMS, "")),
         "<<UTILITY_SCORE>>": str(row.get(COL_UTILITY_SCORE, 0.0)),
     }
-    for key, value in replacements.items():
-        prompt = prompt.replace(key, value)
-    return prompt
+    return render_template(prompt, replacements)
 
 
 # ---------------------------------------------------------------------------
