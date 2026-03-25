@@ -37,7 +37,7 @@ packages = ["src/anonymizer"]
 package = true
 
 override-dependencies = [
-  "grpcio>=1.68.0",  # forcing to a higher version since litellm is constraining it
+  "grpcio>=1.68.0",  # forcing to a higher version since litellm is constraining it, to avoid CVE-2024-11407
 ]
 
 [tool.pytest.ini_options]
