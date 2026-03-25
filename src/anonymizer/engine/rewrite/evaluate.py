@@ -34,6 +34,7 @@ from anonymizer.engine.rewrite.parsers import (
     parse_quality_answers,
     parse_quality_compare,
     parse_quality_qa,
+    render_template,
 )
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswer,
@@ -89,8 +90,12 @@ Fill in the "answer" field for each item. Do not add or remove items.
 <<SKELETON>>
 </answer_template>
 """
-    return prompt.replace("<<SKELETON>>", json.dumps({"answers": skeleton}, indent=2)).replace(
-        "<<REWRITTEN_TEXT>>", str(row.get(COL_REWRITTEN_TEXT, ""))
+    return render_template(
+        prompt,
+        {
+            "<<SKELETON>>": json.dumps({"answers": skeleton}, indent=2),
+            "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
+        },
     )
 
 
@@ -118,8 +123,12 @@ Fill in the "answer" field for each item with "yes" or "no". Do not add or remov
 <<SKELETON>>
 </answer_template>
 """
-    return prompt.replace("<<SKELETON>>", json.dumps({"answers": skeleton}, indent=2)).replace(
-        "<<REWRITTEN_TEXT>>", str(row.get(COL_REWRITTEN_TEXT, ""))
+    return render_template(
+        prompt,
+        {
+            "<<SKELETON>>": json.dumps({"answers": skeleton}, indent=2),
+            "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
+        },
     )
 
 
@@ -165,7 +174,12 @@ Fill in the "score" (0.0-1.0) and "reason" fields for each item. Do not add or r
 <<SKELETON>>
 </answer_template>
 """
-    return prompt.replace("<<SKELETON>>", json.dumps({"per_item": skeleton}, indent=2))
+    return render_template(
+        prompt,
+        {
+            "<<SKELETON>>": json.dumps({"per_item": skeleton}, indent=2),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
