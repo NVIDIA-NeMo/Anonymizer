@@ -25,6 +25,7 @@ from anonymizer.engine.constants import (
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -69,6 +70,7 @@ _SEED_REPAIR = [
     COL_ANY_HIGH_LEAKED,
     COL_UTILITY_SCORE,
 ]
+_SEED_REWRITE_GEN = [COL_TEXT, COL_TAGGED_TEXT, COL_SENSITIVITY_DISPOSITION, COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP]
 _SEED_JUDGE = [COL_TEXT, COL_REWRITTEN_TEXT, COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED]
 
 
@@ -212,8 +214,9 @@ class RewriteWorkflow:
         all_failed.extend(pre_gen_result.failed_records)
 
         # --- Step 4: rewrite generation ---
+        rewrite_gen_seed = _select_seed_cols(entity_rows, _SEED_REWRITE_GEN)
         rewrite_result = self._rewrite_gen_wf.run(
-            entity_rows,
+            rewrite_gen_seed,
             model_configs=model_configs,
             selected_models=selected_models,
             replace_model_selection=replace_model_selection,
@@ -221,7 +224,7 @@ class RewriteWorkflow:
             data_summary=data_summary,
             preview_num_records=preview_num_records,
         )
-        entity_rows = rewrite_result.dataframe
+        entity_rows = _join_new_columns(entity_rows, rewrite_result.dataframe)
         all_failed.extend(rewrite_result.failed_records)
 
         # --- Step 5: evaluate-repair loop ---
