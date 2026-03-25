@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
 )
 from anonymizer.engine.rewrite.repair import (
+    COL_REWRITTEN_TEXT_NEXT,
     RepairParams,
     RepairWorkflow,
     _format_protection_block,
@@ -200,4 +201,4 @@ def test_repair_columns_pipeline(
     assert len(cols) == 2
     assert isinstance(cols[0], CustomColumnConfig)
     assert isinstance(cols[1], CustomColumnConfig)
-    assert cols[1].name == COL_REWRITTEN_TEXT
+    assert cols[1].name == COL_REWRITTEN_TEXT_NEXT

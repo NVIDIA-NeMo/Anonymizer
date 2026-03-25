@@ -313,7 +313,7 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_reanswer_prompt(row))
         parser = _make_quality_answer_parser(recipe, expected_ids)
         result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
-        row[COL_QUALITY_QA_REANSWER] = result
+        row[COL_QUALITY_QA_REANSWER] = result.model_dump()
         return row
 
     return _quality_reanswer
@@ -332,7 +332,7 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         prompt = recipe.apply_recipe_to_user_prompt(_render_privacy_reanswer_prompt(row))
         parser = _make_privacy_answer_parser(recipe, expected_ids)
         result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
-        row[COL_PRIVACY_QA_REANSWER] = result
+        row[COL_PRIVACY_QA_REANSWER] = result.model_dump()
         return row
 
     return _privacy_reanswer
@@ -351,7 +351,7 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_compare_prompt(row))
         parser = _make_qa_compare_parser(recipe, expected_ids)
         result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
-        row[COL_QUALITY_QA_COMPARE] = result
+        row[COL_QUALITY_QA_COMPARE] = result.model_dump()
         return row
 
     return _quality_compare

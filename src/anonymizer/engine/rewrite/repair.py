@@ -45,6 +45,7 @@ from anonymizer.engine.schemas.rewrite import (
 logger = logging.getLogger("anonymizer.rewrite.repair")
 
 _COL_LEAKED_PRIVACY_ITEMS = "_leaked_privacy_items"
+COL_REWRITTEN_TEXT_NEXT = COL_REWRITTEN_TEXT + "__next"
 
 _F_NEEDS_PROTECTION = field(EntityDispositionSchema, "needs_protection")
 _F_ENTITY_LABEL = field(EntityDispositionSchema, "entity_label")
@@ -200,7 +201,7 @@ def _make_repair_column(repairer_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=RewriteOutputSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_repair_prompt(row, generator_params))
         result, _ = models[repairer_alias].generate(prompt=prompt, parser=recipe.parse, max_correction_steps=3)
-        row[COL_REWRITTEN_TEXT] = result.rewritten_text
+        row[COL_REWRITTEN_TEXT_NEXT] = result.rewritten_text
         return row
 
     return _repair_column
@@ -239,7 +240,7 @@ class RepairWorkflow:
             ),
             # Step 2 -- Repair rewritten text (LLM via custom column)
             CustomColumnConfig(
-                name=COL_REWRITTEN_TEXT,
+                name=COL_REWRITTEN_TEXT_NEXT,
                 generator_function=_make_repair_column(repairer_alias),
                 generator_params=RepairParams(
                     privacy_goal_str=privacy_goal.to_prompt_string(),
