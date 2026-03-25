@@ -34,7 +34,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
@@ -57,9 +57,12 @@ _PASSTHROUGH_DEFAULTS: dict[str, object] = {
 _ROW_ORDER_COL = "_anonymizer_row_order"
 
 # Seed columns per adapter call — only these are serialized to parquet.
-_SEED_PRE_GENERATION = [COL_TEXT, COL_TAGGED_TEXT, COL_FINAL_ENTITIES, COL_LATENT_ENTITIES]
-_SEED_EVALUATE = [COL_QUALITY_QA, COL_PRIVACY_QA, COL_REWRITTEN_TEXT]
+# RECORD_ID_COLUMN is included in every list so the adapter preserves the
+# stable ID from detection rather than recomputing from different column sets.
+_SEED_PRE_GENERATION = [RECORD_ID_COLUMN, COL_TEXT, COL_TAGGED_TEXT, COL_FINAL_ENTITIES, COL_LATENT_ENTITIES]
+_SEED_EVALUATE = [RECORD_ID_COLUMN, COL_QUALITY_QA, COL_PRIVACY_QA, COL_REWRITTEN_TEXT]
 _SEED_REPAIR = [
+    RECORD_ID_COLUMN,
     COL_TEXT,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
@@ -70,8 +73,15 @@ _SEED_REPAIR = [
     COL_ANY_HIGH_LEAKED,
     COL_UTILITY_SCORE,
 ]
-_SEED_REWRITE_GEN = [COL_TEXT, COL_TAGGED_TEXT, COL_SENSITIVITY_DISPOSITION, COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP]
-_SEED_JUDGE = [COL_TEXT, COL_REWRITTEN_TEXT, COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED]
+_SEED_REWRITE_GEN = [
+    RECORD_ID_COLUMN,
+    COL_TEXT,
+    COL_TAGGED_TEXT,
+    COL_SENSITIVITY_DISPOSITION,
+    COL_ENTITIES_BY_VALUE,
+    COL_REPLACEMENT_MAP,
+]
+_SEED_JUDGE = [RECORD_ID_COLUMN, COL_TEXT, COL_REWRITTEN_TEXT, COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED]
 
 
 # ---------------------------------------------------------------------------
@@ -114,22 +124,28 @@ def _join_new_columns(target: pd.DataFrame, source: pd.DataFrame, *, overwrite: 
     """Copy columns from source into target using positional alignment.
 
     When the adapter drops rows (tracked via ``failed_records``), source
-    will be shorter than target. In that case we log a warning and skip
-    the join -- the failed rows are already captured by the adapter's
-    missing-record tracking and will degrade gracefully rather than
-    aborting the entire run.
+    will be shorter than target. We align on ``RECORD_ID_COLUMN`` to
+    drop the failed rows from target, then join the new columns from
+    source onto the surviving rows.
 
     Set ``overwrite=True`` to update existing columns (e.g. re-evaluate after repair).
     """
     if len(source) != len(target):
+        dropped = len(target) - len(source)
         logger.warning(
-            "Row count mismatch in _join_new_columns: target=%d, source=%d. "
-            "Adapter likely dropped %d failed row(s); skipping column join.",
+            "Row count mismatch: target=%d, source=%d; dropping %d failed row(s).",
             len(target),
             len(source),
-            len(target) - len(source),
+            dropped,
         )
-        return target
+        surviving_ids = set(source[RECORD_ID_COLUMN].astype(str))
+        target = (
+            target[target[RECORD_ID_COLUMN].astype(str).isin(surviving_ids)]
+            .sort_values(RECORD_ID_COLUMN)
+            .reset_index(drop=True)
+        )
+        source = source.sort_values(RECORD_ID_COLUMN).reset_index(drop=True)
+
     for col in source.columns:
         if col not in target.columns or overwrite:
             target[col] = source[col].values
