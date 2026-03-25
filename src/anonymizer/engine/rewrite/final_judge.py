@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.rewrite.parsers import render_template
 
 # ---------------------------------------------------------------------------
 # Generator params
@@ -57,10 +58,13 @@ def _judge_prompt(privacy_goal: PrivacyGoal) -> str:
 <task>
 Evaluate independently whether the rewrite achieves the privacy goal while maintaining quality and naturalness.
 </task>"""
-    return (
-        prompt.replace("<<PRIVACY_GOAL>>", privacy_goal.to_prompt_string())
-        .replace("<<COL_TEXT>>", _jinja(COL_TEXT))
-        .replace("<<COL_REWRITTEN_TEXT>>", _jinja(COL_REWRITTEN_TEXT))
+    return render_template(
+        prompt,
+        {
+            "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
+            "<<COL_TEXT>>": _jinja(COL_TEXT),
+            "<<COL_REWRITTEN_TEXT>>": _jinja(COL_REWRITTEN_TEXT),
+        },
     )
 
 
