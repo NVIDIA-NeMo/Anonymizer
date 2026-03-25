@@ -700,6 +700,71 @@ class TestRepairLoop:
 
         assert result.dataframe[COL_REPAIR_ITERATIONS].iloc[0] == 1
 
+    def test_evaluate_dropping_rows_degrades_gracefully(
+        self,
+        stub_model_configs: list[ModelConfig],
+        stub_rewrite_model_selection: RewriteModelSelection,
+        stub_replace_model_selection: ReplaceModelSelection,
+        stub_entities_by_value_with_entities: dict,
+    ) -> None:
+        """When evaluate drops a row, the surviving rows still complete the pipeline."""
+        df = pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works here", "Bob works there"],
+                COL_ENTITIES_BY_VALUE: [
+                    stub_entities_by_value_with_entities,
+                    stub_entities_by_value_with_entities,
+                ],
+            }
+        )
+
+        adapter = Mock()
+
+        pre_gen_df = df.copy()
+        pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+        pre_gen_df["_anonymizer_row_order"] = [0, 1]
+        pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
+
+        rewrite_gen_df = pre_gen_df.copy()
+        rewrite_gen_df[COL_REWRITTEN_TEXT] = ["Maria works here", "Rob works there"]
+        rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
+
+        # Evaluate returns only 1 of 2 rows (rec-1 dropped)
+        eval_df = rewrite_gen_df.iloc[[0]].copy().reset_index(drop=True)
+        eval_df[COL_NEEDS_REPAIR] = False
+        eval_df[COL_UTILITY_SCORE] = 0.9
+        eval_df[COL_LEAKAGE_MASS] = 0.1
+        eval_df[COL_ANY_HIGH_LEAKED] = False
+
+        judge_df = eval_df.copy()
+        judge_df[COL_JUDGE_EVALUATION] = None
+        judge_df[COL_NEEDS_HUMAN_REVIEW] = False
+
+        eval_failed = FailedRecord(record_id="rec-1", step="rewrite-evaluate-0", reason="LLM timeout")
+
+        adapter.run_workflow.side_effect = [
+            WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+            WorkflowRunResult(dataframe=eval_df, failed_records=[eval_failed]),
+            WorkflowRunResult(dataframe=judge_df, failed_records=[]),
+        ]
+
+        rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
+
+        wf = RewriteWorkflow(adapter=adapter)
+        with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+            result = wf.run(
+                df,
+                model_configs=stub_model_configs,
+                selected_models=stub_rewrite_model_selection,
+                replace_model_selection=stub_replace_model_selection,
+                privacy_goal=_PRIVACY_GOAL,
+                evaluation=EvaluationCriteria(max_repair_iterations=1),
+            )
+
+        assert len(result.dataframe) == 1
+        assert result.dataframe[COL_REWRITTEN_TEXT].iloc[0] == "Maria works here"
+        assert any(f.record_id == "rec-1" for f in result.failed_records)
+
 
 # ---------------------------------------------------------------------------
 # Tests: mixed rows (entity + passthrough)
