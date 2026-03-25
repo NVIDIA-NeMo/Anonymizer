@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass, field
 from typing import Annotated, Literal
 
 import cyclopts
@@ -27,36 +28,59 @@ _STRATEGY_CLS = {
 }
 
 
-def _build_replace_strategy(
-    name: ReplaceChoice,
-    format_template: str | None = None,
-    normalize_label: bool = True,
-    algorithm: Literal["sha256", "sha1", "md5"] = "sha256",
-    digest_length: int = 12,
-    instructions: str | None = None,
-) -> Redact | Hash | Annotate | Substitute:
+@dataclass
+class CliOpts:
+    """Parameters shared across all CLI subcommands."""
+
+    replace: ReplaceChoice
+    detect: Annotated[Detect, cyclopts.Parameter(name="*")] = field(default_factory=Detect)
+    format_template: str | None = None
+    normalize_label: bool = True
+    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256"
+    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12
+    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for substitute.")] = None
+    model_configs: str | None = None
+    model_providers: str | None = None
+    artifact_path: str | None = None
+    verbose: bool = False
+    debug: bool = False
+
+
+def _build_replace_strategy(opts: CliOpts) -> Redact | Hash | Annotate | Substitute:
     """Build a replace strategy instance from CLI args.
 
     Only passes non-default kwargs so Pydantic field defaults are preserved.
     """
-    cls = _STRATEGY_CLS[name]
+    cls = _STRATEGY_CLS[opts.replace]
     kw: dict = {}
-    if format_template is not None and "format_template" in cls.model_fields:
-        kw["format_template"] = format_template
+    if opts.format_template is not None and "format_template" in cls.model_fields:
+        kw["format_template"] = opts.format_template
     if cls is Redact:
-        kw["normalize_label"] = normalize_label
+        kw["normalize_label"] = opts.normalize_label
     if cls is Hash:
-        kw["algorithm"] = algorithm
-        kw["digest_length"] = digest_length
-    if cls is Substitute and instructions is not None:
-        kw["instructions"] = instructions
+        kw["algorithm"] = opts.algorithm
+        kw["digest_length"] = opts.digest_length
+    if cls is Substitute and opts.instructions is not None:
+        kw["instructions"] = opts.instructions
     return cls(**kw)
 
 
-def _configure_logging(*, verbose: bool, debug: bool) -> None:
-    if debug:
+def _build_config_and_anonymizer(opts: CliOpts) -> tuple[AnonymizerConfig, Anonymizer]:
+    """Build the shared AnonymizerConfig and Anonymizer from CLI args."""
+    strategy = _build_replace_strategy(opts)
+    config = AnonymizerConfig(replace=strategy, detect=opts.detect)
+    anonymizer = Anonymizer(
+        model_configs=opts.model_configs,
+        model_providers=opts.model_providers,
+        artifact_path=opts.artifact_path,
+    )
+    return config, anonymizer
+
+
+def _configure_logging(opts: CliOpts) -> None:
+    if opts.debug:
         configure_logging(LoggingConfig.debug())
-    elif verbose:
+    elif opts.verbose:
         configure_logging(LoggingConfig.verbose())
     else:
         configure_logging(LoggingConfig.default())
@@ -66,31 +90,16 @@ def _configure_logging(*, verbose: bool, debug: bool) -> None:
 def run(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    replace: ReplaceChoice,
+    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")],
     output: str | None = None,
-    detect: Annotated[Detect, cyclopts.Parameter(name="*")] = Detect(),
-    format_template: str | None = None,
-    normalize_label: bool = True,
-    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256",
-    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12,
-    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for substitute.")] = None,
-    model_configs: str | None = None,
-    model_providers: str | None = None,
-    artifact_path: str | None = None,
-    verbose: bool = False,
-    debug: bool = False,
 ) -> None:
     """Run the full anonymization pipeline (detection + replacement)."""
-    _configure_logging(verbose=verbose, debug=debug)
+    _configure_logging(opts)
     try:
-        strategy = _build_replace_strategy(
-            replace, format_template, normalize_label, algorithm, digest_length, instructions
-        )
-        config = AnonymizerConfig(replace=strategy, detect=detect)
+        config, anonymizer = _build_config_and_anonymizer(opts)
     except (ValidationError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1)
-    anonymizer = Anonymizer(model_configs=model_configs, model_providers=model_providers, artifact_path=artifact_path)
     result = anonymizer.run(config=config, data=data)
     print(format_summary(result))
     if output:
@@ -102,31 +111,16 @@ def run(
 def preview(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    replace: ReplaceChoice,
+    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")],
     num_records: int = 10,
-    detect: Annotated[Detect, cyclopts.Parameter(name="*")] = Detect(),
-    format_template: str | None = None,
-    normalize_label: bool = True,
-    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256",
-    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12,
-    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for substitute.")] = None,
-    model_configs: str | None = None,
-    model_providers: str | None = None,
-    artifact_path: str | None = None,
-    verbose: bool = False,
-    debug: bool = False,
 ) -> None:
     """Run the pipeline on a subset of records for quick inspection."""
-    _configure_logging(verbose=verbose, debug=debug)
+    _configure_logging(opts)
     try:
-        strategy = _build_replace_strategy(
-            replace, format_template, normalize_label, algorithm, digest_length, instructions
-        )
-        config = AnonymizerConfig(replace=strategy, detect=detect)
+        config, anonymizer = _build_config_and_anonymizer(opts)
     except (ValidationError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1)
-    anonymizer = Anonymizer(model_configs=model_configs, model_providers=model_providers, artifact_path=artifact_path)
     result = anonymizer.preview(config=config, data=data, num_records=num_records)
     print(format_summary(result))
 
@@ -135,31 +129,15 @@ def preview(
 def validate(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    replace: ReplaceChoice,
-    detect: Annotated[Detect, cyclopts.Parameter(name="*")] = Detect(),
-    format_template: str | None = None,
-    normalize_label: bool = True,
-    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256",
-    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12,
-    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for substitute.")] = None,
-    model_configs: str | None = None,
-    model_providers: str | None = None,
-    artifact_path: str | None = None,
-    verbose: bool = False,
-    debug: bool = False,
+    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")],
 ) -> None:
     """Validate that the active config is compatible with model selections."""
-    _configure_logging(verbose=verbose, debug=debug)
+    _configure_logging(opts)
     try:
-        strategy = _build_replace_strategy(
-            replace, format_template, normalize_label, algorithm, digest_length, instructions
-        )
-        config = AnonymizerConfig(replace=strategy, detect=detect)
-        AnonymizerInput.model_validate(data.model_dump())
+        config, anonymizer = _build_config_and_anonymizer(opts)
     except (ValidationError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1)
-    anonymizer = Anonymizer(model_configs=model_configs, model_providers=model_providers, artifact_path=artifact_path)
     anonymizer.validate_config(config)
     print("Config is valid.")
 

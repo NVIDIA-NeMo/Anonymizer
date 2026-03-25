@@ -3,14 +3,15 @@
 
 from __future__ import annotations
 
+import unittest.mock as mock
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, Detect
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
-from anonymizer.interface.cli.main import _build_replace_strategy
+from anonymizer.interface.cli.main import CliOpts, _build_replace_strategy, app
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -40,7 +41,7 @@ def body_csv_file(tmp_path: Path) -> Path:
 
 def test_parse_redact_defaults() -> None:
     """Redact with all defaults produces a valid strategy and config."""
-    strategy = _build_replace_strategy("redact")
+    strategy = _build_replace_strategy(CliOpts(replace="redact"))
     assert isinstance(strategy, Redact)
     assert strategy.format_template == "[REDACTED_{label}]"
     assert strategy.normalize_label is True
@@ -50,7 +51,7 @@ def test_parse_redact_defaults() -> None:
 
 def test_parse_hash_custom_params() -> None:
     """Hash with algorithm=md5 and digest_length=8."""
-    strategy = _build_replace_strategy("hash", algorithm="md5", digest_length=8)
+    strategy = _build_replace_strategy(CliOpts(replace="hash", algorithm="md5", digest_length=8))
     assert isinstance(strategy, Hash)
     assert strategy.algorithm == "md5"
     assert strategy.digest_length == 8
@@ -58,14 +59,14 @@ def test_parse_hash_custom_params() -> None:
 
 def test_parse_annotate_template() -> None:
     """Annotate with a custom format_template."""
-    strategy = _build_replace_strategy("annotate", format_template="[{label}: {text}]")
+    strategy = _build_replace_strategy(CliOpts(replace="annotate", format_template="[{label}: {text}]"))
     assert isinstance(strategy, Annotate)
     assert strategy.format_template == "[{label}: {text}]"
 
 
 def test_parse_substitute() -> None:
     """Substitute strategy is parsed without extra flags."""
-    strategy = _build_replace_strategy("substitute")
+    strategy = _build_replace_strategy(CliOpts(replace="substitute"))
     assert isinstance(strategy, Substitute)
 
 
@@ -76,8 +77,6 @@ def test_parse_substitute() -> None:
 
 def test_parse_text_column_override(body_csv_file: Path) -> None:
     """AnonymizerInput accepts text_column override."""
-    from anonymizer.config.anonymizer_config import AnonymizerInput
-
     data = AnonymizerInput(source=str(body_csv_file), text_column="body")
     assert data.text_column == "body"
 
@@ -98,13 +97,9 @@ def test_parse_threshold() -> None:
 
 def test_parse_preview_num_records(csv_file: Path) -> None:
     """--num-records is passed as an integer to the preview command."""
-    import unittest.mock as mock
-
-    from anonymizer.interface.cli.main import app
-
     with mock.patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
         mock_result = mock.MagicMock()
-        mock_result.dataframe = []
+        mock_result.dataframe = pd.DataFrame()
         mock_result.failed_records = []
         mock_cls.return_value.preview.return_value = mock_result
         with pytest.raises(SystemExit) as exc:
@@ -116,7 +111,5 @@ def test_parse_preview_num_records(csv_file: Path) -> None:
 
 def test_parse_data_summary(csv_file: Path) -> None:
     """AnonymizerInput accepts data_summary."""
-    from anonymizer.config.anonymizer_config import AnonymizerInput
-
     data = AnonymizerInput(source=str(csv_file), data_summary="customer support tickets")
     assert data.data_summary == "customer support tickets"

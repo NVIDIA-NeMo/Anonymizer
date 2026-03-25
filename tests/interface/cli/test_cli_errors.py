@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig
+from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.interface.cli.main import app
 
@@ -56,9 +57,5 @@ def test_threshold_out_of_range_exits(tmp_path: Path) -> None:
 
 def test_both_modes_set_exits() -> None:
     """Setting both replace and rewrite on AnonymizerConfig violates the model_validator."""
-    from pydantic import ValidationError as PydanticValidationError
-
-    from anonymizer.config.anonymizer_config import Rewrite
-
     with pytest.raises(PydanticValidationError):
         AnonymizerConfig(replace=Redact(), rewrite=Rewrite())

@@ -11,14 +11,16 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Discriminator, Field, Tag, field_validator
 
 
-def _resolve_replace_tag(v: Any) -> str | None:
-    """Callable discriminator: class name for instances, 'kind'/'type' key for dicts."""
+def _resolve_replace_tag(v: Any) -> str:
+    """Callable discriminator: class name for instances, 'kind' key for dicts."""
     if isinstance(v, BaseModel):
         return type(v).__name__.lower()
     if isinstance(v, dict):
-        raw = v.get("kind") or v.get("type") or ""
-        return raw.lower() if isinstance(raw, str) else None
-    return None
+        kind = v.get("kind")
+        if isinstance(kind, str) and kind:
+            return kind.lower()
+        raise TypeError(f"dict is missing a valid 'kind' key: {v!r}")
+    raise TypeError(f"Cannot resolve replace tag for type {type(v).__name__!r}")
 
 
 class ReplaceMethodBase(BaseModel):
