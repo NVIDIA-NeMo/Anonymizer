@@ -17,10 +17,12 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
+    COL_LEAKED_PRIVACY_ITEMS,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
+    COL_REWRITTEN_TEXT_NEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
@@ -44,8 +46,6 @@ from anonymizer.engine.schemas.rewrite import (
 
 logger = logging.getLogger("anonymizer.rewrite.repair")
 
-_COL_LEAKED_PRIVACY_ITEMS = "_leaked_privacy_items"
-COL_REWRITTEN_TEXT_NEXT = COL_REWRITTEN_TEXT + "__next"
 
 _F_NEEDS_PROTECTION = field(EntityDispositionSchema, "needs_protection")
 _F_ENTITY_LABEL = field(EntityDispositionSchema, "entity_label")
@@ -161,7 +161,7 @@ Provide ONLY the rewritten text. Do not include explanations, comments, or markd
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
         if row.get(COL_ANY_HIGH_LEAKED)
         else "",
-        "<<LEAKED_ITEMS>>": str(row.get(_COL_LEAKED_PRIVACY_ITEMS, "")),
+        "<<LEAKED_ITEMS>>": str(row.get(COL_LEAKED_PRIVACY_ITEMS, "")),
         "<<UTILITY_SCORE>>": str(row.get(COL_UTILITY_SCORE, 0.0)),
     }
     return render_template(prompt, replacements)
@@ -177,7 +177,7 @@ def _inject_leaked_items_column(row: dict[str, Any]) -> dict[str, Any]:
     """Format leaked privacy items into a text block for the repair prompt."""
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
-    row[_COL_LEAKED_PRIVACY_ITEMS] = _leaked_items_text(privacy_answers, privacy_qa)
+    row[COL_LEAKED_PRIVACY_ITEMS] = _leaked_items_text(privacy_answers, privacy_qa)
     return row
 
 
@@ -186,7 +186,7 @@ def _make_repair_column(repairer_alias: str) -> Any:
 
     @custom_column_generator(
         required_columns=[
-            _COL_LEAKED_PRIVACY_ITEMS,
+            COL_LEAKED_PRIVACY_ITEMS,
             COL_REWRITTEN_TEXT,
             COL_SENSITIVITY_DISPOSITION,
             COL_TEXT,
@@ -235,7 +235,7 @@ class RepairWorkflow:
         return [
             # Step 1 -- Format leaked items for repair prompt (pure Python)
             CustomColumnConfig(
-                name=_COL_LEAKED_PRIVACY_ITEMS,
+                name=COL_LEAKED_PRIVACY_ITEMS,
                 generator_function=_inject_leaked_items_column,
             ),
             # Step 2 -- Repair rewritten text (LLM via custom column)

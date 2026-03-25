@@ -69,6 +69,8 @@ COL_QUALITY_QA_REANSWER = "_quality_qa_reanswer"
 COL_QUALITY_QA_COMPARE = "_quality_qa_compare"
 COL_PRIVACY_QA_REANSWER = "_privacy_qa_reanswer"
 COL_NEEDS_REPAIR = "_needs_repair"
+COL_LEAKED_PRIVACY_ITEMS = "_leaked_privacy_items"
+COL_REWRITTEN_TEXT_NEXT = COL_REWRITTEN_TEXT + "__next"
 COL_REPAIR_ITERATIONS = "_repair_iterations"
 COL_JUDGE_EVALUATION = "_judge_evaluation"
 
