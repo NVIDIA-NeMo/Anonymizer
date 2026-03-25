@@ -21,6 +21,7 @@ from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_REPLACED_TEXT,
+    COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
@@ -31,6 +32,7 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging
@@ -62,6 +64,7 @@ class Anonymizer:
         data_designer: DataDesigner | None = None,
         detection_workflow: EntityDetectionWorkflow | None = None,
         replace_runner: ReplacementWorkflow | None = None,
+        rewrite_runner: RewriteWorkflow | None = None,
     ) -> None:
         """Create an Anonymizer instance.
 
@@ -76,6 +79,7 @@ class Anonymizer:
             data_designer: Pre-configured DataDesigner instance (advanced usage).
             detection_workflow: Custom detection workflow (advanced/testing).
             replace_runner: Custom replacement workflow (advanced/testing).
+            rewrite_runner: Custom rewrite workflow (advanced/testing).
         """
         _initialize_logging()
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
@@ -97,6 +101,7 @@ class Anonymizer:
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter)
         )
+        self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
 
     def run(
         self,
@@ -187,7 +192,7 @@ class Anonymizer:
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
-            compute_grouped_entities=True if config.replace is not None else None,
+            compute_grouped_entities=True if config.replace is not None or config.rewrite is not None else None,
             preview_num_records=preview_num_records,
         )
         detection_elapsed = time.perf_counter() - t0
@@ -218,15 +223,38 @@ class Anonymizer:
             )
             replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe
-            replace_failures = replace_result.failed_records
+            post_detection_failures = replace_result.failed_records
             logger.info(
-                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]", len(replace_failures), replace_elapsed
+                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
+                len(post_detection_failures),
+                replace_elapsed,
+            )
+        elif config.rewrite is not None:
+            logger.info("✏️ Running rewrite pipeline")
+            t0 = time.perf_counter()
+            rewrite_result = self._rewrite_runner.run(
+                detection_result.dataframe,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.rewrite,
+                replace_model_selection=self._selected_models.replace,
+                privacy_goal=config.rewrite.privacy_goal,
+                evaluation=config.rewrite.evaluation,
+                data_summary=data.data_summary,
+                preview_num_records=preview_num_records,
+            )
+            rewrite_elapsed = time.perf_counter() - t0
+            final_df = rewrite_result.dataframe
+            post_detection_failures = rewrite_result.failed_records
+            logger.info(
+                LOG_INDENT + "📋 Rewrite complete (%d failed) [%.1fs]",
+                len(post_detection_failures),
+                rewrite_elapsed,
             )
         else:
             final_df = detection_result.dataframe
-            replace_failures = []
+            post_detection_failures = []
 
-        all_failures = [*detection_result.failed_records, *replace_failures]
+        all_failures = [*detection_result.failed_records, *post_detection_failures]
         if all_failures and logger.isEnabledFor(logging.DEBUG):
             logger.debug("failed records:")
             for f in all_failures:
@@ -314,6 +342,8 @@ def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
         rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
     if COL_TAGGED_TEXT in df.columns:
         rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
+    if COL_REWRITTEN_TEXT in df.columns:
+        rename_map[COL_REWRITTEN_TEXT] = f"{original_text_column}_rewritten"
     if not rename_map:
         return df
     renamed = df.rename(columns=rename_map)
@@ -328,6 +358,7 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
         original_text_column,
         f"{original_text_column}_replaced",
         f"{original_text_column}_with_spans",
+        f"{original_text_column}_rewritten",
     }
     user_columns = [
         column for column in trace_dataframe.columns if not column.startswith("_") or column in user_visible

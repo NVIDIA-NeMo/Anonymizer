@@ -449,3 +449,105 @@ def test_display_record_out_of_bounds_raises() -> None:
     preview = _make_preview(rows=1)
     with pytest.raises(IndexError, match="out of bounds"):
         preview.display_record(index=5)
+
+
+# ---------------------------------------------------------------------------
+# Rewrite-mode display tests
+# ---------------------------------------------------------------------------
+
+
+def test_render_record_html_rewrite_mode_shows_rewrite_layout() -> None:
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {
+                "entities": [
+                    {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                    {"value": "Acme", "label": "organization", "start_position": 15, "end_position": 19},
+                ]
+            },
+            "utility_score": 0.85,
+            "leakage_mass": 0.3,
+            "needs_human_review": False,
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "Rewrite Preview" in result
+    assert "Original" in result
+    assert "Rewritten" in result
+    assert "Scores" in result
+    assert "0.85" in result
+    assert "0.30" in result
+    assert "Replaced" not in result
+    assert "Replacement Map" not in result
+
+
+def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            "_judge_evaluation": {
+                "scores": [
+                    {"name": "privacy", "score": 8},
+                    {"name": "quality", "score": 9},
+                    {"name": "naturalness", "score": 7},
+                ]
+            },
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "privacy: 8/10" in result
+    assert "quality: 9/10" in result
+    assert "naturalness: 7/10" in result
+
+
+def test_render_record_html_rewrite_mode_with_disposition() -> None:
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.85,
+            "leakage_mass": 0.3,
+            "needs_human_review": False,
+            "_sensitivity_disposition": {
+                "sensitivity_disposition": [
+                    {
+                        "entity_value": "Alice",
+                        "entity_label": "first_name",
+                        "sensitivity": "high",
+                        "protection_method_suggestion": "replace",
+                    },
+                ]
+            },
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "Entity Disposition" in result
+    assert "Alice" in result
+    assert "first_name" in result
+    assert "high" in result
+    assert "replace" in result
+
+
+def test_render_record_html_replace_mode_unchanged_when_no_rewritten_column() -> None:
+    """Existing replace-mode rows still render the Original/Replaced/Replacement Map layout."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_replaced": "[REDACTED] works at [REDACTED]",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            COL_REPLACEMENT_MAP: {"replacements": []},
+        }
+    )
+    result = render_record_html(row)
+    assert "Replaced" in result
+    assert "Replacement Map" in result
+    assert "Rewritten" not in result
+    assert "Scores" not in result

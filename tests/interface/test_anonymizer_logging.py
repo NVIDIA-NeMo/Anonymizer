@@ -14,10 +14,17 @@ import pytest
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
+    COL_REPLACED_TEXT,
+    COL_REWRITTEN_TEXT,
+    COL_TEXT,
+)
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
 
 
@@ -60,7 +67,25 @@ def _make_logging_anonymizer(
         ),
         failed_records=replace_failures or [],
     )
-    return Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
+    rewrite_runner = Mock(spec=RewriteWorkflow)
+    rewrite_runner.run.return_value = RewriteResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
+                COL_REWRITTEN_TEXT: ["Beth works at Globex", "Rob likes cats"],
+                "utility_score": [0.85, 0.90],
+                "leakage_mass": [0.3, 0.1],
+                "any_high_leaked": [False, False],
+                "needs_human_review": [False, False],
+            }
+        ),
+        failed_records=[],
+    )
+    return Anonymizer(
+        detection_workflow=detection_workflow,
+        replace_runner=replace_runner,
+        rewrite_runner=rewrite_runner,
+    )
 
 
 def test_run_logs_pipeline_stages(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
@@ -117,6 +142,7 @@ def test_run_without_replacement_skips_replace_logs(
 
     messages = caplog.text
     assert "🔍 Running entity detection" in messages
+    assert "✏️ Running rewrite pipeline" in messages
     assert "🔄 Running Redact replacement" not in messages
     assert "📋 Replacement complete" not in messages
     assert "🎉 Pipeline complete" in messages
