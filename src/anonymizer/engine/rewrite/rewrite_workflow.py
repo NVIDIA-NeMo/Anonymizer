@@ -111,11 +111,25 @@ def _select_seed_cols(df: pd.DataFrame, seed_cols: list[str]) -> pd.DataFrame:
 
 
 def _join_new_columns(target: pd.DataFrame, source: pd.DataFrame, *, overwrite: bool = False) -> pd.DataFrame:
-    """Copy columns from source into target.
+    """Copy columns from source into target using positional alignment.
 
-    By default only adds columns not already in target. Set ``overwrite=True``
-    to also update existing columns (used when re-evaluating after repair).
+    When the adapter drops rows (tracked via ``failed_records``), source
+    will be shorter than target. In that case we log a warning and skip
+    the join -- the failed rows are already captured by the adapter's
+    missing-record tracking and will degrade gracefully rather than
+    aborting the entire run.
+
+    Set ``overwrite=True`` to update existing columns (e.g. re-evaluate after repair).
     """
+    if len(source) != len(target):
+        logger.warning(
+            "Row count mismatch in _join_new_columns: target=%d, source=%d. "
+            "Adapter likely dropped %d failed row(s); skipping column join.",
+            len(target),
+            len(source),
+            len(target) - len(source),
+        )
+        return target
     for col in source.columns:
         if col not in target.columns or overwrite:
             target[col] = source[col].values
