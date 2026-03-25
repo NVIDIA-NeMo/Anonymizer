@@ -275,7 +275,7 @@ class Anonymizer:
             validate_model_alias_references(
                 self._model_configs,
                 self._selected_models,
-                check_substitute=isinstance(config.replace, Substitute),
+                check_substitute=isinstance(config.replace, Substitute) or config.rewrite is not None,
                 check_rewrite=config.rewrite is not None,
             )
         except ValueError as exc:

@@ -403,7 +403,11 @@ def _render_scores_section(row: pd.Series) -> str:
 
 
 def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
-    """Extract (name, score) pairs from the judge evaluation column."""
+    """Extract (name, score) pairs from the judge evaluation column.
+
+    LLMJudgeColumnConfig output is keyed by rubric name, each value carrying
+    ``{"score": <enum_value>, "reasoning": "..."}``.
+    """
     if raw is None:
         return []
     if hasattr(raw, "model_dump"):
@@ -415,16 +419,14 @@ def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
             return []
     if not isinstance(raw, dict):
         return []
-    scores = raw.get("scores", [])
-    if not isinstance(scores, list):
-        return []
     result: list[tuple[str, int]] = []
-    for s in scores:
-        if isinstance(s, dict) and "name" in s and "score" in s:
-            try:
-                result.append((str(s["name"]), int(s["score"])))
-            except (ValueError, TypeError):
-                continue
+    for name, value in raw.items():
+        if not isinstance(value, dict) or "score" not in value:
+            continue
+        try:
+            result.append((str(name), int(value["score"])))
+        except (ValueError, TypeError):
+            continue
     return result
 
 

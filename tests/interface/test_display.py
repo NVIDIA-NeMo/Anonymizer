@@ -493,11 +493,9 @@ def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
             "leakage_mass": 0.1,
             "needs_human_review": False,
             "_judge_evaluation": {
-                "scores": [
-                    {"name": "privacy", "score": 8},
-                    {"name": "quality", "score": 9},
-                    {"name": "naturalness", "score": 7},
-                ]
+                "privacy": {"score": 8, "reasoning": "good privacy"},
+                "quality": {"score": 9, "reasoning": "high quality"},
+                "naturalness": {"score": 7, "reasoning": "mostly natural"},
             },
         }
     )

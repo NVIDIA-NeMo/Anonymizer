@@ -493,3 +493,19 @@ def test_run_rewrite_passes_compute_grouped_entities(stub_input: AnonymizerInput
     anonymizer.run(config=config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["compute_grouped_entities"] is True
+
+
+def test_validate_config_raises_on_unknown_replace_alias_in_rewrite_mode(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    """Rewrite mode uses replace aliases for the replacement map; validate them up front."""
+    anonymizer, _, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection
+    anonymizer._selected_models = anonymizer._selected_models.model_copy(
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+    )
+
+    with pytest.raises(InvalidConfigError, match="bad-replace-alias"):
+        anonymizer.validate_config(AnonymizerConfig(rewrite=Rewrite()))
