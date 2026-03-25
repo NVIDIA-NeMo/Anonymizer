@@ -15,12 +15,20 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
+    COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_QA,
+    COL_PRIVACY_QA_REANSWER,
+    COL_QUALITY_QA,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
+    COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
+    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
@@ -45,6 +53,22 @@ _PASSTHROUGH_DEFAULTS: dict[str, object] = {
 }
 
 _ROW_ORDER_COL = "_anonymizer_row_order"
+
+# Seed columns per adapter call — only these are serialized to parquet.
+_SEED_PRE_GENERATION = [COL_TEXT, COL_TAGGED_TEXT, COL_FINAL_ENTITIES]
+_SEED_EVALUATE = [COL_QUALITY_QA, COL_PRIVACY_QA, COL_REWRITTEN_TEXT]
+_SEED_REPAIR = [
+    COL_TEXT,
+    COL_REWRITTEN_TEXT,
+    COL_SENSITIVITY_DISPOSITION,
+    COL_REPLACEMENT_MAP_FOR_PROMPT,
+    COL_PRIVACY_QA_REANSWER,
+    COL_PRIVACY_QA,
+    COL_LEAKAGE_MASS,
+    COL_ANY_HIGH_LEAKED,
+    COL_UTILITY_SCORE,
+]
+_SEED_JUDGE = [COL_TEXT, COL_REWRITTEN_TEXT, COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED]
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +99,24 @@ def _merge_and_reorder(
     )
     combined.attrs = {**attrs}
     return combined
+
+
+def _select_seed_cols(df: pd.DataFrame, seed_cols: list[str]) -> pd.DataFrame:
+    """Select only the columns a sub-workflow needs for its adapter call."""
+    present = [c for c in seed_cols if c in df.columns]
+    return df[present].copy()
+
+
+def _join_new_columns(target: pd.DataFrame, source: pd.DataFrame, *, overwrite: bool = False) -> pd.DataFrame:
+    """Copy columns from source into target.
+
+    By default only adds columns not already in target. Set ``overwrite=True``
+    to also update existing columns (used when re-evaluating after repair).
+    """
+    for col in source.columns:
+        if col not in target.columns or overwrite:
+            target[col] = source[col].values
+    return target
 
 
 def _apply_passthrough_defaults(
@@ -157,14 +199,15 @@ class RewriteWorkflow:
             *self._qa_wf.columns(selected_models=selected_models),
         ]
 
+        pre_gen_seed = _select_seed_cols(entity_rows, _SEED_PRE_GENERATION)
         pre_gen_result = self._adapter.run_workflow(
-            entity_rows,
+            pre_gen_seed,
             model_configs=model_configs,
             columns=pre_gen_columns,
             workflow_name="rewrite-pre-generation",
             preview_num_records=preview_num_records,
         )
-        entity_rows = pre_gen_result.dataframe
+        entity_rows = _join_new_columns(entity_rows, pre_gen_result.dataframe)
         all_failed.extend(pre_gen_result.failed_records)
 
         # --- Step 4: rewrite generation ---
@@ -230,20 +273,28 @@ class RewriteWorkflow:
         if COL_REPAIR_ITERATIONS not in df.columns:
             df[COL_REPAIR_ITERATIONS] = 0
 
+        eval_columns = self._evaluate_wf.columns(
+            selected_models=selected_models,
+            evaluation=evaluation,
+            domain=domain,
+        )
+        repair_columns = self._repair_wf.columns(
+            selected_models=selected_models,
+            privacy_goal=privacy_goal,
+            effective_threshold=effective_threshold,
+        )
+
         for iteration in range(evaluation.max_repair_iterations):
             # Evaluate
+            eval_seed = _select_seed_cols(df, _SEED_EVALUATE)
             eval_result = self._adapter.run_workflow(
-                df,
+                eval_seed,
                 model_configs=model_configs,
-                columns=self._evaluate_wf.columns(
-                    selected_models=selected_models,
-                    evaluation=evaluation,
-                    domain=domain,
-                ),
+                columns=eval_columns,
                 workflow_name=f"rewrite-evaluate-{iteration}",
                 preview_num_records=preview_num_records,
             )
-            df = eval_result.dataframe
+            df = _join_new_columns(df, eval_result.dataframe, overwrite=True)
             all_failed.extend(eval_result.failed_records)
 
             needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool)
@@ -262,38 +313,34 @@ class RewriteWorkflow:
             )
 
             # Repair failing rows only
+            repair_seed = _select_seed_cols(failing_rows, _SEED_REPAIR)
             repair_result = self._adapter.run_workflow(
-                failing_rows,
+                repair_seed,
                 model_configs=model_configs,
-                columns=self._repair_wf.columns(
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    effective_threshold=effective_threshold,
-                ),
+                columns=repair_columns,
                 workflow_name=f"rewrite-repair-{iteration}",
                 preview_num_records=preview_num_records,
             )
             all_failed.extend(repair_result.failed_records)
 
             repaired = repair_result.dataframe
-            repaired[COL_REPAIR_ITERATIONS] = repaired[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
+            if COL_REWRITTEN_TEXT_NEXT in repaired.columns:
+                failing_rows[COL_REWRITTEN_TEXT] = repaired[COL_REWRITTEN_TEXT_NEXT].values
+            failing_rows[COL_REPAIR_ITERATIONS] = failing_rows[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
 
-            df = pd.concat([passing_rows, repaired], ignore_index=True)
+            df = pd.concat([passing_rows, failing_rows], ignore_index=True)
         else:
             # Loop exhausted: run a final evaluate so metrics reflect the last repair
             if evaluation.max_repair_iterations > 0:
+                eval_seed = _select_seed_cols(df, _SEED_EVALUATE)
                 eval_result = self._adapter.run_workflow(
-                    df,
+                    eval_seed,
                     model_configs=model_configs,
-                    columns=self._evaluate_wf.columns(
-                        selected_models=selected_models,
-                        evaluation=evaluation,
-                        domain=domain,
-                    ),
+                    columns=eval_columns,
                     workflow_name="rewrite-evaluate-final",
                     preview_num_records=preview_num_records,
                 )
-                df = eval_result.dataframe
+                df = _join_new_columns(df, eval_result.dataframe, overwrite=True)
                 all_failed.extend(eval_result.failed_records)
 
         return df, all_failed
@@ -313,8 +360,9 @@ class RewriteWorkflow:
         preview_num_records: int | None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         try:
+            judge_seed = _select_seed_cols(df, _SEED_JUDGE)
             judge_result = self._adapter.run_workflow(
-                df,
+                judge_seed,
                 model_configs=model_configs,
                 columns=self._judge_wf.columns(
                     selected_models=selected_models,
@@ -324,7 +372,8 @@ class RewriteWorkflow:
                 workflow_name="rewrite-final-judge",
                 preview_num_records=preview_num_records,
             )
-            return judge_result.dataframe, judge_result.failed_records
+            df = _join_new_columns(df, judge_result.dataframe)
+            return df, judge_result.failed_records
         except Exception:
             logger.warning("Final judge step failed; populating defaults", exc_info=True)
             df[COL_JUDGE_EVALUATION] = None

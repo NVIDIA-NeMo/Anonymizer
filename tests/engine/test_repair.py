@@ -17,12 +17,12 @@ from anonymizer.engine.constants import (
     COL_PRIVACY_QA_REANSWER,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
+    COL_REWRITTEN_TEXT_NEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
 from anonymizer.engine.rewrite.repair import (
-    COL_REWRITTEN_TEXT_NEXT,
     RepairParams,
     RepairWorkflow,
     _format_protection_block,
