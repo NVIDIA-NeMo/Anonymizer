@@ -36,6 +36,10 @@ packages = ["src/anonymizer"]
 [tool.uv]
 package = true
 
+override-dependencies = [
+  "grpcio>=1.68.0",  # forcing to a higher version since litellm is constraining it
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -46,6 +50,7 @@ omit = []
 line-length = 120
 indent-width = 4
 target-version = "py311"
+
 
 [tool.ruff.lint]
 select = [
