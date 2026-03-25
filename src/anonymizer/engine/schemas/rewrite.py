@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -199,10 +199,10 @@ class SensitivityDispositionSchema(BaseModel):
         return [e for e in self.sensitivity_disposition if e.protection_method_suggestion == method]
 
     def format_for_rewrite_context(self) -> str:
-        """Format disposition for injection into rewrite prompts — medium and high sensitivity entities only."""
-        entities = self.medium_and_high_sensitivity_entities
+        """Format disposition for injection into rewrite prompts — all entities needing protection."""
+        entities = self.protected_entities
         if not entities:
-            return "No medium or high sensitivity entities identified."
+            return "No entities needing protection."
         lines = []
         for e in entities:
             lines.append(
@@ -306,15 +306,44 @@ class RewriteOutputSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _validate_id_coverage(expected_ids: list[int], returned_ids: list[int], label: str) -> None:
+    """Enforce exact ID coverage: no missing, duplicate, or extra IDs."""
+    expected_set = set(expected_ids)
+    returned_set = set(returned_ids)
+
+    missing = sorted(expected_set - returned_set)
+    if missing:
+        raise ValueError(f"Missing {label} IDs: {missing}")
+
+    duplicates = sorted(id for id in returned_set if returned_ids.count(id) > 1)
+    if duplicates:
+        raise ValueError(f"Duplicate {label} IDs: {duplicates}")
+
+    extra = sorted(returned_set - expected_set)
+    if extra:
+        raise ValueError(f"Extra {label} IDs not in expected set: {extra}")
+
+
 class QualityAnswerSchema(BaseModel):
     id: int
     answer: str
 
 
 class QualityAnswersSchema(BaseModel):
-    """LLM output schema for quality QA re-answer step (on rewritten text)."""
+    """LLM output schema for quality QA re-answer step (on rewritten text).
+
+    When validated with ``context={"expected_ids": [1, 2, ...]}``,
+    enforces exact coverage: no missing, duplicate, or extra IDs.
+    """
 
     answers: list[QualityAnswerSchema]
+
+    @model_validator(mode="after")
+    def _check_coverage(self, info: ValidationInfo) -> QualityAnswersSchema:
+        expected_ids = (info.context or {}).get("expected_ids")
+        if expected_ids is not None:
+            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+        return self
 
 
 class PrivacyAnswerItemSchema(BaseModel):
@@ -323,9 +352,20 @@ class PrivacyAnswerItemSchema(BaseModel):
 
 
 class PrivacyAnswersSchema(BaseModel):
-    """LLM output schema for privacy QA re-answer step (on rewritten text)."""
+    """LLM output schema for privacy QA re-answer step (on rewritten text).
+
+    When validated with ``context={"expected_ids": [1, 2, ...]}``,
+    enforces exact coverage: no missing, duplicate, or extra IDs.
+    """
 
     answers: list[PrivacyAnswerItemSchema]
+
+    @model_validator(mode="after")
+    def _check_coverage(self, info: ValidationInfo) -> PrivacyAnswersSchema:
+        expected_ids = (info.context or {}).get("expected_ids")
+        if expected_ids is not None:
+            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+        return self
 
 
 class QACompareItemSchema(BaseModel):
@@ -335,9 +375,20 @@ class QACompareItemSchema(BaseModel):
 
 
 class QACompareResultsSchema(BaseModel):
-    """LLM output schema for quality QA comparison step."""
+    """LLM output schema for quality QA comparison step.
+
+    When validated with ``context={"expected_ids": [1, 2, ...]}``,
+    enforces exact coverage: no missing, duplicate, or extra IDs.
+    """
 
     per_item: list[QACompareItemSchema]
+
+    @model_validator(mode="after")
+    def _check_coverage(self, info: ValidationInfo) -> QACompareResultsSchema:
+        expected_ids = (info.context or {}).get("expected_ids")
+        if expected_ids is not None:
+            _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
+        return self
 
 
 # ---------------------------------------------------------------------------

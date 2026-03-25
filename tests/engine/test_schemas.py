@@ -285,7 +285,7 @@ def test_sensitivity_disposition_format_for_rewrite_context(mixed_disposition: S
     assert "→ replace" in context
 
 
-def test_sensitivity_disposition_format_for_rewrite_context_empty_when_all_low() -> None:
+def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protection() -> None:
     schema = SensitivityDispositionSchema.model_validate(
         {
             "sensitivity_disposition": [
@@ -295,7 +295,30 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_all_low()
             ]
         }
     )
-    assert schema.format_for_rewrite_context() == "No medium or high sensitivity entities identified."
+    assert schema.format_for_rewrite_context() == "No entities needing protection."
+
+
+def test_sensitivity_disposition_format_for_rewrite_context_includes_low_when_protected() -> None:
+    schema = SensitivityDispositionSchema.model_validate(
+        {
+            "sensitivity_disposition": [
+                _make_entity(
+                    id=1,
+                    sensitivity="low",
+                    entity_label="city",
+                    entity_value="Portland",
+                    needs_protection=True,
+                    protection_method_suggestion="generalize",
+                    combined_risk_level="medium",
+                    protection_reason="City combined with other quasi-identifiers enables re-identification",
+                ),
+            ]
+        }
+    )
+    context = schema.format_for_rewrite_context()
+    assert "[LOW]" in context
+    assert "Portland" in context
+    assert "→ generalize" in context
 
 
 def test_quality_answers_use_integer_ids() -> None:
@@ -330,3 +353,59 @@ def test_judge_evaluation_parses_all_rubrics() -> None:
 def test_judge_evaluation_requires_all_rubrics() -> None:
     with pytest.raises(ValidationError):
         JudgeEvaluationSchema(privacy=JudgeScoreSchema(score=8, reason="good"))
+
+
+# Context-validated answer coverage
+
+
+def test_quality_answers_reject_missing_ids_with_context() -> None:
+    with pytest.raises(ValidationError, match="Missing answer IDs"):
+        QualityAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "yes"}]},
+            context={"expected_ids": [1, 2]},
+        )
+
+
+def test_quality_answers_accept_complete_with_context() -> None:
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    assert len(result.answers) == 2
+
+
+def test_quality_answers_no_enforcement_without_context() -> None:
+    result = QualityAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "yes"}]})
+    assert len(result.answers) == 1
+
+
+def test_privacy_answers_reject_missing_ids_with_context() -> None:
+    with pytest.raises(ValidationError, match="Missing answer IDs"):
+        PrivacyAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "no"}]},
+            context={"expected_ids": [1, 2]},
+        )
+
+
+def test_qa_compare_reject_missing_ids_with_context() -> None:
+    with pytest.raises(ValidationError, match="Missing compare IDs"):
+        QACompareResultsSchema.model_validate(
+            {"per_item": [{"id": 1, "score": 0.9}]},
+            context={"expected_ids": [1, 2]},
+        )
+
+
+def test_quality_answers_reject_duplicate_ids() -> None:
+    with pytest.raises(ValidationError, match="Duplicate answer IDs"):
+        QualityAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
+            context={"expected_ids": [1, 2]},
+        )
+
+
+def test_quality_answers_reject_extra_ids() -> None:
+    with pytest.raises(ValidationError, match="Extra answer IDs"):
+        QualityAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
+            context={"expected_ids": [1, 2]},
+        )

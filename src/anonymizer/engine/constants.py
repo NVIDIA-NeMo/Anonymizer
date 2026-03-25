@@ -48,8 +48,10 @@ COL_LATENT_ENTITIES = "_latent_entities"
 COL_FINAL_ENTITIES = "final_entities"
 
 # ---------------------------------------------------------------------------
-# Rewrite pipeline — internal columns (prefixed with _)
+# Rewrite pipeline
 # ---------------------------------------------------------------------------
+
+# Internal columns (prefixed with _)
 
 COL_DOMAIN = "_domain"
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
@@ -66,9 +68,13 @@ COL_REWRITTEN_TEXT = "_rewritten_text"  # pre-repair intermediate; renamed to {t
 COL_QUALITY_QA_REANSWER = "_quality_qa_reanswer"
 COL_QUALITY_QA_COMPARE = "_quality_qa_compare"
 COL_PRIVACY_QA_REANSWER = "_privacy_qa_reanswer"
+COL_NEEDS_REPAIR = "_needs_repair"
+COL_LEAKED_PRIVACY_ITEMS = "_leaked_privacy_items"
+COL_REWRITTEN_TEXT_NEXT = COL_REWRITTEN_TEXT + "__next"
+COL_REPAIR_ITERATIONS = "_repair_iterations"
 COL_JUDGE_EVALUATION = "_judge_evaluation"
 
-# Rewrite pipeline — user-facing output columns
+# User-facing output columns
 COL_UTILITY_SCORE = "utility_score"
 COL_LEAKAGE_MASS = "leakage_mass"
 COL_ANY_HIGH_LEAKED = "any_high_leaked"
