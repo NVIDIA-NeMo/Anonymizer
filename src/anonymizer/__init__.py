@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
+
 from importlib.metadata import version
 
 __version__ = version("anonymizer")

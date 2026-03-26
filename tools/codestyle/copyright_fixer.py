@@ -213,7 +213,7 @@ def _add_header(filepath: str) -> bool:
         newline_pos = content.index("\n") + 1
         header = _get_header_for_ext(ext)
         new_content = content[:newline_pos] + header + content[newline_pos:]
-    elif ext == ".md" and (content.startswith("---\n") or content.startswith("---\r\n")):
+    elif ext == ".md" and content.startswith(("---\n", "---\r\n")):
         header = _HASH_HEADER
         # Insert copyright as YAML comments right after opening ---
         sep = "---\r\n" if content.startswith("---\r\n") else "---\n"
