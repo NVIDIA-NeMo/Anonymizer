@@ -57,30 +57,28 @@ def _make_logging_anonymizer(
         dataframe=det_df,
         failed_records=detection_failures or [],
     )
+    _replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
+            COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
+        }
+    )
+    _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
-    replace_runner.run.return_value = ReplacementResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
-                COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
-            }
-        ),
-        failed_records=replace_failures or [],
+    replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=replace_failures or [])
+    _rewrite_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex", "Rob likes cats"],
+            "utility_score": [0.85, 0.90],
+            "leakage_mass": [0.3, 0.1],
+            "any_high_leaked": [False, False],
+            "needs_human_review": [False, False],
+        }
     )
+    _rewrite_df.attrs["original_text_column"] = "text"
     rewrite_runner = Mock(spec=RewriteWorkflow)
-    rewrite_runner.run.return_value = RewriteResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
-                COL_REWRITTEN_TEXT: ["Beth works at Globex", "Rob likes cats"],
-                "utility_score": [0.85, 0.90],
-                "leakage_mass": [0.3, 0.1],
-                "any_high_leaked": [False, False],
-                "needs_human_review": [False, False],
-            }
-        ),
-        failed_records=[],
-    )
+    rewrite_runner.run.return_value = RewriteResult(dataframe=_rewrite_df, failed_records=[])
     return Anonymizer(
         detection_workflow=detection_workflow,
         replace_runner=replace_runner,
@@ -186,6 +184,7 @@ def test_local_replace_logs_progress_for_large_datasets(caplog: pytest.LogCaptur
             COL_FINAL_ENTITIES: entities,
         }
     )
+    det_df.attrs["original_text_column"] = "text"
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
     replace_runner = ReplacementWorkflow()

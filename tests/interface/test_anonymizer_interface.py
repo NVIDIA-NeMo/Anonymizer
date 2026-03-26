@@ -47,25 +47,29 @@ def _make_anonymizer(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=[],
     )
+    _replace_df = pd.DataFrame(
+        {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
+    )
+    _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = replace_return or ReplacementResult(
-        dataframe=pd.DataFrame(
-            {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
-        ),
+        dataframe=_replace_df,
         failed_records=[],
     )
+    _rewrite_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+        }
+    )
+    _rewrite_df.attrs["original_text_column"] = "text"
     rewrite_runner = Mock(spec=RewriteWorkflow)
     rewrite_runner.run.return_value = rewrite_return or RewriteResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works at Acme"],
-                COL_REWRITTEN_TEXT: ["Beth works at Globex"],
-                "utility_score": [0.85],
-                "leakage_mass": [0.3],
-                "any_high_leaked": [False],
-                "needs_human_review": [False],
-            }
-        ),
+        dataframe=_rewrite_df,
         failed_records=[],
     )
     anonymizer = Anonymizer(
@@ -87,10 +91,9 @@ def test_run_merges_failed_records_from_both_stages(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=detection_failures,
     )
-    replace_return = ReplacementResult(
-        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["Alice"]}),
-        failed_records=replace_failures,
-    )
+    _replace_df = pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["Alice"]})
+    _replace_df.attrs["original_text_column"] = "text"
+    replace_return = ReplacementResult(dataframe=_replace_df, failed_records=replace_failures)
 
     anonymizer, _, _, _ = _make_anonymizer(detection_return=detection_result, replace_return=replace_return)
     result = anonymizer.run(config=stub_anonymizer_config, data=stub_input)
@@ -139,18 +142,17 @@ def test_run_exposes_trace_dataframe_and_filters_internal_columns(
     stub_anonymizer_config: AnonymizerConfig,
     stub_input: AnonymizerInput,
 ) -> None:
-    replace_return = ReplacementResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice"],
-                COL_REPLACED_TEXT: ["[REDACTED]"],
-                COL_TAGGED_TEXT: ["<first_name>Alice</first_name>"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-                COL_REPLACEMENT_MAP: [{"replacements": []}],
-            }
-        ),
-        failed_records=[],
+    _replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice"],
+            COL_REPLACED_TEXT: ["[REDACTED]"],
+            COL_TAGGED_TEXT: ["<first_name>Alice</first_name>"],
+            COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            COL_REPLACEMENT_MAP: [{"replacements": []}],
+        }
     )
+    _replace_df.attrs["original_text_column"] = "text"
+    replace_return = ReplacementResult(dataframe=_replace_df, failed_records=[])
     anonymizer, _, _, _ = _make_anonymizer(replace_return=replace_return)
 
     result = anonymizer.run(config=stub_anonymizer_config, data=stub_input)
@@ -166,17 +168,16 @@ def test_preview_exposes_trace_dataframe_for_display(
     stub_anonymizer_config: AnonymizerConfig,
     stub_input: AnonymizerInput,
 ) -> None:
-    replace_return = ReplacementResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice"],
-                COL_REPLACED_TEXT: ["[REDACTED]"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-                COL_REPLACEMENT_MAP: [{"replacements": []}],
-            }
-        ),
-        failed_records=[],
+    _replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice"],
+            COL_REPLACED_TEXT: ["[REDACTED]"],
+            COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            COL_REPLACEMENT_MAP: [{"replacements": []}],
+        }
     )
+    _replace_df.attrs["original_text_column"] = "text"
+    replace_return = ReplacementResult(dataframe=_replace_df, failed_records=[])
     anonymizer, _, _, _ = _make_anonymizer(replace_return=replace_return)
 
     preview = anonymizer.preview(
@@ -443,6 +444,7 @@ def test_run_rewrite_internal_columns_only_in_trace(stub_input: AnonymizerInput)
             "needs_human_review": [False],
         }
     )
+    rewrite_df.attrs["original_text_column"] = "text"
     rewrite_return = RewriteResult(dataframe=rewrite_df, failed_records=[])
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, _, _, _ = _make_anonymizer(rewrite_return=rewrite_return)
@@ -463,19 +465,18 @@ def test_run_rewrite_merges_failed_records(stub_input: AnonymizerInput) -> None:
         dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=detection_failures,
     )
-    rewrite_return = RewriteResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice"],
-                COL_REWRITTEN_TEXT: ["Beth"],
-                "utility_score": [0.85],
-                "leakage_mass": [0.3],
-                "any_high_leaked": [False],
-                "needs_human_review": [False],
-            }
-        ),
-        failed_records=rewrite_failures,
+    _rewrite_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice"],
+            COL_REWRITTEN_TEXT: ["Beth"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+        }
     )
+    _rewrite_df.attrs["original_text_column"] = "text"
+    rewrite_return = RewriteResult(dataframe=_rewrite_df, failed_records=rewrite_failures)
 
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, _, _, _ = _make_anonymizer(detection_return=detection_result, rewrite_return=rewrite_return)

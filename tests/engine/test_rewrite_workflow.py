@@ -800,7 +800,7 @@ def test_repair_dropping_rows_degrades_gracefully(
 
     # Repair returns only row 0 (rec-1 dropped during repair)
     repaired_df = eval_df.iloc[[0]].copy().reset_index(drop=True)
-    repaired_df[COL_REWRITTEN_TEXT + "__next"] = "Repaired Maria"
+    repaired_df[COL_REWRITTEN_TEXT_NEXT] = "Repaired Maria"
 
     repair_failed = FailedRecord(record_id="rec-1", step="rewrite-repair-0", reason="LLM timeout")
 

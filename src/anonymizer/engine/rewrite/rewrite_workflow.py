@@ -180,12 +180,13 @@ def _join_judge_columns(target: pd.DataFrame, source: pd.DataFrame) -> pd.DataFr
     )
     result = target.copy()
     source_by_id = source.set_index(RECORD_ID_COLUMN)
+    known_ids = set(source_by_id.index)
 
     result[COL_JUDGE_EVALUATION] = None
     result[COL_NEEDS_HUMAN_REVIEW] = True
 
-    for idx, record_id in result[RECORD_ID_COLUMN].astype(str).items():
-        if record_id in source_by_id.index.astype(str):
+    for idx, record_id in result[RECORD_ID_COLUMN].items():
+        if record_id in known_ids:
             row = source_by_id.loc[record_id]
             result.at[idx, COL_JUDGE_EVALUATION] = row.get(COL_JUDGE_EVALUATION)
             result.at[idx, COL_NEEDS_HUMAN_REVIEW] = row.get(COL_NEEDS_HUMAN_REVIEW, True)

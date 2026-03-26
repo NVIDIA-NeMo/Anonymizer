@@ -28,7 +28,7 @@ class _DisplayMixin:
             raise IndexError(f"Record index {i} is out of bounds for {len(self.trace_dataframe)} records.")
 
         row = self.trace_dataframe.iloc[i]
-        original_text_column = str(self.trace_dataframe.attrs.get("original_text_column", "text"))
+        original_text_column = str(self.trace_dataframe.attrs["original_text_column"])
         html_str = render_record_html(row, record_index=i, original_text_column=original_text_column)
 
         try:
