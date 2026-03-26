@@ -53,3 +53,24 @@ jobs:
 
       - name: Run linter
         run: uv run ruff check
+
+  typecheck:
+    name: Type Check (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run type checks
+        run: uv run tools/codestyle/typecheck.sh
