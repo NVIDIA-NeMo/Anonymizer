@@ -120,7 +120,13 @@ def _select_seed_cols(df: pd.DataFrame, seed_cols: list[str]) -> pd.DataFrame:
     return df[present].copy()
 
 
-def _join_new_columns(target: pd.DataFrame, source: pd.DataFrame, *, overwrite: bool = False) -> pd.DataFrame:
+def _join_new_columns(
+    target: pd.DataFrame,
+    source: pd.DataFrame,
+    *,
+    overwrite: bool = False,
+    seed_cols: list[str] | None = None,
+) -> pd.DataFrame:
     """Copy columns from source into target using positional alignment.
 
     When the adapter drops rows (tracked via ``failed_records``), source
@@ -128,7 +134,9 @@ def _join_new_columns(target: pd.DataFrame, source: pd.DataFrame, *, overwrite: 
     drop the failed rows from target, then join the new columns from
     source onto the surviving rows.
 
-    Set ``overwrite=True`` to update existing columns (e.g. re-evaluate after repair).
+    Set ``overwrite=True`` to update existing columns that the workflow
+    produced (e.g. re-evaluate after repair). Seed columns passed through
+    the adapter are excluded from overwrite to prevent re-serialization artifacts.
     """
     if len(source) != len(target):
         dropped = len(target) - len(source)
@@ -146,7 +154,10 @@ def _join_new_columns(target: pd.DataFrame, source: pd.DataFrame, *, overwrite: 
         )
         source = source.sort_values(RECORD_ID_COLUMN).reset_index(drop=True)
 
+    skip = set(seed_cols) if seed_cols else set()
     for col in source.columns:
+        if col in skip:
+            continue
         if col not in target.columns or overwrite:
             target[col] = source[col].values
     return target
@@ -352,7 +363,7 @@ class RewriteWorkflow:
             workflow_name="rewrite-evaluate-0",
             preview_num_records=preview_num_records,
         )
-        df = _join_new_columns(df, eval_result.dataframe, overwrite=True)
+        df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=_SEED_EVALUATE)
         all_failed.extend(eval_result.failed_records)
 
         repair_columns = self._repair_wf.columns(
@@ -389,8 +400,9 @@ class RewriteWorkflow:
             all_failed.extend(repair_result.failed_records)
 
             repaired = repair_result.dataframe
-            if COL_REWRITTEN_TEXT_NEXT in repaired.columns:
-                failing_rows[COL_REWRITTEN_TEXT] = repaired[COL_REWRITTEN_TEXT_NEXT].values
+            failing_rows = _join_new_columns(failing_rows, repaired)
+            if COL_REWRITTEN_TEXT_NEXT in failing_rows.columns:
+                failing_rows[COL_REWRITTEN_TEXT] = failing_rows[COL_REWRITTEN_TEXT_NEXT]
             failing_rows[COL_REPAIR_ITERATIONS] = failing_rows[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
 
             df = pd.concat([passing_rows, failing_rows], ignore_index=True)
@@ -404,7 +416,7 @@ class RewriteWorkflow:
                 workflow_name=f"rewrite-evaluate-{iteration + 1}",
                 preview_num_records=preview_num_records,
             )
-            df = _join_new_columns(df, eval_result.dataframe, overwrite=True)
+            df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=_SEED_EVALUATE)
             all_failed.extend(eval_result.failed_records)
 
         return df, all_failed
