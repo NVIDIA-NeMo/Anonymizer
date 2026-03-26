@@ -26,6 +26,10 @@ help:
 	@echo "  docs-serve             - Start docs dev server (live-reload)"
 	@echo "  docs-build             - Build docs site (strict mode)"
 	@echo ""
+	@echo "  install-dev-docs       - Install dev + docs dependencies"
+	@echo "  docs-serve             - Start docs dev server (live-reload)"
+	@echo "  docs-build             - Build docs site (strict mode)"
+	@echo ""
 	@echo "  clean                  - Remove coverage reports and cache files"
 	@echo "  clean-merged-branches  - Checkout main, fetch --prune, delete local branches merged into main"
 	@echo ""
@@ -101,6 +105,18 @@ publish-pypi: build-wheel
 	  --non-interactive \
 	  dist/*.whl
 	@echo "published: $$(ls dist/*.whl)"
+
+install-dev-docs:
+	@echo "Installing dev + docs dependencies..."
+	uv sync --group dev --group docs
+
+docs-serve:
+	@echo "Starting docs dev server (live-reload)..."
+	uv run --group docs mkdocs serve
+
+docs-build:
+	@echo "Building docs site..."
+	uv run --group docs mkdocs build --strict
 
 install-dev-docs:
 	@echo "Installing dev + docs dependencies..."
