@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import CustomColumnConfig, LLMJudgeColumnConfig
 import pytest
+from data_designer.config.column_configs import CustomColumnConfig, LLMJudgeColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
