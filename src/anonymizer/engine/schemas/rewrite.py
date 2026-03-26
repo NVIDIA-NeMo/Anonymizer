@@ -30,7 +30,7 @@ Each schema group corresponds to one pipeline step:
         QACompareResultsSchema        (LLM scores quality answer match)
 
     Step 6 — Final judge
-        JudgeEvaluationSchema         (holistic privacy + quality + naturalness scores)
+        Uses LLMJudgeColumnConfig with Score rubrics (no custom schema needed)
 
 Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
                   ProtectionMethod, CombinedRiskLevel, MeaningUnitAspect, PrivacyAnswer
@@ -389,23 +389,3 @@ class QACompareResultsSchema(BaseModel):
         if expected_ids is not None:
             _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
         return self
-
-
-# ---------------------------------------------------------------------------
-# Judge
-# ---------------------------------------------------------------------------
-
-
-class JudgeScoreSchema(BaseModel):
-    """Single rubric score from the final holistic judge."""
-
-    score: int = Field(ge=1, le=10)
-    reason: str = Field(default="")
-
-
-class JudgeEvaluationSchema(BaseModel):
-    """LLM output schema for the final judge step (privacy + quality + naturalness rubrics)."""
-
-    privacy: JudgeScoreSchema
-    quality: JudgeScoreSchema
-    naturalness: JudgeScoreSchema
