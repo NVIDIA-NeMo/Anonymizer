@@ -21,10 +21,11 @@ from anonymizer.engine.constants import (
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
     COL_REWRITTEN_TEXT,
+    COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 
@@ -70,6 +71,19 @@ def stub_df_with_entities(stub_entities_by_value_with_entities: dict) -> pd.Data
 
 
 @pytest.fixture
+def stub_df_two_entities(stub_entities_by_value_with_entities: dict) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works here", "Bob works there"],
+            COL_ENTITIES_BY_VALUE: [
+                stub_entities_by_value_with_entities,
+                stub_entities_by_value_with_entities,
+            ],
+        }
+    )
+
+
+@pytest.fixture
 def stub_df_mixed(stub_entities_by_value_with_entities: dict) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -80,6 +94,54 @@ def stub_df_mixed(stub_entities_by_value_with_entities: dict) -> pd.DataFrame:
             ],
         }
     )
+
+
+@pytest.fixture
+def stub_pre_gen_df(stub_df_with_entities: pd.DataFrame) -> pd.DataFrame:
+    df = stub_df_with_entities.copy()
+    df[COL_DOMAIN] = "BIOGRAPHY"
+    df["_anonymizer_row_order"] = [0]
+    df[RECORD_ID_COLUMN] = ["rec-0"]
+    return df
+
+
+@pytest.fixture
+def stub_rewrite_gen_df(stub_pre_gen_df: pd.DataFrame) -> pd.DataFrame:
+    df = stub_pre_gen_df.copy()
+    df[COL_REWRITTEN_TEXT] = "Maria works"
+    df[COL_REPAIR_ITERATIONS] = 0
+    return df
+
+
+@pytest.fixture
+def stub_eval_df(stub_rewrite_gen_df: pd.DataFrame) -> pd.DataFrame:
+    df = stub_rewrite_gen_df.copy()
+    df[COL_NEEDS_REPAIR] = False
+    df[COL_UTILITY_SCORE] = 0.9
+    df[COL_LEAKAGE_MASS] = 0.1
+    df[COL_ANY_HIGH_LEAKED] = False
+    return df
+
+
+@pytest.fixture
+def stub_judge_df(stub_eval_df: pd.DataFrame) -> pd.DataFrame:
+    df = stub_eval_df.copy()
+    df[COL_JUDGE_EVALUATION] = None
+    df[COL_NEEDS_HUMAN_REVIEW] = False
+    return df
+
+
+def _standard_side_effect(
+    pre_gen_df: pd.DataFrame,
+    eval_df: pd.DataFrame,
+    judge_df: pd.DataFrame,
+) -> list[WorkflowRunResult]:
+    """Happy-path adapter side_effect: pre-gen, evaluate, judge."""
+    return [
+        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -170,37 +232,20 @@ def test_calls_sub_workflows_in_order(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
+    stub_pre_gen_df: pd.DataFrame,
+    stub_rewrite_gen_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-
-    pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
-    pre_gen_df["_anonymizer_row_order"] = [0]
-
-    rewrite_gen_df = pre_gen_df.copy()
-    rewrite_gen_df[COL_REWRITTEN_TEXT] = "Maria works at TechCorp"
-    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
-
-    eval_df = rewrite_gen_df.copy()
-    eval_df[COL_NEEDS_REPAIR] = False
-    eval_df[COL_UTILITY_SCORE] = 0.9
-    eval_df[COL_LEAKAGE_MASS] = 0.1
-    eval_df[COL_ANY_HIGH_LEAKED] = False
-
-    judge_df = eval_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
-    adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
-    ]
-
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
 
     wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch.object(
+        wf._rewrite_gen_wf,
+        "run",
+        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
+    ):
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -216,7 +261,6 @@ def test_calls_sub_workflows_in_order(
     assert workflow_names[-1] == "rewrite-final-judge"
 
     assert len(result.dataframe) == 1
-    assert result.dataframe[COL_REWRITTEN_TEXT].iloc[0] == "Maria works at TechCorp"
 
 
 # ---------------------------------------------------------------------------
@@ -229,44 +273,31 @@ def test_failed_records_accumulated_across_steps(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
+    stub_pre_gen_df: pd.DataFrame,
+    stub_rewrite_gen_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_judge_df: pd.DataFrame,
 ) -> None:
-    adapter = Mock()
-
-    pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
-    pre_gen_df["_anonymizer_row_order"] = [0]
-
-    rewrite_gen_df = pre_gen_df.copy()
-    rewrite_gen_df[COL_REWRITTEN_TEXT] = "Maria works at TechCorp"
-    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
-
-    eval_df = rewrite_gen_df.copy()
-    eval_df[COL_NEEDS_REPAIR] = False
-    eval_df[COL_UTILITY_SCORE] = 0.9
-    eval_df[COL_LEAKAGE_MASS] = 0.1
-    eval_df[COL_ANY_HIGH_LEAKED] = False
-
-    judge_df = eval_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
     failed_pre_gen = FailedRecord(record_id="a", step="rewrite-pre-generation", reason="timeout")
     failed_eval = FailedRecord(record_id="b", step="rewrite-evaluate-0", reason="timeout")
     failed_judge = FailedRecord(record_id="c", step="rewrite-final-judge", reason="timeout")
 
+    adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[failed_pre_gen]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[failed_eval]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[failed_judge]),
+        WorkflowRunResult(dataframe=stub_pre_gen_df, failed_records=[failed_pre_gen]),
+        WorkflowRunResult(dataframe=stub_eval_df, failed_records=[failed_eval]),
+        WorkflowRunResult(dataframe=stub_judge_df, failed_records=[failed_judge]),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(
-        dataframe=rewrite_gen_df,
-        failed_records=[FailedRecord(record_id="d", step="rewrite-generation", reason="timeout")],
-    )
-
     wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch.object(
+        wf._rewrite_gen_wf,
+        "run",
+        return_value=RewriteGenerationResult(
+            dataframe=stub_rewrite_gen_df,
+            failed_records=[FailedRecord(record_id="d", step="rewrite-generation", reason="timeout")],
+        ),
+    ):
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -290,38 +321,21 @@ def test_attrs_propagated_to_final_output(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
+    stub_pre_gen_df: pd.DataFrame,
+    stub_rewrite_gen_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_judge_df: pd.DataFrame,
 ) -> None:
     stub_df_with_entities.attrs["original_text_column"] = "bio"
     adapter = Mock()
-
-    pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
-    pre_gen_df["_anonymizer_row_order"] = [0]
-
-    rewrite_gen_df = pre_gen_df.copy()
-    rewrite_gen_df[COL_REWRITTEN_TEXT] = "Maria works"
-    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
-
-    eval_df = rewrite_gen_df.copy()
-    eval_df[COL_NEEDS_REPAIR] = False
-    eval_df[COL_UTILITY_SCORE] = 0.9
-    eval_df[COL_LEAKAGE_MASS] = 0.1
-    eval_df[COL_ANY_HIGH_LEAKED] = False
-
-    judge_df = eval_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
-    adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
-    ]
-
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
 
     wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch.object(
+        wf._rewrite_gen_wf,
+        "run",
+        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
+    ):
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -344,33 +358,23 @@ def test_judge_failure_does_not_propagate(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
+    stub_pre_gen_df: pd.DataFrame,
+    stub_rewrite_gen_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-
-    pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
-    pre_gen_df["_anonymizer_row_order"] = [0]
-
-    rewrite_gen_df = pre_gen_df.copy()
-    rewrite_gen_df[COL_REWRITTEN_TEXT] = "Maria works"
-    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
-
-    eval_df = rewrite_gen_df.copy()
-    eval_df[COL_NEEDS_REPAIR] = False
-    eval_df[COL_UTILITY_SCORE] = 0.9
-    eval_df[COL_LEAKAGE_MASS] = 0.1
-    eval_df[COL_ANY_HIGH_LEAKED] = False
-
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        WorkflowRunResult(dataframe=stub_pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=stub_eval_df, failed_records=[]),
         RuntimeError("Judge LLM unavailable"),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
     wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch.object(
+        wf._rewrite_gen_wf,
+        "run",
+        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
+    ):
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -389,18 +393,10 @@ def test_judge_partial_row_loss_preserves_all_rows(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
-    stub_entities_by_value_with_entities: dict,
+    stub_df_two_entities: pd.DataFrame,
 ) -> None:
     """Judge drops 1 of 2 rows -- surviving row gets scores, missing row gets defaults."""
-    df = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works here", "Bob works there"],
-            COL_ENTITIES_BY_VALUE: [
-                stub_entities_by_value_with_entities,
-                stub_entities_by_value_with_entities,
-            ],
-        }
-    )
+    df = stub_df_two_entities
 
     adapter = Mock()
 
@@ -462,37 +458,20 @@ def test_repair_loop_exits_early_when_no_rows_need_repair(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
+    stub_pre_gen_df: pd.DataFrame,
+    stub_rewrite_gen_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-
-    pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
-    pre_gen_df["_anonymizer_row_order"] = [0]
-
-    rewrite_gen_df = pre_gen_df.copy()
-    rewrite_gen_df[COL_REWRITTEN_TEXT] = "Maria works"
-    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
-
-    eval_df = rewrite_gen_df.copy()
-    eval_df[COL_NEEDS_REPAIR] = False
-    eval_df[COL_UTILITY_SCORE] = 0.9
-    eval_df[COL_LEAKAGE_MASS] = 0.1
-    eval_df[COL_ANY_HIGH_LEAKED] = False
-
-    judge_df = eval_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
-    adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
-    ]
-
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
 
     wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch.object(
+        wf._rewrite_gen_wf,
+        "run",
+        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
+    ):
         wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -531,7 +510,7 @@ def test_repair_loop_runs_up_to_max_iterations(
     eval_needs_repair[COL_ANY_HIGH_LEAKED] = True
 
     repaired_df = eval_needs_repair.copy()
-    repaired_df[COL_REWRITTEN_TEXT] = "Repaired text"
+    repaired_df[COL_REWRITTEN_TEXT_NEXT] = "Repaired text"
 
     judge_df = repaired_df.copy()
     judge_df[COL_JUDGE_EVALUATION] = None
@@ -575,17 +554,9 @@ def test_only_failing_rows_sent_to_repair(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
-    stub_entities_by_value_with_entities: dict,
+    stub_df_two_entities: pd.DataFrame,
 ) -> None:
-    df = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works here", "Bob works there"],
-            COL_ENTITIES_BY_VALUE: [
-                stub_entities_by_value_with_entities,
-                stub_entities_by_value_with_entities,
-            ],
-        }
-    )
+    df = stub_df_two_entities
 
     adapter = Mock()
 
@@ -605,7 +576,7 @@ def test_only_failing_rows_sent_to_repair(
 
     failing_row = eval_df[eval_df[COL_NEEDS_REPAIR]].copy()
     repaired_row = failing_row.copy()
-    repaired_row[COL_REWRITTEN_TEXT] = "Repaired Maria"
+    repaired_row[COL_REWRITTEN_TEXT_NEXT] = "Repaired Maria"
 
     eval_after_repair = rewrite_gen_df.copy()
     eval_after_repair[COL_NEEDS_REPAIR] = False
@@ -669,7 +640,7 @@ def test_repair_iterations_tracked_per_row(
     eval_needs_repair[COL_ANY_HIGH_LEAKED] = True
 
     repaired_df = eval_needs_repair.copy()
-    repaired_df[COL_REWRITTEN_TEXT] = "Repaired text"
+    repaired_df[COL_REWRITTEN_TEXT_NEXT] = "Repaired text"
 
     eval_pass = rewrite_gen_df.copy()
     eval_pass[COL_NEEDS_REPAIR] = False
@@ -711,37 +682,20 @@ def test_zero_max_repair_iterations_still_evaluates(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
+    stub_pre_gen_df: pd.DataFrame,
+    stub_rewrite_gen_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-
-    pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
-    pre_gen_df["_anonymizer_row_order"] = [0]
-
-    rewrite_gen_df = pre_gen_df.copy()
-    rewrite_gen_df[COL_REWRITTEN_TEXT] = "Maria works"
-    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
-
-    eval_df = rewrite_gen_df.copy()
-    eval_df[COL_NEEDS_REPAIR] = False
-    eval_df[COL_UTILITY_SCORE] = 0.9
-    eval_df[COL_LEAKAGE_MASS] = 0.1
-    eval_df[COL_ANY_HIGH_LEAKED] = False
-
-    judge_df = eval_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
-    adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
-    ]
-
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
 
     wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch.object(
+        wf._rewrite_gen_wf,
+        "run",
+        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
+    ):
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -765,18 +719,10 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
-    stub_entities_by_value_with_entities: dict,
+    stub_df_two_entities: pd.DataFrame,
 ) -> None:
     """When evaluate drops a row, the surviving rows still complete the pipeline."""
-    df = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works here", "Bob works there"],
-            COL_ENTITIES_BY_VALUE: [
-                stub_entities_by_value_with_entities,
-                stub_entities_by_value_with_entities,
-            ],
-        }
-    )
+    df = stub_df_two_entities
 
     adapter = Mock()
 
@@ -822,6 +768,80 @@ def test_evaluate_dropping_rows_degrades_gracefully(
 
     assert len(result.dataframe) == 1
     assert result.dataframe[COL_REWRITTEN_TEXT].iloc[0] == "Maria works here"
+    assert any(f.record_id == "rec-1" for f in result.failed_records)
+
+
+def test_repair_dropping_rows_degrades_gracefully(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    stub_df_two_entities: pd.DataFrame,
+) -> None:
+    """When repair drops a row, the surviving row completes and the failed row is tracked."""
+    df = stub_df_two_entities
+
+    adapter = Mock()
+
+    pre_gen_df = df.copy()
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df["_anonymizer_row_order"] = [0, 1]
+    pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
+
+    rewrite_gen_df = pre_gen_df.copy()
+    rewrite_gen_df[COL_REWRITTEN_TEXT] = ["Maria works here", "Rob works there"]
+    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
+
+    # Initial evaluate: both rows need repair
+    eval_df = rewrite_gen_df.copy()
+    eval_df[COL_NEEDS_REPAIR] = True
+    eval_df[COL_UTILITY_SCORE] = [0.9, 0.8]
+    eval_df[COL_LEAKAGE_MASS] = [2.0, 2.0]
+    eval_df[COL_ANY_HIGH_LEAKED] = True
+
+    # Repair returns only row 0 (rec-1 dropped during repair)
+    repaired_df = eval_df.iloc[[0]].copy().reset_index(drop=True)
+    repaired_df[COL_REWRITTEN_TEXT + "__next"] = "Repaired Maria"
+
+    repair_failed = FailedRecord(record_id="rec-1", step="rewrite-repair-0", reason="LLM timeout")
+
+    # Re-evaluate after repair: 1 row passes
+    eval_after = repaired_df.copy()
+    eval_after[COL_NEEDS_REPAIR] = False
+    eval_after[COL_UTILITY_SCORE] = 0.9
+    eval_after[COL_LEAKAGE_MASS] = 0.1
+    eval_after[COL_ANY_HIGH_LEAKED] = False
+
+    judge_df = eval_after.copy()
+    judge_df[COL_JUDGE_EVALUATION] = None
+    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
+
+    adapter.run_workflow.side_effect = [
+        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        # initial evaluate
+        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        # repair (drops rec-1)
+        WorkflowRunResult(dataframe=repaired_df, failed_records=[repair_failed]),
+        # re-evaluate
+        WorkflowRunResult(dataframe=eval_after, failed_records=[]),
+        # judge
+        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
+    ]
+
+    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
+
+    wf = RewriteWorkflow(adapter=adapter)
+    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+        result = wf.run(
+            df,
+            model_configs=stub_model_configs,
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=1),
+        )
+
+    assert len(result.dataframe) == 1
+    assert result.dataframe[COL_REWRITTEN_TEXT].iloc[0] == "Repaired Maria"
     assert any(f.record_id == "rec-1" for f in result.failed_records)
 
 

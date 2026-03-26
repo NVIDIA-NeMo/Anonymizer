@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMJudgeColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
@@ -105,8 +106,8 @@ def test_judge_column_has_three_rubrics(
     score_names = {s.name for s in judge_col.scores}
     assert score_names == {"privacy", "quality", "naturalness"}
     for score in judge_col.scores:
-        assert "1" in score.options
-        assert "10" in score.options
+        assert 1 in score.options
+        assert 10 in score.options
 
 
 def test_needs_human_review_column_present(
@@ -121,6 +122,22 @@ def test_needs_human_review_column_present(
     custom_cols = [c for c in cols if isinstance(c, CustomColumnConfig)]
     assert len(custom_cols) == 1
     assert custom_cols[0].name == COL_NEEDS_HUMAN_REVIEW
+
+
+def test_needs_human_review_column_uses_evaluation_thresholds(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    wf = FinalJudgeWorkflow()
+    evaluation = EvaluationCriteria(flag_utility_below=0.6, flag_leakage_mass_above=1.5)
+    cols = wf.columns(
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_STUB_PRIVACY_GOAL,
+        evaluation=evaluation,
+    )
+    custom_col = next(c for c in cols if isinstance(c, CustomColumnConfig))
+    params = HumanReviewParams.model_validate(custom_col.generator_params)
+    assert params.flag_utility_below == 0.6
+    assert params.flag_leakage_mass_above == 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -196,3 +213,17 @@ def test_needs_human_review_exact_threshold_leakage() -> None:
     params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is False
+
+
+def test_needs_human_review_raises_on_invalid_utility_score() -> None:
+    row = _make_row(utility_score=None)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    with pytest.raises(TypeError):
+        _determine_needs_human_review(row, generator_params=params)
+
+
+def test_needs_human_review_raises_on_invalid_leakage_mass() -> None:
+    row = _make_row(leakage_mass=None)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    with pytest.raises(TypeError):
+        _determine_needs_human_review(row, generator_params=params)
