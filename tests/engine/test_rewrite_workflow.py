@@ -26,8 +26,9 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
-from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+
+_REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -106,7 +107,16 @@ def stub_pre_gen_df(stub_df_with_entities: pd.DataFrame) -> pd.DataFrame:
 
 
 @pytest.fixture
-def stub_rewrite_gen_df(stub_pre_gen_df: pd.DataFrame) -> pd.DataFrame:
+def stub_replace_df(stub_df_with_entities: pd.DataFrame) -> pd.DataFrame:
+    """Entity rows after replace-map generation (adds COL_REPLACEMENT_MAP)."""
+    df = stub_df_with_entities.copy()
+    df["_replacement_map"] = [{"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]}]
+    return df
+
+
+@pytest.fixture
+def stub_pipeline_df(stub_pre_gen_df: pd.DataFrame) -> pd.DataFrame:
+    """Result of the combined rewrite-pipeline adapter call."""
     df = stub_pre_gen_df.copy()
     df[COL_REWRITTEN_TEXT] = "Maria works"
     df[COL_REPAIR_ITERATIONS] = 0
@@ -114,8 +124,8 @@ def stub_rewrite_gen_df(stub_pre_gen_df: pd.DataFrame) -> pd.DataFrame:
 
 
 @pytest.fixture
-def stub_eval_df(stub_rewrite_gen_df: pd.DataFrame) -> pd.DataFrame:
-    df = stub_rewrite_gen_df.copy()
+def stub_eval_df(stub_pipeline_df: pd.DataFrame) -> pd.DataFrame:
+    df = stub_pipeline_df.copy()
     df[COL_NEEDS_REPAIR] = False
     df[COL_UTILITY_SCORE] = 0.9
     df[COL_LEAKAGE_MASS] = 0.1
@@ -132,16 +142,21 @@ def stub_judge_df(stub_eval_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _standard_side_effect(
-    pre_gen_df: pd.DataFrame,
+    pipeline_df: pd.DataFrame,
     eval_df: pd.DataFrame,
     judge_df: pd.DataFrame,
 ) -> list[WorkflowRunResult]:
-    """Happy-path adapter side_effect: pre-gen, evaluate, judge."""
+    """Happy-path adapter side_effect: pipeline, evaluate, judge."""
     return [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
         WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
+
+
+def _mock_replace(mock_cls: Mock, replace_df: pd.DataFrame) -> None:
+    """Configure a patched LlmReplaceWorkflow class to return replace_df."""
+    mock_cls.return_value.generate_map_only.return_value = Mock(dataframe=replace_df, failed_records=[])
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +237,29 @@ def test_attrs_propagated_on_fast_path(
     assert result.dataframe.attrs.get("original_text_column") == "bio"
 
 
+def test_has_entities_returns_true_when_present(stub_entities_by_value_with_entities: dict) -> None:
+    from anonymizer.engine.rewrite.rewrite_workflow import _has_entities
+
+    assert _has_entities(stub_entities_by_value_with_entities) is True
+
+
+def test_has_entities_returns_false_when_empty() -> None:
+    from anonymizer.engine.rewrite.rewrite_workflow import _has_entities
+
+    assert _has_entities({"entities_by_value": []}) is False
+
+
+def test_has_entities_returns_false_for_none() -> None:
+    from anonymizer.engine.rewrite.rewrite_workflow import _has_entities
+
+    assert _has_entities(None) is False
+
+
+def test_extract_domain_accepts_dict_payloads() -> None:
+    df = pd.DataFrame({COL_DOMAIN: [{"domain": "medical", "domain_confidence": 0.9}, {"domain": "medical"}]})
+    assert RewriteWorkflow._extract_domain(df) == "medical"
+
+
 # ---------------------------------------------------------------------------
 # Tests: full pipeline call order
 # ---------------------------------------------------------------------------
@@ -232,20 +270,17 @@ def test_calls_sub_workflows_in_order(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
-    stub_pre_gen_df: pd.DataFrame,
-    stub_rewrite_gen_df: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
     stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
 
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(
-        wf._rewrite_gen_wf,
-        "run",
-        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
-    ):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, stub_replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -256,7 +291,7 @@ def test_calls_sub_workflows_in_order(
         )
 
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
-    assert workflow_names[0] == "rewrite-pre-generation"
+    assert workflow_names[0] == "rewrite-pipeline"
     assert workflow_names[1].startswith("rewrite-evaluate")
     assert workflow_names[-1] == "rewrite-final-judge"
 
@@ -273,31 +308,28 @@ def test_failed_records_accumulated_across_steps(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
-    stub_pre_gen_df: pd.DataFrame,
-    stub_rewrite_gen_df: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
     stub_judge_df: pd.DataFrame,
 ) -> None:
-    failed_pre_gen = FailedRecord(record_id="a", step="rewrite-pre-generation", reason="timeout")
+    failed_pipeline = FailedRecord(record_id="a", step="rewrite-pipeline", reason="timeout")
     failed_eval = FailedRecord(record_id="b", step="rewrite-evaluate-0", reason="timeout")
     failed_judge = FailedRecord(record_id="c", step="rewrite-final-judge", reason="timeout")
 
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=stub_pre_gen_df, failed_records=[failed_pre_gen]),
+        WorkflowRunResult(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
         WorkflowRunResult(dataframe=stub_eval_df, failed_records=[failed_eval]),
         WorkflowRunResult(dataframe=stub_judge_df, failed_records=[failed_judge]),
     ]
 
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(
-        wf._rewrite_gen_wf,
-        "run",
-        return_value=RewriteGenerationResult(
-            dataframe=stub_rewrite_gen_df,
-            failed_records=[FailedRecord(record_id="d", step="rewrite-generation", reason="timeout")],
-        ),
-    ):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        mock_replace_cls.return_value.generate_map_only.return_value = Mock(
+            dataframe=stub_replace_df,
+            failed_records=[FailedRecord(record_id="d", step="replace-map-generation", reason="timeout")],
+        )
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -321,21 +353,18 @@ def test_attrs_propagated_to_final_output(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
-    stub_pre_gen_df: pd.DataFrame,
-    stub_rewrite_gen_df: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
     stub_judge_df: pd.DataFrame,
 ) -> None:
     stub_df_with_entities.attrs["original_text_column"] = "bio"
     adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
 
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(
-        wf._rewrite_gen_wf,
-        "run",
-        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
-    ):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, stub_replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -358,23 +387,20 @@ def test_judge_failure_does_not_propagate(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
-    stub_pre_gen_df: pd.DataFrame,
-    stub_rewrite_gen_df: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=stub_pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=stub_pipeline_df, failed_records=[]),
         WorkflowRunResult(dataframe=stub_eval_df, failed_records=[]),
         RuntimeError("Judge LLM unavailable"),
     ]
 
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(
-        wf._rewrite_gen_wf,
-        "run",
-        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
-    ):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, stub_replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -419,8 +445,11 @@ def test_judge_partial_row_loss_preserves_all_rows(
     judge_df[COL_JUDGE_EVALUATION] = [{"privacy": {"score": 8}, "quality": {"score": 9}, "naturalness": {"score": 7}}]
     judge_df[COL_NEEDS_HUMAN_REVIEW] = False
 
+    replace_df = df.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
+
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
         WorkflowRunResult(
             dataframe=judge_df,
@@ -428,10 +457,9 @@ def test_judge_partial_row_loss_preserves_all_rows(
         ),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             df,
             model_configs=stub_model_configs,
@@ -458,20 +486,17 @@ def test_repair_loop_exits_early_when_no_rows_need_repair(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
-    stub_pre_gen_df: pd.DataFrame,
-    stub_rewrite_gen_df: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
     stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
 
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(
-        wf._rewrite_gen_wf,
-        "run",
-        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
-    ):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, stub_replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -516,8 +541,12 @@ def test_repair_loop_runs_up_to_max_iterations(
     judge_df[COL_JUDGE_EVALUATION] = None
     judge_df[COL_NEEDS_HUMAN_REVIEW] = True
 
+    replace_df = stub_df_with_entities.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}]
+
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        # pipeline (domain + disposition + QA + rewrite)
+        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         # evaluate-0 -> needs repair
         WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
         # repair-0
@@ -532,10 +561,9 @@ def test_repair_loop_runs_up_to_max_iterations(
         WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -578,28 +606,34 @@ def test_only_failing_rows_sent_to_repair(
     repaired_row = failing_row.copy()
     repaired_row[COL_REWRITTEN_TEXT_NEXT] = "Repaired Maria"
 
-    eval_after_repair = rewrite_gen_df.copy()
+    eval_after_repair = failing_row.copy()
     eval_after_repair[COL_NEEDS_REPAIR] = False
     eval_after_repair[COL_UTILITY_SCORE] = 0.9
     eval_after_repair[COL_LEAKAGE_MASS] = 0.1
     eval_after_repair[COL_ANY_HIGH_LEAKED] = False
 
-    judge_df = eval_after_repair.copy()
+    judge_df = rewrite_gen_df.copy()
+    judge_df[COL_NEEDS_REPAIR] = False
+    judge_df[COL_UTILITY_SCORE] = 0.9
+    judge_df[COL_LEAKAGE_MASS] = 0.1
+    judge_df[COL_ANY_HIGH_LEAKED] = False
     judge_df[COL_JUDGE_EVALUATION] = None
     judge_df[COL_NEEDS_HUMAN_REVIEW] = False
 
+    replace_df = df.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
+
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
         WorkflowRunResult(dataframe=repaired_row, failed_records=[]),
         WorkflowRunResult(dataframe=eval_after_repair, failed_records=[]),
         WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         wf.run(
             df,
             model_configs=stub_model_configs,
@@ -653,18 +687,20 @@ def test_repair_iterations_tracked_per_row(
     judge_df[COL_JUDGE_EVALUATION] = None
     judge_df[COL_NEEDS_HUMAN_REVIEW] = False
 
+    replace_df = stub_df_with_entities.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}]
+
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
         WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_pass, failed_records=[]),
         WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -682,20 +718,17 @@ def test_zero_max_repair_iterations_still_evaluates(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_with_entities: pd.DataFrame,
-    stub_pre_gen_df: pd.DataFrame,
-    stub_rewrite_gen_df: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
     stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pre_gen_df, stub_eval_df, stub_judge_df)
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
 
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(
-        wf._rewrite_gen_wf,
-        "run",
-        return_value=RewriteGenerationResult(dataframe=stub_rewrite_gen_df, failed_records=[]),
-    ):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, stub_replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
             model_configs=stub_model_configs,
@@ -745,18 +778,20 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     judge_df[COL_JUDGE_EVALUATION] = None
     judge_df[COL_NEEDS_HUMAN_REVIEW] = False
 
+    replace_df = df.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
+
     eval_failed = FailedRecord(record_id="rec-1", step="rewrite-evaluate-0", reason="LLM timeout")
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[eval_failed]),
         WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             df,
             model_configs=stub_model_configs,
@@ -815,8 +850,11 @@ def test_repair_dropping_rows_degrades_gracefully(
     judge_df[COL_JUDGE_EVALUATION] = None
     judge_df[COL_NEEDS_HUMAN_REVIEW] = False
 
+    replace_df = df.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
+
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         # initial evaluate
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
         # repair (drops rec-1)
@@ -827,10 +865,9 @@ def test_repair_dropping_rows_degrades_gracefully(
         WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             df,
             model_configs=stub_model_configs,
@@ -881,16 +918,18 @@ def test_passthrough_rows_get_defaults(
     judge_df[COL_JUDGE_EVALUATION] = None
     judge_df[COL_NEEDS_HUMAN_REVIEW] = False
 
+    replace_df = entity_df.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}]
+
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pre_gen_df, failed_records=[]),
+        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
         WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
-    rewrite_gen_result = RewriteGenerationResult(dataframe=rewrite_gen_df, failed_records=[])
-
-    wf = RewriteWorkflow(adapter=adapter)
-    with patch.object(wf._rewrite_gen_wf, "run", return_value=rewrite_gen_result):
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_mixed,
             model_configs=stub_model_configs,

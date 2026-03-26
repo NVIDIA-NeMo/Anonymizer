@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from pydantic import BaseModel
 
@@ -90,6 +91,12 @@ def test_parse_privacy_answers_from_schema() -> None:
 def test_parse_privacy_answers_invalid_type() -> None:
     with pytest.raises(TypeError):
         parse_privacy_answers("bad")
+
+
+def test_parse_privacy_answers_normalizes_numpy_array_payload() -> None:
+    result = parse_privacy_answers({"answers": np.array([{"id": 1, "answer": "yes"}], dtype=object)})
+    assert len(result) == 1
+    assert result[0].id == 1
 
 
 # ---------------------------------------------------------------------------
@@ -205,3 +212,26 @@ def test_parse_sensitivity_disposition_from_dict() -> None:
 def test_parse_sensitivity_disposition_invalid_type() -> None:
     with pytest.raises(ValueError):
         parse_sensitivity_disposition("bad")
+
+
+def test_parse_sensitivity_disposition_normalizes_numpy_array_payload() -> None:
+    raw = {
+        "sensitivity_disposition": np.array(
+            [
+                {
+                    "id": 1,
+                    "source": "tagged",
+                    "category": "direct_identifier",
+                    "sensitivity": "high",
+                    "entity_label": "name",
+                    "entity_value": "Alice",
+                    "needs_protection": True,
+                    "protection_reason": "Direct identifier that enables re-identification",
+                    "protection_method_suggestion": "replace",
+                    "combined_risk_level": "high",
+                }
+            ],
+            dtype=object,
+        )
+    }
+    assert len(parse_sensitivity_disposition(raw).sensitivity_disposition) == 1

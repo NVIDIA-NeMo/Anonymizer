@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
@@ -15,6 +16,8 @@ from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_M
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+
+logger = logging.getLogger("anonymizer.replace.llm_workflow")
 
 
 @dataclass(frozen=True)
@@ -95,6 +98,7 @@ class LlmReplaceWorkflow:
             lambda row: _filter_replacement_map_to_input_entities(
                 raw_map=row.get(COL_REPLACEMENT_MAP, {"replacements": []}),
                 parsed_entities=EntitiesByValueSchema.from_raw(row.get(entities_column, {})),
+                record_id=str(row.get("_anonymizer_record_id", "")),
             ),
             axis=1,
         )
@@ -135,11 +139,17 @@ def _filter_replacement_map_to_input_entities(
     *,
     raw_map: object,
     parsed_entities: EntitiesByValueSchema,
+    record_id: str = "",
 ) -> dict[str, list[dict[str, str]]]:
     """Keep only replacement entries that correspond to actual requested entities."""
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
     if not isinstance(raw_map, dict):
+        logger.warning(
+            "Replacement map has unexpected type for record %s: %s",
+            record_id or "<unknown>",
+            type(raw_map).__name__,
+        )
         return {"replacements": []}
 
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
@@ -158,6 +168,22 @@ def _filter_replacement_map_to_input_entities(
             continue
         seen.add(key)
         filtered.append(replacement.model_dump())
+
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "Replacement map record %s: requested=%s raw=%s filtered=%s",
+            record_id or "<unknown>",
+            sorted(allowed_pairs),
+            [entry.model_dump() for entry in parsed_map.replacements],
+            filtered,
+        )
+    elif not filtered and allowed_pairs:
+        logger.warning(
+            "Replacement map empty after filtering for record %s; requested=%s raw=%s",
+            record_id or "<unknown>",
+            sorted(allowed_pairs),
+            [entry.model_dump() for entry in parsed_map.replacements],
+        )
     return {"replacements": filtered}
 
 

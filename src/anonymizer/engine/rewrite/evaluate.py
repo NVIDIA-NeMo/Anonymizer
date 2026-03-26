@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -45,6 +46,8 @@ from anonymizer.engine.schemas.rewrite import (
     QualityAnswersSchema,
     SensitivityLevel,
 )
+
+logger = logging.getLogger("anonymizer.rewrite.evaluate")
 
 # ---------------------------------------------------------------------------
 # Generator params
@@ -193,8 +196,15 @@ def _make_quality_answer_parser(
 ) -> Any:
     def parser(response: str) -> QualityAnswersSchema:
         obj = recipe.parse(response)
+        payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
+        payload["answers"] = _normalize_answer_items(
+            payload.get("answers"),
+            expected_ids=expected_ids,
+            label="quality answer",
+            default_item_factory=lambda item_id: {"id": item_id, "answer": "unknown"},
+        )
         return QualityAnswersSchema.model_validate(
-            obj.model_dump() if hasattr(obj, "model_dump") else obj,
+            payload,
             context={"expected_ids": expected_ids},
         )
 
@@ -207,8 +217,15 @@ def _make_privacy_answer_parser(
 ) -> Any:
     def parser(response: str) -> PrivacyAnswersSchema:
         obj = recipe.parse(response)
+        payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
+        payload["answers"] = _normalize_answer_items(
+            payload.get("answers"),
+            expected_ids=expected_ids,
+            label="privacy answer",
+            default_item_factory=lambda item_id: {"id": item_id, "answer": "yes"},
+        )
         return PrivacyAnswersSchema.model_validate(
-            obj.model_dump() if hasattr(obj, "model_dump") else obj,
+            payload,
             context={"expected_ids": expected_ids},
         )
 
@@ -221,12 +238,69 @@ def _make_qa_compare_parser(
 ) -> Any:
     def parser(response: str) -> QACompareResultsSchema:
         obj = recipe.parse(response)
+        payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
+        payload["per_item"] = _normalize_answer_items(
+            payload.get("per_item"),
+            expected_ids=expected_ids,
+            label="quality compare",
+            default_item_factory=lambda item_id: {
+                "id": item_id,
+                "score": 0.0,
+                "reason": "Model omitted comparison; defaulted conservatively.",
+            },
+        )
         return QACompareResultsSchema.model_validate(
-            obj.model_dump() if hasattr(obj, "model_dump") else obj,
+            payload,
             context={"expected_ids": expected_ids},
         )
 
     return parser
+
+
+def _normalize_answer_items(
+    raw_items: Any,
+    *,
+    expected_ids: list[int],
+    label: str,
+    default_item_factory: Any,
+) -> list[dict[str, Any]]:
+    """Normalize LLM answer payloads to the exact expected ID set."""
+    if not isinstance(raw_items, list):
+        raise TypeError(f"Expected list of {label}s, got {type(raw_items).__name__}")
+
+    expected_set = set(expected_ids)
+    by_id: dict[int, dict[str, Any]] = {}
+    duplicate_ids: list[int] = []
+    extra_ids: list[int] = []
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise TypeError(f"Expected dict {label}, got {type(item).__name__}")
+        item_id = item.get("id")
+        if not isinstance(item_id, int):
+            raise TypeError(f"Expected integer id in {label}, got {type(item_id).__name__}")
+        if item_id not in expected_set:
+            extra_ids.append(item_id)
+            continue
+        if item_id in by_id:
+            duplicate_ids.append(item_id)
+            continue
+        by_id[item_id] = item
+
+    missing_ids = [item_id for item_id in expected_ids if item_id not in by_id]
+    if missing_ids or duplicate_ids or extra_ids:
+        logger.warning(
+            "Evaluator returned malformed %s set; missing=%s duplicate=%s extra=%s. Applying conservative normalization.",
+            label,
+            missing_ids,
+            sorted(set(duplicate_ids)),
+            sorted(set(extra_ids)),
+        )
+
+    for item_id in missing_ids:
+        by_id[item_id] = default_item_factory(item_id)
+
+    return [by_id[item_id] for item_id in expected_ids]
 
 
 # ---------------------------------------------------------------------------

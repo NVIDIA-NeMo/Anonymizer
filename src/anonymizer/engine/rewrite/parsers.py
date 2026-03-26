@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
+
+from pydantic import BaseModel
 
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswerItemSchema,
@@ -44,7 +47,36 @@ def field(model: type, name: str) -> str:
     return name
 
 
+def normalize_payload(raw: Any) -> Any:
+    """Normalize values that may have been JSON-stringified by parquet round-trip."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw
+    return _to_python(raw)
+
+
+def _to_python(raw: Any) -> Any:
+    """Recursively normalize nested model/array/scalar payloads to plain Python."""
+    if isinstance(raw, BaseModel):
+        return _to_python(raw.model_dump(mode="python"))
+    if isinstance(raw, dict):
+        return {key: _to_python(value) for key, value in raw.items()}
+    if isinstance(raw, (list, tuple)):
+        return [_to_python(value) for value in raw]
+    if hasattr(raw, "tolist") and callable(raw.tolist):
+        return _to_python(raw.tolist())
+    if hasattr(raw, "item") and callable(raw.item):
+        try:
+            return raw.item()
+        except (TypeError, ValueError):
+            pass
+    return raw
+
+
 def parse_privacy_answers(raw: Any) -> list[PrivacyAnswerItemSchema]:
+    raw = normalize_payload(raw)
     if isinstance(raw, PrivacyAnswersSchema):
         return raw.answers
     if isinstance(raw, dict):
@@ -53,6 +85,7 @@ def parse_privacy_answers(raw: Any) -> list[PrivacyAnswerItemSchema]:
 
 
 def parse_quality_qa(raw: Any) -> QualityQAPairsSchema:
+    raw = normalize_payload(raw)
     if isinstance(raw, QualityQAPairsSchema):
         return raw
     if isinstance(raw, dict):
@@ -61,6 +94,7 @@ def parse_quality_qa(raw: Any) -> QualityQAPairsSchema:
 
 
 def parse_quality_answers(raw: Any) -> list[QualityAnswerSchema]:
+    raw = normalize_payload(raw)
     if isinstance(raw, QualityAnswersSchema):
         return raw.answers
     if isinstance(raw, dict):
@@ -70,6 +104,7 @@ def parse_quality_answers(raw: Any) -> list[QualityAnswerSchema]:
 
 def parse_quality_compare(raw: Any) -> tuple[list[int], list[float]]:
     """Return (ids, scores) from a QACompareResultsSchema or dict."""
+    raw = normalize_payload(raw)
     if isinstance(raw, QACompareResultsSchema):
         return [item.id for item in raw.per_item], [item.score for item in raw.per_item]
     if isinstance(raw, dict):
@@ -79,6 +114,7 @@ def parse_quality_compare(raw: Any) -> tuple[list[int], list[float]]:
 
 
 def parse_privacy_qa(raw: Any) -> PrivacyQAPairsSchema:
+    raw = normalize_payload(raw)
     if isinstance(raw, PrivacyQAPairsSchema):
         return raw
     if isinstance(raw, dict):
@@ -87,6 +123,7 @@ def parse_privacy_qa(raw: Any) -> PrivacyQAPairsSchema:
 
 
 def parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema:
+    raw = normalize_payload(raw)
     if isinstance(raw, SensitivityDispositionSchema):
         return raw
     if isinstance(raw, dict):

@@ -15,33 +15,27 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
-    COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
-    COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
-    COL_PRIVACY_QA,
-    COL_PRIVACY_QA_REANSWER,
-    COL_QUALITY_QA,
     COL_REPAIR_ITERATIONS,
-    COL_REPLACEMENT_MAP,
-    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
-    COL_SENSITIVITY_DISPOSITION,
-    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
+from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
-from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow, _has_entities
+from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
+from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
@@ -56,37 +50,21 @@ _PASSTHROUGH_DEFAULTS: dict[str, object] = {
 
 _ROW_ORDER_COL = "_anonymizer_row_order"
 
-# Seed columns per adapter call — only these are serialized to parquet.
-# RECORD_ID_COLUMN is included in every list so the adapter preserves the
-# stable ID from detection rather than recomputing from different column sets.
-_SEED_PRE_GENERATION = [RECORD_ID_COLUMN, COL_TEXT, COL_TAGGED_TEXT, COL_FINAL_ENTITIES, COL_LATENT_ENTITIES]
-_SEED_EVALUATE = [RECORD_ID_COLUMN, COL_QUALITY_QA, COL_PRIVACY_QA, COL_REWRITTEN_TEXT]
-_SEED_REPAIR = [
-    RECORD_ID_COLUMN,
-    COL_TEXT,
-    COL_REWRITTEN_TEXT,
-    COL_SENSITIVITY_DISPOSITION,
-    COL_REPLACEMENT_MAP_FOR_PROMPT,
-    COL_PRIVACY_QA_REANSWER,
-    COL_PRIVACY_QA,
-    COL_LEAKAGE_MASS,
-    COL_ANY_HIGH_LEAKED,
-    COL_UTILITY_SCORE,
-]
-_SEED_REWRITE_GEN = [
-    RECORD_ID_COLUMN,
-    COL_TEXT,
-    COL_TAGGED_TEXT,
-    COL_SENSITIVITY_DISPOSITION,
-    COL_ENTITIES_BY_VALUE,
-    COL_REPLACEMENT_MAP,
-]
-_SEED_JUDGE = [RECORD_ID_COLUMN, COL_TEXT, COL_REWRITTEN_TEXT, COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED]
-
 
 # ---------------------------------------------------------------------------
 # Row split / merge helpers — TODO(#60): move to shared module
 # ---------------------------------------------------------------------------
+
+
+def _has_entities(entities_by_value: object) -> bool:
+    """Return True if this record has at least one detected entity."""
+    entities_by_value = normalize_payload(entities_by_value)
+    if not entities_by_value or not isinstance(entities_by_value, dict):
+        return False
+    items = entities_by_value.get("entities_by_value")
+    if not isinstance(items, list):
+        return False
+    return len(items) > 0
 
 
 def _split_by_entities(
@@ -112,12 +90,6 @@ def _merge_and_reorder(
     )
     combined.attrs = {**attrs}
     return combined
-
-
-def _select_seed_cols(df: pd.DataFrame, seed_cols: list[str]) -> pd.DataFrame:
-    """Select only the columns a sub-workflow needs for its adapter call."""
-    present = [c for c in seed_cols if c in df.columns]
-    return df[present].copy()
 
 
 def _join_new_columns(
@@ -236,7 +208,7 @@ class RewriteWorkflow:
         self._domain_wf = DomainClassificationWorkflow()
         self._disposition_wf = SensitivityDispositionWorkflow()
         self._qa_wf = QAGenerationWorkflow()
-        self._rewrite_gen_wf = RewriteGenerationWorkflow(adapter)
+        self._rewrite_gen_wf = RewriteGenerationWorkflow()
         self._evaluate_wf = EvaluateWorkflow(adapter)
         self._repair_wf = RepairWorkflow(adapter)
         self._judge_wf = FinalJudgeWorkflow()
@@ -263,8 +235,18 @@ class RewriteWorkflow:
             result_df = _merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
             return RewriteResult(dataframe=result_df, failed_records=all_failed)
 
-        # --- Steps 1-3: domain, disposition, QA (single adapter call) ---
-        pre_gen_columns = [
+        # --- Step 1: replacement map (needs only detection output) ---
+        replace_workflow = LlmReplaceWorkflow(adapter=self._adapter)
+        replace_result = replace_workflow.generate_map_only(
+            entity_rows,
+            model_configs=model_configs,
+            selected_models=replace_model_selection,
+        )
+        entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
+        all_failed.extend(replace_result.failed_records)
+
+        # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
+        pipeline_columns = [
             *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
             *self._disposition_wf.columns(
                 selected_models=selected_models,
@@ -272,32 +254,23 @@ class RewriteWorkflow:
                 data_summary=data_summary,
             ),
             *self._qa_wf.columns(selected_models=selected_models),
+            *self._rewrite_gen_wf.columns(
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                data_summary=data_summary,
+            ),
         ]
 
-        pre_gen_seed = _select_seed_cols(entity_rows, _SEED_PRE_GENERATION)
-        pre_gen_result = self._adapter.run_workflow(
-            pre_gen_seed,
+        pipeline_seed = select_seed_cols(entity_rows, derive_seed_columns(pipeline_columns, entity_rows))
+        pipeline_result = self._adapter.run_workflow(
+            pipeline_seed,
             model_configs=model_configs,
-            columns=pre_gen_columns,
-            workflow_name="rewrite-pre-generation",
+            columns=pipeline_columns,
+            workflow_name="rewrite-pipeline",
             preview_num_records=preview_num_records,
         )
-        entity_rows = _join_new_columns(entity_rows, pre_gen_result.dataframe)
-        all_failed.extend(pre_gen_result.failed_records)
-
-        # --- Step 4: rewrite generation ---
-        rewrite_gen_seed = _select_seed_cols(entity_rows, _SEED_REWRITE_GEN)
-        rewrite_result = self._rewrite_gen_wf.run(
-            rewrite_gen_seed,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            replace_model_selection=replace_model_selection,
-            privacy_goal=privacy_goal,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-        )
-        entity_rows = _join_new_columns(entity_rows, rewrite_result.dataframe)
-        all_failed.extend(rewrite_result.failed_records)
+        entity_rows = _join_new_columns(entity_rows, pipeline_result.dataframe)
+        all_failed.extend(pipeline_result.failed_records)
 
         # --- Step 5: evaluate-repair loop ---
         domain = self._extract_domain(entity_rows)
@@ -354,9 +327,10 @@ class RewriteWorkflow:
             evaluation=evaluation,
             domain=domain,
         )
+        eval_seed_cols = derive_seed_columns(eval_columns, df)
 
         # Always run initial evaluate -- metrics must be produced even when max_repair_iterations=0
-        eval_seed = _select_seed_cols(df, _SEED_EVALUATE)
+        eval_seed = select_seed_cols(df, eval_seed_cols)
         eval_result = self._adapter.run_workflow(
             eval_seed,
             model_configs=model_configs,
@@ -364,7 +338,7 @@ class RewriteWorkflow:
             workflow_name="rewrite-evaluate-0",
             preview_num_records=preview_num_records,
         )
-        df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=_SEED_EVALUATE)
+        df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=eval_seed_cols)
         all_failed.extend(eval_result.failed_records)
 
         repair_columns = self._repair_wf.columns(
@@ -390,7 +364,8 @@ class RewriteWorkflow:
             )
 
             # Repair failing rows only
-            repair_seed = _select_seed_cols(failing_rows, _SEED_REPAIR)
+            repair_seed_cols = derive_seed_columns(repair_columns, failing_rows)
+            repair_seed = select_seed_cols(failing_rows, repair_seed_cols)
             repair_result = self._adapter.run_workflow(
                 repair_seed,
                 model_configs=model_configs,
@@ -406,19 +381,22 @@ class RewriteWorkflow:
                 failing_rows[COL_REWRITTEN_TEXT] = failing_rows[COL_REWRITTEN_TEXT_NEXT]
             failing_rows[COL_REPAIR_ITERATIONS] = failing_rows[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
 
-            df = pd.concat([passing_rows, failing_rows], ignore_index=True)
-
-            # Re-evaluate after repair so metrics reflect the repaired text
-            eval_seed = _select_seed_cols(df, _SEED_EVALUATE)
+            # Re-evaluate only repaired rows (passing rows' metrics are unchanged)
+            reeval_seed_cols = derive_seed_columns(eval_columns, failing_rows)
+            reeval_seed = select_seed_cols(failing_rows, reeval_seed_cols)
             eval_result = self._adapter.run_workflow(
-                eval_seed,
+                reeval_seed,
                 model_configs=model_configs,
                 columns=eval_columns,
                 workflow_name=f"rewrite-evaluate-{iteration + 1}",
                 preview_num_records=preview_num_records,
             )
-            df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=_SEED_EVALUATE)
+            failing_rows = _join_new_columns(
+                failing_rows, eval_result.dataframe, overwrite=True, seed_cols=reeval_seed_cols
+            )
             all_failed.extend(eval_result.failed_records)
+
+            df = pd.concat([passing_rows, failing_rows], ignore_index=True)
 
         return df, all_failed
 
@@ -437,15 +415,16 @@ class RewriteWorkflow:
         preview_num_records: int | None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         try:
-            judge_seed = _select_seed_cols(df, _SEED_JUDGE)
+            judge_columns = self._judge_wf.columns(
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+            )
+            judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))
             judge_result = self._adapter.run_workflow(
                 judge_seed,
                 model_configs=model_configs,
-                columns=self._judge_wf.columns(
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    evaluation=evaluation,
-                ),
+                columns=judge_columns,
                 workflow_name="rewrite-final-judge",
                 preview_num_records=preview_num_records,
             )
@@ -467,15 +446,23 @@ class RewriteWorkflow:
         if COL_DOMAIN not in df.columns:
             return None
         try:
-            domains = df[COL_DOMAIN].dropna()
+            domains = (
+                df[COL_DOMAIN]
+                .dropna()
+                .apply(
+                    lambda raw: (
+                        str(raw.domain)
+                        if hasattr(raw, "domain")
+                        else str(raw.get("domain", ""))
+                        if isinstance(raw, dict)
+                        else str(raw)
+                    )
+                )
+            )
+            domains = domains[domains != ""]
             if domains.empty:
                 return None
-            raw = domains.mode().iloc[0]
-            if hasattr(raw, "domain"):
-                return str(raw.domain)
-            if isinstance(raw, dict):
-                return str(raw.get("domain", ""))
-            return str(raw)
+            return str(domains.mode().iloc[0])
         except Exception:
             logger.debug("Could not extract domain from COL_DOMAIN", exc_info=True)
             return None

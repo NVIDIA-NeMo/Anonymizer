@@ -14,6 +14,7 @@ from anonymizer.config.rewrite import SENSITIVITY_WEIGHTS, EvaluationCriteria
 from anonymizer.engine.constants import COL_UTILITY_SCORE
 from anonymizer.engine.rewrite.evaluate import (
     EvaluateWorkflow,
+    _normalize_answer_items,
     compute_any_high_leaked,
     compute_leakage_mass,
     compute_utility_score,
@@ -218,3 +219,27 @@ def test_evaluate_columns_pipeline(
     for col in cols:
         assert isinstance(col, CustomColumnConfig)
     assert cols[3].name == COL_UTILITY_SCORE
+
+
+def test_normalize_answer_items_fills_missing_privacy_answers_conservatively() -> None:
+    normalized = _normalize_answer_items(
+        [{"id": 1, "answer": "no"}],
+        expected_ids=[1, 2],
+        label="privacy answer",
+        default_item_factory=lambda item_id: {"id": item_id, "answer": "yes"},
+    )
+    assert normalized == [{"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]
+
+
+def test_normalize_answer_items_drops_extra_and_duplicate_ids() -> None:
+    normalized = _normalize_answer_items(
+        [
+            {"id": 1, "answer": "first"},
+            {"id": 1, "answer": "duplicate"},
+            {"id": 99, "answer": "extra"},
+        ],
+        expected_ids=[1, 2],
+        label="quality answer",
+        default_item_factory=lambda item_id: {"id": item_id, "answer": "unknown"},
+    )
+    assert normalized == [{"id": 1, "answer": "first"}, {"id": 2, "answer": "unknown"}]

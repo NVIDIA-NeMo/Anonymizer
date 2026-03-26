@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -26,6 +27,11 @@ def _parse_raw_wrapper(
 
     if isinstance(raw, model_cls):
         return raw
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return model_cls()
     if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
 

@@ -31,6 +31,7 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.rewrite.parsers import (
     field,
+    normalize_payload,
     parse_privacy_answers,
     parse_privacy_qa,
     parse_sensitivity_disposition,
@@ -52,6 +53,17 @@ _F_ENTITY_LABEL = field(EntityDispositionSchema, "entity_label")
 _F_ENTITY_VALUE = field(EntityDispositionSchema, "entity_value")
 _F_PROTECTION_METHOD = field(EntityDispositionSchema, "protection_method_suggestion")
 _F_PROTECTION_REASON = field(EntityDispositionSchema, "protection_reason")
+
+
+def _replacement_map_is_empty(raw_map: Any) -> bool:
+    """Return True when the replacement map is absent or has no replacements."""
+    normalized = normalize_payload(raw_map)
+    if normalized is None:
+        return True
+    if not isinstance(normalized, dict):
+        return False
+    replacements = normalized.get("replacements")
+    return isinstance(replacements, list) and len(replacements) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +116,8 @@ def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
         e.protection_method_suggestion == "replace" and e.needs_protection for e in disposition.sensitivity_disposition
     )
     raw_map = row.get(COL_REPLACEMENT_MAP_FOR_PROMPT)
-    if has_replace_entities and (not raw_map or raw_map == {"replacements": []}):
+    map_is_empty = _replacement_map_is_empty(raw_map)
+    if has_replace_entities and map_is_empty:
         logger.warning(
             "Repair prompt has entities requiring replacement but COL_REPLACEMENT_MAP_FOR_PROMPT is empty; "
             "the LLM will have no synthetic values to use."
@@ -159,7 +172,7 @@ Provide ONLY the rewritten text. Do not include explanations, comments, or markd
         "<<REPLACEMENT_MAP>>": str(row.get(COL_REPLACEMENT_MAP_FOR_PROMPT, "")),
         "<<LEAKAGE_MASS>>": str(row.get(COL_LEAKAGE_MASS, 0.0)),
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
-        if row.get(COL_ANY_HIGH_LEAKED)
+        if bool(row.get(COL_ANY_HIGH_LEAKED, False))
         else "",
         "<<LEAKED_ITEMS>>": str(row.get(COL_LEAKED_PRIVACY_ITEMS, "")),
         "<<UTILITY_SCORE>>": str(row.get(COL_UTILITY_SCORE, 0.0)),

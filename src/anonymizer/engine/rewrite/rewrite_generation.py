@@ -4,19 +4,15 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 
-import pandas as pd
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
-from data_designer.config.models import ModelConfig
 
-from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
+from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
-    COL_ENTITIES_BY_VALUE,
     COL_FULL_REWRITE,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
@@ -25,16 +21,13 @@ from anonymizer.engine.constants import (
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
-    COL_TEXT,
     _jinja,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     EntityReplacementMapSchema,
     RewriteOutputSchema,
-    SensitivityDispositionSchema,
 )
 
 logger = logging.getLogger("anonymizer.rewrite.generation")
@@ -132,7 +125,7 @@ Rules:
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-filter and serialize needs_protection=True entities for the rewrite prompt."""
-    disposition = SensitivityDispositionSchema.model_validate(row[COL_SENSITIVITY_DISPOSITION])
+    disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     block = []
     for e in disposition.sensitivity_disposition:
         if not e.needs_protection:
@@ -166,6 +159,7 @@ def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
             )
         row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": []}
         return row
+    raw_map = normalize_payload(raw_map)
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
@@ -183,11 +177,6 @@ def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
     Sets ``COL_REWRITTEN_TEXT`` to ``None`` on failure or blank output so
     downstream steps (repair, judge, human-review flagging) can distinguish
     a failed rewrite from a valid one.
-
-    TODO: (potentially) replace ``None`` with a ``RewriteStatus`` enum + ``COL_REWRITE_STATUS``
-    column so downstream steps can distinguish failure reasons (blank_output,
-    extraction_failed) and the repair loop can add its own statuses (repaired,
-    repair_failed).
     """
     try:
         full_rewrite = row[COL_FULL_REWRITE]
@@ -206,128 +195,18 @@ def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _has_entities(entities_by_value: object) -> bool:
-    """Return True if this record has at least one detected entity."""
-    if not entities_by_value or not isinstance(entities_by_value, dict):
-        return False
-    items = entities_by_value.get("entities_by_value")
-    if not isinstance(items, list):
-        logger.debug("Unexpected entities_by_value structure: %s", type(entities_by_value).__name__)
-        return False
-    return len(items) > 0
-
-
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RewriteGenerationResult:
-    dataframe: pd.DataFrame
-    failed_records: list[FailedRecord]
-
-
-# ---------------------------------------------------------------------------
 # Workflow
 # ---------------------------------------------------------------------------
 
 
 class RewriteGenerationWorkflow:
-    """Generate rewritten text for records that have detected entities.
+    """Column factory for the rewrite generation step.
 
-    Follows the column-factory pattern: ``columns()`` returns a list of
-    ``ColumnConfigT`` objects intended to be passed to a single
-    ``NddAdapter.run_workflow()`` call by the top-level ``RewriteWorkflow``.
-
-    Fast path: rows with no entities in ``COL_ENTITIES_BY_VALUE`` receive
-    ``COL_REWRITTEN_TEXT = COL_TEXT`` without any LLM calls.
+    Returns column configs for disposition-block formatting,
+    replacement-map filtering, LLM rewrite, and text extraction.
+    The orchestrator (``RewriteWorkflow``) collects these alongside
+    domain/disposition/QA columns for a single adapter call.
     """
-
-    def __init__(self, adapter: NddAdapter) -> None:
-        self._adapter = adapter
-
-    def run(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        replace_model_selection: ReplaceModelSelection,
-        privacy_goal: PrivacyGoal,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-    ) -> RewriteGenerationResult:
-        """Run the full rewrite generation workflow.
-
-        Records with no entities are passed through immediately; records
-        with entities go through LLM replacement-map generation followed by
-        the disposition-block + rewrite + text-extraction column pipeline.
-
-        TODO: when wiring this into the orchestrator, ensure ``compute_grouped_entities=True``
-        covers ``config.rewrite`` (not just ``config.replace``), otherwise ``COL_ENTITIES_BY_VALUE``
-        will be missing and raise ``KeyError``.
-        """
-        working_df = dataframe.copy()
-        working_df["_anonymizer_row_order"] = range(len(working_df))
-
-        has_entities_mask = working_df[COL_ENTITIES_BY_VALUE].apply(_has_entities)
-        entity_rows = working_df[has_entities_mask].copy()
-        passthrough_rows = working_df[~has_entities_mask].copy()
-
-        passthrough_rows[COL_REWRITTEN_TEXT] = passthrough_rows[COL_TEXT]
-
-        all_failed: list[FailedRecord] = []
-
-        if entity_rows.empty:
-            combined = (
-                passthrough_rows.sort_values("_anonymizer_row_order")
-                .drop(columns=["_anonymizer_row_order"])
-                .reset_index(drop=True)
-            )
-            combined.attrs = {**dataframe.attrs}
-            return RewriteGenerationResult(dataframe=combined, failed_records=all_failed)
-
-        # Step 1 — Replacement map (LLM): reuse LlmReplaceWorkflow.
-        # TODO: replace with single-workflow column architecture (see REFACTOR_PLAN.md).
-        replace_workflow = LlmReplaceWorkflow(adapter=self._adapter)
-        replace_result = replace_workflow.generate_map_only(
-            entity_rows,
-            model_configs=model_configs,
-            selected_models=replace_model_selection,
-        )
-        entity_rows = replace_result.dataframe
-        all_failed.extend(replace_result.failed_records)
-
-        # Steps 2–4: disposition block, prompt replacement map, LLM rewrite, text extraction.
-        columns = self.columns(
-            selected_models=selected_models,
-            privacy_goal=privacy_goal,
-            data_summary=data_summary,
-        )
-
-        run_result = self._adapter.run_workflow(
-            entity_rows,
-            model_configs=model_configs,
-            columns=columns,
-            workflow_name="rewrite-generation",
-            preview_num_records=preview_num_records,
-        )
-        rewrite_df = run_result.dataframe
-        all_failed.extend(run_result.failed_records)
-
-        combined = (
-            pd.concat([rewrite_df, passthrough_rows], ignore_index=True)
-            .sort_values("_anonymizer_row_order")
-            .drop(columns=["_anonymizer_row_order"])
-            .reset_index(drop=True)
-        )
-        combined.attrs = {**run_result.dataframe.attrs, **dataframe.attrs}
-        return RewriteGenerationResult(dataframe=combined, failed_records=all_failed)
 
     def columns(
         self,
@@ -336,35 +215,22 @@ class RewriteGenerationWorkflow:
         privacy_goal: PrivacyGoal,
         data_summary: str | None = None,
     ) -> list[ColumnConfigT]:
-        """Return column configs for Steps 2–4 of the rewrite generation workflow.
-
-        Intended to be collected alongside other rewrite-pipeline columns and
-        passed to a single ``NddAdapter.run_workflow()`` call.
-
-        Steps 2 and 4 are pure-Python ``CustomColumnConfig``; Step 3
-        (rewrite LLM call) is an ``LLMStructuredColumnConfig`` using the
-        ``rewriter`` alias.
-        """
         rewriter_alias = resolve_model_alias("rewriter", selected_models)
         return [
-            # Step 2 — Disposition block (pure Python): filter and serialize protected entities
             CustomColumnConfig(
                 name=COL_REWRITE_DISPOSITION_BLOCK,
                 generator_function=_format_rewrite_disposition_block,
             ),
-            # Step 3 — Filter replacement map to "replace"-method entities only
             CustomColumnConfig(
                 name=COL_REPLACEMENT_MAP_FOR_PROMPT,
                 generator_function=_filter_replacement_map_for_prompt,
             ),
-            # Step 4 — Rewrite (LLM), output alias: "rewriter"
             LLMStructuredColumnConfig(
                 name=COL_FULL_REWRITE,
                 prompt=_get_rewrite_prompt(privacy_goal, data_summary),
                 model_alias=rewriter_alias,
                 output_format=RewriteOutputSchema,
             ),
-            # Step 5 — Extract text (pure Python)
             CustomColumnConfig(
                 name=COL_REWRITTEN_TEXT,
                 generator_function=_extract_rewritten_text,

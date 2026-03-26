@@ -11,7 +11,7 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
-    COL_FINAL_ENTITIES,
+    COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAGGED_TEXT,
@@ -158,7 +158,7 @@ QUALITY REQUIREMENTS:
         .replace("<<DATA_SUMMARY>>", data_summary_line)
         .replace("<<DOMAIN_SUPPLEMENT>>", _jinja(COL_DOMAIN_SUPPLEMENT))
         .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))
-        .replace("<<FINAL_ENTITIES>>", _jinja(COL_FINAL_ENTITIES))
+        .replace("<<FINAL_ENTITIES>>", _jinja(COL_ENTITIES_BY_VALUE))
         .replace("<<LATENT_ENTITIES>>", _jinja(COL_LATENT_ENTITIES))
     )
 
