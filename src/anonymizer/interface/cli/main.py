@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated, Literal
 
 import cyclopts
@@ -15,7 +16,7 @@ from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInpu
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import InvalidConfigError, AnonymizerIOError
-from anonymizer.interface.cli._output import format_summary, write_result
+from anonymizer.interface.cli._output import write_result
 from anonymizer.logging import LoggingConfig, configure_logging
 
 app = cyclopts.App(help="NeMo Anonymizer CLI")
@@ -112,10 +113,11 @@ def run(
     _configure_logging(opts)
     config, anonymizer = _build_config_and_anonymizer(opts)
     result = anonymizer.run(config=config, data=data)
-    print(format_summary(result))
-    if output:
-        written = write_result(result, output)
-        print(f"Output written to: {written}")
+    if output is None:
+        source = Path(data.source)
+        output = str(source.parent / f"{source.stem}_anonymized{source.suffix}")
+    written = write_result(result, output)
+    print(f"Output written to: {written}")
 
 
 @app.command
@@ -130,7 +132,7 @@ def preview(
     _configure_logging(opts)
     config, anonymizer = _build_config_and_anonymizer(opts)
     result = anonymizer.preview(config=config, data=data, num_records=num_records)
-    print(format_summary(result))
+    print(result.dataframe.to_string(max_colwidth=80))
 
 
 @app.command
