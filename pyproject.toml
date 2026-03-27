@@ -1,6 +1,6 @@
 [project]
 name = "anonymizer"
-version = "0.1.0"
+dynamic = ["version"]
 description = "NeMo Anonymizer"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,17 @@ dev = [
     "pytest>=8.0,<9",
     "pytest-cov>=7.0,<8",
     "ruff>=0.12.3,<1",
+    "ty>=0.0.23,<0.1",
+]
+docs = [
+    "mike>=2.1.3,<3",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "griffe-pydantic",
+    "mkdocs-gen-files",
+    "mkdocs-literate-nav",
+    "mkdocs-jupyter",
+    "jupytext",
 ]
 notebooks = [
     "datasets>=4.0.0,<5",
@@ -27,8 +38,16 @@ notebooks = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+vcs = "git"
+style = "pep440"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/anonymizer"]
@@ -42,38 +61,17 @@ override-dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests",
+    "integration: integration tests",
+]
+
+[tool.ty.src]
+root = "src"
+exclude = ["tools/"]
+
+[tool.ty.environment]
+python-version = "3.11"
 
 [tool.coverage.run]
 omit = []
-
-[tool.ruff]
-line-length = 120
-indent-width = 4
-target-version = "py311"
-
-
-[tool.ruff.lint]
-select = [
-    "W",     # pycodestyle warnings
-    "F",     # pyflakes
-    "I",     # isort (import sorting)
-    "ICN",   # flake8-import-conventions
-    "PIE",   # flake8-pie (misc lints)
-    "TID",   # flake8-tidy-imports (ban relative imports)
-    "UP006", # List[A] -> list[A]
-    "UP007", # Union[A, B] -> A | B
-    "UP045", # Optional[A] -> A | None
-]
-ignore = []
-
-[tool.ruff.lint.isort]
-known-first-party = ["anonymizer"]
-
-[tool.ruff.lint.flake8-tidy-imports]
-ban-relative-imports = "all"
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
