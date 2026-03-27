@@ -16,7 +16,9 @@ from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 
 def _make_result(num_rows: int = 2, num_failures: int = 0) -> AnonymizerResult:
-    df = pd.DataFrame({"bio": [f"original {i}" for i in range(num_rows)], "bio_replaced": [f"REDACTED_{i}" for i in range(num_rows)]})
+    df = pd.DataFrame(
+        {"bio": [f"original {i}" for i in range(num_rows)], "bio_replaced": [f"REDACTED_{i}" for i in range(num_rows)]}
+    )
     failures = [FailedRecord(record_id=str(i), step="detect", reason="test") for i in range(num_failures)]
     return AnonymizerResult(dataframe=df, trace_dataframe=df.copy(), failed_records=failures)
 

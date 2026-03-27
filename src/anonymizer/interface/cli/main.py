@@ -3,20 +3,20 @@
 
 from __future__ import annotations
 
+import functools
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Literal
 
 import cyclopts
-import functools
 from pydantic import ValidationError
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.interface.anonymizer import Anonymizer
-from anonymizer.interface.errors import InvalidConfigError, AnonymizerIOError
 from anonymizer.interface.cli._output import write_result
+from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
 from anonymizer.logging import LoggingConfig, configure_logging
 
 app = cyclopts.App(help="NeMo Anonymizer CLI")

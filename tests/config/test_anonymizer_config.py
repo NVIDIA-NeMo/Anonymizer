@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.replace_strategies import (
@@ -13,7 +14,6 @@ from anonymizer.config.replace_strategies import (
     Hash,
     Redact,
 )
-from pydantic import ValidationError
 
 
 def test_hash_is_deterministic() -> None:

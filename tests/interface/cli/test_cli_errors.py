@@ -8,10 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-from pydantic import ValidationError as PydanticValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite
-from anonymizer.config.replace_strategies import Redact
 from anonymizer.interface.cli.main import app
 from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
 
