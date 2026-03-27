@@ -13,6 +13,7 @@ from anonymizer.config.replace_strategies import (
     Hash,
     Redact,
 )
+from pydantic import ValidationError
 
 
 def test_hash_is_deterministic() -> None:
@@ -91,3 +92,9 @@ def test_entity_labels_empty_list_raises() -> None:
 def test_entity_labels_whitespace_only_raises() -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         AnonymizerConfig(detect={"entity_labels": ["  ", ""]}, replace=Redact())
+
+
+def test_both_modes_set_exits() -> None:
+    """Setting both replace and rewrite on AnonymizerConfig violates the model_validator."""
+    with pytest.raises(ValidationError):
+        AnonymizerConfig(replace=Redact(), rewrite=Rewrite())
