@@ -118,18 +118,6 @@ docs-build:
 	@echo "Building docs site..."
 	uv run --group docs mkdocs build --strict
 
-install-dev-docs:
-	@echo "Installing dev + docs dependencies..."
-	uv sync --group dev --group docs
-
-docs-serve:
-	@echo "Starting docs dev server (live-reload)..."
-	uv run --group docs mkdocs serve
-
-docs-build:
-	@echo "Building docs site..."
-	uv run --group docs mkdocs build --strict
-
 clean-pycache:
 	@echo "Cleaning Python cache files..."
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

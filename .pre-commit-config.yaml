@@ -23,13 +23,13 @@ repos:
         types: [python]
         pass_filenames: true
 
-      - id: typecheck
-        name: Typecheck (advisory)
-        language: system
-        entry: bash -c 'uv run tools/codestyle/typecheck.sh || true'
-        types: [python]
-        pass_filenames: false
-        verbose: true
+#      - id: typecheck
+#        name: Typecheck (advisory)
+#        language: system
+#        entry: bash -c 'uv run tools/codestyle/typecheck.sh || true'
+#        types: [python]
+#        pass_filenames: false
+#        verbose: true
 
       - id: copyright-fix
         name: Copyright Fix
