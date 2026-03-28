@@ -15,9 +15,9 @@
 name: Copyright check
 
 on:
-  push:
-    branches:
-      - "pull-request/[0-9]+"
+  pull_request:
+    branches: [main]
+
 
 jobs:
   copyright-check:
