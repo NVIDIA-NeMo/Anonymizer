@@ -20,12 +20,5 @@ on:
       - "pull-request/[0-9]+"
 
 jobs:
-  pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.81.1
-
   copyright-check:
-    needs: [pre-flight]
-    if: |
-      !(needs.pre-flight.outputs.docs_only == 'true'
-      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_copyright_check.yml@v0.81.1
