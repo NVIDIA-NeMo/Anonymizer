@@ -152,7 +152,7 @@ def test_serialize_meaning_units_accepts_dict_payload() -> None:
 def test_generate_privacy_qa_column_only_protected_entities() -> None:
     row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION}
     result = _generate_privacy_qa_column(row)
-    qa: PrivacyQAPairsSchema = result[COL_PRIVACY_QA]
+    qa = PrivacyQAPairsSchema.model_validate(result[COL_PRIVACY_QA])
     # Only Alice needs protection; Portland does not
     assert len(qa.items) == 1
     assert "Alice" in qa.items[0].question
@@ -163,7 +163,7 @@ def test_generate_privacy_qa_column_only_protected_entities() -> None:
 def test_generate_privacy_qa_column_accepts_dict_payload() -> None:
     row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION.model_dump(mode="python")}
     result = _generate_privacy_qa_column(row)
-    qa: PrivacyQAPairsSchema = result[COL_PRIVACY_QA]
+    qa = PrivacyQAPairsSchema.model_validate(result[COL_PRIVACY_QA])
     assert len(qa.items) == 1
     assert qa.items[0].entity_value == "Alice"
 
@@ -187,7 +187,7 @@ def test_generate_privacy_qa_column_no_protected_entities() -> None:
     )
     row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _generate_privacy_qa_column(row)
-    qa: PrivacyQAPairsSchema = result[COL_PRIVACY_QA]
+    qa = PrivacyQAPairsSchema.model_validate(result[COL_PRIVACY_QA])
     assert len(qa.items) == 0
 
 

@@ -9,7 +9,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DOMAIN_SUPPLEMENT,
-    COL_FINAL_ENTITIES,
+    COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAGGED_TEXT,
@@ -60,7 +60,7 @@ def test_prompt_omits_data_summary_when_none() -> None:
 def test_prompt_references_required_columns() -> None:
     prompt = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
     assert _jinja(COL_TAGGED_TEXT) in prompt
-    assert _jinja(COL_FINAL_ENTITIES) in prompt
+    assert _jinja(COL_ENTITIES_BY_VALUE) in prompt
     assert _jinja(COL_LATENT_ENTITIES) in prompt
     assert _jinja(COL_DOMAIN_SUPPLEMENT) in prompt
     assert _jinja("_domain", key="domain") in prompt

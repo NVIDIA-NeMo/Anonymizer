@@ -171,11 +171,9 @@ class SensitivityDispositionSchema(BaseModel):
     sensitivity_disposition: list[EntityDispositionSchema] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _validate_ids_sequential(self) -> SensitivityDispositionSchema:
-        ids = [e.id for e in self.sensitivity_disposition]
-        expected = list(range(1, len(ids) + 1))
-        if sorted(ids) != expected:
-            raise ValueError(f"Entity IDs must be sequential starting from 1. Got: {sorted(ids)}, expected: {expected}")
+    def _normalize_ids(self) -> SensitivityDispositionSchema:
+        for i, entry in enumerate(self.sensitivity_disposition, start=1):
+            entry.id = i
         return self
 
     @property

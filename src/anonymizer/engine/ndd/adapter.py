@@ -82,9 +82,10 @@ class NddAdapter:
                 )
                 output_df = run_results.load_dataset()
             else:
+                effective_preview = min(preview_num_records, len(workflow_input_df))
                 preview_results = self._data_designer.preview(
                     config_builder,
-                    num_records=preview_num_records,
+                    num_records=effective_preview,
                 )
                 if preview_results.dataset is None:
                     output_df = workflow_input_df.iloc[0:0].copy()

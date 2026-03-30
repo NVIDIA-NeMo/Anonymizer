@@ -19,10 +19,16 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
+    COL_ANY_HIGH_LEAKED,
     COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
+    COL_LEAKAGE_MASS,
+    COL_NEEDS_HUMAN_REVIEW,
     COL_REPLACED_TEXT,
+    COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    COL_UTILITY_SCORE,
     DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
@@ -31,6 +37,7 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging
@@ -62,6 +69,7 @@ class Anonymizer:
         data_designer: DataDesigner | None = None,
         detection_workflow: EntityDetectionWorkflow | None = None,
         replace_runner: ReplacementWorkflow | None = None,
+        rewrite_runner: RewriteWorkflow | None = None,
     ) -> None:
         """Create an Anonymizer instance.
 
@@ -76,6 +84,7 @@ class Anonymizer:
             data_designer: Pre-configured DataDesigner instance (advanced usage).
             detection_workflow: Custom detection workflow (advanced/testing).
             replace_runner: Custom replacement workflow (advanced/testing).
+            rewrite_runner: Custom rewrite workflow (advanced/testing).
         """
         _initialize_logging()
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
@@ -97,6 +106,7 @@ class Anonymizer:
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter)
         )
+        self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
 
     def run(
         self,
@@ -187,7 +197,7 @@ class Anonymizer:
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
-            compute_grouped_entities=True if config.replace is not None else None,
+            compute_grouped_entities=config.replace is not None or config.rewrite is not None,
             preview_num_records=preview_num_records,
         )
         detection_elapsed = time.perf_counter() - t0
@@ -218,17 +228,40 @@ class Anonymizer:
             )
             replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe
-            replace_failures = replace_result.failed_records
+            post_detection_failures = replace_result.failed_records
             logger.info(
-                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]", len(replace_failures), replace_elapsed
+                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
+                len(post_detection_failures),
+                replace_elapsed,
+            )
+        elif config.rewrite is not None:
+            logger.info("✏️ Running rewrite pipeline")
+            t0 = time.perf_counter()
+            rewrite_result = self._rewrite_runner.run(
+                detection_result.dataframe,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.rewrite,
+                replace_model_selection=self._selected_models.replace,
+                privacy_goal=config.rewrite.privacy_goal,
+                evaluation=config.rewrite.evaluation,
+                data_summary=data.data_summary,
+                preview_num_records=preview_num_records,
+            )
+            rewrite_elapsed = time.perf_counter() - t0
+            final_df = rewrite_result.dataframe
+            post_detection_failures = rewrite_result.failed_records
+            logger.info(
+                LOG_INDENT + "📋 Rewrite complete (%d failed) [%.1fs]",
+                len(post_detection_failures),
+                rewrite_elapsed,
             )
         else:
             final_df = detection_result.dataframe
-            replace_failures = []
+            post_detection_failures = []
 
-        all_failures = [*detection_result.failed_records, *replace_failures]
-        if all_failures and logger.isEnabledFor(logging.DEBUG):
-            logger.debug("failed records:")
+        all_failures = [*detection_result.failed_records, *post_detection_failures]
+        if all_failures:
+            logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         renamed_trace = _rename_output_columns(final_df)
@@ -247,7 +280,7 @@ class Anonymizer:
             validate_model_alias_references(
                 self._model_configs,
                 self._selected_models,
-                check_substitute=isinstance(config.replace, Substitute),
+                check_substitute=isinstance(config.replace, Substitute) or config.rewrite is not None,
                 check_rewrite=config.rewrite is not None,
             )
         except ValueError as exc:
@@ -306,7 +339,7 @@ def _resolve_model_providers(
 
 def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Rename internal column names to user-facing names based on the original text column."""
-    original_text_column = str(df.attrs.get("original_text_column", "text"))
+    original_text_column = str(df.attrs["original_text_column"])
     rename_map: dict[str, str] = {}
     if COL_TEXT in df.columns:
         rename_map[COL_TEXT] = original_text_column
@@ -314,6 +347,8 @@ def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
         rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
     if COL_TAGGED_TEXT in df.columns:
         rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
+    if COL_REWRITTEN_TEXT in df.columns:
+        rename_map[COL_REWRITTEN_TEXT] = f"{original_text_column}_rewritten"
     if not rename_map:
         return df
     renamed = df.rename(columns=rename_map)
@@ -322,16 +357,40 @@ def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
-    """Filter trace dataframe to only user-facing columns (already renamed)."""
-    original_text_column = str(trace_dataframe.attrs.get("original_text_column", "text"))
-    user_visible = {
-        original_text_column,
-        f"{original_text_column}_replaced",
-        f"{original_text_column}_with_spans",
-    }
-    user_columns = [
-        column for column in trace_dataframe.columns if not column.startswith("_") or column in user_visible
-    ]
-    user_dataframe = trace_dataframe[user_columns].copy()
-    user_dataframe.attrs = dict(trace_dataframe.attrs)
+    """Filter trace dataframe to the public column set for the active mode.
+
+    Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities
+    Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass,
+                 any_high_leaked, needs_human_review
+    Detect-only: {text_col}, {text_col}_with_spans, final_entities
+    """
+    t = trace_dataframe
+    text_col = str(t.attrs["original_text_column"])
+
+    if f"{text_col}_rewritten" in t.columns:
+        allowed = {
+            text_col,
+            f"{text_col}_rewritten",
+            COL_UTILITY_SCORE,
+            COL_LEAKAGE_MASS,
+            COL_ANY_HIGH_LEAKED,
+            COL_NEEDS_HUMAN_REVIEW,
+        }
+    elif f"{text_col}_replaced" in t.columns:
+        allowed = {
+            text_col,
+            f"{text_col}_replaced",
+            f"{text_col}_with_spans",
+            COL_FINAL_ENTITIES,
+        }
+    else:
+        allowed = {
+            text_col,
+            f"{text_col}_with_spans",
+            COL_FINAL_ENTITIES,
+        }
+
+    user_columns = [col for col in t.columns if col in allowed]
+    user_dataframe = t[user_columns].copy()
+    user_dataframe.attrs = dict(t.attrs)
     return user_dataframe

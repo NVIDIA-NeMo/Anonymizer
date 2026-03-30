@@ -167,6 +167,36 @@ def test_entities_by_value_payload_from_raw_list() -> None:
     assert payload.entities_by_value[0].labels == ["city"]
 
 
+def test_entities_by_value_from_json_string() -> None:
+    """Regression: _select_seed_cols JSON-serializes dicts before parquet round-trip."""
+    import json
+
+    raw = json.dumps({"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]})
+    payload = EntitiesByValueSchema.from_raw(raw)
+    assert len(payload.entities_by_value) == 1
+    assert payload.entities_by_value[0].value == "Alice"
+
+
+def test_entities_from_json_string() -> None:
+    import json
+
+    raw = json.dumps(
+        {
+            "entities": [
+                {"id": "fn_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}
+            ]
+        }
+    )
+    payload = EntitiesSchema.from_raw(raw)
+    assert len(payload.entities) == 1
+    assert payload.entities[0].value == "Alice"
+
+
+def test_from_raw_invalid_json_string_returns_empty() -> None:
+    payload = EntitiesByValueSchema.from_raw("{bad json")
+    assert payload.entities_by_value == []
+
+
 # ---------------------------------------------------------------------------
 # Rewrite schemas
 # ---------------------------------------------------------------------------
@@ -225,31 +255,33 @@ def test_entity_disposition_invalid_needs_protection_but_left_as_is() -> None:
         )
 
 
-# SensitivityDispositionSchema — sequential ID validator
+# SensitivityDispositionSchema — ID normalization
 
 
-def test_sensitivity_disposition_invalid_non_sequential_ids() -> None:
-    with pytest.raises(ValidationError, match="sequential"):
-        SensitivityDispositionSchema.model_validate(
-            {
-                "sensitivity_disposition": [
-                    _make_entity(id=1),
-                    _make_entity(id=3, entity_label="last_name", entity_value="Smith"),
-                ],
-            }
-        )
+def test_sensitivity_disposition_renumbers_non_sequential_ids() -> None:
+    schema = SensitivityDispositionSchema.model_validate(
+        {
+            "sensitivity_disposition": [
+                _make_entity(id=1),
+                _make_entity(id=3, entity_label="last_name", entity_value="Smith"),
+            ],
+        }
+    )
+    assert [e.id for e in schema.sensitivity_disposition] == [1, 2]
 
 
-def test_sensitivity_disposition_invalid_duplicate_ids() -> None:
-    with pytest.raises(ValidationError, match="sequential"):
-        SensitivityDispositionSchema.model_validate(
-            {
-                "sensitivity_disposition": [
-                    _make_entity(id=1),
-                    _make_entity(id=1, entity_label="last_name", entity_value="Smith"),
-                ],
-            }
-        )
+def test_sensitivity_disposition_renumbers_duplicate_ids() -> None:
+    schema = SensitivityDispositionSchema.model_validate(
+        {
+            "sensitivity_disposition": [
+                _make_entity(id=1),
+                _make_entity(id=1, entity_label="last_name", entity_value="Smith"),
+            ],
+        }
+    )
+    assert [e.id for e in schema.sensitivity_disposition] == [1, 2]
+    assert schema.sensitivity_disposition[0].entity_value == "Alice"
+    assert schema.sensitivity_disposition[1].entity_value == "Smith"
 
 
 def test_sensitivity_disposition_protected_entities(mixed_disposition: SensitivityDispositionSchema) -> None:

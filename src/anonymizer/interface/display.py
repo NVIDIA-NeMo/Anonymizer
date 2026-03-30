@@ -10,7 +10,13 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES, COL_REPLACEMENT_MAP
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
+    COL_JUDGE_EVALUATION,
+    COL_REPLACEMENT_MAP,
+    COL_SENSITIVITY_DISPOSITION,
+)
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 
 ENTITY_COLORS: list[str] = [
@@ -60,12 +66,19 @@ def _color_for_label(label: str) -> tuple[str, str]:
 def render_record_html(row: pd.Series, record_index: int | None = None, original_text_column: str | None = None) -> str:
     """Render a single anonymizer result record as self-contained HTML.
 
-    Returns an HTML string with three sections:
-    1. Original text with entity highlights
-    2. Replaced text with entity highlights
-    3. Replacement map table
+    Dispatches to rewrite-mode or replace-mode layout based on which output
+    columns are present.
     """
     text_col = original_text_column or "text"
+
+    if f"{text_col}_rewritten" in row.index:
+        return _render_rewrite_html(row, text_col=text_col, record_index=record_index)
+
+    return _render_replace_html(row, text_col=text_col, record_index=record_index)
+
+
+def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | None) -> str:
+    """Replace-mode layout: Original, Replaced, Replacement Map."""
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
     entities = _resolve_display_entities(row)
@@ -84,11 +97,31 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
 
     index_label = f" (record {record_index})" if record_index is not None else ""
 
-    return _TEMPLATE.format(
+    return _REPLACE_TEMPLATE.format(
         index_label=html.escape(index_label),
         original_html=original_html,
         replaced_html=replaced_html,
         table_html=table_html,
+    )
+
+
+def _render_rewrite_html(row: pd.Series, *, text_col: str, record_index: int | None) -> str:
+    """Rewrite-mode layout: Original (highlighted), Rewritten, Scores, Entity Disposition."""
+    text = str(row.get(text_col, ""))
+    rewritten_text = str(row.get(f"{text_col}_rewritten", ""))
+    entities = _resolve_display_entities(row)
+    original_html = _render_highlighted_text(text, entities)
+    rewritten_html = f"<span>{html.escape(rewritten_text)}</span>"
+    scores_html = _render_scores_section(row)
+    disposition_html = _render_disposition_table(row)
+    index_label = f" (record {record_index})" if record_index is not None else ""
+
+    return _REWRITE_TEMPLATE.format(
+        index_label=html.escape(index_label),
+        original_html=original_html,
+        rewritten_html=rewritten_html,
+        scores_html=scores_html,
+        disposition_html=disposition_html,
     )
 
 
@@ -338,7 +371,124 @@ def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]
     return result
 
 
-_TEMPLATE = """\
+def _render_scores_section(row: pd.Series) -> str:
+    """Render utility/leakage metrics and optional judge scores."""
+    parts: list[str] = []
+
+    utility = row.get("utility_score")
+    leakage = row.get("leakage_mass")
+    needs_review = row.get("needs_human_review")
+
+    if utility is not None:
+        parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {float(utility):.2f}</span>")
+    if leakage is not None:
+        parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {float(leakage):.2f}</span>")
+    if needs_review is not None:
+        badge_color = "#ef4444" if needs_review else "#22c55e"
+        badge_text = "Yes" if needs_review else "No"
+        parts.append(
+            f"<span style='margin-right:16px'><strong>Needs Review:</strong> "
+            f"<span style='color:{badge_color};font-weight:600'>{badge_text}</span></span>"
+        )
+
+    judge_raw = row.get(COL_JUDGE_EVALUATION)
+    judge_scores = _extract_judge_scores(judge_raw)
+    if judge_scores:
+        score_strs = [f"{name}: {score}/10" for name, score in judge_scores]
+        parts.append(f"<span><strong>Judge:</strong> {html.escape(', '.join(score_strs))}</span>")
+
+    if not parts:
+        return "<p style='opacity:0.5;font-style:italic'>No scores available.</p>"
+    return "<div style='font-size:0.9em;line-height:1.8'>" + "".join(parts) + "</div>"
+
+
+def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
+    """Extract (name, score) pairs from the judge evaluation column.
+
+    LLMJudgeColumnConfig output is keyed by rubric name, each value carrying
+    ``{"score": <enum_value>, "reasoning": "..."}``.
+    """
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump()
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if not isinstance(raw, dict):
+        return []
+    result: list[tuple[str, int]] = []
+    for name, value in raw.items():
+        if not isinstance(value, dict) or "score" not in value:
+            continue
+        try:
+            result.append((str(name), int(value["score"])))
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+def _render_disposition_table(row: pd.Series) -> str:
+    """Render entity disposition table from _sensitivity_disposition column."""
+    raw = row.get(COL_SENSITIVITY_DISPOSITION)
+    entries = _normalize_disposition(raw)
+    if not entries:
+        return ""
+
+    rows_html: list[str] = []
+    for entry in entries:
+        value = html.escape(str(entry.get("entity_value", "")))
+        label = str(entry.get("entity_label", ""))
+        sensitivity = html.escape(str(entry.get("sensitivity", "")))
+        method = html.escape(str(entry.get("protection_method_suggestion", "")))
+        _, border_color = _color_for_label(label)
+        rows_html.append(
+            f"<tr>"
+            f"<td style='padding:6px 12px'>{value}</td>"
+            f"<td style='padding:6px 12px'>"
+            f"<span style='border:1.5px solid {border_color};"
+            f"padding:1px 6px;border-radius:3px;font-size:0.85em'>{html.escape(label)}</span></td>"
+            f"<td style='padding:6px 12px'>{sensitivity}</td>"
+            f"<td style='padding:6px 12px'>{method}</td>"
+            f"</tr>"
+        )
+
+    return (
+        "<table style='border-collapse:collapse;width:100%;font-size:0.9em'>"
+        "<thead><tr style='border-bottom:2px solid currentColor;text-align:left;opacity:0.7'>"
+        "<th style='padding:6px 12px'>Entity</th>"
+        "<th style='padding:6px 12px'>Label</th>"
+        "<th style='padding:6px 12px'>Sensitivity</th>"
+        "<th style='padding:6px 12px'>Protection</th>"
+        "</tr></thead><tbody>" + "".join(rows_html) + "</tbody></table>"
+    )
+
+
+def _normalize_disposition(raw: object) -> list[dict[str, str]]:
+    """Extract disposition entries from the raw column value."""
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump()
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if isinstance(raw, dict):
+        entries = raw.get("sensitivity_disposition", [])
+        if isinstance(entries, list):
+            return [e if isinstance(e, dict) else getattr(e, "model_dump", dict)() for e in entries]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Templates
+# ---------------------------------------------------------------------------
+
+_REPLACE_TEMPLATE = """\
 <div style="font-family:system-ui,-apple-system,sans-serif;max-width:960px;margin:12px 0">
   <div style="border:1px solid currentColor;border-radius:8px;overflow:hidden;opacity:0.95">
     <div style="padding:10px 16px;border-bottom:1px solid currentColor;opacity:0.7">
@@ -363,6 +513,41 @@ border-radius:6px;opacity:0.85">{replaced_html}</div>
         <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
 letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replacement Map</div>
         {table_html}
+      </div>
+    </div>
+  </div>
+</div>"""
+
+_REWRITE_TEMPLATE = """\
+<div style="font-family:system-ui,-apple-system,sans-serif;max-width:960px;margin:12px 0">
+  <div style="border:1px solid currentColor;border-radius:8px;overflow:hidden;opacity:0.95">
+    <div style="padding:10px 16px;border-bottom:1px solid currentColor;opacity:0.7">
+      <strong>Anonymizer Rewrite Preview{index_label}</strong>
+    </div>
+    <div style="padding:16px">
+      <div style="margin-bottom:16px">
+        <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
+letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Original</div>
+        <div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.85em;\
+line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;\
+border-radius:6px;opacity:0.85">{original_html}</div>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
+letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Rewritten</div>
+        <div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.85em;\
+line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;\
+border-radius:6px;opacity:0.85">{rewritten_html}</div>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
+letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Scores</div>
+        {scores_html}
+      </div>
+      <div>
+        <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
+letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Entity Disposition</div>
+        {disposition_html}
       </div>
     </div>
   </div>

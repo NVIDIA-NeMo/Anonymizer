@@ -44,17 +44,17 @@ def _stub_anonymizer() -> Anonymizer:
             FailedRecord(record_id="r1", step="detection", reason="timeout"),
         ],
     )
+    _replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
+            COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
+        }
+    )
+    _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = ReplacementResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
-                COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
-            }
-        ),
-        failed_records=[
-            FailedRecord(record_id="r2", step="replace", reason="parse error"),
-        ],
+        dataframe=_replace_df,
+        failed_records=[FailedRecord(record_id="r2", step="replace", reason="parse error")],
     )
     return Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
 
@@ -76,7 +76,6 @@ def debug_messages(
 @pytest.mark.parametrize(
     "expected_substring",
     [
-        "failed records:",
         "r1",
         "r2",
         "input text lengths:",

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import numpy as np
 from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 
@@ -180,6 +181,21 @@ class TestRenderRepairPrompt:
         params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
         result = _render_repair_prompt(row, params)
         assert "WARNING" not in result
+
+    def test_accepts_numpy_array_replacement_map_payload(self) -> None:
+        row = {
+            COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION,
+            COL_TEXT: "Alice lives in Seattle.",
+            COL_REWRITTEN_TEXT: "A person lives in a city.",
+            COL_REPLACEMENT_MAP_FOR_PROMPT: {"replacements": np.array([], dtype=object)},
+            COL_LEAKAGE_MASS: 1.0,
+            COL_ANY_HIGH_LEAKED: False,
+            COL_UTILITY_SCORE: 0.85,
+            "_leaked_privacy_items": "",
+        }
+        params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
+        result = _render_repair_prompt(row, params)
+        assert "<replacement_map>" in result
 
 
 # ---------------------------------------------------------------------------
