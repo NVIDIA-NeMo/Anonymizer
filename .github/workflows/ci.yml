@@ -55,6 +55,9 @@ jobs:
       - name: Run formatting check
         run: make format-check
 
+      - name: Check copyright headers
+        run: make copyright-check
+
   typecheck:
     name: Type Check (advisory)
     runs-on: ubuntu-latest
