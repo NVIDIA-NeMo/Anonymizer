@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
+# test
 
 site_name: NeMo Anonymizer
 site_url: https://nvidia-nemo.github.io/Anonymizer/
