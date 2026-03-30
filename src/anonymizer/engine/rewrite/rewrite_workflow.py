@@ -196,9 +196,7 @@ class RewriteWorkflow:
     ) -> RewriteResult:
         all_failed: list[FailedRecord] = []
 
-        entity_rows, passthrough_rows = split_rows(
-            dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities
-        )
+        entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
 
         # Fast path: no entities anywhere
         if entity_rows.empty:

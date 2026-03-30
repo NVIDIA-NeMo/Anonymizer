@@ -54,9 +54,7 @@ class LlmReplaceWorkflow:
         working_df["_entities_for_replace_json"] = working_df["_entities_for_replace"].apply(json.dumps)
 
         # Partition: rows with an empty entity list bypass replacement-map generation.
-        entity_rows, passthrough_rows = split_rows(
-            working_df, column="_entities_for_replace", predicate=bool
-        )
+        entity_rows, passthrough_rows = split_rows(working_df, column="_entities_for_replace", predicate=bool)
         passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
 
         if entity_rows.empty:
@@ -97,7 +95,9 @@ class LlmReplaceWorkflow:
             axis=1,
         )
 
-        combined = merge_and_reorder(output_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs})
+        combined = merge_and_reorder(
+            output_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
+        )
         return LlmReplaceResult(dataframe=combined, failed_records=run_result.failed_records)
 
 

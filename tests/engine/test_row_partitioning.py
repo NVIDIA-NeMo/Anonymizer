@@ -24,9 +24,7 @@ _MIXED_VALUES = [1, 0, 3, 0, 5]
     ],
     ids=["mixed", "all-matching", "none-matching"],
 )
-def test_split_rows_partitions(
-    values: list[int], expected_match: list[int], expected_non_match: list[int]
-) -> None:
+def test_split_rows_partitions(values: list[int], expected_match: list[int], expected_non_match: list[int]) -> None:
     df = pd.DataFrame({"val": values})
     matching, non_matching = split_rows(df, column="val", predicate=bool)
 
