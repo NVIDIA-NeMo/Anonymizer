@@ -36,6 +36,7 @@ from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
+from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
@@ -48,13 +49,6 @@ _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_REPAIR_ITERATIONS: 0,
 }
 
-_ROW_ORDER_COL = "_anonymizer_row_order"
-
-
-# ---------------------------------------------------------------------------
-# Row split / merge helpers — TODO(#60): move to shared module
-# ---------------------------------------------------------------------------
-
 
 def _has_entities(entities_by_value: object) -> bool:
     """Return True if this record has at least one detected entity."""
@@ -65,31 +59,6 @@ def _has_entities(entities_by_value: object) -> bool:
     if not isinstance(items, list):
         return False
     return len(items) > 0
-
-
-def _split_by_entities(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Partition df into (entity_rows, passthrough_rows) with row-order tracking."""
-    working = df.copy()
-    working[_ROW_ORDER_COL] = range(len(working))
-    mask = working[COL_ENTITIES_BY_VALUE].apply(_has_entities)
-    return working[mask].copy(), working[~mask].copy()
-
-
-def _merge_and_reorder(
-    *parts: pd.DataFrame,
-    attrs: dict,
-) -> pd.DataFrame:
-    """Concat partitions, restore original row order, drop the tracking column."""
-    combined = (
-        pd.concat(list(parts), ignore_index=True)
-        .sort_values(_ROW_ORDER_COL)
-        .drop(columns=[_ROW_ORDER_COL])
-        .reset_index(drop=True)
-    )
-    combined.attrs = {**attrs}
-    return combined
 
 
 def _join_new_columns(
@@ -227,12 +196,14 @@ class RewriteWorkflow:
     ) -> RewriteResult:
         all_failed: list[FailedRecord] = []
 
-        entity_rows, passthrough_rows = _split_by_entities(dataframe)
+        entity_rows, passthrough_rows = split_rows(
+            dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities
+        )
 
         # Fast path: no entities anywhere
         if entity_rows.empty:
             _apply_passthrough_defaults(passthrough_rows)
-            result_df = _merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            result_df = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
             return RewriteResult(dataframe=result_df, failed_records=all_failed)
 
         # --- Step 1: replacement map (needs only detection output) ---
@@ -298,7 +269,7 @@ class RewriteWorkflow:
 
         # --- Merge and return ---
         _apply_passthrough_defaults(passthrough_rows)
-        combined = _merge_and_reorder(entity_rows, passthrough_rows, attrs=dataframe.attrs)
+        combined = merge_and_reorder(entity_rows, passthrough_rows, attrs=dataframe.attrs)
         return RewriteResult(dataframe=combined, failed_records=all_failed)
 
     # ---------------------------------------------------------------------------
