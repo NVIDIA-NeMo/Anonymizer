@@ -21,4 +21,28 @@ on:
 
 jobs:
   copyright-check:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_copyright_check.yml@v0.81.1
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -x -e -u -o pipefail {0}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout copyright checker
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-NeMo/FW-CI-templates
+          ref: v0.83.0
+          path: copyright-checker
+
+      - name: Find Python files
+        id: find-files
+        run: |
+          files=$(find . -name "*.py" -not -path "./copyright-checker/*" | tr '\n' ' ')
+          echo "files=$files" | tee -a $GITHUB_OUTPUT
+
+      - name: Check copyright headers
+        uses: ./copyright-checker/.github/actions/copyright-checker
+        with:
+          changed-files: ${{ steps.find-files.outputs.files }}
