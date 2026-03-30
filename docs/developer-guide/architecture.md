@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Architecture
 
 PLACEHOLDER: 2-3 sentences describing what Anonymizer does, where NDD fits, and what DataDesigner provides.

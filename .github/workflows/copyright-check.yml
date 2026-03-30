@@ -1,23 +1,11 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 name: Copyright check
 
 on:
   pull_request:
     branches: [main]
-
 
 jobs:
   copyright-check:
@@ -29,20 +17,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout copyright checker
-        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          repository: NVIDIA-NeMo/FW-CI-templates
-          ref: v0.83.0
-          path: copyright-checker
-
-      - name: Find Python files
-        id: find-files
-        run: |
-          files=$(find . -name "*.py" -not -path "./copyright-checker/*" | tr '\n' ' ')
-          echo "files=$files" | tee -a $GITHUB_OUTPUT
+          version: "latest"
+          python-version: "3.11"
+          enable-cache: true
 
       - name: Check copyright headers
-        uses: ./copyright-checker/.github/actions/copyright-checker
-        with:
-          changed-files: ${{ steps.find-files.outputs.files }}
+        run: make copyright-check
