@@ -156,9 +156,11 @@ wheels = [
 name = "anonymizer"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "cyclopts" },
     { name = "data-designer" },
     { name = "pydantic" },
+    { name = "pygments" },
 ]
 
 [package.dev-dependencies]
@@ -189,9 +191,11 @@ notebooks = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
     { name = "data-designer", specifier = "==0.5.0" },
     { name = "pydantic", specifier = ">=2.9,<3" },
+    { name = "pygments", specifier = ">=2.20.0" },
 ]
 
 [package.metadata.requires-dev]
