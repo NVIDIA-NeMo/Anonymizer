@@ -1,5 +1,5 @@
 [project]
-name = "anonymizer"
+name = "nemo-anonymizer"
 dynamic = ["version"]
 description = "NeMo Anonymizer"
 readme = "README.md"
