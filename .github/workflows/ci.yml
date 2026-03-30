@@ -33,7 +33,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Run tests with coverage
-        run: uv run pytest -v --cov=anonymizer --cov-report=term-missing
+        run: make coverage
 
   lint:
     name: Lint and Format Check
