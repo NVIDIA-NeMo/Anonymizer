@@ -11,6 +11,13 @@ on:
       - "mkdocs.yml"
       - "src/**"
       - ".github/workflows/docs.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "src/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -37,5 +44,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Build docs
+        run: make docs-build
+
       - name: Deploy docs with mike
+        if: github.event_name == 'push'
         run: uv run --group docs mike deploy --push --update-aliases dev latest
