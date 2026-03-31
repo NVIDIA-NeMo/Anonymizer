@@ -19,15 +19,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - uses: ./.github/actions/setup-python-env
         with:
-          version: "latest"
+          fetch-depth: "0"
           python-version: ${{ matrix.python-version }}
-          enable-cache: true
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -39,15 +34,10 @@ jobs:
     name: Lint and Format Check
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - uses: ./.github/actions/setup-python-env
         with:
-          version: "latest"
-          python-version: "3.11"
-          enable-cache: true
+          fetch-depth: "0"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -63,15 +53,10 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - uses: ./.github/actions/setup-python-env
         with:
-          version: "latest"
-          python-version: "3.11"
-          enable-cache: true
+          fetch-depth: "0"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: uv sync --group dev
