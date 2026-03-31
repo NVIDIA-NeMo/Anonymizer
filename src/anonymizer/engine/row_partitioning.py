@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-_ROW_ORDER_COL = "_anonymizer_row_order"
+ROW_ORDER_COL = "_anonymizer_row_order"
 
 
 def split_rows(
@@ -26,7 +26,7 @@ def split_rows(
     independently.
     """
     working = df.copy()
-    working[_ROW_ORDER_COL] = range(len(working))
+    working[ROW_ORDER_COL] = range(len(working))
     mask = working[column].apply(predicate)
     return working[mask].copy(), working[~mask].copy()
 
@@ -36,10 +36,12 @@ def merge_and_reorder(
     attrs: dict,
 ) -> pd.DataFrame:
     """Concat partitions, restore original row order, and propagate *attrs*."""
+    if not parts:
+        raise ValueError("merge_and_reorder requires at least one partition")
     combined = (
         pd.concat(list(parts), ignore_index=True)
-        .sort_values(_ROW_ORDER_COL)
-        .drop(columns=[_ROW_ORDER_COL])
+        .sort_values(ROW_ORDER_COL)
+        .drop(columns=[ROW_ORDER_COL])
         .reset_index(drop=True)
     )
     combined.attrs = {**attrs}

@@ -6,7 +6,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 
 _MIXED_VALUES = [1, 0, 3, 0, 5]
 
@@ -30,8 +30,8 @@ def test_split_rows_partitions(values: list[int], expected_match: list[int], exp
 
     assert list(matching["val"]) == expected_match
     assert list(non_matching["val"]) == expected_non_match
-    assert "_anonymizer_row_order" in matching.columns
-    assert "_anonymizer_row_order" in non_matching.columns
+    assert ROW_ORDER_COL in matching.columns
+    assert ROW_ORDER_COL in non_matching.columns
 
 
 def test_split_rows_empty_df() -> None:
@@ -65,7 +65,7 @@ def test_merge_and_reorder_restores_order() -> None:
     combined = merge_and_reorder(matching, non_matching, attrs={})
 
     assert list(combined["val"]) == _MIXED_VALUES
-    assert "_anonymizer_row_order" not in combined.columns
+    assert ROW_ORDER_COL not in combined.columns
     assert list(combined.index) == list(range(len(combined)))
 
 
@@ -75,6 +75,11 @@ def test_merge_and_reorder_propagates_attrs() -> None:
     attrs = {"key": "value", "nested": {"a": 1}}
     combined = merge_and_reorder(matching, non_matching, attrs=attrs)
     assert combined.attrs == attrs
+
+
+def test_merge_and_reorder_raises_on_empty_parts() -> None:
+    with pytest.raises(ValueError, match="at least one partition"):
+        merge_and_reorder(attrs={})
 
 
 def test_merge_and_reorder_single_partition() -> None:
@@ -92,4 +97,5 @@ def test_roundtrip_preserves_columns_added_after_split() -> None:
     non_matching["extra"] = "skipped"
 
     combined = merge_and_reorder(matching, non_matching, attrs={})
+    assert list(combined["val"]) == [1, 0, 3]
     assert list(combined["extra"]) == ["processed", "skipped", "processed"]
