@@ -2804,15 +2804,15 @@
 <h2 id="entity-labels">Entity labels<a class="headerlink" href="#entity-labels" title="Permanent link">&para;</a></h2>
 <p>Anonymizer ships with a comprehensive default label set covering:</p>
 <ul>
-<li><strong>Direct identifiers</strong>: <code>first_name</code>, <code>last_name</code>, <code>email</code>, <code>phone_number</code>, <code>ssn</code>, <code>date_of_birth</code>, <code>street_address</code>, ...</li>
-<li><strong>Quasi-identifiers</strong>: <code>age</code>, <code>city</code>, <code>state</code>, <code>country</code>, <code>occupation</code>, <code>company_name</code>, <code>date</code>, ...</li>
-<li><strong>Technical data</strong>: <code>api_key</code>, <code>password</code>, <code>url</code>, <code>ipv4</code>, <code>ipv6</code>, <code>mac_address</code>, <code>device_identifier</code>, ...</li>
-<li><strong>Demographics</strong>: <code>gender</code>, <code>race_ethnicity</code>, <code>religious_belief</code>, <code>political_view</code>, <code>language</code>, ...</li>
-<li><strong>Financial</strong>: <code>credit_debit_card</code>, <code>account_number</code>, <code>bank_routing_number</code>, <code>tax_id</code>, ...</li>
+<li><strong>Direct identifiers</strong> (e.g. <code>first_name</code>, <code>last_name</code>, <code>email</code>, <code>ssn</code>, <code>date_of_birth</code>, <code>street_address</code>)</li>
+<li><strong>Quasi-identifiers</strong> (e.g. <code>age</code>, <code>city</code>, <code>state</code>, <code>country</code>, <code>occupation</code>, <code>company_name</code>, <code>date</code>)</li>
+<li><strong>Technical data</strong> (e.g. <code>api_key</code>, <code>password</code>, <code>url</code>, <code>ipv4</code>, <code>ipv6</code>, <code>device_identifier</code>)</li>
+<li><strong>Demographics</strong> (e.g. <code>gender</code>, <code>race_ethnicity</code>, <code>religious_belief</code>, <code>political_view</code>, <code>language</code>)</li>
+<li><strong>Financial</strong> (e.g. <code>credit_debit_card</code>, <code>account_number</code>, <code>bank_routing_number</code>, <code>tax_id</code>)</li>
 </ul>
 <p>To inspect the full list:</p>
 <div class="language-python highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_ENTITY_LABELS</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">DEFAULT_ENTITY_LABELS</span><span class="p">)</span>  <span class="c1"># 48 labels</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">DEFAULT_ENTITY_LABELS</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="custom-labels">Custom labels<a class="headerlink" href="#custom-labels" title="Permanent link">&para;</a></h3>
 <p>When you pass <code>entity_labels</code> explicitly, the augmenter operates in <strong>strict mode</strong> -- it only outputs entities matching your list. When <code>entity_labels=None</code>, the augmenter can create additional labels beyond the defaults (e.g., <code>clinic_name</code>, <code>server_name</code>).</p>
