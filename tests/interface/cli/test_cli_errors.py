@@ -69,6 +69,24 @@ def test_error_handler_exits_nonzero(csv_file: Path, exc: Exception, subcommand:
     assert exc_info.value.code != 0
 
 
+def test_bad_output_format_exits_before_pipeline(csv_file: Path) -> None:
+    """An unsupported output extension is rejected before the pipeline runs."""
+    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+        with pytest.raises(SystemExit) as exc_info:
+            app(["run", "--source", str(csv_file), "--replace", "redact", "--output", "/tmp/out.xyz"])
+        assert exc_info.value.code != 0
+    mock_cls.return_value.run.assert_not_called()
+
+
+def test_output_same_as_source_exits(csv_file: Path) -> None:
+    """Output path identical to source is rejected before the pipeline runs."""
+    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+        with pytest.raises(SystemExit) as exc_info:
+            app(["run", "--source", str(csv_file), "--replace", "redact", "--output", str(csv_file)])
+        assert exc_info.value.code != 0
+    mock_cls.return_value.run.assert_not_called()
+
+
 def test_threshold_out_of_range_exits(tmp_path: Path) -> None:
     """gliner_threshold=2.0 violates the le=1.0 constraint → SystemExit."""
     csv_file = tmp_path / "data.csv"

@@ -78,7 +78,6 @@ class Rewrite(BaseModel):
         default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
     )
     instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
-    skip_low_sensitivity_pii: bool = Field(default=False, description="Skip low-sensitivity PII during rewrite.")
     evaluation: EvaluationCriteria = Field(
         default_factory=EvaluationCriteria,
         description="Criteria and thresholds for privacy leakage and utility scoring.",
