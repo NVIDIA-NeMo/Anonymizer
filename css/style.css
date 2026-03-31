@@ -62,6 +62,11 @@ div.output_subarea pre,
     max-width: 100% !important;
 }
 
+/* NVIDIA green for card grid header links */
+.grid.cards a strong {
+    color: #76B900;
+}
+
 /* NVIDIA green accent for links and highlights */
 :root {
     --md-primary-fg-color: #76b900;

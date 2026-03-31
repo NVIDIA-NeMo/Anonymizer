@@ -28,7 +28,7 @@ for path in sorted(package.rglob("*.py")):
 
     identifier = ".".join(parts)
 
-    nav[parts] = doc_path.as_posix()
+    nav[parts[1:]] = doc_path.as_posix()
 
     with mkdocs_gen_files.open(full_doc_path, "w") as fd:
         fd.write(f"::: {identifier}\n")
