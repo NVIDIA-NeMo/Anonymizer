@@ -19,6 +19,12 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
+      # Required to use the reusable action
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
       - uses: ./.github/actions/setup-python-env
         with:
           fetch-depth: "0"
@@ -34,6 +40,12 @@ jobs:
     name: Lint and Format Check
     runs-on: ubuntu-latest
     steps:
+      # Required to use the reusable action
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
       - uses: ./.github/actions/setup-python-env
         with:
           fetch-depth: "0"
@@ -53,6 +65,12 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
+      # Required to use the reusable action
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
       - uses: ./.github/actions/setup-python-env
         with:
           fetch-depth: "0"
