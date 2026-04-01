@@ -9,7 +9,7 @@
 
 ## What can you do with Anonymizer?
 
-- **Detect entities** using NemotronPII and LLM-based augmentation and validation
+- **Detect entities** using GLiNER-PII and LLM-based augmentation and validation
 - **Replace with 4 strategies** — redact, annotate, hash (deterministic, local) or LLM-generated substitute values
 - **Preview results** before full runs with `display_record()` visualization
 
@@ -27,7 +27,7 @@ make install
 
 ### 2. Set up model providers
 
-By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — NemotronPII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
+By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — GLiNER-PII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
 
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
@@ -125,7 +125,7 @@ make install-pre-commit   # Install pre-commit hooks
 
 - Python 3.11+
 - [NeMo Data Designer](https://github.com/NVIDIA-NeMo/DataDesigner) (installed as dependency)
-- [NVIDIA API key](https://build.nvidia.com) for default model providers (NemotronPII + text LLM), or custom model endpoints
+- [NVIDIA API key](https://build.nvidia.com) for default model providers (GLiNER-PII + text LLM), or custom model endpoints
 
 ---
 

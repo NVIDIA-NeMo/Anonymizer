@@ -46,6 +46,47 @@ class ReplaceMethodBase(BaseModel):
             raise ValueError(f"template is missing required placeholders: {missing}")
 
 
+class Substitute(ReplaceMethodBase):
+    """Replace entities with LLM-generated synthetic values."""
+
+    instructions: str | None = Field(
+        default=None, description="Additional instructions for the LLM replacement generator."
+    )
+
+
+class Redact(ReplaceMethodBase):
+    """Replace each entity with a configurable redaction template."""
+
+    format_template: str = Field(
+        default="[REDACTED_{label}]", description="Template with optional {label} placeholder."
+    )
+    normalize_label: bool = Field(default=True, description="Uppercase and clean label before substitution.")
+
+    @field_validator("format_template")
+    @classmethod
+    def validate_format_template(cls, value: str) -> str:
+        cls._validate_template(
+            value=value,
+            required_fields=set(),
+            allowed_fields={"label"},
+        )
+        return value
+
+    def replace(self, text: str, label: str) -> str:
+        """Apply the redaction template to a single entity occurrence.
+
+        Args:
+            text: Original entity text (e.g. ``"Alice"``).
+            label: Entity label (e.g. ``"first_name"``).
+        """
+        normalized_label = _format_label_for_redaction(label) if self.normalize_label else label
+        return self._render_template(
+            template=self.format_template,
+            text=text,
+            label=normalized_label,
+        )
+
+
 class Annotate(ReplaceMethodBase):
     """Tag each entity with a readable label token."""
 
@@ -64,37 +105,16 @@ class Annotate(ReplaceMethodBase):
         return value
 
     def replace(self, text: str, label: str) -> str:
+        """Apply the annotation template to a single entity occurrence.
+
+        Args:
+            text: Original entity text (e.g. ``"Alice"``).
+            label: Entity label (e.g. ``"first_name"``).
+        """
         return self._render_template(
             template=self.format_template,
             text=text,
             label=label,
-        )
-
-
-class Redact(ReplaceMethodBase):
-    """Replace each entity with a configurable redaction template."""
-
-    format_template: str = Field(
-        default="[REDACTED_{label}]", description="Template with optional {text} and {label} placeholders."
-    )
-    normalize_label: bool = Field(default=True, description="Uppercase and clean label before substitution.")
-
-    @field_validator("format_template")
-    @classmethod
-    def validate_format_template(cls, value: str) -> str:
-        cls._validate_template(
-            value=value,
-            required_fields=set(),
-            allowed_fields={"text", "label"},
-        )
-        return value
-
-    def replace(self, text: str, label: str) -> str:
-        normalized_label = _format_label_for_redaction(label) if self.normalize_label else label
-        return self._render_template(
-            template=self.format_template,
-            text=text,
-            label=normalized_label,
         )
 
 
@@ -106,7 +126,7 @@ class Hash(ReplaceMethodBase):
         default=12, ge=6, le=64, description="Number of hex characters to keep from the hash digest."
     )
     format_template: str = Field(
-        default="<HASH_{label}_{digest}>", description="Template with {digest} required; {text} and {label} optional."
+        default="<HASH_{label}_{digest}>", description="Template with {digest} required and optional {label}."
     )
 
     @field_validator("format_template")
@@ -115,11 +135,17 @@ class Hash(ReplaceMethodBase):
         cls._validate_template(
             value=value,
             required_fields={"digest"},
-            allowed_fields={"text", "label", "digest"},
+            allowed_fields={"label", "digest"},
         )
         return value
 
     def replace(self, text: str, label: str) -> str:
+        """Apply the hash template to a single entity occurrence.
+
+        Args:
+            text: Original entity text (e.g. ``"Alice"``).
+            label: Entity label (e.g. ``"first_name"``).
+        """
         digest = hashlib.new(self.algorithm, text.encode("utf-8")).hexdigest()[: self.digest_length]
         return self._render_template(
             template=self.format_template,
@@ -127,14 +153,6 @@ class Hash(ReplaceMethodBase):
             label=label.upper(),
             digest=digest,
         )
-
-
-class Substitute(ReplaceMethodBase):
-    """Replace entities with LLM-generated synthetic values."""
-
-    instructions: str | None = Field(
-        default=None, description="Additional instructions for the LLM replacement generator."
-    )
 
 
 ReplaceMethod = Annotated[

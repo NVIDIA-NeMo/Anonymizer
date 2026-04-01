@@ -12,7 +12,7 @@
 # ---
 
 # %% [markdown]
-# # Rewrite Mode
+# # Rewriting Biographies
 #
 # Instead of replacing entities with tokens, rewrite mode generates a
 # privacy-safe paraphrase of the entire text. The pipeline:
@@ -30,14 +30,8 @@
 # ## Setup
 
 # %%
-from pathlib import Path
-
-try:
-    NOTEBOOK_SOURCE_DIR = Path(__file__).resolve().parent
-except NameError:
-    NOTEBOOK_SOURCE_DIR = Path.cwd().parent / "notebook_source"
-
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, Rewrite, configure_logging
+from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal, RiskTolerance
 
 configure_logging(LoggingConfig.debug())
 
@@ -49,21 +43,35 @@ anonymizer = Anonymizer()
 
 # %%
 input_data = AnonymizerInput(
-    source=str(NOTEBOOK_SOURCE_DIR / "data" / "synth_bios_sample10.csv"),
-    text_column="bio",
+    source="../data/NVIDIA_synthetic_biographies.csv",
+    text_column="biography",
     data_summary="Biographical profiles",
 )
 
 # %% [markdown]
-# ## Basic rewrite
+# ## Configure
 #
-# `Rewrite()` with no arguments uses sensible defaults:
-# conservative risk tolerance, up to 2 repair iterations, and an
-# auto-populated privacy goal.
+# Spell out what to protect and what to preserve. This gives the rewriter
+# clear guidance for your domain.
 
 # %%
-config = AnonymizerConfig(rewrite=Rewrite())
+config = AnonymizerConfig(
+    rewrite=Rewrite(
+        privacy_goal=PrivacyGoal(
+            protect="All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)",
+            preserve="Career trajectory, educational background, and professional accomplishments",
+        ),
+        evaluation=EvaluationCriteria(
+            risk_tolerance=RiskTolerance.strict,
+            max_repair_iterations=3,
+        ),
+    ),
+)
 
+# %% [markdown]
+# ## Preview
+
+# %%
 preview = anonymizer.preview(
     config=config,
     data=input_data,
@@ -76,7 +84,7 @@ preview.display_record(0)
 preview.display_record(1)
 
 # %% [markdown]
-# ## Inspect the results
+# ## Full run
 #
 # `result.dataframe` has user-facing columns only.
 # `result.trace_dataframe` has every intermediate column for debugging.
@@ -88,40 +96,10 @@ print(result)
 result.dataframe.head()
 
 # %%
-result.dataframe[["bio_rewritten", "utility_score", "leakage_mass", "needs_human_review"]].head()
+result.dataframe[["biography_rewritten", "utility_score", "leakage_mass", "needs_human_review"]].head()
 
 # %%
 result.trace_dataframe.columns.tolist()
-
-# %% [markdown]
-# ## Custom privacy goal
-#
-# For domain-specific data you can spell out exactly what to protect
-# and what to preserve.
-
-# %%
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal, RiskTolerance
-
-custom_config = AnonymizerConfig(
-    rewrite=Rewrite(
-        privacy_goal=PrivacyGoal(
-            protect="All direct identifiers, quasi-identifier combinations, and medical record numbers",
-            preserve="Clinical meaning, temporal relationships, and treatment outcomes",
-        ),
-        evaluation=EvaluationCriteria(
-            risk_tolerance=RiskTolerance.strict,
-            max_repair_iterations=3,
-        ),
-    ),
-)
-
-custom_preview = anonymizer.preview(
-    config=custom_config,
-    data=input_data,
-    num_records=3,
-)
-
-custom_preview.display_record(0)
 
 # %% [markdown]
 # ## Filter by review flag

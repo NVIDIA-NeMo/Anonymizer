@@ -25,10 +25,7 @@ help:
 	@echo "  install-dev-docs       - Install dev + docs dependencies"
 	@echo "  docs-serve             - Start docs dev server (live-reload)"
 	@echo "  docs-build             - Build docs site (strict mode)"
-	@echo ""
-	@echo "  install-dev-docs       - Install dev + docs dependencies"
-	@echo "  docs-serve             - Start docs dev server (live-reload)"
-	@echo "  docs-build             - Build docs site (strict mode)"
+	@echo "  convert-notebooks      - Convert .py tutorials to .ipynb with outputs"
 	@echo ""
 	@echo "  clean                  - Remove coverage reports and cache files"
 	@echo "  clean-merged-branches  - Checkout main, fetch --prune, delete local branches merged into main"
@@ -118,6 +115,13 @@ docs-build:
 	@echo "Building docs site..."
 	uv run --group docs mkdocs build --strict
 
+convert-notebooks:
+	@echo "Converting Python tutorials to notebooks and executing..."
+	@mkdir -p docs/notebooks
+	uv run --group notebooks --group docs jupytext --to ipynb --execute docs/notebook_source/*.py
+	mv docs/notebook_source/*.ipynb docs/notebooks/
+	@echo "Notebooks created in docs/notebooks/"
+
 clean-pycache:
 	@echo "Cleaning Python cache files..."
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
@@ -132,4 +136,4 @@ clean-merged-branches:
 	git checkout main && git fetch --prune && git branch --merged | grep -v '^\*\|main' | xargs -n 1 git branch -d || true
 	@echo "Done!"
 
-.PHONY: help bootstrap install install-dev install-dev-notebooks install-pre-commit format format-check typecheck check lock-check test test-e2e coverage build-wheel publish-pypi install-dev-docs docs-serve docs-build clean clean-pycache clean-merged-branches
+.PHONY: help bootstrap install install-dev install-dev-notebooks install-pre-commit format format-check typecheck check lock-check test test-e2e coverage build-wheel publish-pypi install-dev-docs docs-serve docs-build convert-notebooks clean clean-pycache clean-merged-branches
