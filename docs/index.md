@@ -46,30 +46,54 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
 
 ## Anonymize
 
-```python
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
+=== "Python"
 
-input_data = AnonymizerInput(source="patient_data.csv", text_column="notes", data_summary="Records containing detailed notes on patient encounters")
-anonymizer = Anonymizer()
-config = AnonymizerConfig(replace=Redact())
+    ```python
+    from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
 
-anonymizer.validate_config(config)
+    input_data = AnonymizerInput(
+        source="patient_data.csv",
+        text_column="notes",
+        data_summary="Records containing detailed notes on patient encounters",
+    )
+    anonymizer = Anonymizer()
+    config = AnonymizerConfig(replace=Redact())
 
-preview = anonymizer.preview(
-    config=config,
-    data=input_data,
-    num_records=5,
-)
+    anonymizer.validate_config(config)
 
-preview.display_record()
-```
-Inspect the preview, adjust parameters if needed, then run the full dataset.
-```python
-output = anonymizer.run(
-    config=config, 
-    data=input_data
-)
-```
+    preview = anonymizer.preview(
+        config=config,
+        data=input_data,
+        num_records=5,
+    )
+    preview.display_record()
+
+    # Inspect the preview, adjust parameters if needed, then run full data.
+    output = anonymizer.run(
+        config=config,
+        data=input_data,
+    )
+    ```
+
+=== "CLI"
+
+    ```bash
+    # Preview a few rows first
+    anonymizer preview \
+      --source patient_data.csv \
+      --text-column notes \
+      --data-summary "Records containing detailed notes on patient encounters" \
+      --replace redact \
+      --num-records 5
+
+    # Then run the full dataset
+    anonymizer run \
+      --source patient_data.csv \
+      --text-column notes \
+      --data-summary "Records containing detailed notes on patient encounters" \
+      --replace redact \
+      --output patient_data_anonymized.csv
+    ```
 
 !!! note "`data_summary` improves detection"
 

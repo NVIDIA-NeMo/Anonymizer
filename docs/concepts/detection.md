@@ -31,10 +31,7 @@ Detection is configured via the `Detect` object on `AnonymizerConfig`:
 from anonymizer import AnonymizerConfig, Detect, Redact
 
 config = AnonymizerConfig(
-    detect=Detect(
-        entity_labels=["first_name", "last_name", "email", "phone_number"],
-        gliner_threshold=0.3,
-    ),
+    detect=Detect(),
     replace=Redact(),
 )
 ```
@@ -43,7 +40,7 @@ config = AnonymizerConfig(
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `entity_labels` | `None` (all defaults) | List of labels to detect. `None` uses the full default set (i.e. set `entity_labels=None`, or simply omit this variable altogether). |
+| `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 
 

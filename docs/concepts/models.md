@@ -12,6 +12,10 @@ Set your API key for Anonymizer to use models hosted on [build.nvidia.com](https
 export NVIDIA_API_KEY="your-nvidia-api-key"
 ```
 
+!!! note "Provider data handling"
+
+    Anonymizer sends prompts and text snippets to your configured model provider. If data must stay in your trusted environment, use a trusted/local provider endpoint.
+
 | Alias | Model | Used by |
 |-------|-------|---------|
 | `gliner-pii-detector` | [`nvidia/gliner-pii`](https://build.nvidia.com/nvidia/gliner-pii) | Entity detection (NER) |
@@ -52,7 +56,7 @@ anonymizer = Anonymizer(model_providers="my_providers.yaml")
 
 ## Custom models
 
-Override specific roles by passing a unified YAML to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name -- use `nvidia` for build.nvidia.com, or a custom provider defined above.
+Override specific roles by passing a unified YAML path to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name -- use `nvidia` for build.nvidia.com, or a custom provider defined above.
 
 ```yaml
 # my_models.yaml
@@ -93,6 +97,8 @@ anonymizer = Anonymizer(
 )
 ```
 
+You can pass `model_configs` as either a YAML file path or a YAML string.
+
 Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
 
 !!! tip "Validate your config"
@@ -104,24 +110,25 @@ Roles you don't override keep their default alias selections, but those aliases 
 
 For Anonymizer, the best overall leaderboard model is not always the best default for every role.
 Some roles are simple classification or constrained JSON generation tasks, while others require deeper
-reasoning about privacy risk, long-context rewriting, and leakage repair.
+reasoning about privacy risk, long-context rewriting, and leakage repair (see [Rewrite evaluation criteria](rewrite.md#evaluation-criteria)).
 
 Use benchmarks as signals for role fit, not as a single global ranking.
 
 #### Most useful benchmark signals
 
-| Benchmark / metric | What it predicts well in Anonymizer |
-|--------------------|--------------------------------------|
+| Benchmark | What it predicts well in Anonymizer |
+|--------------------|-------------------------------------|
 | `IFBench` | Following detailed instructions, producing constrained outputs, and obeying prompt rules. |
 | `AA-Omniscience Accuracy` | Recovering the right facts without dropping important information. |
 | `AA-Omniscience Non-Hallucination` | Avoiding invented entities, facts, or unsupported claims. |
 | `AA-LCR` | Handling long prompts with tagged text, domain guidance, replacement maps, and evaluation context. |
 | `Humanity's Last Exam` / `GPQA Diamond` | General reasoning depth for privacy-sensitive planning and rewriting. |
-| Latency / output speed / verbosity | Notebook UX, evaluation-loop cost, and practical throughput. |
+
+Also consider operational constraints like latency, output speed, and verbosity, since they drive cost and practical throughput.
 
 #### Practical guidance
 
-- Use your strongest models for `latent_detector`, `disposition_analyzer`, `rewriter`, and often `repairer`.
+- Use your strongest models for `latent_detector`, `disposition_analyzer`, `rewriter`, and `repairer`.
 - Use mid-tier models for `entity_augmenter`, `meaning_extractor`, and `replacement_generator`.
-- Use smaller or faster models for `entity_validator`, `domain_classifier`, `qa_generator`, and often `evaluator`.
-- Do not optimize every role for peak leaderboard rank. Optimize the hard-to-recover privacy and rewrite steps for quality, and the bounded steps for reliability per token.
+- Use smaller or faster models for `entity_validator`, `domain_classifier`, `qa_generator`, and `evaluator`.
+- Do not optimize every role for peak leaderboard rank. Optimize the hard-to-recover privacy and rewrite steps for quality. Optimize bounded steps for reliability per token.
