@@ -24,7 +24,7 @@ Each pipeline stage has a **role** mapped to one of these aliases. See the full 
 
 ## Custom providers
 
-To use models from a non-default provider (OpenAI, OpenRouter, etc.), define a providers YAML:
+To use models from a different provider (OpenAI, OpenRouter, etc.), define a providers YAML:
 
 ```yaml
 # my_providers.yaml
