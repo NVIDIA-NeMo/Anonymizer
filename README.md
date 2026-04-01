@@ -10,7 +10,7 @@
 ## What can you do with Anonymizer?
 
 - **Detect entities** using GLiNER-PII and LLM-based augmentation and validation
-- **Replace with 4 strategies** — redact, annotate, hash (deterministic, local) or LLM-generated substitute values
+- **Replace with 4 strategies** — LLM-generated substitute, redact, annotate, or hash (deterministic, local)
 - **Preview results** before full runs with `display_record()` visualization
 
 ---
@@ -88,10 +88,10 @@ anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 
 | Strategy | Output for `"Alice"` (first_name) | Configurable |
 |----------|----------------------------------|-------------|
+| **Substitute** | `Maya` | `instructions` |
 | **Redact** | `[REDACTED_FIRST_NAME]` | `format_template` |
 | **Annotate** | `<Alice, first_name>` | `format_template` |
 | **Hash** | `<HASH_FIRST_NAME_3bc51062973c>` | `format_template`, `algorithm`, `digest_length` |
-| **Substitute** | `Maya` | `instructions` |
 
 ```python
 from anonymizer import Redact, Annotate, Hash, Substitute

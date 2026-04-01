@@ -6,7 +6,7 @@ Instead of replacing individual entities, rewrite mode generates a privacy-safe 
 
 ## How it works
 
-Detection runs first (same as replace mode, plus latent entity detection for context-inferable information). Then the text is classified by domain, each entity gets a sensitivity disposition, and an LLM rewrites the text accordingly. The rewrite is evaluated for quality and privacy leakage, with automatic repair if thresholds are exceeded. A final judge sets a `needs_human_review` flag.
+[Detection](detection.md) runs first (same as [replace mode](replace.md), plus latent entity detection for context-inferable information). Then the text is classified by domain, each entity gets a sensitivity disposition, and an LLM rewrites the text accordingly. The rewrite is evaluated for quality and privacy leakage, with automatic repair if thresholds are exceeded. A final judge sets a `needs_human_review` flag.
 
 ---
 
@@ -62,10 +62,10 @@ Controls the repair loop and human review flagging:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `risk_tolerance` | `conservative` | Preset leakage threshold: `strict` (0.6), `conservative` (1.0), `moderate` (1.5), `permissive` (2.0). |
-| `max_leakage_mass` | `None` | Explicit threshold override (bypasses `risk_tolerance`). |
-| `auto_adjust_by_domain` | `False` | Tighten thresholds automatically for high-risk domains. |
+| `max_leakage_mass` | `None` | How much `leakage_mass` is still okay before repair should try again; if you set this, it overrides `risk_tolerance` and domain-based limits. |
+| `auto_adjust_by_domain` | `False` | Tighten thresholds automatically for high-risk domains ([domain → risk level map](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/rewrite.py#L28)). |
 | `repair_any_high_leak` | `True` | Trigger repair if any high-sensitivity entity leaks. |
-| `max_repair_iterations` | `2` | Maximum repair rounds. |
+| `max_repair_iterations` | `2` | Maximum repair rounds. Only applicable when `auto_repair_privacy=True` |
 | `auto_repair_privacy` | `True` | Enable automatic repair loop. |
 | `flag_utility_below` | `0.50` | Flag for human review if utility score is below this. |
 | `flag_leakage_mass_above` | `2.0` | Flag for human review if leakage mass exceeds this. |

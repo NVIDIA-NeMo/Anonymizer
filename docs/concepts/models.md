@@ -6,7 +6,7 @@ Anonymizer uses LLMs for entity detection, replacement, and rewriting. Models ar
 
 ## Defaults
 
-Set your API key and Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com).
+Set your API key for Anonymizer to use models hosted on [build.nvidia.com](https://build.nvidia.com).
 
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
@@ -14,9 +14,9 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 
 | Alias | Model | Used by |
 |-------|-------|---------|
-| `gliner-pii-detector` | `nvidia/gliner-pii` | Entity detection (NER) |
-| `gpt-oss-120b` | `openai/gpt-oss-120b` | Validation, augmentation, replacement, rewriting |
-| `nemotron-30b-thinking` | `nvidia/nemotron-3-nano-30b-a3b` | Latent detection, evaluation, final judge |
+| `gliner-pii-detector` | [`nvidia/gliner-pii`](https://build.nvidia.com/nvidia/gliner-pii) | Entity detection (NER) |
+| `gpt-oss-120b` | [`openai/gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Detection validation & augmentation, replacement, rewriting |
+| `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, evaluation, final judge |
 
 Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the default configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
 
@@ -93,15 +93,14 @@ anonymizer = Anonymizer(
 )
 ```
 
-Roles you don't override keep their defaults.
+Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
 
 !!! tip "Validate your config"
 
     Use [`anonymizer.validate_config(config)`](../reference/anonymizer/interface/anonymizer.md) (or [`anonymizer validate`](../reference/anonymizer/interface/cli/main.md) from the CLI) after changing model configs to catch alias mismatches before processing data.
 
----
 
-## Choosing custom models
+### Choosing custom models
 
 For Anonymizer, the best overall leaderboard model is not always the best default for every role.
 Some roles are simple classification or constrained JSON generation tasks, while others require deeper
@@ -109,7 +108,7 @@ reasoning about privacy risk, long-context rewriting, and leakage repair.
 
 Use benchmarks as signals for role fit, not as a single global ranking.
 
-### Most useful benchmark signals
+#### Most useful benchmark signals
 
 | Benchmark / metric | What it predicts well in Anonymizer |
 |--------------------|--------------------------------------|
@@ -120,7 +119,7 @@ Use benchmarks as signals for role fit, not as a single global ranking.
 | `Humanity's Last Exam` / `GPQA Diamond` | General reasoning depth for privacy-sensitive planning and rewriting. |
 | Latency / output speed / verbosity | Notebook UX, evaluation-loop cost, and practical throughput. |
 
-### Practical guidance
+#### Practical guidance
 
 - Use your strongest models for `latent_detector`, `disposition_analyzer`, `rewriter`, and often `repairer`.
 - Use mid-tier models for `entity_augmenter`, `meaning_extractor`, and `replacement_generator`.
