@@ -45,7 +45,7 @@ input_data = AnonymizerInput(
 # %% [markdown]
 # ## Redact
 #
-# Default: `[REDACTED_FIRST_NAME]`. Customize with `format_template`.
+# Default: `[REDACTED_FIRST_NAME]`. Customize with `Redact(format_template=...)`.
 
 # %%
 redact_config = AnonymizerConfig(replace=Redact())
