@@ -1081,6 +1081,8 @@
       
         
       
+        
+      
     
     
     
@@ -2181,6 +2183,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../row_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    row_partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -2207,10 +2237,10 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_2_1_2_7" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_2_1_2_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_2_1_2_7" id="__nav_4_2_1_2_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_2_1_2_8" id="__nav_4_2_1_2_8_label" tabindex="0">
             
   
   
@@ -2228,8 +2258,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="5" aria-labelledby="__nav_4_2_1_2_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_2_1_2_7">
+        <nav class="md-nav" data-md-level="5" aria-labelledby="__nav_4_2_1_2_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2_1_2_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3112,23 +3142,23 @@ evaluate-repair loop, and final judge.</p>
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>src/anonymizer/engine/rewrite/rewrite_workflow.py</code></summary>
-                    <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-206">206</a></span>
-<span class="normal"><a href="#__codelineno-0-207">207</a></span>
-<span class="normal"><a href="#__codelineno-0-208">208</a></span>
-<span class="normal"><a href="#__codelineno-0-209">209</a></span>
-<span class="normal"><a href="#__codelineno-0-210">210</a></span>
-<span class="normal"><a href="#__codelineno-0-211">211</a></span>
-<span class="normal"><a href="#__codelineno-0-212">212</a></span>
-<span class="normal"><a href="#__codelineno-0-213">213</a></span>
-<span class="normal"><a href="#__codelineno-0-214">214</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-206"><a id="__codelineno-0-206" name="__codelineno-0-206"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">adapter</span><span class="p">:</span> <span class="n">NddAdapter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-207"><a id="__codelineno-0-207" name="__codelineno-0-207"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_adapter</span> <span class="o">=</span> <span class="n">adapter</span>
-</span><span id="__span-0-208"><a id="__codelineno-0-208" name="__codelineno-0-208"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_domain_wf</span> <span class="o">=</span> <span class="n">DomainClassificationWorkflow</span><span class="p">()</span>
-</span><span id="__span-0-209"><a id="__codelineno-0-209" name="__codelineno-0-209"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_disposition_wf</span> <span class="o">=</span> <span class="n">SensitivityDispositionWorkflow</span><span class="p">()</span>
-</span><span id="__span-0-210"><a id="__codelineno-0-210" name="__codelineno-0-210"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_qa_wf</span> <span class="o">=</span> <span class="n">QAGenerationWorkflow</span><span class="p">()</span>
-</span><span id="__span-0-211"><a id="__codelineno-0-211" name="__codelineno-0-211"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_rewrite_gen_wf</span> <span class="o">=</span> <span class="n">RewriteGenerationWorkflow</span><span class="p">()</span>
-</span><span id="__span-0-212"><a id="__codelineno-0-212" name="__codelineno-0-212"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_evaluate_wf</span> <span class="o">=</span> <span class="n">EvaluateWorkflow</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
-</span><span id="__span-0-213"><a id="__codelineno-0-213" name="__codelineno-0-213"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_repair_wf</span> <span class="o">=</span> <span class="n">RepairWorkflow</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
-</span><span id="__span-0-214"><a id="__codelineno-0-214" name="__codelineno-0-214"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_judge_wf</span> <span class="o">=</span> <span class="n">FinalJudgeWorkflow</span><span class="p">()</span>
+                    <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-175">175</a></span>
+<span class="normal"><a href="#__codelineno-0-176">176</a></span>
+<span class="normal"><a href="#__codelineno-0-177">177</a></span>
+<span class="normal"><a href="#__codelineno-0-178">178</a></span>
+<span class="normal"><a href="#__codelineno-0-179">179</a></span>
+<span class="normal"><a href="#__codelineno-0-180">180</a></span>
+<span class="normal"><a href="#__codelineno-0-181">181</a></span>
+<span class="normal"><a href="#__codelineno-0-182">182</a></span>
+<span class="normal"><a href="#__codelineno-0-183">183</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-175"><a id="__codelineno-0-175" name="__codelineno-0-175"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">adapter</span><span class="p">:</span> <span class="n">NddAdapter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-176"><a id="__codelineno-0-176" name="__codelineno-0-176"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_adapter</span> <span class="o">=</span> <span class="n">adapter</span>
+</span><span id="__span-0-177"><a id="__codelineno-0-177" name="__codelineno-0-177"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_domain_wf</span> <span class="o">=</span> <span class="n">DomainClassificationWorkflow</span><span class="p">()</span>
+</span><span id="__span-0-178"><a id="__codelineno-0-178" name="__codelineno-0-178"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_disposition_wf</span> <span class="o">=</span> <span class="n">SensitivityDispositionWorkflow</span><span class="p">()</span>
+</span><span id="__span-0-179"><a id="__codelineno-0-179" name="__codelineno-0-179"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_qa_wf</span> <span class="o">=</span> <span class="n">QAGenerationWorkflow</span><span class="p">()</span>
+</span><span id="__span-0-180"><a id="__codelineno-0-180" name="__codelineno-0-180"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_rewrite_gen_wf</span> <span class="o">=</span> <span class="n">RewriteGenerationWorkflow</span><span class="p">()</span>
+</span><span id="__span-0-181"><a id="__codelineno-0-181" name="__codelineno-0-181"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_evaluate_wf</span> <span class="o">=</span> <span class="n">EvaluateWorkflow</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
+</span><span id="__span-0-182"><a id="__codelineno-0-182" name="__codelineno-0-182"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_repair_wf</span> <span class="o">=</span> <span class="n">RepairWorkflow</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
+</span><span id="__span-0-183"><a id="__codelineno-0-183" name="__codelineno-0-183"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_judge_wf</span> <span class="o">=</span> <span class="n">FinalJudgeWorkflow</span><span class="p">()</span>
 </span></code></pre></div></td></tr></table></div>
                   </details>
 

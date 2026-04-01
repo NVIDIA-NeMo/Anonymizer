@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/engine/schemas/shared/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/engine/row_partitioning/">
       
       
-        <link rel="prev" href="../rewrite/">
+        <link rel="prev" href="../rewrite/workflow_utils/">
       
       
-        <link rel="next" href="../../../interface/anonymizer/">
+        <link rel="next" href="../schemas/detection/">
       
       
         
       
       
-      <link rel="icon" href="../../../../../assets/images/favicon.png">
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
     
     
       
-        <title>shared - NeMo Anonymizer</title>
+        <title>row_partitioning - NeMo Anonymizer</title>
       
     
     
-      <link rel="stylesheet" href="../../../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,13 +53,13 @@
       
     
     
-      <link rel="stylesheet" href="../../../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../../../css/style.css">
+      <link rel="stylesheet" href="../../../../css/style.css">
     
-      <link rel="stylesheet" href="../../../../../css/mkdocstrings.css">
+      <link rel="stylesheet" href="../../../../css/mkdocstrings.css">
     
-    <script>__md_scope=new URL("../../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#anonymizer.engine.schemas.shared" class="md-skip">
+        <a href="#anonymizer.engine.row_partitioning" class="md-skip">
           Skip to content
         </a>
       
@@ -102,7 +102,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              shared
+              row_partitioning
             
           </span>
         </div>
@@ -235,7 +235,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../../.." class="md-tabs__link">
+      <a href="../../../.." class="md-tabs__link">
         
   
   
@@ -256,7 +256,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../../../user-guide/getting-started/" class="md-tabs__link">
+        <a href="../../../../user-guide/getting-started/" class="md-tabs__link">
           
   
   
@@ -278,7 +278,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../../../notebook_source/01_replace/" class="md-tabs__link">
+        <a href="../../../../notebook_source/01_replace/" class="md-tabs__link">
           
   
   
@@ -302,7 +302,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../../../../../developer-guide/architecture/" class="md-tabs__link">
+        <a href="../../../../developer-guide/architecture/" class="md-tabs__link">
           
   
   
@@ -324,7 +324,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../../../devnotes/" class="md-tabs__link">
+        <a href="../../../../devnotes/" class="md-tabs__link">
           
   
   
@@ -360,7 +360,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -390,7 +390,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   
@@ -475,7 +475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../user-guide/getting-started/" class="md-nav__link">
+      <a href="../../../../user-guide/getting-started/" class="md-nav__link">
         
   
   
@@ -572,7 +572,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../notebook_source/01_replace/" class="md-nav__link">
+      <a href="../../../../notebook_source/01_replace/" class="md-nav__link">
         
   
   
@@ -600,7 +600,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../notebook_source/02_detection_debug/" class="md-nav__link">
+      <a href="../../../../notebook_source/02_detection_debug/" class="md-nav__link">
         
   
   
@@ -628,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../notebook_source/03_rewrite/" class="md-nav__link">
+      <a href="../../../../notebook_source/03_rewrite/" class="md-nav__link">
         
   
   
@@ -726,7 +726,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../developer-guide/architecture/" class="md-nav__link">
+      <a href="../../../../developer-guide/architecture/" class="md-nav__link">
         
   
   
@@ -943,7 +943,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../config/anonymizer_config/" class="md-nav__link">
+      <a href="../../config/anonymizer_config/" class="md-nav__link">
         
   
   
@@ -971,7 +971,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../config/models/" class="md-nav__link">
+      <a href="../../config/models/" class="md-nav__link">
         
   
   
@@ -999,7 +999,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../config/replace_strategies/" class="md-nav__link">
+      <a href="../../config/replace_strategies/" class="md-nav__link">
         
   
   
@@ -1027,7 +1027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../config/rewrite/" class="md-nav__link">
+      <a href="../../config/rewrite/" class="md-nav__link">
         
   
   
@@ -1135,7 +1135,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../constants/" class="md-nav__link">
+      <a href="../constants/" class="md-nav__link">
         
   
   
@@ -1225,7 +1225,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../detection/custom_columns/" class="md-nav__link">
+      <a href="../detection/custom_columns/" class="md-nav__link">
         
   
   
@@ -1253,7 +1253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../detection/detection_workflow/" class="md-nav__link">
+      <a href="../detection/detection_workflow/" class="md-nav__link">
         
   
   
@@ -1281,7 +1281,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../detection/postprocess/" class="md-nav__link">
+      <a href="../detection/postprocess/" class="md-nav__link">
         
   
   
@@ -1379,7 +1379,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../io/constants/" class="md-nav__link">
+      <a href="../io/constants/" class="md-nav__link">
         
   
   
@@ -1407,7 +1407,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../io/reader/" class="md-nav__link">
+      <a href="../io/reader/" class="md-nav__link">
         
   
   
@@ -1435,7 +1435,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../io/writer/" class="md-nav__link">
+      <a href="../io/writer/" class="md-nav__link">
         
   
   
@@ -1531,7 +1531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../ndd/adapter/" class="md-nav__link">
+      <a href="../ndd/adapter/" class="md-nav__link">
         
   
   
@@ -1559,7 +1559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../ndd/model_loader/" class="md-nav__link">
+      <a href="../ndd/model_loader/" class="md-nav__link">
         
   
   
@@ -1657,7 +1657,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../replace/llm_replace_workflow/" class="md-nav__link">
+      <a href="../replace/llm_replace_workflow/" class="md-nav__link">
         
   
   
@@ -1685,7 +1685,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../replace/replace_runner/" class="md-nav__link">
+      <a href="../replace/replace_runner/" class="md-nav__link">
         
   
   
@@ -1713,7 +1713,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../replace/strategies/" class="md-nav__link">
+      <a href="../replace/strategies/" class="md-nav__link">
         
   
   
@@ -1825,7 +1825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/domain_classification/" class="md-nav__link">
+      <a href="../rewrite/domain_classification/" class="md-nav__link">
         
   
   
@@ -1853,7 +1853,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/evaluate/" class="md-nav__link">
+      <a href="../rewrite/evaluate/" class="md-nav__link">
         
   
   
@@ -1881,7 +1881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/final_judge/" class="md-nav__link">
+      <a href="../rewrite/final_judge/" class="md-nav__link">
         
   
   
@@ -1909,7 +1909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/parsers/" class="md-nav__link">
+      <a href="../rewrite/parsers/" class="md-nav__link">
         
   
   
@@ -1937,7 +1937,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/qa_generation/" class="md-nav__link">
+      <a href="../rewrite/qa_generation/" class="md-nav__link">
         
   
   
@@ -1965,7 +1965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/repair/" class="md-nav__link">
+      <a href="../rewrite/repair/" class="md-nav__link">
         
   
   
@@ -1993,7 +1993,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/rewrite_generation/" class="md-nav__link">
+      <a href="../rewrite/rewrite_generation/" class="md-nav__link">
         
   
   
@@ -2021,7 +2021,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/rewrite_workflow/" class="md-nav__link">
+      <a href="../rewrite/rewrite_workflow/" class="md-nav__link">
         
   
   
@@ -2049,7 +2049,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/sensitivity_disposition/" class="md-nav__link">
+      <a href="../rewrite/sensitivity_disposition/" class="md-nav__link">
         
   
   
@@ -2077,7 +2077,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rewrite/workflow_utils/" class="md-nav__link">
+      <a href="../rewrite/workflow_utils/" class="md-nav__link">
         
   
   
@@ -2110,10 +2110,35 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../row_partitioning/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    row_partitioning
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2129,6 +2154,63 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#anonymizer.engine.row_partitioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;row_partitioning
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" row_partitioning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.engine.row_partitioning.split_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;split_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.engine.row_partitioning.merge_and_reorder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;merge_and_reorder
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2138,10 +2220,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -2162,11 +2242,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2_1_2_8" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_2_1_2_8" >
         
           
           <label class="md-nav__link" for="__nav_4_2_1_2_8" id="__nav_4_2_1_2_8_label" tabindex="0">
@@ -2187,7 +2269,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="5" aria-labelledby="__nav_4_2_1_2_8_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="5" aria-labelledby="__nav_4_2_1_2_8_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4_2_1_2_8">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2205,7 +2287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../detection/" class="md-nav__link">
+      <a href="../schemas/detection/" class="md-nav__link">
         
   
   
@@ -2233,7 +2315,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../replace/" class="md-nav__link">
+      <a href="../schemas/replace/" class="md-nav__link">
         
   
   
@@ -2261,7 +2343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rewrite/" class="md-nav__link">
+      <a href="../schemas/rewrite/" class="md-nav__link">
         
   
   
@@ -2286,35 +2368,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    shared
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../schemas/shared/" class="md-nav__link">
         
   
   
@@ -2330,35 +2387,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#anonymizer.engine.schemas.shared" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;shared
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2453,7 +2481,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../interface/anonymizer/" class="md-nav__link">
+      <a href="../../interface/anonymizer/" class="md-nav__link">
         
   
   
@@ -2539,7 +2567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../interface/cli/main/" class="md-nav__link">
+      <a href="../../interface/cli/main/" class="md-nav__link">
         
   
   
@@ -2575,7 +2603,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../interface/display/" class="md-nav__link">
+      <a href="../../interface/display/" class="md-nav__link">
         
   
   
@@ -2603,7 +2631,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../interface/errors/" class="md-nav__link">
+      <a href="../../interface/errors/" class="md-nav__link">
         
   
   
@@ -2631,7 +2659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../interface/results/" class="md-nav__link">
+      <a href="../../interface/results/" class="md-nav__link">
         
   
   
@@ -2667,7 +2695,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../logging/" class="md-nav__link">
+      <a href="../../logging/" class="md-nav__link">
         
   
   
@@ -2745,7 +2773,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../../devnotes/" class="md-nav__link ">
+            <a href="../../../../devnotes/" class="md-nav__link ">
               
   
   
@@ -2789,7 +2817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   
@@ -2842,13 +2870,41 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#anonymizer.engine.schemas.shared" class="md-nav__link">
+  <a href="#anonymizer.engine.row_partitioning" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;shared
+        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;row_partitioning
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label=" row_partitioning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.engine.row_partitioning.split_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;split_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.engine.row_partitioning.merge_and_reorder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;merge_and_reorder
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2877,7 +2933,7 @@
   
   
     <li class="md-path__item">
-      <a href="../../../../.." class="md-path__link">
+      <a href="../../../.." class="md-path__link">
         
   <span class="md-ellipsis">
     Home
@@ -2895,7 +2951,7 @@
     
     
       <li class="md-path__item">
-        <a href="../../../../../developer-guide/architecture/" class="md-path__link">
+        <a href="../../../../developer-guide/architecture/" class="md-path__link">
           
   <span class="md-ellipsis">
     Developer Guide
@@ -2923,7 +2979,7 @@
     
     
       <li class="md-path__item">
-        <a href="../../../config/anonymizer_config/" class="md-path__link">
+        <a href="../../config/anonymizer_config/" class="md-path__link">
           
   <span class="md-ellipsis">
     API Reference
@@ -2952,7 +3008,7 @@
     
     
       <li class="md-path__item">
-        <a href="../../../config/anonymizer_config/" class="md-path__link">
+        <a href="../../config/anonymizer_config/" class="md-path__link">
           
   <span class="md-ellipsis">
     anonymizer
@@ -2973,28 +3029,10 @@
     
     
       <li class="md-path__item">
-        <a href="../../constants/" class="md-path__link">
+        <a href="../constants/" class="md-path__link">
           
   <span class="md-ellipsis">
     engine
-  </span>
-
-        </a>
-      </li>
-    
-  
-
-      
-        
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../detection/" class="md-path__link">
-          
-  <span class="md-ellipsis">
-    schemas
   </span>
 
         </a>
@@ -3016,20 +3054,21 @@
   
 
 
-  <h1>shared</h1>
+  <h1>row_partitioning</h1>
 
 <div class="doc doc-object doc-module">
 
 
 
-<h2 id="anonymizer.engine.schemas.shared" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <code>shared</code>
+<h2 id="anonymizer.engine.row_partitioning" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <code>row_partitioning</code>
 
 
-<a href="#anonymizer.engine.schemas.shared" class="headerlink" title="Permanent link">&para;</a></h2>
+<a href="#anonymizer.engine.row_partitioning" class="headerlink" title="Permanent link">&para;</a></h2>
 
     <div class="doc doc-contents first">
 
+        <p>Shared helpers for partitioning DataFrames by a row predicate and recombining them.</p>
 
 
 
@@ -3039,6 +3078,36 @@
 
 
 
+
+
+
+<p><span class="doc-section-title">Functions:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            split_rows(df, *, column, predicate) (anonymizer.engine.row_partitioning.split_rows)" href="#anonymizer.engine.row_partitioning.split_rows">split_rows</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Partition <em>df</em> into (matching, non-matching) rows with row-order tracking.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            merge_and_reorder(*parts, attrs) (anonymizer.engine.row_partitioning.merge_and_reorder)" href="#anonymizer.engine.row_partitioning.merge_and_reorder">merge_and_reorder</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Concat partitions, restore original row order, and propagate <em>attrs</em>.</p>
+                </div>
+              </td>
+            </tr>
+      </tbody>
+    </table>
 
 
 
@@ -3054,6 +3123,113 @@
 
 
 
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="anonymizer.engine.row_partitioning.split_rows" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python"><span class="n">split_rows</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">column</span><span class="p">,</span> <span class="n">predicate</span><span class="p">)</span></code>
+
+<a href="#anonymizer.engine.row_partitioning.split_rows" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Partition <em>df</em> into (matching, non-matching) rows with row-order tracking.</p>
+<p>A <code>_anonymizer_row_order</code> column is added so that :func:<code>merge_and_reorder</code>
+can restore the original ordering after the two partitions are processed
+independently.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/engine/row_partitioning.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-16">16</a></span>
+<span class="normal"><a href="#__codelineno-0-17">17</a></span>
+<span class="normal"><a href="#__codelineno-0-18">18</a></span>
+<span class="normal"><a href="#__codelineno-0-19">19</a></span>
+<span class="normal"><a href="#__codelineno-0-20">20</a></span>
+<span class="normal"><a href="#__codelineno-0-21">21</a></span>
+<span class="normal"><a href="#__codelineno-0-22">22</a></span>
+<span class="normal"><a href="#__codelineno-0-23">23</a></span>
+<span class="normal"><a href="#__codelineno-0-24">24</a></span>
+<span class="normal"><a href="#__codelineno-0-25">25</a></span>
+<span class="normal"><a href="#__codelineno-0-26">26</a></span>
+<span class="normal"><a href="#__codelineno-0-27">27</a></span>
+<span class="normal"><a href="#__codelineno-0-28">28</a></span>
+<span class="normal"><a href="#__codelineno-0-29">29</a></span>
+<span class="normal"><a href="#__codelineno-0-30">30</a></span>
+<span class="normal"><a href="#__codelineno-0-31">31</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16"></a><span class="k">def</span><span class="w"> </span><span class="nf">split_rows</span><span class="p">(</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17"></a>    <span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19"></a>    <span class="n">column</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20"></a>    <span class="n">predicate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="nb">bool</span><span class="p">],</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">]:</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Partition *df* into (matching, non-matching) rows with row-order tracking.</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23"></a>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24"></a><span class="sd">    A ``_anonymizer_row_order`` column is added so that :func:`merge_and_reorder`</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25"></a><span class="sd">    can restore the original ordering after the two partitions are processed</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26"></a><span class="sd">    independently.</span>
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28"></a>    <span class="n">working</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29"></a>    <span class="n">working</span><span class="p">[</span><span class="n">ROW_ORDER_COL</span><span class="p">]</span> <span class="o">=</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">working</span><span class="p">))</span>
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30"></a>    <span class="n">mask</span> <span class="o">=</span> <span class="n">working</span><span class="p">[</span><span class="n">column</span><span class="p">]</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">predicate</span><span class="p">)</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31"></a>    <span class="k">return</span> <span class="n">working</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span> <span class="n">working</span><span class="p">[</span><span class="o">~</span><span class="n">mask</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="anonymizer.engine.row_partitioning.merge_and_reorder" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python"><span class="n">merge_and_reorder</span><span class="p">(</span><span class="o">*</span><span class="n">parts</span><span class="p">,</span> <span class="n">attrs</span><span class="p">)</span></code>
+
+<a href="#anonymizer.engine.row_partitioning.merge_and_reorder" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Concat partitions, restore original row order, and propagate <em>attrs</em>.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/engine/row_partitioning.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-34">34</a></span>
+<span class="normal"><a href="#__codelineno-0-35">35</a></span>
+<span class="normal"><a href="#__codelineno-0-36">36</a></span>
+<span class="normal"><a href="#__codelineno-0-37">37</a></span>
+<span class="normal"><a href="#__codelineno-0-38">38</a></span>
+<span class="normal"><a href="#__codelineno-0-39">39</a></span>
+<span class="normal"><a href="#__codelineno-0-40">40</a></span>
+<span class="normal"><a href="#__codelineno-0-41">41</a></span>
+<span class="normal"><a href="#__codelineno-0-42">42</a></span>
+<span class="normal"><a href="#__codelineno-0-43">43</a></span>
+<span class="normal"><a href="#__codelineno-0-44">44</a></span>
+<span class="normal"><a href="#__codelineno-0-45">45</a></span>
+<span class="normal"><a href="#__codelineno-0-46">46</a></span>
+<span class="normal"><a href="#__codelineno-0-47">47</a></span>
+<span class="normal"><a href="#__codelineno-0-48">48</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34"></a><span class="k">def</span><span class="w"> </span><span class="nf">merge_and_reorder</span><span class="p">(</span>
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35"></a>    <span class="o">*</span><span class="n">parts</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span>
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36"></a>    <span class="n">attrs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Concat partitions, restore original row order, and propagate *attrs*.&quot;&quot;&quot;</span>
+</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">parts</span><span class="p">:</span>
+</span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;merge_and_reorder requires at least one partition&quot;</span><span class="p">)</span>
+</span><span id="__span-0-41"><a id="__codelineno-0-41" name="__codelineno-0-41"></a>    <span class="n">combined</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-0-42"><a id="__codelineno-0-42" name="__codelineno-0-42"></a>        <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">parts</span><span class="p">),</span> <span class="n">ignore_index</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-43"><a id="__codelineno-0-43" name="__codelineno-0-43"></a>        <span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="n">ROW_ORDER_COL</span><span class="p">)</span>
+</span><span id="__span-0-44"><a id="__codelineno-0-44" name="__codelineno-0-44"></a>        <span class="o">.</span><span class="n">drop</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="n">ROW_ORDER_COL</span><span class="p">])</span>
+</span><span id="__span-0-45"><a id="__codelineno-0-45" name="__codelineno-0-45"></a>        <span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-46"><a id="__codelineno-0-46" name="__codelineno-0-46"></a>    <span class="p">)</span>
+</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47"></a>    <span class="n">combined</span><span class="o">.</span><span class="n">attrs</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">attrs</span><span class="p">}</span>
+</span><span id="__span-0-48"><a id="__codelineno-0-48" name="__codelineno-0-48"></a>    <span class="k">return</span> <span class="n">combined</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
 
 
 
@@ -3099,7 +3275,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../rewrite/" class="md-footer__link md-footer__link--prev" aria-label="Previous: rewrite">
+          <a href="../rewrite/workflow_utils/" class="md-footer__link md-footer__link--prev" aria-label="Previous: workflow_utils">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -3109,20 +3285,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                rewrite
+                workflow_utils
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../../interface/anonymizer/" class="md-footer__link md-footer__link--next" aria-label="Next: anonymizer">
+          <a href="../schemas/detection/" class="md-footer__link md-footer__link--next" aria-label="Next: detection">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                anonymizer
+                detection
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -3163,16 +3339,16 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../../..", "features": ["content.code.copy", "content.code.select", "content.code.annotate", "content.tabs.link", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["content.code.copy", "content.code.select", "content.code.annotate", "content.tabs.link", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../../../../js/mathjax.js"></script>
+        <script src="../../../../js/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
-        <script src="../../../../../js/toc-toggle.js"></script>
+        <script src="../../../../js/toc-toggle.js"></script>
       
     
   </body>
