@@ -70,6 +70,9 @@ watch:
 
 strict: !ENV [MKDOCS_STRICT, false]
 
+hooks:
+  - docs/hooks.py
+
 plugins:
   - search
   - mike:
@@ -165,10 +168,9 @@ nav:
   - Tutorials:
       - Replace Mode: notebook_source/01_replace.py
       - Detection Debug: notebook_source/02_detection_debug.py
+      - Rewrite Mode: notebook_source/03_rewrite.py
   - Developer Guide:
       - Architecture: developer-guide/architecture.md
-      - API Reference:
-          - Top-level: reference/anonymizer.md
-          - reference/
+      - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md

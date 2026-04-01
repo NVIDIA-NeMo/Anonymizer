@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from importlib.metadata import version
 
-__version__ = version("anonymizer")
+__version__ = version("nemo-anonymizer")
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
