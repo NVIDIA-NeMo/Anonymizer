@@ -105,7 +105,7 @@ preview.trace_dataframe
 
     Generate a privacy-safe paraphrase of the entire text.
 
--   :material-book-open-variant: [**Tutorials**](notebook_source/01_replace.py)
+-   :material-book-open-variant: [**Tutorials**](notebooks/01_your_first_anonymization.ipynb)
 
     End-to-end notebooks for replace and rewrite.
 
