@@ -15,7 +15,7 @@
 # ---
 
 # %% [markdown]
-# # Replace Mode
+# # Choosing a Replacement Strategy
 #
 # Four replacement strategies compared side by side:
 # - **Redact** — remove entity, leave a marker
@@ -27,14 +27,6 @@
 # ## Setup
 
 # %%
-from pathlib import Path
-
-try:
-    NOTEBOOK_SOURCE_DIR = Path(__file__).resolve().parent
-except NameError:
-    # Running as .ipynb — cwd is docs/notebooks/, data lives in docs/notebook_source/
-    NOTEBOOK_SOURCE_DIR = Path.cwd().parent / "notebook_source"
-
 from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact, Substitute
 
 # %%
@@ -45,8 +37,8 @@ anonymizer = Anonymizer()
 
 # %%
 input_data = AnonymizerInput(
-    source=str(NOTEBOOK_SOURCE_DIR / "data" / "synth_bios_sample10.csv"),
-    text_column="bio",
+    source="../data/NVIDIA_synthetic_biographies.csv",
+    text_column="biography",
     data_summary="Biographical profiles",
 )
 

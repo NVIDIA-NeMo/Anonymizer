@@ -15,29 +15,23 @@
 # ---
 
 # %% [markdown]
-# # Detection Debug
+# # Inspecting Detected Entities
 #
 # Inspect the entity detection pipeline output. Useful for understanding what was detected,
-# what the LLM validator kept/dropped, and where entities appear in the text.
+# what the LLM validator kept or dropped, and where entities appear in the text.
 #
-# Pipeline: NER detection → parse → LLM augmentation → merge → LLM validation → propagate.
+# We use **Annotate** mode here -- it preserves the original text while tagging each entity
+# with its label, making it ideal for reviewing detection quality.
 
 # %% [markdown]
 # ## Setup
 
 # %%
 from collections import Counter
-from pathlib import Path
-
-try:
-    NOTEBOOK_SOURCE_DIR = Path(__file__).resolve().parent
-except NameError:
-    # Running as .ipynb — cwd is docs/notebooks/, data lives in docs/notebook_source/
-    NOTEBOOK_SOURCE_DIR = Path.cwd().parent / "notebook_source"
 
 import pandas as pd
 
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
+from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput
 
 # %%
 anonymizer = Anonymizer()
@@ -45,15 +39,15 @@ anonymizer = Anonymizer()
 # %% [markdown]
 # ## Run
 #
-# Detection runs as part of any strategy. We use `Redact` here since we only
-# care about the detection columns. Set `data_summary` on the input to improve augmenter/validator accuracy.
+# Detection runs as part of any strategy. Annotate is a good fit for debugging because
+# the original values stay visible alongside their labels.
 
 # %%
-config = AnonymizerConfig(replace=Redact())
+config = AnonymizerConfig(replace=Annotate())
 
 input_data = AnonymizerInput(
-    source=str(NOTEBOOK_SOURCE_DIR / "data" / "synth_bios_sample10.csv"),
-    text_column="bio",
+    source="../data/NVIDIA_synthetic_biographies.csv",
+    text_column="biography",
     data_summary="Biographical profiles",
 )
 
@@ -80,12 +74,12 @@ print(f"Columns: {list(df.columns)}")
 # %% [markdown]
 # ## Tagged text
 #
-# Original text with entities marked inline. Notation adapts to avoid conflicts with existing markup.
+# Original text with entities marked inline.
 
 # %%
 for i in range(len(df)):
     print(f"--- Record {i} ---")
-    print(df.loc[i, "bio_with_spans"][:1000])
+    print(df.loc[i, "biography_with_spans"][:1000])
     print()
 
 # %% [markdown]
@@ -95,25 +89,24 @@ for i in range(len(df)):
 # and `source` (detector / augmenter / name_split / propagation).
 
 # %%
-
-
 row_idx = 0
-entities = df.loc[row_idx, "_detected_entities"]
+raw = df.loc[row_idx, "_detected_entities"]
+entities = raw["entities"] if isinstance(raw, dict) else raw
 print(f"Record {row_idx}: {len(entities)} entities detected\n")
 
 entity_df = pd.DataFrame(entities)
 if not entity_df.empty:
-    print(entity_df[["value", "label", "start_position", "end_position", "source"]].to_string())
+    cols = [c for c in ["value", "label", "start_position", "end_position", "source"] if c in entity_df.columns]
+    print(entity_df[cols].to_string())
 
 # %% [markdown]
 # ## Labels
 
 # %%
-
-
 label_counts = Counter()
-for entities in df["_detected_entities"]:
-    for entity in entities:
+for raw in df["_detected_entities"]:
+    entity_list = raw["entities"] if isinstance(raw, dict) else raw
+    for entity in entity_list:
         label_counts[entity["label"]] += 1
 
 for label, count in label_counts.most_common():
@@ -122,15 +115,17 @@ for label, count in label_counts.most_common():
 # %% [markdown]
 # ## Sources
 #
-# - `detector` — GLiNER NER
-# - `augmenter` — LLM-added (missed by GLiNER)
-# - `name_split` — derived from splitting full names
-# - `propagation` — expanded from validated entities to all text occurrences
+# - `detector` -- GLiNER NER
+# - `augmenter` -- LLM-added (missed by GLiNER)
+# - `validator` -— LLM decision step over detector-seed entities (keep/reclass/drop); it does not emit a separate source value.
+# - `name_split` -- derived from splitting full names
+# - `propagation` -- expanded from validated entities to all text occurrences
 
 # %%
 source_counts = Counter()
-for entities in df["_detected_entities"]:
-    for entity in entities:
+for raw in df["_detected_entities"]:
+    entity_list = raw["entities"] if isinstance(raw, dict) else raw
+    for entity in entity_list:
         source_counts[entity.get("source", "unknown")] += 1
 
 for source, count in source_counts.most_common():
@@ -139,11 +134,12 @@ for source, count in source_counts.most_common():
 # %% [markdown]
 # ## By value
 #
-# Entities grouped by unique value — this drives consistent replacement.
+# Entities grouped by unique value -- this drives consistent replacement.
 
 # %%
 row_idx = 0
-by_value = df.loc[row_idx, "_entities_by_value"]
+raw_bv = df.loc[row_idx, "_entities_by_value"]
+by_value = raw_bv["entities_by_value"] if isinstance(raw_bv, dict) else raw_bv
 print(f"Record {row_idx}: {len(by_value)} unique entity values\n")
 
 for entry in by_value:
