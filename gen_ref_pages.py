@@ -25,6 +25,8 @@ for path in sorted(package.rglob("*.py")):
         continue
     if "test" in parts[-1]:
         continue
+    if len(parts) > 1 and parts[1] in {"engine", "utils"}:
+        continue
 
     identifier = ".".join(parts)
 

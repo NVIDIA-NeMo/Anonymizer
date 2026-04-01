@@ -27,9 +27,21 @@
     user-select: none;
 }
 
+/* Hide the secondary header topic (page title on scroll) */
+.md-header__topic:nth-child(2) {
+    display: none;
+}
+
 /* Reduce space between logo and site name */
 .md-header__button.md-logo {
     margin-right: -1rem;
+}
+
+/* NVIDIA green header logo */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+    fill: #76B900;
+    color: #76B900;
 }
 
 /* Remove background from Jupyter notebook outputs */
