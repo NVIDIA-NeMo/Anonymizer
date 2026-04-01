@@ -20,7 +20,7 @@
 ### 1. Install
 
 ```bash
-git clone https://github.com/NVIDIA/Anonymizer.git
+git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
 cd Anonymizer
 make install
 ```
