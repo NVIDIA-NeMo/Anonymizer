@@ -1,35 +1,35 @@
-# :material-incognito:{ .nvidia-green } NeMo Anonymizer
+# 🕵️ NeMo Anonymizer
 
 [![GitHub](https://img.shields.io/badge/github-repo-952fc6?logo=github)](https://github.com/NVIDIA-NeMo/Anonymizer) [![License](https://img.shields.io/badge/License-Apache_2.0-0074df.svg)](https://opensource.org/licenses/Apache-2.0) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-**Detect and protect PII through context-aware replacement and rewriting.**
-
-Anonymizer is a privacy-preserving text processing library built for high-quality entity detection with user guidance. Review what was found, tune the protection strategy, then generate anonymized text.
+NeMo Anonymizer detects and protects PII through context-aware replacement and rewriting. It offers high-quality user-guided entity detection, followed by modification options that maintain context while inducing privacy. You can review what sensitive information was found, adjust your masking strategy, and generate anonymized text.
 
 Pick a strategy:
 > Alice met with Bob and his daughter to review kindergarten application #A9349.
 
-=== "Annotate"
-
-    &lt;Alice, first_name&gt; met with &lt;Bob, first_name&gt; and his daughter to review kindergarten application &lt;A9349, id&gt;.
-
-=== "Redact"
-
-    [REDACTED_FIRST_NAME] met with [REDACTED_FIRST_NAME] and his daughter to review kindergarten application [REDACTED_ID].
-
-=== "Hash"
-
-    &lt;HASH_FIRST_NAME_3bc51062973c&gt; met with &lt;HASH_FIRST_NAME_cd9fb1e148cc&gt; and his daughter to review kindergarten application &lt;HASH_ID_f2a5f83e2a4c&gt;.
-
 === "Substitute"
 
     Maya met with Daniel and his daughter to review kindergarten application #B5821.
+
+=== "Redact"
+
+    [REDACTED_FIRST_NAME] met with [REDACTED_FIRST_NAME] and his daughter to review kindergarten application #[REDACTED_ID].
+
+=== "Annotate"
+
+    &lt;Alice, first_name&gt; met with &lt;Bob, first_name&gt; and his daughter to review kindergarten application #&lt;A9349, id&gt;.
+
+=== "Hash"
+
+    &lt;HASH_FIRST_NAME_3bc51062973c&gt; met with &lt;HASH_FIRST_NAME_cd9fb1e148cc&gt; and his daughter to review kindergarten application #&lt;HASH_ID_f2a5f83e2a4c&gt;.
 
 === "Rewrite"
 
     The family met with the admissions counselor to review their school application.
 
 ---
+
+# Get Started
 
 ## Install
 
@@ -99,13 +99,13 @@ preview.trace_dataframe
 
 -   :material-find-replace: [**Replace**](concepts/replace.md)
 
-    Customize how to replace entities -- redact, annotate, hash, or substitute.
+    Customize how to replace entities -- substitute, redact, annotate, or hash.
 
 -   :material-auto-fix: [**Rewrite**](concepts/rewrite.md)
 
     Generate a privacy-safe paraphrase of the entire text.
 
--   :material-book-open-variant: [**Tutorials**](notebooks/01_your_first_anonymization.ipynb)
+-   :material-book-open-variant: [**Tutorials**](notebook_source/01_replace.py)
 
     End-to-end notebooks for replace and rewrite.
 

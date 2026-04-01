@@ -6,9 +6,20 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines a lightweight NER model (GLiNER-PII) with LLM-based refinement. GLiNER produces an initial set of entity spans, then an LLM augments it with entities the NER missed and validates each detection -- keeping, reclassifying, or dropping entities based on context. 
+Detection combines a lightweight NER model (GLiNER-PII) with LLM-based refinement. GLiNER PII produces an initial set of entity spans, then an LLM augments it with entities the NER missed and validates each detection -- keeping, reclassifying, or dropping entities based on context. 
 
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
+
+### Example: standard vs. latent entities
+
+Consider this short passage:
+
+> Sarah described her appointment. She's looking forward to ringing the bell soon and said the care team has been wonderful.
+
+| Type | Value | Description |
+| --- | --- | --- |
+| Standard entity | Sarah | first_name |
+| Latent entity | ringing the bell | Reveals something sensitive - nearing the end of cancer treatment. It is only inferable from surrounding context (e.g. the passage never says "cancer"). |
 
 ---
 
@@ -32,7 +43,7 @@ config = AnonymizerConfig(
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `entity_labels` | `None` (all defaults) | List of labels to detect. `None` uses the full default set. |
+| `entity_labels` | `None` (all defaults) | List of labels to detect. `None` uses the full default set (i.e. set `entity_labels=None`, or simply omit this variable altogether). |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 
 
@@ -67,7 +78,7 @@ Detect()  # entity_labels=None
 ```
 ## Tuning the threshold
 
-For gliner_threshold, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.
+For `gliner_threshold`, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.
 
 ---
 
@@ -77,9 +88,9 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 
 | Role | Default alias | Purpose |
 |------|--------------|---------|
-| `entity_detector` | `gliner-pii-detector` | GLiNER-PII NER model. |
-| `entity_validator` | `gpt-oss-120b` | Validates and reclassifies detected entities. |
-| `entity_augmenter` | `gpt-oss-120b` | Finds entities the NER model missed. |
-| `latent_detector` | `nemotron-30b-thinking` | Identifies inferable entities (rewrite only). |
+| `entity_detector` | [`gliner-pii-detector`](https://build.nvidia.com/nvidia/gliner-pii) | GLiNER-PII NER model. |
+| `entity_validator` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Validates and reclassifies detected entities. |
+| `entity_augmenter` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Finds entities the NER model missed. |
+| `latent_detector` | [`nemotron-30b-thinking`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
 
 See [Models](models.md) for how to override these.

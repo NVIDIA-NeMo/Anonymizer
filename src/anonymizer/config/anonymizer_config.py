@@ -99,7 +99,8 @@ class AnonymizerConfig(BaseModel):
 
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(
-        default=None, description="Replacement method (Redact(), Annotate(), Hash(), or Substitute())."
+        default=None,
+        description="Replacement method (Substitute(), Redact(), Annotate(), or Hash()).",
     )
     rewrite: Rewrite | None = Field(default=None, description="Optional rewrite-mode parameters. ")
 
