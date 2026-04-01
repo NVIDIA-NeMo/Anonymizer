@@ -451,15 +451,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#choosing-models-by-benchmark-fit" class="md-nav__link">
+  <a href="#choosing-custom-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Choosing models by benchmark fit
+        Choosing custom models
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Choosing models by benchmark fit">
+    <nav class="md-nav" aria-label="Choosing custom models">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -474,43 +474,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#lower-value-benchmark-signals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lower-value benchmark signals
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#role-to-benchmark-mapping" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Role-to-benchmark mapping
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#practical-guidance" class="md-nav__link">
     <span class="md-ellipsis">
       
         Practical guidance
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#suggested-bakeoff-rubric" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Suggested bakeoff rubric
       
     </span>
   </a>
@@ -1520,15 +1487,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#choosing-models-by-benchmark-fit" class="md-nav__link">
+  <a href="#choosing-custom-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Choosing models by benchmark fit
+        Choosing custom models
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Choosing models by benchmark fit">
+    <nav class="md-nav" aria-label="Choosing custom models">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1543,43 +1510,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#lower-value-benchmark-signals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lower-value benchmark signals
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#role-to-benchmark-mapping" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Role-to-benchmark mapping
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#practical-guidance" class="md-nav__link">
     <span class="md-ellipsis">
       
         Practical guidance
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#suggested-bakeoff-rubric" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Suggested bakeoff rubric
       
     </span>
   </a>
@@ -1749,7 +1683,7 @@ model_configs:
 <p>Use <a href="../../reference/anonymizer/interface/anonymizer/"><code>anonymizer.validate_config(config)</code></a> (or <a href="../../reference/anonymizer/interface/cli/main/"><code>anonymizer validate</code></a> from the CLI) after changing model configs to catch alias mismatches before processing data.</p>
 </div>
 <hr />
-<h2 id="choosing-models-by-benchmark-fit">Choosing models by benchmark fit<a class="headerlink" href="#choosing-models-by-benchmark-fit" title="Permanent link">&para;</a></h2>
+<h2 id="choosing-custom-models">Choosing custom models<a class="headerlink" href="#choosing-custom-models" title="Permanent link">&para;</a></h2>
 <p>For Anonymizer, the best overall leaderboard model is not always the best default for every role.
 Some roles are simple classification or constrained JSON generation tasks, while others require deeper
 reasoning about privacy risk, long-context rewriting, and leakage repair.</p>
@@ -1789,85 +1723,6 @@ reasoning about privacy risk, long-context rewriting, and leakage repair.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="lower-value-benchmark-signals">Lower-value benchmark signals<a class="headerlink" href="#lower-value-benchmark-signals" title="Permanent link">&para;</a></h3>
-<p>These can still be useful for general model quality, but they are less predictive for Anonymizer's core workflows:</p>
-<ul>
-<li>Coding benchmarks such as <code>LiveCodeBench</code>, <code>SciCode</code>, and <code>Terminal-Bench Hard</code></li>
-<li>Domain-specific benchmarks unrelated to text anonymization</li>
-<li>Aggregate leaderboard rank without looking at instruction-following, hallucination, and long-context behavior</li>
-</ul>
-<h3 id="role-to-benchmark-mapping">Role-to-benchmark mapping<a class="headerlink" href="#role-to-benchmark-mapping" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Role</th>
-<th>Most relevant signals</th>
-<th>Why</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>entity_validator</code></td>
-<td><code>IFBench</code>, non-hallucination</td>
-<td>Mostly accept/reject plus structured output.</td>
-</tr>
-<tr>
-<td><code>entity_augmenter</code></td>
-<td><code>IFBench</code>, accuracy, non-hallucination</td>
-<td>Must find missing entities without inventing them.</td>
-</tr>
-<tr>
-<td><code>latent_detector</code></td>
-<td><code>AA-LCR</code>, accuracy, non-hallucination, reasoning</td>
-<td>Must infer indirect or combinatorial identity clues from context.</td>
-</tr>
-<tr>
-<td><code>replacement_generator</code></td>
-<td><code>IFBench</code></td>
-<td>Controlled substitution task; less dependent on frontier reasoning.</td>
-</tr>
-<tr>
-<td><code>domain_classifier</code></td>
-<td><code>IFBench</code></td>
-<td>Simple classification; a smaller model is often sufficient.</td>
-</tr>
-<tr>
-<td><code>disposition_analyzer</code></td>
-<td><code>IFBench</code>, <code>AA-LCR</code>, non-hallucination, reasoning</td>
-<td>High-stakes privacy planning step that determines what must be protected.</td>
-</tr>
-<tr>
-<td><code>meaning_extractor</code></td>
-<td><code>IFBench</code>, accuracy, <code>AA-LCR</code></td>
-<td>Must preserve important meaning without carrying forward protected detail.</td>
-</tr>
-<tr>
-<td><code>qa_generator</code></td>
-<td><code>IFBench</code></td>
-<td>Controlled transformation from meaning units into evaluation questions.</td>
-</tr>
-<tr>
-<td><code>rewriter</code></td>
-<td><code>IFBench</code>, <code>AA-LCR</code>, non-hallucination, reasoning</td>
-<td>Long-context rewrite under privacy and fidelity constraints.</td>
-</tr>
-<tr>
-<td><code>evaluator</code></td>
-<td><code>IFBench</code>, accuracy, non-hallucination</td>
-<td>Mostly repeated QA answering and answer comparison.</td>
-</tr>
-<tr>
-<td><code>repairer</code></td>
-<td><code>IFBench</code>, <code>AA-LCR</code>, non-hallucination, reasoning</td>
-<td>Must fix leaks without damaging utility or introducing new details.</td>
-</tr>
-<tr>
-<td><code>judge</code></td>
-<td>non-hallucination, <code>IFBench</code>, reasoning</td>
-<td>Holistic quality read; useful but lower-stakes than rewrite and disposition.</td>
-</tr>
-</tbody>
-</table>
 <h3 id="practical-guidance">Practical guidance<a class="headerlink" href="#practical-guidance" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Use your strongest models for <code>latent_detector</code>, <code>disposition_analyzer</code>, <code>rewriter</code>, and often <code>repairer</code>.</li>
@@ -1875,49 +1730,6 @@ reasoning about privacy risk, long-context rewriting, and leakage repair.</p>
 <li>Use smaller or faster models for <code>entity_validator</code>, <code>domain_classifier</code>, <code>qa_generator</code>, and often <code>evaluator</code>.</li>
 <li>Do not optimize every role for peak leaderboard rank. Optimize the hard-to-recover privacy and rewrite steps for quality, and the bounded steps for reliability per token.</li>
 </ul>
-<h3 id="suggested-bakeoff-rubric">Suggested bakeoff rubric<a class="headerlink" href="#suggested-bakeoff-rubric" title="Permanent link">&para;</a></h3>
-<p>Before changing defaults, run a small bakeoff on representative records from your target domains and compare candidate models on:</p>
-<table>
-<thead>
-<tr>
-<th>Category</th>
-<th>What to measure</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Detection quality</td>
-<td>False positives and false negatives for validated, augmented, and latent entities</td>
-</tr>
-<tr>
-<td>Privacy planning</td>
-<td>Whether disposition decisions are consistent, defensible, and aligned with the threat model</td>
-</tr>
-<tr>
-<td>Rewrite quality</td>
-<td>Utility score, leakage mass, and human readability</td>
-</tr>
-<tr>
-<td>Repair behavior</td>
-<td>How often repair is triggered and whether it actually reduces leakage without harming utility</td>
-</tr>
-<tr>
-<td>Output reliability</td>
-<td>Structured-output validity, malformed JSON rate, and blank-response rate</td>
-</tr>
-<tr>
-<td>Runtime cost</td>
-<td>Latency, output speed, and token usage for notebook and docs workflows</td>
-</tr>
-</tbody>
-</table>
-<p>For docs defaults, the best choice is usually the smallest set of models that:</p>
-<ol>
-<li>Performs well on the high-stakes roles</li>
-<li>Produces stable structured outputs</li>
-<li>Keeps latency and token cost reasonable</li>
-<li>Avoids unnecessary model sprawl</li>
-</ol>
 
 
 
