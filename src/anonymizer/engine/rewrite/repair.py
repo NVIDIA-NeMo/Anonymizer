@@ -93,7 +93,8 @@ def _leaked_items_text(
             item = qa_lookup.get(answer.id)
             if item:
                 lines.append(
-                    f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question}'
+                    f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question} '
+                    f"(confidence_leakage_occurred: {answer.confidence:.2f}; reason: {answer.reason})"
                 )
     return "\n".join(lines)
 

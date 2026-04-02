@@ -54,6 +54,12 @@ def privacy_qa_high_and_low() -> dict:
     }
 
 
+def _privacy_answer(
+    item_id: int, answer: str, confidence: float = 1.0, reason: str = "evidence in text"
+) -> PrivacyAnswerItemSchema:
+    return PrivacyAnswerItemSchema(id=item_id, answer=answer, confidence=confidence, reason=reason)
+
+
 # ---------------------------------------------------------------------------
 # compute_leakage_mass
 # ---------------------------------------------------------------------------
@@ -61,33 +67,38 @@ def privacy_qa_high_and_low() -> dict:
 
 class TestComputeLeakageMass:
     def test_no_leaks(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="no"), PrivacyAnswerItemSchema(id=2, answer="no")]
+        answers = [_privacy_answer(1, "no"), _privacy_answer(2, "no")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS)) == 0.0
 
     def test_high_leak_only(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="yes"), PrivacyAnswerItemSchema(id=2, answer="no")]
+        answers = [_privacy_answer(1, "yes"), _privacy_answer(2, "no")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS)) == 1.0
 
     def test_low_leak_only(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="no"), PrivacyAnswerItemSchema(id=2, answer="yes")]
+        answers = [_privacy_answer(1, "no"), _privacy_answer(2, "yes")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS)) == 0.3
 
     def test_both_leaked(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="yes"), PrivacyAnswerItemSchema(id=2, answer="yes")]
+        answers = [_privacy_answer(1, "yes"), _privacy_answer(2, "yes")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS)) == pytest.approx(1.3)
 
     def test_custom_weights(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="yes"), PrivacyAnswerItemSchema(id=2, answer="yes")]
+        answers = [_privacy_answer(1, "yes"), _privacy_answer(2, "yes")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_leakage_mass(answers, qa, {"high": 2.0, "medium": 1.0, "low": 0.5}) == pytest.approx(2.5)
 
     def test_empty_answers(self, privacy_qa_high_and_low: dict) -> None:
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_leakage_mass([], qa, dict(SENSITIVITY_WEIGHTS)) == 0.0
+
+    def test_confidence_weights_leakage_mass(self, privacy_qa_high_and_low: dict) -> None:
+        answers = [_privacy_answer(1, "yes", confidence=0.4), _privacy_answer(2, "yes", confidence=0.5)]
+        qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
+        assert compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS)) == pytest.approx(0.55)
 
 
 # ---------------------------------------------------------------------------
@@ -97,17 +108,17 @@ class TestComputeLeakageMass:
 
 class TestComputeAnyHighLeaked:
     def test_high_leaked(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="yes"), PrivacyAnswerItemSchema(id=2, answer="no")]
+        answers = [_privacy_answer(1, "yes"), _privacy_answer(2, "no")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_any_high_leaked(answers, qa) is True
 
     def test_only_low_leaked(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="no"), PrivacyAnswerItemSchema(id=2, answer="yes")]
+        answers = [_privacy_answer(1, "no"), _privacy_answer(2, "yes")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_any_high_leaked(answers, qa) is False
 
     def test_no_leaks(self, privacy_qa_high_and_low: dict) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="no"), PrivacyAnswerItemSchema(id=2, answer="no")]
+        answers = [_privacy_answer(1, "no"), _privacy_answer(2, "no")]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_any_high_leaked(answers, qa) is False
 
@@ -223,12 +234,25 @@ def test_evaluate_columns_pipeline(
 
 def test_normalize_answer_items_fills_missing_privacy_answers_conservatively() -> None:
     normalized = _normalize_answer_items(
-        [{"id": 1, "answer": "no"}],
+        [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}],
         expected_ids=[1, 2],
         label="privacy answer",
-        default_item_factory=lambda item_id: {"id": item_id, "answer": "yes"},
+        default_item_factory=lambda item_id: {
+            "id": item_id,
+            "answer": "yes",
+            "confidence": 1.0,
+            "reason": "Model omitted this item; defaulted to highest-confidence leak.",
+        },
     )
-    assert normalized == [{"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]
+    assert normalized == [
+        {"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"},
+        {
+            "id": 2,
+            "answer": "yes",
+            "confidence": 1.0,
+            "reason": "Model omitted this item; defaulted to highest-confidence leak.",
+        },
+    ]
 
 
 def test_normalize_answer_items_drops_extra_and_duplicate_ids() -> None:

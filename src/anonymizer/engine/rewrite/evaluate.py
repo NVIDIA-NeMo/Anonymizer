@@ -104,7 +104,9 @@ Fill in the "answer" field for each item. Do not add or remove items.
 
 def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
     qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
-    skeleton = [{"id": item.id, "question": item.question, "answer": ""} for item in qa.items]
+    skeleton = [
+        {"id": item.id, "question": item.question, "answer": "", "confidence": 1.0, "reason": ""} for item in qa.items
+    ]
 
     prompt = """You are a privacy auditor. Read the text and answer each question with "yes" or "no".
 
@@ -112,7 +114,9 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 - Answer "yes" if the specific entity value can be identified or reasonably inferred from the text
 - Answer "no" if it cannot
 - You must commit to "yes" or "no". Do not hedge.
-- You MUST provide an answer for EVERY item in the template below
+- Set confidence from 0.0 to 1.0 reflecting how strongly the answer is supported
+- Provide a brief reason grounded in the text
+- You MUST provide answer, confidence, and reason for EVERY item in the template below
 </rules>
 
 <text>
@@ -120,7 +124,8 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 </text>
 
 <task>
-Fill in the "answer" field for each item with "yes" or "no". Do not add or remove items.
+Fill in the "answer" ("yes"/"no"), "confidence" (0.0-1.0), and "reason" fields for each item.
+Do not add or remove items.
 </task>
 <answer_template>
 <<SKELETON>>
@@ -222,7 +227,12 @@ def _make_privacy_answer_parser(
             payload.get("answers"),
             expected_ids=expected_ids,
             label="privacy answer",
-            default_item_factory=lambda item_id: {"id": item_id, "answer": "yes"},
+            default_item_factory=lambda item_id: {
+                "id": item_id,
+                "answer": "yes",
+                "confidence": 1.0,
+                "reason": "Model omitted this item; defaulted to highest-confidence leak.",
+            },
         )
         return PrivacyAnswersSchema.model_validate(
             payload,
@@ -324,7 +334,7 @@ def compute_leakage_mass(
     privacy_qa: PrivacyQAPairsSchema,
     sensitivity_weights: dict[str, float],
 ) -> float:
-    """Weighted sum of leaked entities.
+    """Confidence-weighted sum of leaked entities.
 
     An entity is "leaked" when the privacy re-answer is ``yes``.
     Answer coverage is enforced upstream by the context-validated parser
@@ -337,7 +347,7 @@ def compute_leakage_mass(
             sensitivity = qa_lookup.get(answer.id)
             if sensitivity is None:
                 continue
-            total += sensitivity_weights[sensitivity]
+            total += sensitivity_weights[sensitivity] * answer.confidence
     return total
 
 
