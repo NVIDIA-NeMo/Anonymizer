@@ -157,7 +157,7 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
         "Cook County Jail",
     ],
     "nationality": ["American", "Japanese", "Brazilian", "Nigerian"],
-    "degree": ["Bachelor of Science", "Master of Arts", "Doctor of Philosophy", "Juris Doctor", "B.S.", "Ph.D"],
+    "degree": ["Bachelor of Science", "Master of Arts", "Doctor of Philosophy", "Juris Doctor", "B.S.", "Ph.D."],
     "field_of_study": ["Computer Science", "Mechanical Engineering", "International Relations", "Public Health"],
     "place_name": ["Brooklyn", "Lake Tahoe", "Silicon Valley", "Downtown Seattle"],
     "landmark": ["Eiffel Tower", "Golden Gate Bridge", "Statue of Liberty", "Big Ben"],
