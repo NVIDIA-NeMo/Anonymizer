@@ -231,7 +231,7 @@ def mixed_disposition() -> SensitivityDispositionSchema:
                     entity_label="city",
                     entity_value="Portland",
                     needs_protection=False,
-                    protection_method_suggestion="left_as_is",
+                    protection_method_suggestion="leave_as_is",
                 ),
             ]
         }
@@ -248,10 +248,10 @@ def test_entity_disposition_invalid_no_protection_but_method_set() -> None:
         )
 
 
-def test_entity_disposition_invalid_needs_protection_but_left_as_is() -> None:
+def test_entity_disposition_invalid_needs_protection_but_leave_as_is() -> None:
     with pytest.raises(ValidationError, match="needs_protection=True"):
         EntityDispositionSchema.model_validate(
-            _make_entity(needs_protection=True, protection_method_suggestion="left_as_is")
+            _make_entity(needs_protection=True, protection_method_suggestion="leave_as_is")
         )
 
 
@@ -294,7 +294,7 @@ def test_sensitivity_disposition_get_entities_by_method(mixed_disposition: Sensi
     replaceable = mixed_disposition.get_entities_by_method("replace")
     assert len(replaceable) == 1
     assert replaceable[0].entity_label == "first_name"
-    left = mixed_disposition.get_entities_by_method("left_as_is")
+    left = mixed_disposition.get_entities_by_method("leave_as_is")
     assert len(left) == 1
     assert left[0].entity_label == "city"
 
@@ -320,7 +320,7 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protec
         {
             "sensitivity_disposition": [
                 _make_entity(
-                    id=1, sensitivity="low", needs_protection=False, protection_method_suggestion="left_as_is"
+                    id=1, sensitivity="low", needs_protection=False, protection_method_suggestion="leave_as_is"
                 ),
             ]
         }

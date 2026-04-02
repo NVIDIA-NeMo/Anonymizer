@@ -157,9 +157,9 @@ Fix the privacy leaks by following the protection decisions above:
 1. For "replace" - use synthetic values from the replacement map
 2. For "generalize" - use broader categories
 3. For "remove" - omit the detail entirely
-4. For "paraphrase" - rewrite surrounding context
+4. For "suppress_inference" - modify text so the attribute cannot be reliably inferred
 
-If privacy issues remain, you may override earlier "left_as_is" decisions when needed to satisfy privacy goals.
+If privacy issues remain, you may override earlier "leave_as_is" decisions when needed to satisfy privacy goals.
 You may modify surrounding context beyond the explicit entity span to break inferential leakage.
 Modify the text such that latent attributes cannot be reliably inferred by a motivated reader.
 This may involve reducing specificity, removing or weakening key details, breaking causal or identifying linkages,

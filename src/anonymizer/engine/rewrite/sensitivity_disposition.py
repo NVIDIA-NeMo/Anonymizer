@@ -138,8 +138,8 @@ LATENT IDENTIFIERS (inferred)
 
 <output_requirements>
 CONSISTENCY RULES:
-- If needs_protection=false → protection_method_suggestion MUST be "left_as_is".
-- If needs_protection=true → protection_method_suggestion MUST NOT be "left_as_is".
+- If needs_protection=false → protection_method_suggestion MUST be "leave_as_is".
+- If needs_protection=true → protection_method_suggestion MUST NOT be "leave_as_is".
 - For latent entities, "replace" is rarely appropriate (value not in text).
 - For source="tagged": entity_value MUST match tag exactly.
 - For source="latent": entity_label/value MUST match the provided latent entity.
