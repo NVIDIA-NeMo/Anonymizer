@@ -159,6 +159,12 @@ Fix the privacy leaks by following the protection decisions above:
 3. For "remove" - omit the detail entirely
 4. For "paraphrase" - rewrite surrounding context
 
+If privacy issues remain, you may override earlier "left_as_is" decisions when needed to satisfy privacy goals.
+You may modify surrounding context beyond the explicit entity span to break inferential leakage.
+Modify the text such that latent attributes cannot be reliably inferred by a motivated reader.
+This may involve reducing specificity, removing or weakening key details, breaking causal or identifying linkages,
+or introducing ambiguity, while preserving overall narrative coherence.
+
 Maintain content quality (utility score: <<UTILITY_SCORE>>), consistency, and naturalness.
 
 Provide ONLY the rewritten text. Do not include explanations, comments, or markdown formatting.
