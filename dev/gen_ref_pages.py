@@ -25,10 +25,12 @@ for path in sorted(package.rglob("*.py")):
         continue
     if "test" in parts[-1]:
         continue
+    if len(parts) > 1 and parts[1] in {"engine", "utils"}:
+        continue
 
     identifier = ".".join(parts)
 
-    nav[parts] = doc_path.as_posix()
+    nav[parts[1:]] = doc_path.as_posix()
 
     with mkdocs_gen_files.open(full_doc_path, "w") as fd:
         fd.write(f"::: {identifier}\n")
