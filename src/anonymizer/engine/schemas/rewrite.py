@@ -110,8 +110,8 @@ class ProtectionMethod(str, Enum):
     replace = "replace"
     generalize = "generalize"
     remove = "remove"
-    paraphrase = "paraphrase"
-    left_as_is = "left_as_is"
+    suppress_inference = "suppress_inference"
+    leave_as_is = "leave_as_is"
 
 
 class CombinedRiskLevel(str, Enum):
@@ -142,14 +142,14 @@ class EntityDispositionSchema(BaseModel):
 
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
-        if not self.needs_protection and self.protection_method_suggestion != ProtectionMethod.left_as_is:
+        if not self.needs_protection and self.protection_method_suggestion != ProtectionMethod.leave_as_is:
             raise ValueError(
-                f"Entity {self.id}: needs_protection=False requires protection_method_suggestion='left_as_is', "
+                f"Entity {self.id}: needs_protection=False requires protection_method_suggestion='leave_as_is', "
                 f"got '{self.protection_method_suggestion}'"
             )
-        if self.needs_protection and self.protection_method_suggestion == ProtectionMethod.left_as_is:
+        if self.needs_protection and self.protection_method_suggestion == ProtectionMethod.leave_as_is:
             raise ValueError(
-                f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='left_as_is'"
+                f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='leave_as_is'"
             )
         return self
 
