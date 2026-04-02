@@ -15,6 +15,7 @@ from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, ENTITY_LABEL_EXAMPLES
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
@@ -45,7 +46,6 @@ class LlmReplaceWorkflow:
         replace_alias = resolve_model_alias("replacement_generator", selected_models)
 
         working_df = dataframe.copy()
-        working_df["_anonymizer_row_order"] = range(len(working_df))
 
         # Parse the per-row entity payload once, then reuse it for prompt inputs.
         parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
@@ -53,25 +53,17 @@ class LlmReplaceWorkflow:
         working_df["_entities_for_replace"] = parsed_entities.apply(_enrich_entities_for_template)
         working_df["_entities_for_replace_json"] = working_df["_entities_for_replace"].apply(json.dumps)
 
-        # Rows with an empty entity list should bypass replacement-map generation.
-        has_entities_mask = working_df["_entities_for_replace"].apply(bool)
-
-        # Passthrough rows get an empty replacement map immediately.
-        passthrough_rows = working_df[~has_entities_mask].copy()
+        # Partition: rows with an empty entity list bypass replacement-map generation.
+        entity_rows, passthrough_rows = split_rows(working_df, column="_entities_for_replace", predicate=bool)
         passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
 
-        if not has_entities_mask.any():
-            passthrough_rows = (
-                passthrough_rows.sort_values("_anonymizer_row_order")
-                .drop(columns="_anonymizer_row_order")
-                .reset_index(drop=True)
+        if entity_rows.empty:
+            return LlmReplaceResult(
+                dataframe=merge_and_reorder(passthrough_rows, attrs=dataframe.attrs),
+                failed_records=[],
             )
-            passthrough_rows.attrs = {**dataframe.attrs}
-            return LlmReplaceResult(dataframe=passthrough_rows, failed_records=[])
 
         # Only rows with actual entities are sent to the LLM.
-        entity_rows = working_df[has_entities_mask].copy()
-
         effective_preview_num_records = (
             min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
         )
@@ -103,19 +95,10 @@ class LlmReplaceWorkflow:
             axis=1,
         )
 
-        # Recombine LLM-processed rows with passthrough rows in original order.
-        output_df = (
-            pd.concat([output_df, passthrough_rows], axis=0)
-            .sort_values("_anonymizer_row_order")
-            .drop(columns="_anonymizer_row_order")
-            .reset_index(drop=True)
+        combined = merge_and_reorder(
+            output_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
         )
-        # Carry pipeline metadata (e.g. original_text_column) through to downstream steps.
-        # pandas .attrs is experimental and not preserved through merge/concat/groupby,
-        # but is preserved through copy which is all we do here.
-        # TODO: consider wrapping df + metadata in a typed container.
-        output_df.attrs = {**run_result.dataframe.attrs, **dataframe.attrs}
-        return LlmReplaceResult(dataframe=output_df, failed_records=run_result.failed_records)
+        return LlmReplaceResult(dataframe=combined, failed_records=run_result.failed_records)
 
 
 def _enrich_entities_for_template(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:

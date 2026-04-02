@@ -358,7 +358,14 @@ def test_quality_answers_use_integer_ids() -> None:
 
 def test_privacy_answers_reject_unknown_and_use_integer_ids() -> None:
     with pytest.raises(ValidationError):
-        PrivacyAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "unknown"}]})
+        PrivacyAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "unknown", "confidence": 0.9, "reason": "unsupported enum value"}]}
+        )
+
+
+def test_privacy_answers_require_confidence_and_reason() -> None:
+    with pytest.raises(ValidationError):
+        PrivacyAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "yes"}]})
 
 
 def test_qa_compare_results_use_integer_ids() -> None:
@@ -393,7 +400,7 @@ def test_quality_answers_no_enforcement_without_context() -> None:
 def test_privacy_answers_reject_missing_ids_with_context() -> None:
     with pytest.raises(ValidationError, match="Missing answer IDs"):
         PrivacyAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "no"}]},
+            {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
             context={"expected_ids": [1, 2]},
         )
 

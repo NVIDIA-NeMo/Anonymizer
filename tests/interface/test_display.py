@@ -469,6 +469,7 @@ def test_render_record_html_rewrite_mode_shows_rewrite_layout() -> None:
             },
             "utility_score": 0.85,
             "leakage_mass": 0.3,
+            "weighted_leakage_rate": 0.23,
             "needs_human_review": False,
         }
     )
@@ -479,6 +480,7 @@ def test_render_record_html_rewrite_mode_shows_rewrite_layout() -> None:
     assert "Scores" in result
     assert "0.85" in result
     assert "0.30" in result
+    assert "0.23" in result
     assert "Replaced" not in result
     assert "Replacement Map" not in result
 

@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
@@ -209,6 +210,7 @@ def test_passthrough_defaults_populated(
     assert df[COL_REWRITTEN_TEXT].tolist() == ["The sky is blue", "Water is wet"]
     assert df[COL_UTILITY_SCORE].tolist() == [1.0, 1.0]
     assert df[COL_LEAKAGE_MASS].tolist() == [0.0, 0.0]
+    assert df[COL_WEIGHTED_LEAKAGE_RATE].tolist() == [0.0, 0.0]
     assert df[COL_ANY_HIGH_LEAKED].tolist() == [False, False]
     assert df[COL_NEEDS_HUMAN_REVIEW].tolist() == [False, False]
     assert df[COL_JUDGE_EVALUATION].tolist() == [None, None]
