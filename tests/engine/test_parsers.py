@@ -78,13 +78,15 @@ def test_field_invalid_raises() -> None:
 
 
 def test_parse_privacy_answers_from_dict() -> None:
-    result = parse_privacy_answers({"answers": [{"id": 1, "answer": "yes"}]})
+    result = parse_privacy_answers({"answers": [{"id": 1, "answer": "yes", "confidence": 0.8, "reason": "explicit"}]})
     assert len(result) == 1
     assert result[0].id == 1
 
 
 def test_parse_privacy_answers_from_schema() -> None:
-    schema = PrivacyAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "no"}]})
+    schema = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]}
+    )
     assert len(parse_privacy_answers(schema)) == 1
 
 
@@ -94,7 +96,9 @@ def test_parse_privacy_answers_invalid_type() -> None:
 
 
 def test_parse_privacy_answers_normalizes_numpy_array_payload() -> None:
-    result = parse_privacy_answers({"answers": np.array([{"id": 1, "answer": "yes"}], dtype=object)})
+    result = parse_privacy_answers(
+        {"answers": np.array([{"id": 1, "answer": "yes", "confidence": 0.9, "reason": "explicit"}], dtype=object)}
+    )
     assert len(result) == 1
     assert result[0].id == 1
 

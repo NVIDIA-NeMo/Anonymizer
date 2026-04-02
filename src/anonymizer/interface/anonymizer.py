@@ -29,6 +29,7 @@ from anonymizer.engine.constants import (
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
@@ -360,7 +361,7 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities
-    Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass,
+    Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
     """
@@ -373,6 +374,7 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
             f"{text_col}_rewritten",
             COL_UTILITY_SCORE,
             COL_LEAKAGE_MASS,
+            COL_WEIGHTED_LEAKAGE_RATE,
             COL_ANY_HIGH_LEAKED,
             COL_NEEDS_HUMAN_REVIEW,
         }

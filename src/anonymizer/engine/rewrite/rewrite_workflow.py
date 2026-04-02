@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -43,6 +44,7 @@ logger = logging.getLogger("anonymizer.rewrite.workflow")
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
     COL_LEAKAGE_MASS: 0.0,
+    COL_WEIGHTED_LEAKAGE_RATE: 0.0,
     COL_ANY_HIGH_LEAKED: False,
     COL_NEEDS_HUMAN_REVIEW: False,
     COL_JUDGE_EVALUATION: None,

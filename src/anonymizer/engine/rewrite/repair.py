@@ -93,7 +93,8 @@ def _leaked_items_text(
             item = qa_lookup.get(answer.id)
             if item:
                 lines.append(
-                    f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question}'
+                    f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question} '
+                    f"(confidence_leakage_occurred: {answer.confidence:.2f}; reason: {answer.reason})"
                 )
     return "\n".join(lines)
 
@@ -157,6 +158,12 @@ Fix the privacy leaks by following the protection decisions above:
 2. For "generalize" - use broader categories
 3. For "remove" - omit the detail entirely
 4. For "paraphrase" - rewrite surrounding context
+
+If privacy issues remain, you may override earlier "left_as_is" decisions when needed to satisfy privacy goals.
+You may modify surrounding context beyond the explicit entity span to break inferential leakage.
+Modify the text such that latent attributes cannot be reliably inferred by a motivated reader.
+This may involve reducing specificity, removing or weakening key details, breaking causal or identifying linkages,
+or introducing ambiguity, while preserving overall narrative coherence.
 
 Maintain content quality (utility score: <<UTILITY_SCORE>>), consistency, and naturalness.
 

@@ -77,6 +77,7 @@ COL_JUDGE_EVALUATION = "_judge_evaluation"
 # User-facing output columns
 COL_UTILITY_SCORE = "utility_score"
 COL_LEAKAGE_MASS = "leakage_mass"
+COL_WEIGHTED_LEAKAGE_RATE = "weighted_leakage_rate"
 COL_ANY_HIGH_LEAKED = "any_high_leaked"
 COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
 
