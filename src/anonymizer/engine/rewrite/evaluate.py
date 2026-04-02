@@ -18,7 +18,6 @@ from anonymizer.config.rewrite import EvaluationCriteria
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
-    COL_WEIGHTED_LEAKAGE_RATE,
     COL_NEEDS_REPAIR,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
@@ -27,6 +26,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_REWRITTEN_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias

@@ -17,8 +17,8 @@ from anonymizer.engine.rewrite.evaluate import (
     _normalize_answer_items,
     compute_any_high_leaked,
     compute_leakage_mass,
-    compute_weighted_leakage_rate,
     compute_utility_score,
+    compute_weighted_leakage_rate,
     determine_repair_needs,
 )
 from anonymizer.engine.schemas.rewrite import (

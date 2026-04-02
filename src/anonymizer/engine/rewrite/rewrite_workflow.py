@@ -17,7 +17,6 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
-    COL_WEIGHTED_LEAKAGE_RATE,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
@@ -25,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow

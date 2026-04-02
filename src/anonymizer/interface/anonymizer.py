@@ -23,13 +23,13 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_FINAL_ENTITIES,
     COL_LEAKAGE_MASS,
-    COL_WEIGHTED_LEAKAGE_RATE,
     COL_NEEDS_HUMAN_REVIEW,
     COL_REPLACED_TEXT,
     COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
