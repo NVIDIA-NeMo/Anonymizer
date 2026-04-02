@@ -159,6 +159,7 @@ nav:
       - Replace: concepts/replace.md
       - Rewrite: concepts/rewrite.md
   - Tutorials:
+      - Overview: tutorials/index.md
       - Your First Anonymization: notebooks/01_your_first_anonymization.ipynb
       - Inspecting Detected Entities: notebooks/02_inspecting_detected_entities.ipynb
       - Choosing a Replacement Strategy: notebooks/03_choosing_a_replacement_strategy.ipynb
