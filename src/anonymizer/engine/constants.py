@@ -143,6 +143,31 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
     "http_cookie": ["session_id=abc123xyz", "jwt_token=...; Path=/auth"],
     "employment_status": ["full-time", "part-time", "self-employed", "contractor"],
     "education_level": ["high school", "bachelor's degree", "some college", "graduate level"],
+    "university": ["Stanford University", "University of Oxford", "National University of Singapore", "UCLA"],
+    "court_name": [
+        "U.S. District Court for the Northern District of California",
+        "Supreme Court of the United Kingdom",
+        "European Court of Human Rights",
+        "Los Angeles County Superior Court",
+    ],
+    "prison_detention_facility": [
+        "San Quentin State Prison",
+        "Rikers Island Correctional Facility",
+        "ADX Florence Supermax Prison",
+        "Cook County Jail",
+    ],
+    "nationality": ["American", "Japanese", "Brazilian", "Nigerian"],
+    "degree": ["Bachelor of Science", "Master of Arts", "Doctor of Philosophy", "Juris Doctor", "B.S.", "Ph.D."],
+    "field_of_study": ["Computer Science", "Mechanical Engineering", "International Relations", "Public Health"],
+    "place_name": ["Brooklyn", "Lake Tahoe", "Silicon Valley", "Downtown Seattle"],
+    "landmark": ["Eiffel Tower", "Golden Gate Bridge", "Statue of Liberty", "Big Ben"],
+    "organization_name": [
+        "World Health Organization",
+        "Amnesty International",
+        "OpenAI",
+        "International Monetary Fund",
+    ],
+    "monetary_amount": ["$125", "$18,400", "$1.2 million", "€245,000", "200 PLN", "50 EUR", "CAD 36,000", "¥850,000"],
 }
 
 DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())

@@ -122,6 +122,7 @@ LATENT IDENTIFIERS (inferred)
 <protection_principles>
 1. MINIMUM NECESSARY CHANGE: If a detail doesn't meaningfully increase re-identification risk
    and isn't a sensitive attribute, leave it unchanged.
+   EXCEPTION: Always replace the names of people regardless of re-identification risk.
 
 2. CONTEXTUAL EVALUATION: A tag does NOT automatically require action. Every change must be
    justified by contextual privacy risk under the threat model.
