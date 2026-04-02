@@ -238,7 +238,7 @@ DOMAIN_SUPPLEMENT_MAP: dict[Domain, str] = {
         "or sections (e.g., signature block, date field, merchant details, amount fields), "
         "when they define the meaning or operation of the document. "
         "- The fact that the form is a template requiring user-provided inputs (e.g., amount, "
-        "date, merchant details), expressed abstractly."
+        "date, merchant details), expressed abstractly. "
         "- Unique record locators (e.g., case numbers, docket numbers, application numbers, "
         " record IDs) should be treated as high-risk even if they identify the record rather "
         " than naming the person directly. They should ALWAYS be replaced."
