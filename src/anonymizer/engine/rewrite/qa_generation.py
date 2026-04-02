@@ -91,7 +91,7 @@ remain true after anonymization.
 You are given a SENSITIVITY DISPOSITION BLOCK, which contains entries like:
 - entity_value (surface form from the original text)
 - does_need_protection (True/False)
-- protection_method_suggestion (replace/remove/generalize/paraphrase/left_as_is)
+- protection_method_suggestion (replace/remove/generalize/suppress_inference/leave_as_is)
 - category (direct_identifier/quasi_identifier/sensitive_attribute/latent_identifier/etc.)
 
 Use it as follows:
@@ -107,10 +107,10 @@ Then treat its entity_value as a BANNED SURFACE FORM:
     (roles, relationships, high-level descriptions).
   - If it cannot be expressed safely without carrying identifying detail, DROP the unit.
 
-B) TRANSFORM-ALLOWED (allowed only if generalized/paraphrased)
+B) TRANSFORM-ALLOWED (allowed only if generalized/suppress_inference)
 If an entry has:
   - does_need_protection = True
-  AND protection_method_suggestion is "generalize" OR "paraphrase"
+  AND protection_method_suggestion is "generalize" OR "suppress_inference"
 Then you MAY still capture the meaning, BUT you must NOT use the entity_value itself.
 Instead: preserve the semantic role while moving to a broader, less identifying level of abstraction.
 This may include:

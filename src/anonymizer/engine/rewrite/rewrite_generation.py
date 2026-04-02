@@ -97,7 +97,7 @@ Apply each protection method as follows:
 - "generalize": Replace with a broader category or range
   (e.g., a specific city → "a city in the Pacific Northwest", exact age → "in their late 30s").
 - "remove": Omit the detail entirely. Rewrite the surrounding sentence so it reads naturally without it.
-- "paraphrase": Rewrite the surrounding context to obscure the entity without explicitly referencing it.
+- "suppress_inference": Modify the text so the attribute cannot be reliably inferred by a motivated reader.
 
 Rules:
 1. ALL entity tags (as described above) must be removed. Output must be plain text.

@@ -44,7 +44,7 @@ def test_render_template_no_cross_contamination() -> None:
     assert result == "text: contains <<SCORE>> literally, score: 0.9"
 
 
-def test_render_template_unmatched_placeholder_left_as_is() -> None:
+def test_render_template_unmatched_placeholder_leave_as_is() -> None:
     assert render_template("<<A>> and <<B>>", {"<<A>>": "X"}) == "X and <<B>>"
 
 
