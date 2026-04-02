@@ -23,6 +23,7 @@
 git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
 cd Anonymizer
 make install
+source .venv/bin/activate
 ```
 
 ### 2. Set up model providers
