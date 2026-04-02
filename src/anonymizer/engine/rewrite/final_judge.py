@@ -56,8 +56,78 @@ def _judge_prompt(privacy_goal: PrivacyGoal) -> str:
 </rewritten_text>
 
 <task>
-Evaluate independently whether the rewrite achieves the privacy goal while maintaining quality and naturalness.
-</task>"""
+Evaluate the rewritten text on three separate dimensions:
+1. privacy protection,
+2. content quality / meaning preservation,
+3. naturalness of writing.
+
+Score each dimension independently.
+</task>
+
+<privacy_scoring_instructions>
+- Judge privacy relative to the original text, not in isolation.
+- The privacy score must reflect the likelihood that a realistic attacker could discover or match the rewritten text back to the original person, case, listing, or record using available information.
+- Focus on residual linkage risk after the rewrite, not on the mere presence of detail.
+
+- When evaluating identifiers, explicitly compare rewritten values to original values.
+- Only treat an identifier as leaked if the SAME original value, a near-direct equivalent, or an obvious reversible transformation remains.
+- If no original identifiers remain, do NOT treat identifiers present in the rewritten text as leaked.
+- The presence of the same value alone does not imply a privacy leak unless the value is inherently identifying or uniquely distinguishing.
+
+- Distinguish between:
+  * direct identifiers: information that uniquely identifies the protected subject on its own (not other people mentioned)
+  * quasi-identifiers: information that contributes to identification only in combination with other details
+
+- Treat preserved direct identifiers as high risk, but assess both:
+  * their strength (how uniquely identifying they are), and
+  * their role (whether they directly identify the subject or are secondary/relational, such as names of relatives)
+- Secondary or relational identifiers and distinctive combinations increase linkage risk but typically require additional context. They should not alone imply easy re-identification and should only result in the lowest scores (1–2) when they provide a short, reliable, and low-ambiguity path to identifying the protected subject.
+
+- Treat contextual attributes (e.g., organizations, locations, roles, affiliations) as quasi-identifiers unless they uniquely identify the individual on their own.
+
+- Evaluate linkage risk based on how much the remaining information narrows the set of plausible matches.
+  * Do not infer high risk from specificity alone.
+  * Only penalize quasi-identifiers when they significantly reduce the candidate set or form a distinctive or rare combination.
+
+- Distinguish between levels of linkage risk:
+  * plausible linkage (requires effort, auxiliary information, or narrowing across many candidates) → scores 5–6
+  * strong but indirect signals (significantly narrows candidates but still requires effort) → scores 3–4
+  * likely or easy re-identification (directly identifying or easily traceable with minimal effort) → scores 1–2
+
+- A small number of weak or secondary identifiers (e.g., common names of relatives) should increase risk but should not by themselves result in low scores unless they substantially narrow the candidate set.
+
+- Apply the stated privacy goal. Do not require unnecessary over-redaction if the rewrite adequately achieves the intended level of protection.
+</privacy_scoring_instructions>
+
+<quality_scoring_instructions>
+    - Judge quality based on how well the rewritten text preserves the important meaning, facts,
+      and utility of the original while pursuing the privacy goal.
+    - Focus on preservation of substantive content, not verbatim wording.
+    - Do NOT penalize the rewrite for changing or removing details when those changes are necessary
+      for privacy and the important meaning is still preserved.
+    - Reward rewrites that preserve the main events, relationships, roles, chronology, and
+      conclusions of the original.
+    - Penalize rewrites that omit important facts, distort the meaning, introduce contradictions,
+      or materially change the core message.
+    - Minor loss of detail should reduce the score only slightly; major loss of important
+      information should reduce it substantially.
+    - Judge quality independently from privacy and naturalness. A rewrite can be privacy-protective
+      but still low quality if it loses important meaning, and it can be high quality even if
+      some surface details are changed.
+</quality_scoring_instructions>
+
+<naturalness_scoring_instructions>
+    - Judge naturalness based on whether the rewritten text reads as fluent, coherent, and human-written.
+    - Focus on readability, grammatical correctness, clarity, and smooth phrasing.
+    - Do NOT penalize the rewrite merely for using different wording, sentence structure, or
+      level of specificity from the original.
+    - Reward rewrites that sound natural and internally consistent.
+    - Penalize awkward phrasing, repetitive wording, broken grammar, incoherence, unnatural
+      insertions, placeholder-like language, or text that feels machine-generated.
+    - Judge naturalness independently from privacy and quality. A rewrite can be natural even if it
+      changes content, and it can preserve content while still sounding awkward.
+</naturalness_scoring_instructions>
+"""
     return render_template(
         prompt,
         {
@@ -104,21 +174,20 @@ def _determine_needs_human_review(row: dict[str, Any], generator_params: HumanRe
 # Workflow
 # ---------------------------------------------------------------------------
 
-
 PRIVACY_RUBRIC = Score(
     name="privacy",
-    description="Privacy protection effectiveness - how well are identifiable entities obscured?",
+    description="Privacy protection effectiveness - how well the rewrite reduces the risk of linking the text back to the original person, case, listing, or record while preserving the stated privacy goal.",
     options={
-        10: "Perfect privacy - complete anonymization, impossible to re-identify",
-        9: "Excellent privacy - virtually impossible to re-identify",
-        8: "Strong privacy - very difficult to re-identify",
-        7: "Good privacy - only low-sensitivity context remains",
-        6: "Fair privacy - minor quasi-identifiers remain",
-        5: "Acceptable - some low-sensitivity leaks",
-        4: "Moderate leaks - mostly medium/low sensitivity information",
-        3: "Significant leaks - some high-sensitivity information remains",
-        2: "Major privacy issues - multiple high-sensitivity entities exposed",
-        1: "Severe privacy leaks - direct identifiers easily recoverable",
+        10: "Excellent privacy protection. Original direct identifiers are removed or safely transformed, and remaining details are too generic to support realistic linkage.",
+        9: "Very strong privacy protection. No meaningful original direct identifiers remain, and only weak, common contextual details are left.",
+        8: "Strong privacy protection. Original direct identifiers are removed; some quasi-identifiers remain, but linkage risk is low.",
+        7: "Good privacy protection. Original direct identifiers are removed; some contextual specifics remain, but re-identification would be difficult.",
+        6: "Moderate privacy protection. Original direct identifiers are removed, but a distinctive factual bundle or several quasi-identifiers still create noticeable linkage risk.",
+        5: "Mixed privacy protection. No obvious original direct identifiers remain, but the rewrite preserves enough distinctive detail that linkage is plausible.",
+        4: "Weak privacy protection. Important identifying or highly distinctive details remain, making linkage fairly feasible.",
+        3: "Poor privacy protection. The rewrite leaves strong identifying clues or a highly unique fact pattern that makes re-identification likely.",
+        2: "Very poor privacy protection. One or more original direct identifiers or near-direct equivalents remain, or the text is easily linkable to the original.",
+        1: "Severe privacy failure. Original direct identifiers are plainly exposed or the person, case, listing, or record is essentially still directly identifiable.",
     },
 )
 
