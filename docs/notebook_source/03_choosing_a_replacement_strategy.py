@@ -154,9 +154,7 @@ hash_preview.display_record(0)
 # - Override the algorithm, digest length, and output format.
 
 # %%
-hash_custom_config = AnonymizerConfig(
-    replace=Hash(algorithm="md5", digest_length=8, format_template="[{digest}]")
-)
+hash_custom_config = AnonymizerConfig(replace=Hash(algorithm="md5", digest_length=8, format_template="[{digest}]"))
 hash_custom_preview = anonymizer.preview(
     config=hash_custom_config,
     data=input_data,
