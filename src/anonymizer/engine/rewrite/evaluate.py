@@ -30,13 +30,13 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
     parse_privacy_qa,
     parse_quality_answers,
     parse_quality_compare,
     parse_quality_qa,
-    render_template,
 )
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswer,
@@ -93,7 +93,7 @@ Fill in the "answer" field for each item. Do not add or remove items.
 <<SKELETON>>
 </answer_template>
 """
-    return render_template(
+    return substitute_placeholders(
         prompt,
         {
             "<<SKELETON>>": json.dumps({"answers": skeleton}, indent=2),
@@ -131,7 +131,7 @@ Do not add or remove items.
 <<SKELETON>>
 </answer_template>
 """
-    return render_template(
+    return substitute_placeholders(
         prompt,
         {
             "<<SKELETON>>": json.dumps({"answers": skeleton}, indent=2),
@@ -182,7 +182,7 @@ Fill in the "score" (0.0-1.0) and "reason" fields for each item. Do not add or r
 <<SKELETON>>
 </answer_template>
 """
-    return render_template(
+    return substitute_placeholders(
         prompt,
         {
             "<<SKELETON>>": json.dumps({"per_item": skeleton}, indent=2),
