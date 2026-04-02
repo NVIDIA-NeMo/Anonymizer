@@ -17,6 +17,7 @@ from anonymizer.engine.rewrite.evaluate import (
     _normalize_answer_items,
     compute_any_high_leaked,
     compute_leakage_mass,
+    compute_weighted_leakage_rate,
     compute_utility_score,
     determine_repair_needs,
 )
@@ -99,6 +100,34 @@ class TestComputeLeakageMass:
         answers = [_privacy_answer(1, "yes", confidence=0.4), _privacy_answer(2, "yes", confidence=0.5)]
         qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
         assert compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS)) == pytest.approx(0.55)
+
+
+# ---------------------------------------------------------------------------
+# compute_weighted_leakage_rate
+# ---------------------------------------------------------------------------
+
+
+def test_weighted_leakage_rate_positive_when_any_leak_present(privacy_qa_high_and_low: dict) -> None:
+    qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
+    answers = [_privacy_answer(1, "no"), _privacy_answer(2, "yes")]
+    leakage_mass = compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS))
+    weighted_leakage_rate = compute_weighted_leakage_rate(leakage_mass, qa, dict(SENSITIVITY_WEIGHTS))
+    assert weighted_leakage_rate > 0.0
+    assert weighted_leakage_rate == pytest.approx(0.3 / 1.3)
+
+
+class TestComputeWeightedLeakageRate:
+    def test_normalizes_to_unit_interval(self, privacy_qa_high_and_low: dict) -> None:
+        qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
+        assert compute_weighted_leakage_rate(0.65, qa, dict(SENSITIVITY_WEIGHTS)) == pytest.approx(0.5)
+
+    def test_zero_when_no_mass(self, privacy_qa_high_and_low: dict) -> None:
+        qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
+        assert compute_weighted_leakage_rate(0.0, qa, dict(SENSITIVITY_WEIGHTS)) == 0.0
+
+    def test_zero_when_no_possible_weight(self, privacy_qa_high_and_low: dict) -> None:
+        qa = PrivacyQAPairsSchema.model_validate(privacy_qa_high_and_low)
+        assert compute_weighted_leakage_rate(1.0, qa, {"high": 0.0, "medium": 0.0, "low": 0.0}) == 0.0
 
 
 # ---------------------------------------------------------------------------

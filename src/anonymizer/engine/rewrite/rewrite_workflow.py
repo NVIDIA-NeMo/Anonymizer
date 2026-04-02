@@ -17,6 +17,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
+    COL_WEIGHTED_LEAKAGE_RATE,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
@@ -42,6 +43,7 @@ logger = logging.getLogger("anonymizer.rewrite.workflow")
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
     COL_LEAKAGE_MASS: 0.0,
+    COL_WEIGHTED_LEAKAGE_RATE: 0.0,
     COL_ANY_HIGH_LEAKED: False,
     COL_NEEDS_HUMAN_REVIEW: False,
     COL_JUDGE_EVALUATION: None,

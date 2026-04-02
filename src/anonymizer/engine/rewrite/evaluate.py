@@ -18,6 +18,7 @@ from anonymizer.config.rewrite import EvaluationCriteria
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
+    COL_WEIGHTED_LEAKAGE_RATE,
     COL_NEEDS_REPAIR,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
@@ -363,6 +364,18 @@ def compute_any_high_leaked(
     )
 
 
+def compute_weighted_leakage_rate(
+    leakage_mass: float,
+    privacy_qa: PrivacyQAPairsSchema,
+    sensitivity_weights: dict[str, float],
+) -> float:
+    """Normalized leakage in [0, 1] relative to maximum possible leakage mass."""
+    max_possible_mass = sum(sensitivity_weights[item.sensitivity] for item in privacy_qa.items)
+    if max_possible_mass <= 0.0:
+        return 0.0
+    return leakage_mass / max_possible_mass
+
+
 def determine_repair_needs(
     *,
     any_high_leaked: bool,
@@ -448,16 +461,20 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
 
 @custom_column_generator(
     required_columns=[COL_QUALITY_QA_COMPARE, COL_PRIVACY_QA_REANSWER, COL_PRIVACY_QA, COL_QUALITY_QA],
-    side_effect_columns=[COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED],
+    side_effect_columns=[COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE, COL_ANY_HIGH_LEAKED],
 )
 def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParams) -> dict[str, Any]:
-    """Compute utility_score, leakage_mass, and any_high_leaked from evaluation outputs."""
+    """Compute utility_score, leakage_mass, weighted_leakage_rate, and any_high_leaked from evaluation outputs."""
     _, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
 
     row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores)
-    row[COL_LEAKAGE_MASS] = compute_leakage_mass(privacy_answers, privacy_qa, generator_params.sensitivity_weights)
+    leakage_mass = compute_leakage_mass(privacy_answers, privacy_qa, generator_params.sensitivity_weights)
+    row[COL_LEAKAGE_MASS] = leakage_mass
+    row[COL_WEIGHTED_LEAKAGE_RATE] = compute_weighted_leakage_rate(
+        leakage_mass, privacy_qa, generator_params.sensitivity_weights
+    )
     row[COL_ANY_HIGH_LEAKED] = compute_any_high_leaked(privacy_answers, privacy_qa)
     return row
 
