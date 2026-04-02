@@ -150,7 +150,7 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
         "European Court of Human Rights",
         "Los Angeles County Superior Court",
     ],
-    "prison_detection_facility": [
+    "prison_detention_facility": [
         "San Quentin State Prison",
         "Rikers Island Correctional Facility",
         "ADX Florence Supermax Prison",
