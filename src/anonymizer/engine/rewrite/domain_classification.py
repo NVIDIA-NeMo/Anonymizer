@@ -241,7 +241,7 @@ DOMAIN_SUPPLEMENT_MAP: dict[Domain, str] = {
         "date, merchant details), expressed abstractly. "
         "- Unique record locators (e.g., case numbers, docket numbers, application numbers, "
         " record IDs) should be treated as high-risk even if they identify the record rather "
-        " than naming the person directly. They should ALWAYS be replaced."
+        " than naming the person directly. They should ALWAYS be replaced. "
         "- Lawyer's names must always be replaced."
         "- Court names and monetary amounts must always be either replaced, dropped or generalized."
         "\n\n"
