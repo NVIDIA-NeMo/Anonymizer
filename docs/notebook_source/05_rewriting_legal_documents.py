@@ -36,7 +36,7 @@
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
 # - Import `Detect` (for custom entity labels), `Rewrite`, and its config classes.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
-# - `configure_logging()` controls verbosity -- switch to `LoggingConfig.debug()` when troubleshooting.
+# - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
 # %%
 import getpass
@@ -49,10 +49,10 @@ if not os.getenv("NVIDIA_API_KEY"):
     os.environ["NVIDIA_API_KEY"] = key
 
 # %%
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Detect, LoggingConfig, Rewrite, configure_logging
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Detect, Rewrite, configure_logging
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal, RiskTolerance
 
-configure_logging(LoggingConfig.default())
+configure_logging(enabled=False)
 
 # %%
 anonymizer = Anonymizer()

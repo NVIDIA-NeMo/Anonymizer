@@ -41,6 +41,7 @@
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
 # - Import the core classes -- this notebook uses `Annotate` to keep original values visible.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
+# - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
 # %%
 import getpass
@@ -101,18 +102,6 @@ result.display_record(0)
 df = result.trace_dataframe
 print(f"Records: {len(df)}")
 print(f"Columns: {list(df.columns)}")
-
-# %% [markdown]
-# ## 📝 Tagged text
-#
-# - Original text with entities marked inline as `<value, label>`.
-# - Quick way to eyeball detection coverage before digging into structured data.
-
-# %%
-for i in range(len(df)):
-    print(f"--- Record {i} ---")
-    print(df.loc[i, "biography_with_spans"][:1000])
-    print()
 
 # %% [markdown]
 # ## 🎯 Detected entities

@@ -77,7 +77,7 @@ Understand what detection produced, how entities are labeled, and where they cam
 
 ### 3. [Choosing a Replacement Strategy](../notebooks/03_choosing_a_replacement_strategy.ipynb)
 
-Compare Redact, Annotate, Hash, and Substitute side by side, including custom templates.
+Compare replace mode options -- Redact, Annotate, Hash, and Substitute -- side by side, including custom templates.
 
 ### 4. [Rewriting Biographies](../notebooks/04_rewriting_biographies.ipynb)
 

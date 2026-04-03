@@ -20,7 +20,7 @@
 # Instead of replacing entities with tokens, rewrite mode generates a
 # privacy-safe transformation of the entire text. The pipeline:
 #
-# 1. Detects entities (same as replace mode)
+# 1. Detects entities (same as replace mode, plus latent entity detection)
 # 2. Classifies the domain and assigns sensitivity dispositions
 # 3. Generates a rewritten version that obscures sensitive entities
 # 4. Evaluates quality (utility) and privacy (leakage) with an automated repair loop
@@ -42,16 +42,7 @@
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
 # - Import `Rewrite` and its config classes: `PrivacyGoal`, `EvaluationCriteria`, `RiskTolerance`.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
-
-# %%
-import getpass
-import os
-
-if not os.getenv("NVIDIA_API_KEY"):
-    key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
-    if not key:
-        raise RuntimeError("NVIDIA_API_KEY is required to run these notebooks.")
-    os.environ["NVIDIA_API_KEY"] = key
+# - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
 # %%
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite

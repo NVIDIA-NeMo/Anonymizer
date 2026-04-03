@@ -17,8 +17,14 @@
 # %% [markdown]
 # # 🕵️ Choosing a Replacement Strategy
 #
-# Four replacement strategies compared side-by-side on the same data.
+# Four [replace mode](../concepts/replace.md) strategies compared side-by-side on the same data.
 #
+# | Strategy | What it does |
+# |----------|-------------|
+# | **Substitute** | LLM-generated contextual replacements |
+# | **Redact** | Label-based markers (`[REDACTED_FIRST_NAME]`) |
+# | **Annotate** | Tags entities but keeps original text |
+# # | **Hash** | Deterministic hash digest |
 # #### 📚 What you'll learn
 #
 # - Compare **Redact**, **Annotate**, **Hash**, and **Substitute** on the same input
@@ -34,6 +40,7 @@
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
 # - Import all four strategy classes: `Redact`, `Annotate`, `Hash`, `Substitute`.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
+# - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
 # %%
 import getpass
@@ -134,7 +141,7 @@ annotate_custom_preview.display_record(0)
 # ## #️⃣ Hash
 #
 # - Deterministic -- same input always produces the same hash.
-# - Customize `format_template` (must include `{digest}`),
+# - Customize with `format_template` (must include `{digest}`),
 #   `algorithm` (`sha256`/`sha1`/`md5`), and `digest_length` (6--64).
 
 # %%
