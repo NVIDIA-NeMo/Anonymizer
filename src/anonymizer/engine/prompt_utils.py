@@ -10,6 +10,7 @@ import re
 
 logger = logging.getLogger("anonymizer.prompt_utils")
 
+# \w+ matches [a-zA-Z0-9_] only; hyphens in placeholder names are not supported.
 _PLACEHOLDER_RE = re.compile(r"<<\w+>>")
 
 

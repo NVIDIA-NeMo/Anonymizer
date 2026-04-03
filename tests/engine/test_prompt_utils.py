@@ -31,6 +31,16 @@ def test_no_cross_contamination() -> None:
     assert result == "text: contains <<SCORE>> literally, score: 0.9"
 
 
+def test_repeated_placeholder() -> None:
+    result = substitute_placeholders("<<X>> and <<X>>", {"<<X>>": "Y"})
+    assert result == "Y and Y"
+
+
+def test_empty_replacement_value() -> None:
+    result = substitute_placeholders("a<<X>>b", {"<<X>>": ""})
+    assert result == "ab"
+
+
 def test_empty_replacements_no_placeholders() -> None:
     assert substitute_placeholders("no placeholders", {}) == "no placeholders"
 
