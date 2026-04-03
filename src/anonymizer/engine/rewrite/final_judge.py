@@ -32,7 +32,7 @@ from anonymizer.engine.rewrite.parsers import render_template
 
 class HumanReviewParams(BaseModel):
     flag_utility_below: float | None
-    flag_leakage_mass_above: float | None
+    flag_leakage_above: float | None
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +161,8 @@ def _determine_needs_human_review(row: dict[str, Any], generator_params: HumanRe
             row[COL_NEEDS_HUMAN_REVIEW] = True
             return row
 
-    if generator_params.flag_leakage_mass_above is not None:
-        if float(row[COL_LEAKAGE_MASS]) > generator_params.flag_leakage_mass_above:
+    if generator_params.flag_leakage_above is not None:
+        if float(row[COL_LEAKAGE_MASS]) > generator_params.flag_leakage_above:
             row[COL_NEEDS_HUMAN_REVIEW] = True
             return row
 
@@ -260,7 +260,7 @@ class FinalJudgeWorkflow:
                 generator_function=_determine_needs_human_review,
                 generator_params=HumanReviewParams(
                     flag_utility_below=evaluation.flag_utility_below,
-                    flag_leakage_mass_above=evaluation.flag_leakage_mass_above,
+                    flag_leakage_above=evaluation.flag_leakage_above,
                 ),
             ),
         ]

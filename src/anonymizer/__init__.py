@@ -7,7 +7,7 @@ from importlib.metadata import version
 
 __version__ = version("nemo-anonymizer")
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite, RiskTolerance
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS as _DEFAULT_ENTITY_LABELS
 from anonymizer.interface.anonymizer import Anonymizer
@@ -38,6 +38,7 @@ __all__ = [
     "LoggingConfig",
     "Redact",
     "Rewrite",
+    "RiskTolerance",
     "Substitute",
     "configure_logging",
 ]

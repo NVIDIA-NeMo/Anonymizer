@@ -181,7 +181,6 @@ class TestDetermineRepairNeeds:
         assert determine_repair_needs(
             any_high_leaked=True,
             leakage_mass=0.0,
-            auto_repair_privacy=True,
             repair_any_high_leak=True,
             effective_threshold=1.0,
         )
@@ -190,7 +189,6 @@ class TestDetermineRepairNeeds:
         assert determine_repair_needs(
             any_high_leaked=False,
             leakage_mass=1.5,
-            auto_repair_privacy=True,
             repair_any_high_leak=True,
             effective_threshold=1.0,
         )
@@ -199,16 +197,6 @@ class TestDetermineRepairNeeds:
         assert not determine_repair_needs(
             any_high_leaked=False,
             leakage_mass=0.3,
-            auto_repair_privacy=True,
-            repair_any_high_leak=True,
-            effective_threshold=1.0,
-        )
-
-    def test_auto_repair_disabled(self) -> None:
-        assert not determine_repair_needs(
-            any_high_leaked=True,
-            leakage_mass=5.0,
-            auto_repair_privacy=False,
             repair_any_high_leak=True,
             effective_threshold=1.0,
         )
@@ -217,26 +205,26 @@ class TestDetermineRepairNeeds:
         assert not determine_repair_needs(
             any_high_leaked=True,
             leakage_mass=0.3,
-            auto_repair_privacy=True,
             repair_any_high_leak=False,
             effective_threshold=1.0,
         )
 
-    def test_domain_adjusts_threshold(self) -> None:
-        evaluation = EvaluationCriteria(auto_adjust_by_domain=True, repair_any_high_leak=False)
+    def test_threshold_from_minimal_preset(self) -> None:
+        evaluation = EvaluationCriteria(risk_tolerance="minimal")
         assert determine_repair_needs(
             any_high_leaked=False,
             leakage_mass=0.8,
-            auto_repair_privacy=True,
-            repair_any_high_leak=False,
-            effective_threshold=evaluation.get_effective_threshold("medical"),
+            repair_any_high_leak=evaluation.repair_any_high_leak,
+            effective_threshold=evaluation.repair_threshold,
         )
+
+    def test_threshold_from_high_preset(self) -> None:
+        evaluation = EvaluationCriteria(risk_tolerance="high")
         assert not determine_repair_needs(
             any_high_leaked=False,
             leakage_mass=0.8,
-            auto_repair_privacy=True,
-            repair_any_high_leak=False,
-            effective_threshold=evaluation.get_effective_threshold("social_media"),
+            repair_any_high_leak=evaluation.repair_any_high_leak,
+            effective_threshold=evaluation.repair_threshold,
         )
 
 
