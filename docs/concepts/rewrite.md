@@ -93,6 +93,27 @@ Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, 
 
 ---
 
+## Working with flagged records
+
+Records with `needs_human_review=True` exceeded automated thresholds for leakage or utility. To investigate and resolve:
+
+**Diagnose:** Use `trace_dataframe` to inspect the flagged record's intermediate columns — disposition, leakage breakdown, repair iterations, and judge evaluation.
+
+```python
+flagged = result.trace_dataframe[result.trace_dataframe["needs_human_review"] == True]
+flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
+```
+
+**Tune and re-run:** Adjust settings and re-run on flagged records:
+
+- Increase `max_repair_iterations` to give the rewriter more attempts.
+- Refine `privacy_goal` with more specific `protect` / `preserve` instructions for the domain.
+- Lower `risk_tolerance` (e.g. `strict`) to trigger more aggressive repair.
+
+**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. 
+
+---
+
 ## Model roles
 
 Rewrite uses multiple LLM roles. All default to models in the [default config](models.md):

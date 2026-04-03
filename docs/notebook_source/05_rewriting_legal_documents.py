@@ -161,6 +161,8 @@ result.dataframe[["text_rewritten", "utility_score", "leakage_mass", "needs_huma
 #
 # - Records where automated metrics exceed thresholds are flagged for manual review.
 # - Use this to prioritize human attention on the records that need it most.
+# - See [Working with flagged records](../concepts/rewrite.md#working-with-flagged-records)
+#   for guidance on diagnosing and resolving flagged records.
 
 # %%
 df = result.dataframe
