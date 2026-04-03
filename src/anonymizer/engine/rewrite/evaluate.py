@@ -60,7 +60,6 @@ class MetricsParams(BaseModel):
 
 
 class RepairNeedsParams(BaseModel):
-    auto_repair_privacy: bool
     repair_any_high_leak: bool
     effective_threshold: float
 
@@ -380,13 +379,10 @@ def determine_repair_needs(
     *,
     any_high_leaked: bool,
     leakage_mass: float,
-    auto_repair_privacy: bool,
     repair_any_high_leak: bool,
     effective_threshold: float,
 ) -> bool:
     """Decide whether a single row needs repair."""
-    if not auto_repair_privacy:
-        return False
     if repair_any_high_leak and any_high_leaked:
         return True
     return leakage_mass > effective_threshold
@@ -485,7 +481,6 @@ def _determine_repair_needs_column(row: dict[str, Any], generator_params: Repair
     row[COL_NEEDS_REPAIR] = determine_repair_needs(
         any_high_leaked=bool(row.get(COL_ANY_HIGH_LEAKED, False)),
         leakage_mass=float(row.get(COL_LEAKAGE_MASS, 0.0)),
-        auto_repair_privacy=generator_params.auto_repair_privacy,
         repair_any_high_leak=generator_params.repair_any_high_leak,
         effective_threshold=generator_params.effective_threshold,
     )
@@ -519,10 +514,8 @@ class EvaluateWorkflow:
         *,
         selected_models: RewriteModelSelection,
         evaluation: EvaluationCriteria,
-        domain: str | None = None,
     ) -> list[ColumnConfigT]:
         evaluator_alias = resolve_model_alias("evaluator", selected_models)
-        effective_threshold = evaluation.get_effective_threshold(domain)
 
         return [
             # Step 1 -- Quality re-answer (LLM with context-validated parser)
@@ -551,9 +544,8 @@ class EvaluateWorkflow:
                 name=COL_NEEDS_REPAIR,
                 generator_function=_determine_repair_needs_column,
                 generator_params=RepairNeedsParams(
-                    auto_repair_privacy=evaluation.auto_repair_privacy,
                     repair_any_high_leak=evaluation.repair_any_high_leak,
-                    effective_threshold=effective_threshold,
+                    effective_threshold=evaluation.repair_threshold,
                 ),
             ),
         ]

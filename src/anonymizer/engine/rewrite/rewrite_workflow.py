@@ -13,7 +13,6 @@ from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelectio
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
-    COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
@@ -244,14 +243,12 @@ class RewriteWorkflow:
         all_failed.extend(pipeline_result.failed_records)
 
         # --- Step 5: evaluate-repair loop ---
-        domain = self._extract_domain(entity_rows)
         entity_rows, eval_repair_failed = self._run_evaluate_repair_loop(
             entity_rows,
             model_configs=model_configs,
             selected_models=selected_models,
             privacy_goal=privacy_goal,
             evaluation=evaluation,
-            domain=domain,
             preview_num_records=preview_num_records,
         )
         all_failed.extend(eval_repair_failed)
@@ -284,11 +281,9 @@ class RewriteWorkflow:
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         evaluation: EvaluationCriteria,
-        domain: str | None,
         preview_num_records: int | None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         all_failed: list[FailedRecord] = []
-        effective_threshold = evaluation.get_effective_threshold(domain)
 
         if COL_REPAIR_ITERATIONS not in df.columns:
             df[COL_REPAIR_ITERATIONS] = 0
@@ -296,7 +291,6 @@ class RewriteWorkflow:
         eval_columns = self._evaluate_wf.columns(
             selected_models=selected_models,
             evaluation=evaluation,
-            domain=domain,
         )
         eval_seed_cols = derive_seed_columns(eval_columns, df)
 
@@ -315,7 +309,7 @@ class RewriteWorkflow:
         repair_columns = self._repair_wf.columns(
             selected_models=selected_models,
             privacy_goal=privacy_goal,
-            effective_threshold=effective_threshold,
+            effective_threshold=evaluation.repair_threshold,
         )
 
         for iteration in range(evaluation.max_repair_iterations):
@@ -406,34 +400,3 @@ class RewriteWorkflow:
             df[COL_JUDGE_EVALUATION] = None
             df[COL_NEEDS_HUMAN_REVIEW] = True
             return df, []
-
-    # ---------------------------------------------------------------------------
-    # Helpers
-    # ---------------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_domain(df: pd.DataFrame) -> str | None:
-        """Extract the most common domain from the domain classification column, if present."""
-        if COL_DOMAIN not in df.columns:
-            return None
-        try:
-            domains = (
-                df[COL_DOMAIN]
-                .dropna()
-                .apply(
-                    lambda raw: (
-                        str(raw.domain)
-                        if hasattr(raw, "domain")
-                        else str(raw.get("domain", ""))
-                        if isinstance(raw, dict)
-                        else str(raw)
-                    )
-                )
-            )
-            domains = domains[domains != ""]
-            if domains.empty:
-                return None
-            return str(domains.mode().iloc[0])
-        except Exception:
-            logger.debug("Could not extract domain from COL_DOMAIN", exc_info=True)
-            return None
