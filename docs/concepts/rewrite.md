@@ -3,13 +3,13 @@
 
 # Rewrite
 
-Instead of replacing individual entities, rewrite mode generates a privacy-safe paraphrase of the entire text, preserving semantic meaning while obscuring sensitive information.
+Instead of replacing individual entities, rewrite mode generates a privacy-safe transformation of the entire text, preserving semantic meaning while obscuring sensitive information.
 
 ---
 
 ## How it works
 
-[Detection](detection.md) runs first (same as [replace mode](replace.md), plus latent entity detection for context-inferable information). Then the text is classified by domain, each entity gets a sensitivity disposition, and an LLM rewrites the text accordingly. The rewrite is evaluated for quality and privacy leakage, with automatic repair if thresholds are exceeded. A final judge sets a `needs_human_review` flag.
+[Detection](detection.md) runs first (same as [replace mode](replace.md), plus latent entity detection for context-inferable information). Then the text is classified by domain, each entity gets a sensitivity disposition, and an LLM transforms the text accordingly. The result is evaluated for quality and privacy leakage, with automatic repair if thresholds are exceeded. A final judge sets a `needs_human_review` flag.
 
 ---
 

@@ -18,7 +18,7 @@
 # # 🕵️ Rewriting Biographies
 #
 # Instead of replacing entities with tokens, rewrite mode generates a
-# privacy-safe paraphrase of the entire text. The pipeline:
+# privacy-safe transformation of the entire text. The pipeline:
 #
 # 1. Detects entities (same as replace mode)
 # 2. Classifies the domain and assigns sensitivity dispositions
