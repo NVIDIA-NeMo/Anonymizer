@@ -72,6 +72,42 @@ input_data = AnonymizerInput(
 )
 
 # %% [markdown]
+# ## 🔄 Substitute
+#
+# - Uses an LLM to generate contextually appropriate synthetic replacements.
+# - Unlike the strategies above, the LLM considers the full document context --
+#   matching names with emails, cities to states, etc.
+# - Customize with `instructions` to steer the LLM's replacement choices.
+
+# %%
+substitute_config = AnonymizerConfig(replace=Substitute())
+
+substitute_preview = anonymizer.preview(
+    config=substitute_config,
+    data=input_data,
+    num_records=3,
+)
+
+# %%
+substitute_preview.display_record(0)
+
+# %% [markdown]
+# ### Custom instructions
+#
+# - Pass `instructions` to guide the LLM -- e.g. keep replacements within
+#   a specific region, culture, or naming convention.
+
+# %%
+substitute_custom_config = AnonymizerConfig(
+    replace=Substitute(instructions="Use only Japanese names and locations for all replacements.")
+)
+substitute_custom_preview = anonymizer.preview(
+    config=substitute_custom_config,
+    data=input_data,
+    num_records=3,
+)
+substitute_custom_preview.display_record(0)
+# %% [markdown]
 # ## 🚫 Redact
 #
 # - Replaces each entity with a label-based marker. Default: `[REDACTED_FIRST_NAME]`.
@@ -169,42 +205,6 @@ hash_custom_preview = anonymizer.preview(
 )
 hash_custom_preview.display_record(0)
 
-# %% [markdown]
-# ## 🔄 Substitute
-#
-# - Uses an LLM to generate contextually appropriate synthetic replacements.
-# - Unlike the strategies above, the LLM considers the full document context --
-#   matching names with emails, cities to states, etc.
-# - Customize with `instructions` to steer the LLM's replacement choices.
-
-# %%
-substitute_config = AnonymizerConfig(replace=Substitute())
-
-substitute_preview = anonymizer.preview(
-    config=substitute_config,
-    data=input_data,
-    num_records=3,
-)
-
-# %%
-substitute_preview.display_record(0)
-
-# %% [markdown]
-# ### Custom instructions
-#
-# - Pass `instructions` to guide the LLM -- e.g. keep replacements within
-#   a specific region, culture, or naming convention.
-
-# %%
-substitute_custom_config = AnonymizerConfig(
-    replace=Substitute(instructions="Use only Japanese names and locations for all replacements.")
-)
-substitute_custom_preview = anonymizer.preview(
-    config=substitute_custom_config,
-    data=input_data,
-    num_records=3,
-)
-substitute_custom_preview.display_record(0)
 
 # %% [markdown]
 # ## ⏭️ Next steps

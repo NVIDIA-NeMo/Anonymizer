@@ -47,12 +47,16 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 ```
 By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based anonymization. You can also [bring your own models](concepts/models.md).
 
+!!! info "Record length"
+
+    Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs. 
+
 ## Anonymize
 
 === "Python"
 
     ```python
-    from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
+    from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
 
     input_data = AnonymizerInput(
         source="patient_data.csv",
@@ -60,7 +64,7 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
         data_summary="Records containing detailed notes on patient encounters",
     )
     anonymizer = Anonymizer()
-    config = AnonymizerConfig(replace=Redact())
+    config = AnonymizerConfig(replace=Substitute())
 
     anonymizer.validate_config(config)
 
@@ -86,7 +90,7 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
       --source patient_data.csv \
       --text-column notes \
       --data-summary "Records containing detailed notes on patient encounters" \
-      --replace redact \
+      --replace substitute \
       --num-records 5
 
     # Then run the full dataset
@@ -94,7 +98,7 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
       --source patient_data.csv \
       --text-column notes \
       --data-summary "Records containing detailed notes on patient encounters" \
-      --replace redact \
+      --replace substitute \
       --output patient_data_anonymized.csv
     ```
 

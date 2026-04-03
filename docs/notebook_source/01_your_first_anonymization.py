@@ -56,8 +56,9 @@ anonymizer = Anonymizer()
 #
 # - `AnonymizerInput` points to your CSV and names the text column. `data_summary`
 #   gives the LLM context about the kind of text it will process.
+# - Records up to 2,000 tokens each work with the default model configs.
 # - `AnonymizerConfig` with `Substitute()` tells Anonymizer to replace detected
-#   entities with LLM-generated synthetic values (e.g. fake names, cities, dates).
+#   entities with LLM-generated synthetic values for names, cities, dates, etc.
 
 # %%
 input_data = AnonymizerInput(
