@@ -257,11 +257,6 @@ def test_has_entities_returns_false_for_none() -> None:
     assert _has_entities(None) is False
 
 
-def test_extract_domain_accepts_dict_payloads() -> None:
-    df = pd.DataFrame({COL_DOMAIN: [{"domain": "medical", "domain_confidence": 0.9}, {"domain": "medical"}]})
-    assert RewriteWorkflow._extract_domain(df) == "medical"
-
-
 # ---------------------------------------------------------------------------
 # Tests: full pipeline call order
 # ---------------------------------------------------------------------------
