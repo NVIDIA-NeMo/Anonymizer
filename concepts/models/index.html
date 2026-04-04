@@ -448,9 +448,10 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
+    <nav class="md-nav" aria-label="Custom models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#choosing-custom-models" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -481,6 +482,11 @@
       
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -599,6 +605,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -619,8 +629,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tutorials/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -634,8 +645,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
@@ -647,6 +664,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -1484,9 +1503,10 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
+    <nav class="md-nav" aria-label="Custom models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#choosing-custom-models" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1517,6 +1537,11 @@
       
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -1593,12 +1618,19 @@
   
 
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 <h1 id="models">Models<a class="headerlink" href="#models" title="Permanent link">&para;</a></h1>
 <p>Anonymizer uses LLMs for entity detection, replacement, and rewriting. Models are configured via YAML and mapped to workflow roles.</p>
 <hr />
 <h2 id="defaults">Defaults<a class="headerlink" href="#defaults" title="Permanent link">&para;</a></h2>
-<p>Set your API key and Anonymizer uses models hosted on <a href="https://build.nvidia.com">build.nvidia.com</a>.</p>
+<p>Set your API key for Anonymizer to use models hosted on <a href="https://build.nvidia.com">build.nvidia.com</a>.</p>
 <pre class="highlight"><code class="language-bash">export NVIDIA_API_KEY="your-nvidia-api-key"</code></pre>
+<div class="admonition note">
+<p class="admonition-title">Provider data handling</p>
+<p>Anonymizer sends prompts and text snippets to your configured model provider. If data must stay in your trusted environment, use a trusted/local provider endpoint.</p>
+</div>
 <table>
 <thead>
 <tr>
@@ -1610,17 +1642,17 @@
 <tbody>
 <tr>
 <td><code>gliner-pii-detector</code></td>
-<td><code>nvidia/gliner-pii</code></td>
+<td><a href="https://build.nvidia.com/nvidia/gliner-pii"><code>nvidia/gliner-pii</code></a></td>
 <td>Entity detection (NER)</td>
 </tr>
 <tr>
 <td><code>gpt-oss-120b</code></td>
-<td><code>openai/gpt-oss-120b</code></td>
-<td>Validation, augmentation, replacement, rewriting</td>
+<td><a href="https://build.nvidia.com/openai/gpt-oss-120b"><code>openai/gpt-oss-120b</code></a></td>
+<td>Detection validation &amp; augmentation, replacement, rewriting</td>
 </tr>
 <tr>
 <td><code>nemotron-30b-thinking</code></td>
-<td><code>nvidia/nemotron-3-nano-30b-a3b</code></td>
+<td><a href="https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b"><code>nvidia/nemotron-3-nano-30b-a3b</code></a></td>
 <td>Latent detection, evaluation, final judge</td>
 </tr>
 </tbody>
@@ -1628,7 +1660,7 @@
 <p>Each pipeline stage has a <strong>role</strong> mapped to one of these aliases. See the full role list in the default configs: <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml"><code>detection.yaml</code></a>, <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml"><code>replace.yaml</code></a>, <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml"><code>rewrite.yaml</code></a>.</p>
 <hr />
 <h2 id="custom-providers">Custom providers<a class="headerlink" href="#custom-providers" title="Permanent link">&para;</a></h2>
-<p>To use models from a non-default provider (OpenAI, OpenRouter, etc.), define a providers YAML:</p>
+<p>To use models from a different provider (OpenAI, OpenRouter, etc.), define a providers YAML:</p>
 <pre class="highlight"><code class="language-yaml"># my_providers.yaml
 providers:
   - name: openai
@@ -1643,7 +1675,7 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"</code></pre>
 <pre class="highlight"><code class="language-python">anonymizer = Anonymizer(model_providers="my_providers.yaml")</code></pre>
 <hr />
 <h2 id="custom-models">Custom models<a class="headerlink" href="#custom-models" title="Permanent link">&para;</a></h2>
-<p>Override specific roles by passing a unified YAML to <code>Anonymizer(model_configs=...)</code>. The <code>provider</code> field references a provider by name -- use <code>nvidia</code> for build.nvidia.com, or a custom provider defined above.</p>
+<p>Override specific roles by passing a unified YAML path to <code>Anonymizer(model_configs=...)</code>. The <code>provider</code> field references a provider by name -- use <code>nvidia</code> for build.nvidia.com, or a custom provider defined above.</p>
 <pre class="highlight"><code class="language-yaml"># my_models.yaml
 selected_models:
   detection:
@@ -1677,22 +1709,22 @@ model_configs:
     model_configs="my_models.yaml",
     model_providers="my_providers.yaml",
 )</code></pre>
-<p>Roles you don't override keep their defaults.</p>
+<p>You can pass <code>model_configs</code> as either a YAML file path or a YAML string.</p>
+<p>Roles you don't override keep their default alias selections, but those aliases must still exist in your <code>model_configs</code> pool.</p>
 <div class="admonition tip">
 <p class="admonition-title">Validate your config</p>
 <p>Use <a href="../../reference/anonymizer/interface/anonymizer/"><code>anonymizer.validate_config(config)</code></a> (or <a href="../../reference/anonymizer/interface/cli/main/"><code>anonymizer validate</code></a> from the CLI) after changing model configs to catch alias mismatches before processing data.</p>
 </div>
-<hr />
-<h2 id="choosing-custom-models">Choosing custom models<a class="headerlink" href="#choosing-custom-models" title="Permanent link">&para;</a></h2>
+<h3 id="choosing-custom-models">Choosing custom models<a class="headerlink" href="#choosing-custom-models" title="Permanent link">&para;</a></h3>
 <p>For Anonymizer, the best overall leaderboard model is not always the best default for every role.
 Some roles are simple classification or constrained JSON generation tasks, while others require deeper
-reasoning about privacy risk, long-context rewriting, and leakage repair.</p>
+reasoning about privacy risk, long-context rewriting, and leakage repair (see <a href="../rewrite/#evaluation-criteria">Rewrite evaluation criteria</a>).</p>
 <p>Use benchmarks as signals for role fit, not as a single global ranking.</p>
-<h3 id="most-useful-benchmark-signals">Most useful benchmark signals<a class="headerlink" href="#most-useful-benchmark-signals" title="Permanent link">&para;</a></h3>
+<h4 id="most-useful-benchmark-signals">Most useful benchmark signals<a class="headerlink" href="#most-useful-benchmark-signals" title="Permanent link">&para;</a></h4>
 <table>
 <thead>
 <tr>
-<th>Benchmark / metric</th>
+<th>Benchmark</th>
 <th>What it predicts well in Anonymizer</th>
 </tr>
 </thead>
@@ -1717,18 +1749,15 @@ reasoning about privacy risk, long-context rewriting, and leakage repair.</p>
 <td><code>Humanity's Last Exam</code> / <code>GPQA Diamond</code></td>
 <td>General reasoning depth for privacy-sensitive planning and rewriting.</td>
 </tr>
-<tr>
-<td>Latency / output speed / verbosity</td>
-<td>Notebook UX, evaluation-loop cost, and practical throughput.</td>
-</tr>
 </tbody>
 </table>
-<h3 id="practical-guidance">Practical guidance<a class="headerlink" href="#practical-guidance" title="Permanent link">&para;</a></h3>
+<p>Also consider operational constraints like latency, output speed, and verbosity, since they drive cost and practical throughput.</p>
+<h4 id="practical-guidance">Practical guidance<a class="headerlink" href="#practical-guidance" title="Permanent link">&para;</a></h4>
 <ul>
-<li>Use your strongest models for <code>latent_detector</code>, <code>disposition_analyzer</code>, <code>rewriter</code>, and often <code>repairer</code>.</li>
+<li>Use your strongest models for <code>latent_detector</code>, <code>disposition_analyzer</code>, <code>rewriter</code>, and <code>repairer</code>.</li>
 <li>Use mid-tier models for <code>entity_augmenter</code>, <code>meaning_extractor</code>, and <code>replacement_generator</code>.</li>
-<li>Use smaller or faster models for <code>entity_validator</code>, <code>domain_classifier</code>, <code>qa_generator</code>, and often <code>evaluator</code>.</li>
-<li>Do not optimize every role for peak leaderboard rank. Optimize the hard-to-recover privacy and rewrite steps for quality, and the bounded steps for reliability per token.</li>
+<li>Use smaller or faster models for <code>entity_validator</code>, <code>domain_classifier</code>, <code>qa_generator</code>, and <code>evaluator</code>.</li>
+<li>Do not optimize every role for peak leaderboard rank. Optimize the hard-to-recover privacy and rewrite steps for quality. Optimize bounded steps for reliability per token.</li>
 </ul>
 
 

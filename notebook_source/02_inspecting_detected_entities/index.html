@@ -474,6 +474,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -494,8 +498,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tutorials/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -509,8 +514,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
@@ -522,6 +533,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -1329,10 +1342,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-youll-learn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📚 What you'll learn
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#setup" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Setup
+        ⚙️ Setup
       
     </span>
   </a>
@@ -1340,10 +1364,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#run" class="md-nav__link">
+  <a href="#preview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Run
+        👁️ Preview
       
     </span>
   </a>
@@ -1351,10 +1375,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#visual-preview" class="md-nav__link">
+  <a href="#inspect" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Visual preview
+        🔍 Inspect
       
     </span>
   </a>
@@ -1365,18 +1389,7 @@
   <a href="#columns" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Columns
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tagged-text" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tagged text
+        📋 Columns
       
     </span>
   </a>
@@ -1387,7 +1400,7 @@
   <a href="#detected-entities" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Detected entities
+        🎯 Detected entities
       
     </span>
   </a>
@@ -1398,7 +1411,7 @@
   <a href="#labels" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Labels
+        🏷️ Labels
       
     </span>
   </a>
@@ -1409,7 +1422,7 @@
   <a href="#sources" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Sources
+        📡 Sources
       
     </span>
   </a>
@@ -1420,7 +1433,7 @@
   <a href="#by-value" class="md-nav__link">
     <span class="md-ellipsis">
       
-        By value
+        📊 By value
       
     </span>
   </a>
@@ -1431,7 +1444,18 @@
   <a href="#failures" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Failures
+        ❌ Failures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⏭️ Next steps
       
     </span>
   </a>
@@ -2188,32 +2212,49 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=60e21b2f">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e0807635">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="inspecting-detected-entities">Inspecting Detected Entities<a class="anchor-link" href="#inspecting-detected-entities">¶</a></h1><p>Inspect the entity detection pipeline output. Useful for understanding what was detected,
+<h1 id="inspecting-detected-entities">🕵️ Inspecting Detected Entities<a class="anchor-link" href="#inspecting-detected-entities">¶</a></h1><p>Dig into the entity detection pipeline output -- what was detected,
 what the LLM validator kept or dropped, and where entities appear in the text.</p>
-<p>We use <strong>Annotate</strong> mode here -- it preserves the original text while tagging each entity
+<p>This notebook is for users who need to debug detection quality,
+tune labels and/or thresholds, or investigate downstream replacement or rewriting results.</p>
+<p>We use <strong>Annotate</strong> mode because it preserves the original text while tagging each entity
 with its label, making it ideal for reviewing detection quality.</p>
+<h4 id="what-youll-learn">📚 What you'll learn<a class="anchor-link" href="#what-youll-learn">¶</a></h4><ul>
+<li>Run the detection pipeline and inspect its output using Annotate mode</li>
+<li>View tagged text with entities marked inline</li>
+<li>Break down detected entities by label, source, and unique value</li>
+<li>Identify and triage failed records</li>
+</ul>
+<blockquote>
+<p><strong>Tip:</strong> First time running notebooks? Start with
+<a href="https://nvidia-nemo.github.io/Anonymizer/latest/tutorials/">setup instructions</a>.</p>
+</blockquote>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=52963ef5">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a44df5eb">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h2>
+<h2 id="setup">⚙️ Setup<a class="anchor-link" href="#setup">¶</a></h2><ul>
+<li>Check if your <code>NVIDIA_API_KEY</code> from <a href="https://build.nvidia.com">build.nvidia.com</a> is registered for model access.</li>
+<li>Import the core classes -- this notebook uses <code>Annotate</code> to keep original values visible.</li>
+<li><code>Anonymizer()</code> initializes with the default model provider -- no extra config needed.</li>
+<li><code>Anonymizer.configure_logging()</code> controls verbosity -- switch to <code>Anonymizer.configure_logging(LoggingConfig.debug())</code> when troubleshooting.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=05cdd9e2">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=44401d80">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2231,24 +2272,36 @@ with its label, making it ideal for reviewing detection quality.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">getpass</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">getpass</span><span class="o">.</span><span class="n">getpass</span><span class="p">(</span><span class="s2">"Enter NVIDIA_API_KEY from build.nvidia.com: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY is required to run these notebooks."</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">from collections import Counter
+<div class="clipboard-copy-txt" id="cell-1">import getpass
+import os
+from collections import Counter
 
 import pandas as pd
 
-from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput</div>
+if not os.getenv("NVIDIA_API_KEY"):
+    key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
+    if not key:
+        raise RuntimeError("NVIDIA_API_KEY is required to run these notebooks.")
+    os.environ["NVIDIA_API_KEY"] = key</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=55e2f056">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fc6dac6c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2266,28 +2319,16 @@ from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput</
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">anonymizer = Anonymizer()</div>
+<div class="clipboard-copy-txt" id="cell-2">from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput</div>
 </div>
 </div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e3c24613">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="run">Run<a class="anchor-link" href="#run">¶</a></h2><p>Detection runs as part of any strategy. Annotate is a good fit for debugging because
-the original values stay visible alongside their labels.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=db7b68e7">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c6ec363b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2296,6 +2337,48 @@ the original values stay visible alongside their labels.</p>
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
 <clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-3">anonymizer = Anonymizer()</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1435c821">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="preview">👁️ Preview<a class="anchor-link" href="#preview">¶</a></h2><ul>
+<li>Detection runs as part of any strategy. <code>Annotate</code> keeps original text visible
+alongside entity labels -- ideal for debugging.</li>
+<li><code>trace_dataframe</code> exposes every internal pipeline column; that's what we explore below.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0e47e8c6">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2319,7 +2402,7 @@ the original values stay visible alongside their labels.</p>
     <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">config = AnonymizerConfig(replace=Annotate())
+<div class="clipboard-copy-txt" id="cell-4">config = AnonymizerConfig(replace=Annotate())
 
 input_data = AnonymizerInput(
     source="../data/NVIDIA_synthetic_biographies.csv",
@@ -2338,56 +2421,20 @@ result = anonymizer.preview(
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=84ebb3f7">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=64ac8173">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="visual-preview">Visual preview<a class="anchor-link" href="#visual-preview">¶</a></h2>
+<h2 id="inspect">🔍 Inspect<a class="anchor-link" href="#inspect">¶</a></h2><ul>
+<li><code>display_record()</code> renders an interactive view with entity highlights.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0348ffdd">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-4">result.display_record(0)</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9cc0e5e3">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="columns">Columns<a class="anchor-link" href="#columns">¶</a></h2>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e57494e1">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f09d94a4">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2405,31 +2452,30 @@ result = anonymizer.preview(
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">trace_dataframe</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Records: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Columns: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">df = result.trace_dataframe
-print(f"Records: {len(df)}")
-print(f"Columns: {list(df.columns)}")</div>
+<div class="clipboard-copy-txt" id="cell-5">result.display_record(0)</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ab5f68fb">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c905d76b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="tagged-text">Tagged text<a class="anchor-link" href="#tagged-text">¶</a></h2><p>Original text with entities marked inline.</p>
+<h2 id="columns">📋 Columns<a class="anchor-link" href="#columns">¶</a></h2><ul>
+<li><code>trace_dataframe</code> contains all internal columns from the pipeline
+(detection, validation, replacement, etc.).</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=00252500">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f527b5a0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2447,34 +2493,34 @@ print(f"Columns: {list(df.columns)}")</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"--- Record </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2"> ---"</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="s2">"biography_with_spans"</span><span class="p">][:</span><span class="mi">1000</span><span class="p">])</span>
-    <span class="nb">print</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">trace_dataframe</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Records: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Columns: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">for i in range(len(df)):
-    print(f"--- Record {i} ---")
-    print(df.loc[i, "biography_with_spans"][:1000])
-    print()</div>
+<div class="clipboard-copy-txt" id="cell-6">df = result.trace_dataframe
+print(f"Records: {len(df)}")
+print(f"Columns: {list(df.columns)}")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=28059298">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d6f29894">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="detected-entities">Detected entities<a class="anchor-link" href="#detected-entities">¶</a></h2><p>Final entity list after validation. Each has <code>value</code>, <code>label</code>, positions, <code>score</code>,
-and <code>source</code> (detector / augmenter / name_split / propagation).</p>
+<h2 id="detected-entities">🎯 Detected entities<a class="anchor-link" href="#detected-entities">¶</a></h2><ul>
+<li>Final entity list after validation. Each entity has <code>value</code>, <code>label</code>,
+positions, <code>score</code>, and <code>source</code> (detector / augmenter / name_split / propagation).</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=eaab0b2d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=418ea841">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2517,18 +2563,20 @@ if not entity_df.empty:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=899b4d90">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e2219fa8">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="labels">Labels<a class="anchor-link" href="#labels">¶</a></h2>
+<h2 id="labels">🏷️ Labels<a class="anchor-link" href="#labels">¶</a></h2><ul>
+<li>Entity label distribution across all records -- which types are most common.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e9152dd4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=58fa3fd1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2569,24 +2617,27 @@ for label, count in label_counts.most_common():
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=352254a4">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1d5d54b8">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="sources">Sources<a class="anchor-link" href="#sources">¶</a></h2><ul>
+<h2 id="sources">📡 Sources<a class="anchor-link" href="#sources">¶</a></h2><ul>
+<li>Where each entity came from in the pipeline:<ul>
 <li><code>detector</code> -- GLiNER NER</li>
 <li><code>augmenter</code> -- LLM-added (missed by GLiNER)</li>
-<li><code>validator</code> -— LLM decision step over detector-seed entities (keep/reclass/drop); it does not emit a separate source value.</li>
+<li><code>validator</code> -- LLM decision step over detector-seed entities (keep/reclass/drop); does not emit a separate source value</li>
 <li><code>name_split</code> -- derived from splitting full names</li>
 <li><code>propagation</code> -- expanded from validated entities to all text occurrences</li>
+</ul>
+</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e88caeb7">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6d913c2a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2627,18 +2678,21 @@ for source, count in source_counts.most_common():
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0318ab45">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5a838909">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="by-value">By value<a class="anchor-link" href="#by-value">¶</a></h2><p>Entities grouped by unique value -- this drives consistent replacement.</p>
+<h2 id="by-value">📊 By value<a class="anchor-link" href="#by-value">¶</a></h2><ul>
+<li>Entities grouped by unique value -- this is what drives consistent replacement
+downstream (same name always maps to the same substitute).</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=07123c60">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cdbdf17a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2677,18 +2731,21 @@ for entry in by_value:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3525b572">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=eb424507">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="failures">Failures<a class="anchor-link" href="#failures">¶</a></h2><p>Records dropped during detection (LLM timeout, parse error, etc.).</p>
+<h2 id="failures">❌ Failures<a class="anchor-link" href="#failures">¶</a></h2><ul>
+<li>Records dropped during detection (LLM timeout, parse error, etc.).</li>
+<li>Check this to understand data loss in your pipeline.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7e1753c8">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=effb57c5">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2719,6 +2776,24 @@ else:
     print("No failed records.")</div>
 </div>
 </div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0ce1abfa">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="next-steps">⏭️ Next steps<a class="anchor-link" href="#next-steps">¶</a></h2><ul>
+<li><strong><a href="01_your_first_anonymization.ipynb">🕵️ Your First Anonymization</a></strong> --
+the simplest end-to-end replace workflow if you haven't run it yet.</li>
+<li><strong><a href="03_choosing_a_replacement_strategy.ipynb">🎯 Choosing a Replacement Strategy</a></strong> --
+compare Redact, Annotate, Hash, and Substitute side-by-side.</li>
+<li><strong><a href="04_rewriting_biographies.ipynb">✏️ Rewriting Biographies</a></strong> --
+generate privacy-safe paraphrases instead of token-level replacements.</li>
+</ul>
 </div>
 </div>
 </div>

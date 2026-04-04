@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/concepts/rewrite/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/tutorials/">
       
       
-        <link rel="prev" href="../replace/">
+        <link rel="prev" href="../concepts/rewrite/">
       
       
-        <link rel="next" href="../../tutorials/">
+        <link rel="next" href="../notebooks/01_your_first_anonymization/">
       
       
         
       
       
-      <link rel="icon" href="../../assets/favicon.svg">
+      <link rel="icon" href="../assets/favicon.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
     
     
       
-        <title>Rewrite - NeMo Anonymizer</title>
+        <title>Overview - NeMo Anonymizer</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,13 +53,13 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../css/style.css">
+      <link rel="stylesheet" href="../css/style.css">
     
-      <link rel="stylesheet" href="../../css/mkdocstrings.css">
+      <link rel="stylesheet" href="../css/mkdocstrings.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rewrite" class="md-skip">
+        <a href="#tutorials-overview" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +104,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href=".." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Rewrite
+              Overview
             
           </span>
         </div>
@@ -242,7 +242,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href=".." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -272,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -296,10 +296,8 @@
       
   
   
-    
   
   
-  
     
     
       
@@ -315,11 +313,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -340,7 +338,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -358,7 +356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../models/" class="md-nav__link">
+      <a href="../concepts/models/" class="md-nav__link">
         
   
   
@@ -386,7 +384,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../detection/" class="md-nav__link">
+      <a href="../concepts/detection/" class="md-nav__link">
         
   
   
@@ -414,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../replace/" class="md-nav__link">
+      <a href="../concepts/replace/" class="md-nav__link">
         
   
   
@@ -439,37 +437,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Rewrite
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../concepts/rewrite/" class="md-nav__link">
         
   
   
@@ -485,120 +456,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How it works
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Configuration">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#privacy-goal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Privacy goal
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#risk-tolerance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Risk tolerance
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#output-columns" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Output columns
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#working-with-flagged-records" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Working with flagged records
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#model-roles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Model roles
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -615,6 +472,8 @@
       
   
   
+    
+  
   
   
     
@@ -638,15 +497,15 @@
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tutorials/" class="md-nav__link ">
+            <a href="./" class="md-nav__link md-nav__link--active">
               
   
   
@@ -664,13 +523,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+              <label class="md-nav__link md-nav__link--active" for="__nav_3" id="__nav_3_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -690,7 +549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../notebooks/01_your_first_anonymization/" class="md-nav__link">
+      <a href="../notebooks/01_your_first_anonymization/" class="md-nav__link">
         
   
   
@@ -718,7 +577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
+      <a href="../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
         
   
   
@@ -746,7 +605,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
+      <a href="../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
         
   
   
@@ -774,7 +633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../notebooks/04_rewriting_biographies/" class="md-nav__link">
+      <a href="../notebooks/04_rewriting_biographies/" class="md-nav__link">
         
   
   
@@ -802,7 +661,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
+      <a href="../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
         
   
   
@@ -949,7 +808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/config/anonymizer_config/" class="md-nav__link">
+      <a href="../reference/anonymizer/config/anonymizer_config/" class="md-nav__link">
         
   
   
@@ -977,7 +836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/config/models/" class="md-nav__link">
+      <a href="../reference/anonymizer/config/models/" class="md-nav__link">
         
   
   
@@ -1005,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/config/replace_strategies/" class="md-nav__link">
+      <a href="../reference/anonymizer/config/replace_strategies/" class="md-nav__link">
         
   
   
@@ -1033,7 +892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/config/rewrite/" class="md-nav__link">
+      <a href="../reference/anonymizer/config/rewrite/" class="md-nav__link">
         
   
   
@@ -1128,7 +987,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/interface/anonymizer/" class="md-nav__link">
+      <a href="../reference/anonymizer/interface/anonymizer/" class="md-nav__link">
         
   
   
@@ -1207,7 +1066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/interface/cli/main/" class="md-nav__link">
+      <a href="../reference/anonymizer/interface/cli/main/" class="md-nav__link">
         
   
   
@@ -1243,7 +1102,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/interface/display/" class="md-nav__link">
+      <a href="../reference/anonymizer/interface/display/" class="md-nav__link">
         
   
   
@@ -1271,7 +1130,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/interface/errors/" class="md-nav__link">
+      <a href="../reference/anonymizer/interface/errors/" class="md-nav__link">
         
   
   
@@ -1299,7 +1158,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/interface/results/" class="md-nav__link">
+      <a href="../reference/anonymizer/interface/results/" class="md-nav__link">
         
   
   
@@ -1335,7 +1194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/anonymizer/logging/" class="md-nav__link">
+      <a href="../reference/anonymizer/logging/" class="md-nav__link">
         
   
   
@@ -1390,7 +1249,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../devnotes/" class="md-nav__link ">
+            <a href="../devnotes/" class="md-nav__link ">
               
   
   
@@ -1434,7 +1293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -1489,55 +1348,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
+  <a href="#setting-up-your-environment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How it works
+        🚀 Setting Up Your Environment
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Configuration">
+    <nav class="md-nav" aria-label="🚀 Setting Up Your Environment">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#privacy-goal" class="md-nav__link">
+  <a href="#local-setup-best-practices" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Privacy goal
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#risk-tolerance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Risk tolerance
+        Local Setup Best Practices
       
     </span>
   </a>
@@ -1550,35 +1376,74 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#output-columns" class="md-nav__link">
+  <a href="#tutorial-series" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output columns
+        📚 Tutorial Series
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="📚 Tutorial Series">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-your-first-anonymization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Your First Anonymization
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#working-with-flagged-records" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#2-inspecting-detected-entities" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Working with flagged records
+        2. Inspecting Detected Entities
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#model-roles" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#3-choosing-a-replacement-strategy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Model roles
+        3. Choosing a Replacement Strategy
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-rewriting-biographies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Rewriting Biographies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-rewriting-legal-documents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Rewriting Legal Documents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1607,7 +1472,7 @@
   
   
     <li class="md-path__item">
-      <a href="../.." class="md-path__link">
+      <a href=".." class="md-path__link">
         
   <span class="md-ellipsis">
     Home
@@ -1625,10 +1490,10 @@
     
     
       <li class="md-path__item">
-        <a href="../models/" class="md-path__link">
+        <a href="./" class="md-path__link">
           
   <span class="md-ellipsis">
-    Concepts
+    Tutorials
   </span>
 
         </a>
@@ -1653,234 +1518,73 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-<h1 id="rewrite">Rewrite<a class="headerlink" href="#rewrite" title="Permanent link">&para;</a></h1>
-<p>Instead of replacing individual entities, rewrite mode transforms the entire text to produce a privacy-safe version that reduces both explicit identifiers and implicit, inferable signals that could lead to re-identification. While overall meaning is preserved where possible, rewrite mode intentionally modifies or removes details when needed to eliminate latent entities and break inference pathways.</p>
-<hr />
-<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p><a href="../detection/">Detection</a> runs first (same as <a href="../replace/">Replace mode</a>, plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. </p>
-<p>The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. A final judge provides a qualitative assessment of the rewritten record. Any records that failed to meet standards are tagged for human review. </p>
-<hr />
-<h2 id="basic-usage">Basic usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
-<pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
+<h1 id="tutorials-overview">Tutorials Overview<a class="headerlink" href="#tutorials-overview" title="Permanent link">&para;</a></h1>
+<p>The Anonymizer tutorial series covers everything from basic replace workflows to advanced rewrite workflows.</p>
+<h2 id="setting-up-your-environment">🚀 Setting Up Your Environment<a class="headerlink" href="#setting-up-your-environment" title="Permanent link">&para;</a></h2>
+<h3 id="local-setup-best-practices">Local Setup Best Practices<a class="headerlink" href="#local-setup-best-practices" title="Permanent link">&para;</a></h3>
+<p>First, download the tutorial <code>anonymizer_tutorial.zip</code> from the
+<a href="https://github.com/NVIDIA-NeMo/Anonymizer/releases">Anonymizer release assets</a> page. </p>
+<!-- TODO: update with direct link after cutting a release -->
 
-anonymizer = Anonymizer()
+<p><pre class="highlight"><code class="language-bash"># Extract tutorial notebooks
+unzip anonymizer_tutorial.zip
+cd anonymizer_tutorial</code></pre>
+We recommend using a virtual environment to manage dependencies.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">uv (Recommended)</label><label for="__tabbed_1_2">pip + venv</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<pre class="highlight"><code class="language-bash"># Create and activate a virtual environment
+uv venv .venv
+source .venv/bin/activate
 
-config = AnonymizerConfig(rewrite=Rewrite())
-data = AnonymizerInput(source="data.csv", text_column="text")
+# Install Anonymizer + notebook tooling
+uv pip install nemo-anonymizer jupyter ipykernel
 
-preview = anonymizer.preview(config=config, data=data, num_records=3)
-preview.display_record()</code></pre>
-<hr />
-<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Default</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>privacy_goal</code></td>
-<td>Auto-populated</td>
-<td>What to protect and what to preserve.</td>
-</tr>
-<tr>
-<td><code>instructions</code></td>
-<td><code>None</code></td>
-<td>Additional instructions for the rewrite LLM.</td>
-</tr>
-<tr>
-<td><code>risk_tolerance</code></td>
-<td><code>low</code></td>
-<td>Preset controlling repair and review thresholds: <code>minimal</code>, <code>low</code>, <code>moderate</code>, <code>high</code>.</td>
-</tr>
-<tr>
-<td><code>max_repair_iterations</code></td>
-<td><code>2</code></td>
-<td>Maximum repair rounds. Set to 0 to disable repair.</td>
-</tr>
-</tbody>
-</table>
-<h3 id="privacy-goal">Privacy goal<a class="headerlink" href="#privacy-goal" title="Permanent link">&para;</a></h3>
-<p><code>PrivacyGoal</code> tells the rewriter what matters. Defaults work for general-purpose data. Override for domain-specific needs:</p>
-<pre class="highlight"><code class="language-python">from anonymizer.config.rewrite import PrivacyGoal
+# Register this env as a notebook kernel (one-time)
+python -m ipykernel install --user --name anonymizer-venv
 
-config = AnonymizerConfig(
-    rewrite=Rewrite(
-        privacy_goal=PrivacyGoal(
-            protect="All patient identifiers and clinical facility names",
-            preserve="Clinical findings, treatment plans, and medical terminology",
-        )
-    )
-)</code></pre>
-<div class="admonition tip">
-<p class="admonition-title">Be specific</p>
-<p>The more precise the <code>protect</code> and <code>preserve</code> fields, the better the rewriter targets sensitive content while retaining what matters.</p>
+# Set API key before launching Jupyter
+export NVIDIA_API_KEY="your-nvidia-api-key"
+
+# Launch Jupyter
+uv run jupyter notebook</code></pre>
 </div>
-<h3 id="risk-tolerance">Risk tolerance<a class="headerlink" href="#risk-tolerance" title="Permanent link">&para;</a></h3>
-<p>Controls the automated repair loop and human review flagging. Each preset bundles a coherent set of behaviors:</p>
-<table>
-<thead>
-<tr>
-<th>Preset</th>
-<th>Repair threshold</th>
-<th>Repair on any high leak</th>
-<th>Flag utility below</th>
-<th>Flag leakage above</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>minimal</code></td>
-<td>0.6</td>
-<td>Yes</td>
-<td>0.6</td>
-<td>1.0</td>
-</tr>
-<tr>
-<td><code>low</code></td>
-<td>1.0</td>
-<td>Yes</td>
-<td>0.5</td>
-<td>2.0</td>
-</tr>
-<tr>
-<td><code>moderate</code></td>
-<td>1.5</td>
-<td>Yes</td>
-<td>0.4</td>
-<td>2.5</td>
-</tr>
-<tr>
-<td><code>high</code></td>
-<td>2.0</td>
-<td>No</td>
-<td>0.3</td>
-<td>3.0</td>
-</tr>
-</tbody>
-</table>
-<p>The <strong>repair threshold</strong> is the leakage mass above which a record is sent for repair.</p>
-<blockquote>
-<p>Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
-A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.</p>
-</blockquote>
-<pre class="highlight"><code class="language-python">config = AnonymizerConfig(
-    rewrite=Rewrite(
-        risk_tolerance="minimal",
-        max_repair_iterations=3,
-    )
-)</code></pre>
-<hr />
-<h2 id="output-columns">Output columns<a class="headerlink" href="#output-columns" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Column</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>{text_col}_rewritten</code></td>
-<td>The privacy-safe rewritten text.</td>
-</tr>
-<tr>
-<td><code>utility_score</code></td>
-<td>Quality preservation (0.0--1.0). Higher is better.</td>
-</tr>
-<tr>
-<td><code>leakage_mass</code></td>
-<td>Weighted privacy leakage. Lower is better.</td>
-</tr>
-<tr>
-<td><code>weighted_leakage_rate</code></td>
-<td>Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass.</td>
-</tr>
-<tr>
-<td><code>any_high_leaked</code></td>
-<td>Whether any high-sensitivity entity leaked through.</td>
-</tr>
-<tr>
-<td><code>needs_human_review</code></td>
-<td>Flag for records that may need manual review.</td>
-</tr>
-</tbody>
-</table>
-<p>Use <code>preview.trace_dataframe</code> for the full pipeline trace (domain, disposition, QA pairs, repair iterations, judge evaluation).</p>
-<div class="admonition note">
-<p class="admonition-title">No entities? No rewrite.</p>
-<p>Records with no detected entities pass through unchanged with <code>utility_score=1.0</code> and <code>leakage_mass=0.0</code>.</p>
+<div class="tabbed-block">
+<pre class="highlight"><code class="language-bash"># Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate
+
+# Install Anonymizer + notebook tooling
+pip install nemo-anonymizer jupyter ipykernel
+
+# Optional: register this env as a named kernel for Jupyter/VS Code
+python -m ipykernel install --user --name anonymizer-venv
+
+# Set API key before launching Jupyter
+export NVIDIA_API_KEY="your-nvidia-api-key"
+
+# Launch Jupyter
+jupyter notebook</code></pre>
 </div>
-<hr />
-<h2 id="working-with-flagged-records">Working with flagged records<a class="headerlink" href="#working-with-flagged-records" title="Permanent link">&para;</a></h2>
-<p>Records with <code>needs_human_review=True</code> exceeded automated thresholds for leakage or utility. To investigate and resolve:</p>
-<p><strong>Diagnose:</strong> Use <code>trace_dataframe</code> to inspect the flagged record's intermediate columns — disposition, leakage breakdown, repair iterations, and judge evaluation.</p>
-<pre class="highlight"><code class="language-python">flagged = result.trace_dataframe[result.trace_dataframe["needs_human_review"] == True]
-flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre>
-<p><strong>Tune and re-run:</strong> Adjust settings and re-run on flagged records:</p>
-<ul>
-<li>Increase <code>max_repair_iterations</code> to give the rewriter more attempts.</li>
-<li>Refine <code>privacy_goal</code> with more specific <code>protect</code> / <code>preserve</code> instructions for the domain.</li>
-<li>Lower <code>risk_tolerance</code> (e.g. <code>minimal</code>) to trigger more aggressive repair.</li>
-</ul>
-<p><strong>Last resort:</strong> Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. </p>
-<hr />
-<h2 id="model-roles">Model roles<a class="headerlink" href="#model-roles" title="Permanent link">&para;</a></h2>
-<p>Rewrite uses multiple LLM roles. All default to models in the <a href="../models/">default config</a>:</p>
-<table>
-<thead>
-<tr>
-<th>Role</th>
-<th>Default</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>domain_classifier</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Classifies text domain.</td>
-</tr>
-<tr>
-<td><code>disposition_analyzer</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Assigns sensitivity levels.</td>
-</tr>
-<tr>
-<td><code>meaning_extractor</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Extracts meaning units.</td>
-</tr>
-<tr>
-<td><code>qa_generator</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Generates QA pairs for evaluation.</td>
-</tr>
-<tr>
-<td><code>rewriter</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Generates the rewritten text.</td>
-</tr>
-<tr>
-<td><code>evaluator</code></td>
-<td><code>nemotron-30b-thinking</code></td>
-<td>Evaluates quality and leakage.</td>
-</tr>
-<tr>
-<td><code>repairer</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Repairs high-leakage rewrites.</td>
-</tr>
-<tr>
-<td><code>judge</code></td>
-<td><code>nemotron-30b-thinking</code></td>
-<td>Final quality/privacy judge.</td>
-</tr>
-</tbody>
-</table>
+</div>
+</div>
+<p>Set your <code>NVIDIA_API_KEY</code> in the same shell where you launch Jupyter. If <code>NVIDIA_API_KEY</code> appears to be missing in a notebook:</p>
+<ol>
+<li>Launch Jupyter from the same shell where you exported it.</li>
+<li>Confirm the selected kernel is your intended environment.</li>
+<li>Restart the notebook kernel after setting or changing environment variables.</li>
+</ol>
+<h2 id="tutorial-series">📚 Tutorial Series<a class="headerlink" href="#tutorial-series" title="Permanent link">&para;</a></h2>
+<h3 id="1-your-first-anonymization">1. <a href="../notebooks/02_inspecting_detected_entities/">Your First Anonymization</a><a class="headerlink" href="#1-your-first-anonymization" title="Permanent link">&para;</a></h3>
+<p>Learn the basic end-to-end flow: load data, configure replace mode, preview, inspect, and run.</p>
+<h3 id="2-inspecting-detected-entities">2. <a href="../notebooks/02_inspecting_detected_entities/">Inspecting Detected Entities</a><a class="headerlink" href="#2-inspecting-detected-entities" title="Permanent link">&para;</a></h3>
+<p>Understand what detection produced, how entities are labeled, and where they came from.</p>
+<h3 id="3-choosing-a-replacement-strategy">3. <a href="../notebooks/03_choosing_a_replacement_strategy/">Choosing a Replacement Strategy</a><a class="headerlink" href="#3-choosing-a-replacement-strategy" title="Permanent link">&para;</a></h3>
+<p>Compare replace mode options -- Redact, Annotate, Hash, and Substitute -- side by side, including custom templates.</p>
+<h3 id="4-rewriting-biographies">4. <a href="../notebooks/04_rewriting_biographies/">Rewriting Biographies</a><a class="headerlink" href="#4-rewriting-biographies" title="Permanent link">&para;</a></h3>
+<p>Use rewrite mode with privacy goals, evaluation criteria, and review-flag triage.</p>
+<h3 id="5-rewriting-legal-documents">5. <a href="../notebooks/05_rewriting_legal_documents/">Rewriting Legal Documents</a><a class="headerlink" href="#5-rewriting-legal-documents" title="Permanent link">&para;</a></h3>
+<p>Apply rewrite mode to legal-domain text with custom entity labels and stricter protection goals.</p>
 
 
 
@@ -1918,7 +1622,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../replace/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Replace">
+          <a href="../concepts/rewrite/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Rewrite">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1928,20 +1632,20 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
                 Previous
               </span>
               <div class="md-ellipsis">
-                Replace
+                Rewrite
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../tutorials/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+          <a href="../notebooks/01_your_first_anonymization/" class="md-footer__link md-footer__link--next" aria-label="Next: Your First Anonymization">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Overview
+                Your First Anonymization
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -1978,16 +1682,16 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../js/mathjax.js"></script>
+        <script src="../js/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
-        <script src="../../js/toc-toggle.js"></script>
+        <script src="../js/toc-toggle.js"></script>
       
     
   </body>

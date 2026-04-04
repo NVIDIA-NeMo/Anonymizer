@@ -474,6 +474,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -494,8 +498,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tutorials/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -509,8 +514,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
@@ -522,6 +533,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -1329,10 +1342,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-youll-learn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📚 What you'll learn
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#setup" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Setup
+        ⚙️ Setup
       
     </span>
   </a>
@@ -1343,7 +1367,7 @@
   <a href="#input-data" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Input data
+        📦 Input data
       
     </span>
   </a>
@@ -1354,7 +1378,7 @@
   <a href="#configure" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configure
+        🎛️ Configure
       
     </span>
   </a>
@@ -1365,7 +1389,7 @@
   <a href="#preview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Preview
+        👁️ Preview
       
     </span>
   </a>
@@ -1376,7 +1400,7 @@
   <a href="#full-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Full run
+        🚀 Full run
       
     </span>
   </a>
@@ -1387,7 +1411,18 @@
   <a href="#filter-by-review-flag" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Filter by review flag
+        🚩 Filter by review flag
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⏭️ Next steps
       
     </span>
   </a>
@@ -2144,39 +2179,52 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c3916015">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7c4d51b0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="rewriting-biographies">Rewriting Biographies<a class="anchor-link" href="#rewriting-biographies">¶</a></h1><p>Instead of replacing entities with tokens, rewrite mode generates a
-privacy-safe paraphrase of the entire text. The pipeline:</p>
+<h1 id="rewriting-biographies">🕵️ Rewriting Biographies<a class="anchor-link" href="#rewriting-biographies">¶</a></h1><p>Instead of replacing entities with tokens, rewrite mode generates a
+privacy-safe transformation of the entire text. The pipeline:</p>
 <ol>
-<li>Detects entities (same as replace mode)</li>
+<li>Detects entities (same as replace mode, plus latent entity detection)</li>
 <li>Classifies the domain and assigns sensitivity dispositions</li>
 <li>Generates a rewritten version that obscures sensitive entities</li>
 <li>Evaluates quality (utility) and privacy (leakage) with an automated repair loop</li>
 <li>Runs a final LLM judge for informational scores</li>
 </ol>
-<p>The result includes <strong>utility_score</strong>, <strong>leakage_mass</strong>, and a
-<strong>needs_human_review</strong> flag so you can triage records that need attention.</p>
+<h4 id="what-youll-learn">📚 What you'll learn<a class="anchor-link" href="#what-youll-learn">¶</a></h4><ul>
+<li>Configure rewrite mode with <code>PrivacyGoal</code> to specify what to protect and what to preserve</li>
+<li>Set evaluation criteria and risk tolerance for automated quality checks</li>
+<li>Preview rewritten text and inspect utility / leakage scores</li>
+<li>Triage flagged records with <code>needs_human_review</code></li>
+</ul>
+<blockquote>
+<p><strong>Tip:</strong> First time running notebooks? Start with
+<a href="https://nvidia-nemo.github.io/Anonymizer/latest/tutorials/">setup instructions</a>.</p>
+</blockquote>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8f48dad7">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6ad0bff0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h2>
+<h2 id="setup">⚙️ Setup<a class="anchor-link" href="#setup">¶</a></h2><ul>
+<li>Check if your <code>NVIDIA_API_KEY</code> from <a href="https://build.nvidia.com">build.nvidia.com</a> is registered for model access.</li>
+<li>Import <code>Rewrite</code> and <code>PrivacyGoal</code>.</li>
+<li><code>Anonymizer()</code> initializes with the default model provider -- no extra config needed.</li>
+<li><code>Anonymizer.configure_logging()</code> controls verbosity -- switch to <code>Anonymizer.configure_logging(LoggingConfig.debug())</code> when troubleshooting.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f0783795">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cd4e16ac">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2194,22 +2242,22 @@ privacy-safe paraphrase of the entire text. The pipeline:</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">LoggingConfig</span><span class="p">,</span> <span class="n">Rewrite</span><span class="p">,</span> <span class="n">configure_logging</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer.config.rewrite</span><span class="w"> </span><span class="kn">import</span> <span class="n">EvaluationCriteria</span><span class="p">,</span> <span class="n">PrivacyGoal</span><span class="p">,</span> <span class="n">RiskTolerance</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">Rewrite</span><span class="p">,</span> <span class="n">configure_logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer.config.rewrite</span><span class="w"> </span><span class="kn">import</span> <span class="n">PrivacyGoal</span>
 
-<span class="n">configure_logging</span><span class="p">(</span><span class="n">LoggingConfig</span><span class="o">.</span><span class="n">debug</span><span class="p">())</span>
+<span class="n">configure_logging</span><span class="p">(</span><span class="n">enabled</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, Rewrite, configure_logging
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal, RiskTolerance
+<div class="clipboard-copy-txt" id="cell-1">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite, configure_logging
+from anonymizer.config.rewrite import PrivacyGoal
 
-configure_logging(LoggingConfig.debug())</div>
+configure_logging(enabled=False)</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=038658d1">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=41855484">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2236,18 +2284,21 @@ configure_logging(LoggingConfig.debug())</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=15dadb25">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=58699153">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="input-data">Input data<a class="anchor-link" href="#input-data">¶</a></h2>
+<h2 id="input-data">📦 Input data<a class="anchor-link" href="#input-data">¶</a></h2><ul>
+<li>Same biographies dataset used in earlier notebooks -- familiar data makes it
+easy to compare rewrite output against replace output.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b69c8f3d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ebb6c3c0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2282,19 +2333,24 @@ configure_logging(LoggingConfig.debug())</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=730d326a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fc7b1134">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="configure">Configure<a class="anchor-link" href="#configure">¶</a></h2><p>Spell out what to protect and what to preserve. This gives the rewriter
-clear guidance for your domain.</p>
+<h2 id="configure">🎛️ Configure<a class="anchor-link" href="#configure">¶</a></h2><ul>
+<li><code>PrivacyGoal</code> spells out what to <strong>protect</strong> and what to <strong>preserve</strong> --
+this gives the rewriter clear, domain-specific guidance.</li>
+<li><code>risk_tolerance</code> (default <code>"low"</code>) and <code>max_repair_iterations</code> (default <code>2</code>)
+control the automated quality gate --
+see <a href="../concepts/rewrite.md#evaluation-criteria">Evaluation criteria</a> for presets.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c4e1eb81">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=27784e72">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2318,10 +2374,6 @@ clear guidance for your domain.</p>
             <span class="n">protect</span><span class="o">=</span><span class="s2">"All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)"</span><span class="p">,</span>
             <span class="n">preserve</span><span class="o">=</span><span class="s2">"Career trajectory, educational background, and professional accomplishments"</span><span class="p">,</span>
         <span class="p">),</span>
-        <span class="n">evaluation</span><span class="o">=</span><span class="n">EvaluationCriteria</span><span class="p">(</span>
-            <span class="n">risk_tolerance</span><span class="o">=</span><span class="n">RiskTolerance</span><span class="o">.</span><span class="n">strict</span><span class="p">,</span>
-            <span class="n">max_repair_iterations</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-        <span class="p">),</span>
     <span class="p">),</span>
 <span class="p">)</span>
 </pre></div>
@@ -2331,10 +2383,6 @@ clear guidance for your domain.</p>
             protect="All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)",
             preserve="Career trajectory, educational background, and professional accomplishments",
         ),
-        evaluation=EvaluationCriteria(
-            risk_tolerance=RiskTolerance.strict,
-            max_repair_iterations=3,
-        ),
     ),
 )</div>
 </div>
@@ -2343,18 +2391,21 @@ clear guidance for your domain.</p>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=71bc00b9">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=cd0b185b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="preview">Preview<a class="anchor-link" href="#preview">¶</a></h2>
+<h2 id="preview">👁️ Preview<a class="anchor-link" href="#preview">¶</a></h2><ul>
+<li><code>preview()</code> runs on a small sample so you can iterate on privacy goals
+and evaluation criteria before committing to a full run.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=76a122b8">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=bd1c7d86">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2393,7 +2444,7 @@ preview.display_record(0)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cb22ce2d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f6a7543d">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2420,19 +2471,21 @@ preview.display_record(0)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d165225e">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=11b54e79">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="full-run">Full run<a class="anchor-link" href="#full-run">¶</a></h2><p><code>result.dataframe</code> has user-facing columns only.
-<code>result.trace_dataframe</code> has every intermediate column for debugging.</p>
+<h2 id="full-run">🚀 Full run<a class="anchor-link" href="#full-run">¶</a></h2><ul>
+<li><code>result.dataframe</code> has user-facing columns: rewritten text, scores, and the review flag.</li>
+<li><code>result.trace_dataframe</code> has every intermediate column for debugging.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cb83788f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=eca8c8d6">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2452,12 +2505,10 @@ preview.display_record(0)</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">)</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
 <span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-7">result = anonymizer.run(config=config, data=input_data)
 
-print(result)
 result.dataframe.head()</div>
 </div>
 </div>
@@ -2465,7 +2516,7 @@ result.dataframe.head()</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fdaaeac7">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b3d5783a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2492,7 +2543,7 @@ result.dataframe.head()</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=00ab2817">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ea5c47d6">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2519,18 +2570,23 @@ result.dataframe.head()</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4d457b79">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=72623047">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="filter-by-review-flag">Filter by review flag<a class="anchor-link" href="#filter-by-review-flag">¶</a></h2><p>Records where automated metrics exceed thresholds are flagged for manual review.</p>
+<h2 id="filter-by-review-flag">🚩 Filter by review flag<a class="anchor-link" href="#filter-by-review-flag">¶</a></h2><ul>
+<li>Records where automated metrics exceed thresholds are flagged for manual review.</li>
+<li>Use this to prioritize human attention on the records that need it most.</li>
+<li>See <a href="../concepts/rewrite.md#working-with-flagged-records">Working with flagged records</a>
+for guidance on diagnosing and resolving flagged records.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=eaf915e4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6b79a09a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2559,6 +2615,24 @@ print(f"{len(flagged)} of {len(df)} records flagged for human review")
 flagged.head()</div>
 </div>
 </div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2066ec40">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="next-steps">⏭️ Next steps<a class="anchor-link" href="#next-steps">¶</a></h2><ul>
+<li><strong><a href="05_rewriting_legal_documents.ipynb">⚖️ Rewriting Legal Documents</a></strong> --
+rewrite legal text with custom entity labels and domain-specific privacy goals.</li>
+<li><strong><a href="03_choosing_a_replacement_strategy.ipynb">🎯 Choosing a Replacement Strategy</a></strong> --
+compare Redact, Annotate, Hash, and Substitute if you prefer token-level replacement.</li>
+<li><strong><a href="02_inspecting_detected_entities.ipynb">🔍 Inspecting Detected Entities</a></strong> --
+debug what the detection pipeline found before rewriting.</li>
+</ul>
 </div>
 </div>
 </div>

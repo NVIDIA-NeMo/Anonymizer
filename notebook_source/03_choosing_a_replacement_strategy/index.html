@@ -474,6 +474,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -494,8 +498,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tutorials/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -509,8 +514,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
@@ -522,6 +533,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -1322,97 +1335,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Setup
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#input-data" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Input data
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#redact" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Redact
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Redact">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#custom-template" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Custom template
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#annotate" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Annotate
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#hash" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hash
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#substitute" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Substitute
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -2161,35 +2083,65 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=66b8a80f">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=cf53e88e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="choosing-a-replacement-strategy">Choosing a Replacement Strategy<a class="anchor-link" href="#choosing-a-replacement-strategy">¶</a></h1><p>Four replacement strategies compared side by side:</p>
-<ul>
-<li><strong>Redact</strong> — remove entity, leave a marker</li>
-<li><strong>Annotate</strong> — tag entity with its label (no removal)</li>
-<li><strong>Hash</strong> — deterministic hash token</li>
-<li><strong>Substitute</strong> — LLM-generated synthetic values</li>
+<h1 id="choosing-a-replacement-strategy">🕵️ Choosing a Replacement Strategy<a class="anchor-link" href="#choosing-a-replacement-strategy">¶</a></h1><p>Four <a href="../concepts/replace.md">replace mode</a> strategies compared side-by-side on the same data.</p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Substitute</strong></td>
+<td>LLM-generated contextual replacements</td>
+</tr>
+<tr>
+<td><strong>Redact</strong></td>
+<td>Label-based markers (<code>[REDACTED_FIRST_NAME]</code>)</td>
+</tr>
+<tr>
+<td><strong>Annotate</strong></td>
+<td>Tags entities but keeps original text</td>
+</tr>
+</tbody>
+</table>
+<h1 id="hash-deterministic-hash-digest">| <strong>Hash</strong> | Deterministic hash digest |<a class="anchor-link" href="#hash-deterministic-hash-digest">¶</a></h1><h4 id="what-youll-learn">📚 What you'll learn<a class="anchor-link" href="#what-youll-learn">¶</a></h4><ul>
+<li>Compare <strong>Redact</strong>, <strong>Annotate</strong>, <strong>Hash</strong>, and <strong>Substitute</strong> on the same input</li>
+<li>Customize output formats with <code>format_template</code></li>
+<li>Understand which strategy fits your use case (readability, determinism, privacy)</li>
+</ul>
+<blockquote>
+<p><strong>Tip:</strong> First time running notebooks? Start with
+<a href="https://nvidia-nemo.github.io/Anonymizer/latest/tutorials/">setup instructions</a>.</p>
+</blockquote>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=abc3b6dd">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="setup">⚙️ Setup<a class="anchor-link" href="#setup">¶</a></h2><ul>
+<li>Check if your <code>NVIDIA_API_KEY</code> from <a href="https://build.nvidia.com">build.nvidia.com</a> is registered for model access.</li>
+<li>Import all four strategy classes: <code>Redact</code>, <code>Annotate</code>, <code>Hash</code>, <code>Substitute</code>.</li>
+<li><code>Anonymizer()</code> initializes with the default model provider -- no extra config needed.</li>
+<li><code>Anonymizer.configure_logging()</code> controls verbosity -- switch to <code>Anonymizer.configure_logging(LoggingConfig.debug())</code> when troubleshooting.</li>
 </ul>
 </div>
 </div>
 </div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=80e8073e">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h2>
-</div>
-</div>
-</div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c832a03f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0dc4bebe">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2207,16 +2159,30 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">Hash</span><span class="p">,</span> <span class="n">Redact</span><span class="p">,</span> <span class="n">Substitute</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">getpass</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">getpass</span><span class="o">.</span><span class="n">getpass</span><span class="p">(</span><span class="s2">"Enter NVIDIA_API_KEY from build.nvidia.com: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY is required to run these notebooks."</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact, Substitute</div>
+<div class="clipboard-copy-txt" id="cell-1">import getpass
+import os
+
+if not os.getenv("NVIDIA_API_KEY"):
+    key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
+    if not key:
+        raise RuntimeError("NVIDIA_API_KEY is required to run these notebooks.")
+    os.environ["NVIDIA_API_KEY"] = key</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=469e52b4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8d4b5edd">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2234,27 +2200,16 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">Hash</span><span class="p">,</span> <span class="n">Redact</span><span class="p">,</span> <span class="n">Substitute</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">anonymizer = Anonymizer()</div>
+<div class="clipboard-copy-txt" id="cell-2">from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, Hash, Redact, Substitute</div>
 </div>
 </div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=cf7543c3">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="input-data">Input data<a class="anchor-link" href="#input-data">¶</a></h2>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7e4e235e">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6c719c56">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2272,13 +2227,54 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-3">anonymizer = Anonymizer()</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8a58556c">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="input-data">📦 Input data<a class="anchor-link" href="#input-data">¶</a></h2><ul>
+<li>We use the same biographies dataset throughout so each strategy is compared
+on identical input.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=378e496b">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
     <span class="n">source</span><span class="o">=</span><span class="s2">"../data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
     <span class="n">text_column</span><span class="o">=</span><span class="s2">"biography"</span><span class="p">,</span>
     <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Biographical profiles"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">input_data = AnonymizerInput(
+<div class="clipboard-copy-txt" id="cell-4">input_data = AnonymizerInput(
     source="../data/NVIDIA_synthetic_biographies.csv",
     text_column="biography",
     data_summary="Biographical profiles",
@@ -2289,18 +2285,23 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1b811fa3">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=134e3bcf">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="redact">Redact<a class="anchor-link" href="#redact">¶</a></h2><p>Default: <code>[REDACTED_FIRST_NAME]</code>. Customize with <code>format_template</code>.</p>
+<h2 id="substitute">🔄 Substitute<a class="anchor-link" href="#substitute">¶</a></h2><ul>
+<li>Uses an LLM to generate contextually appropriate synthetic replacements.</li>
+<li>Unlike the strategies above, the LLM considers the full document context --
+matching names with emails, cities to states, etc.</li>
+<li>Customize with <code>instructions</code> to steer the LLM's replacement choices.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8d47a36d">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=9241acdd">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2308,7 +2309,144 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">substitute_config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span><span class="n">replace</span><span class="o">=</span><span class="n">Substitute</span><span class="p">())</span>
+
+<span class="n">substitute_preview</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">preview</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">substitute_config</span><span class="p">,</span>
+    <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">,</span>
+    <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-5">substitute_config = AnonymizerConfig(replace=Substitute())
+
+substitute_preview = anonymizer.preview(
+    config=substitute_config,
+    data=input_data,
+    num_records=3,
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=9f6be87a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">substitute_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-6">substitute_preview.display_record(0)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ff709655">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="custom-instructions">Custom instructions<a class="anchor-link" href="#custom-instructions">¶</a></h3><ul>
+<li>Pass <code>instructions</code> to guide the LLM -- e.g. keep replacements within
+a specific region, culture, or naming convention.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d697dbc0">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">substitute_custom_config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span>
+    <span class="n">replace</span><span class="o">=</span><span class="n">Substitute</span><span class="p">(</span><span class="n">instructions</span><span class="o">=</span><span class="s2">"Use only Japanese names and locations for all replacements."</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">substitute_custom_preview</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">preview</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">substitute_custom_config</span><span class="p">,</span>
+    <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">,</span>
+    <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">substitute_custom_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-7">substitute_custom_config = AnonymizerConfig(
+    replace=Substitute(instructions="Use only Japanese names and locations for all replacements.")
+)
+substitute_custom_preview = anonymizer.preview(
+    config=substitute_custom_config,
+    data=input_data,
+    num_records=3,
+)
+substitute_custom_preview.display_record(0)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=95d384af">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="redact">🚫 Redact<a class="anchor-link" href="#redact">¶</a></h2><ul>
+<li>Replaces each entity with a label-based marker. Default: <code>[REDACTED_FIRST_NAME]</code>.</li>
+<li>Customize with <code>Redact(format_template=...)</code>.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3030927c">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2328,7 +2466,7 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 
 <span class="n">redact_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">redact_config = AnonymizerConfig(replace=Redact())
+<div class="clipboard-copy-txt" id="cell-8">redact_config = AnonymizerConfig(replace=Redact())
 
 redact_preview = anonymizer.preview(
     config=redact_config,
@@ -2342,58 +2480,21 @@ redact_preview.display_record(0)</div>
 </div>
 </div>
 </div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=203a7b5b">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">redact_run</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="n">config</span><span class="o">=</span><span class="n">redact_config</span><span class="p">,</span>
-    <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="n">redact_run</span><span class="p">)</span>
-<span class="n">redact_run</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-5">redact_run = anonymizer.run(
-    config=redact_config,
-    data=input_data,
-)
-
-print(redact_run)
-redact_run.display_record(0)</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=350a6d89">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=41a7c8cf">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="custom-template">Custom template<a class="anchor-link" href="#custom-template">¶</a></h3><p><code>format_template="***"</code> replaces every entity with the same constant.</p>
+<h3 id="custom-template">Custom template<a class="anchor-link" href="#custom-template">¶</a></h3><ul>
+<li><code>format_template="***"</code> replaces every entity with the same constant.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=55795237">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=87716b0a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2401,7 +2502,7 @@ redact_run.display_record(0)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2421,7 +2522,7 @@ redact_run.display_record(0)</div>
 
 <span class="n">custom_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">custom_config = AnonymizerConfig(replace=Redact(format_template="***"))
+<div class="clipboard-copy-txt" id="cell-9">custom_config = AnonymizerConfig(replace=Redact(format_template="***"))
 
 custom_preview = anonymizer.preview(
     config=custom_config,
@@ -2436,18 +2537,23 @@ custom_preview.display_record(0)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4cafaae8">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=363b1fbc">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="annotate">Annotate<a class="anchor-link" href="#annotate">¶</a></h2><p>Default: <code>&lt;Alice, first_name&gt;</code>. Customize with <code>format_template</code> — must include <code>{text}</code> and <code>{label}</code>.</p>
+<h2 id="annotate">🏷️ Annotate<a class="anchor-link" href="#annotate">¶</a></h2><ul>
+<li>Tags each entity with its label but keeps the original text visible.
+Default: <code>&lt;Alice, first_name&gt;</code>.</li>
+<li>Customize with <code>format_template</code> -- must include <code>{text}</code> and <code>{label}</code>,
+e.g. <code>Annotate(format_template="&lt;{text}-|-{label}&gt;")</code>.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b70a859c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0926a47b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2455,7 +2561,7 @@ custom_preview.display_record(0)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2475,7 +2581,7 @@ custom_preview.display_record(0)</div>
 
 <span class="n">annotate_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">annotate_config = AnonymizerConfig(replace=Annotate())
+<div class="clipboard-copy-txt" id="cell-10">annotate_config = AnonymizerConfig(replace=Annotate())
 
 annotate_preview = anonymizer.preview(
     config=annotate_config,
@@ -2490,19 +2596,20 @@ annotate_preview.display_record(0)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2bcc3f2a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2adb3dd9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="hash">Hash<a class="anchor-link" href="#hash">¶</a></h2><p>Deterministic — same input always produces the same hash. Customize <code>format_template</code>
-(must include <code>{digest}</code>), <code>algorithm</code> (<code>sha256</code>/<code>sha1</code>/<code>md5</code>), and <code>digest_length</code> (6–64).</p>
+<h3 id="custom-template">Custom template<a class="anchor-link" href="#custom-template">¶</a></h3><ul>
+<li>Override the default format with any string containing <code>{text}</code> and <code>{label}</code>.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fa0b862a">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ac99efe7">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2510,7 +2617,61 @@ annotate_preview.display_record(0)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">annotate_custom_config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span><span class="n">replace</span><span class="o">=</span><span class="n">Annotate</span><span class="p">(</span><span class="n">format_template</span><span class="o">=</span><span class="s2">"&lt;</span><span class="si">{text}</span><span class="s2">-|-</span><span class="si">{label}</span><span class="s2">&gt;"</span><span class="p">))</span>
+<span class="n">annotate_custom_preview</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">preview</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">annotate_custom_config</span><span class="p">,</span>
+    <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">,</span>
+    <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">annotate_custom_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-11">annotate_custom_config = AnonymizerConfig(replace=Annotate(format_template="&lt;{text}-|-{label}&gt;"))
+annotate_custom_preview = anonymizer.preview(
+    config=annotate_custom_config,
+    data=input_data,
+    num_records=3,
+)
+annotate_custom_preview.display_record(0)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=50bd950a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="hash">#️⃣ Hash<a class="anchor-link" href="#hash">¶</a></h2><ul>
+<li>Deterministic -- same input always produces the same hash.</li>
+<li>Customize with <code>format_template</code> (must include <code>{digest}</code>),
+<code>algorithm</code> (<code>sha256</code>/<code>sha1</code>/<code>md5</code>), and <code>digest_length</code> (6-64 characters).</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2d675b67">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2530,7 +2691,7 @@ annotate_preview.display_record(0)</div>
 
 <span class="n">hash_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">hash_config = AnonymizerConfig(replace=Hash())
+<div class="clipboard-copy-txt" id="cell-12">hash_config = AnonymizerConfig(replace=Hash())
 
 hash_preview = anonymizer.preview(
     config=hash_config,
@@ -2545,20 +2706,20 @@ hash_preview.display_record(0)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0da42221">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b3857c23">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="substitute">Substitute<a class="anchor-link" href="#substitute">¶</a></h2><p>Uses an LLM to generate contextually appropriate synthetic replacements. Unlike the
-strategies above, the LLM considers the full document context — matching names to emails,
-cities to states, etc.</p>
+<h3 id="custom-template">Custom template<a class="anchor-link" href="#custom-template">¶</a></h3><ul>
+<li>Override the algorithm, digest length, and output format.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=845e9ab4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ecc504ea">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2566,7 +2727,7 @@ cities to states, etc.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2576,50 +2737,41 @@ cities to states, etc.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">substitute_config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span><span class="n">replace</span><span class="o">=</span><span class="n">Substitute</span><span class="p">())</span>
-
-<span class="n">substitute_preview</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">preview</span><span class="p">(</span>
-    <span class="n">config</span><span class="o">=</span><span class="n">substitute_config</span><span class="p">,</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">hash_custom_config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span><span class="n">replace</span><span class="o">=</span><span class="n">Hash</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"md5"</span><span class="p">,</span> <span class="n">digest_length</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">format_template</span><span class="o">=</span><span class="s2">"[</span><span class="si">{digest}</span><span class="s2">]"</span><span class="p">))</span>
+<span class="n">hash_custom_preview</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">preview</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">hash_custom_config</span><span class="p">,</span>
     <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">,</span>
     <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="n">hash_custom_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">substitute_config = AnonymizerConfig(replace=Substitute())
-
-substitute_preview = anonymizer.preview(
-    config=substitute_config,
+<div class="clipboard-copy-txt" id="cell-13">hash_custom_config = AnonymizerConfig(replace=Hash(algorithm="md5", digest_length=8, format_template="[{digest}]"))
+hash_custom_preview = anonymizer.preview(
+    config=hash_custom_config,
     data=input_data,
     num_records=3,
-)</div>
+)
+hash_custom_preview.display_record(0)</div>
 </div>
 </div>
 </div>
 </div>
 </div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=16ecc48a">
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d6b87c83">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">substitute_preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-10">substitute_preview.display_record(0)</div>
-</div>
-</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="next-steps">⏭️ Next steps<a class="anchor-link" href="#next-steps">¶</a></h2><ul>
+<li><strong><a href="02_inspecting_detected_entities.ipynb">🕵️ Inspecting Detected Entities</a></strong> --
+dig into what the detection pipeline found and debug quality.</li>
+<li><strong><a href="04_rewriting_biographies.ipynb">✏️ Rewriting Biographies</a></strong> --
+generate privacy-safe paraphrases instead of token-level replacements.</li>
+<li><strong><a href="05_rewriting_legal_documents.ipynb">⚖️ Rewriting Legal Documents</a></strong> --
+rewrite legal text with domain-specific privacy goals.</li>
+</ul>
 </div>
 </div>
 </div>
