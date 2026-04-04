@@ -35,7 +35,8 @@ preview.display_record()
 |-------|---------|-------------|
 | `privacy_goal` | Auto-populated | What to protect and what to preserve. |
 | `instructions` | `None` | Additional instructions for the rewrite LLM. |
-| `evaluation` | `EvaluationCriteria()` | Thresholds and criteria for leakage/utility scoring. |
+| `risk_tolerance` | `low` | Preset controlling repair and review thresholds: `minimal`, `low`, `moderate`, `high`. |
+| `max_repair_iterations` | `2` | Maximum repair rounds. Set to 0 to disable repair. |
 
 ### Privacy goal
 
@@ -58,20 +59,29 @@ config = AnonymizerConfig(
 
     The more precise the `protect` and `preserve` fields, the better the rewriter targets sensitive content while retaining what matters.
 
-### Evaluation criteria
+### Risk tolerance
 
-Controls the repair loop and human review flagging:
+Controls the automated repair loop and human review flagging. Each preset bundles a coherent set of behaviors:
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `risk_tolerance` | `conservative` | Preset leakage threshold: `strict` (0.6), `conservative` (1.0), `moderate` (1.5), `permissive` (2.0). |
-| `max_leakage_mass` | `None` | How much `leakage_mass` is still okay before repair should try again; if you set this, it overrides `risk_tolerance` and domain-based limits. |
-| `auto_adjust_by_domain` | `False` | Tighten thresholds automatically for high-risk domains ([domain → risk level map](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/rewrite.py#L28)). |
-| `repair_any_high_leak` | `True` | Trigger repair if any high-sensitivity entity leaks. |
-| `max_repair_iterations` | `2` | Maximum repair rounds. Only applicable when `auto_repair_privacy=True` |
-| `auto_repair_privacy` | `True` | Enable automatic repair loop. |
-| `flag_utility_below` | `0.50` | Flag for human review if utility score is below this. |
-| `flag_leakage_mass_above` | `2.0` | Flag for human review if leakage mass exceeds this. |
+| Preset | Repair threshold | Repair on any high leak | Flag utility below | Flag leakage above |
+|--------|-----------------|------------------------|--------------------|--------------------|
+| `minimal` | 0.6 | Yes | 0.6 | 1.0 |
+| `low` | 1.0 | Yes | 0.5 | 2.0 |
+| `moderate` | 1.5 | Yes | 0.4 | 2.5 |
+| `high` | 2.0 | No | 0.3 | 3.0 |
+
+The **repair threshold** is the leakage mass above which a record is sent for repair.
+> Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
+> A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.
+
+```python
+config = AnonymizerConfig(
+    rewrite=Rewrite(
+        risk_tolerance="minimal",
+        max_repair_iterations=3,
+    )
+)
+```
 
 ---
 
@@ -82,6 +92,7 @@ Controls the repair loop and human review flagging:
 | `{text_col}_rewritten` | The privacy-safe rewritten text. |
 | `utility_score` | Quality preservation (0.0--1.0). Higher is better. |
 | `leakage_mass` | Weighted privacy leakage. Lower is better. |
+| `weighted_leakage_rate` | Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass. |
 | `any_high_leaked` | Whether any high-sensitivity entity leaked through. |
 | `needs_human_review` | Flag for records that may need manual review. |
 
@@ -108,7 +119,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
 
 - Increase `max_repair_iterations` to give the rewriter more attempts.
 - Refine `privacy_goal` with more specific `protect` / `preserve` instructions for the domain.
-- Lower `risk_tolerance` (e.g. `strict`) to trigger more aggressive repair.
+- Lower `risk_tolerance` (e.g. `minimal`) to trigger more aggressive repair.
 
 **Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. 
 

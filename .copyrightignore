@@ -11,3 +11,4 @@ CHANGELOG.md
 .cursor/
 .claude/
 .agent/
+docs/notebook_source/

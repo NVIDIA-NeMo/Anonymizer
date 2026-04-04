@@ -5,10 +5,17 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*DataFrame concatenation with empty or all-NA entries.*",
+    category=FutureWarning,
+)
 
 ROW_ORDER_COL = "_anonymizer_row_order"
 

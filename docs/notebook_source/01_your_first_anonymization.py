@@ -10,8 +10,6 @@
 #     language: python
 #     name: python3
 # ---
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 
 # %% [markdown]
 # # 🕵️ Your First Anonymization
@@ -35,6 +33,8 @@
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
 # - Import the core Anonymizer classes: `Anonymizer`, `AnonymizerConfig`, `AnonymizerInput`, and `Substitute`.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
+# - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
+
 # %%
 import getpass
 import os

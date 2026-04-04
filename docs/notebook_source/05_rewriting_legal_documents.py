@@ -10,9 +10,6 @@
 #     language: python
 #     name: python3
 # ---
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 
 # %% [markdown]
 # # 🕵️ Rewriting Legal Documents
@@ -38,6 +35,7 @@
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
 # - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
+
 # %%
 import getpass
 import os
@@ -50,7 +48,7 @@ if not os.getenv("NVIDIA_API_KEY"):
 
 # %%
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Detect, Rewrite, configure_logging
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal, RiskTolerance
+from anonymizer.config.rewrite import PrivacyGoal
 
 configure_logging(enabled=False)
 
@@ -118,10 +116,8 @@ config = AnonymizerConfig(
             protect="All personal identifiers, case numbers, court names, and institutional references that could identify parties",
             preserve="Legal reasoning, procedural facts, statutory references, and the structure of the ruling",
         ),
-        evaluation=EvaluationCriteria(
-            risk_tolerance=RiskTolerance.strict,
-            max_repair_iterations=3,
-        ),
+        risk_tolerance="minimal",
+        max_repair_iterations=3,
     ),
 )
 

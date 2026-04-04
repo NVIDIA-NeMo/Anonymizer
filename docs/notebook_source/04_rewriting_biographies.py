@@ -10,9 +10,6 @@
 #     language: python
 #     name: python3
 # ---
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 
 # %% [markdown]
 # # 🕵️ Rewriting Biographies
@@ -40,13 +37,15 @@
 # ## ⚙️ Setup
 #
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
-# - Import `Rewrite` and its config classes: `PrivacyGoal`, `EvaluationCriteria`, `RiskTolerance`.
+# - Import `Rewrite` and `PrivacyGoal`.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
 # - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
 # %%
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal, RiskTolerance
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite, configure_logging
+from anonymizer.config.rewrite import PrivacyGoal
+
+configure_logging(enabled=False)
 
 # %%
 anonymizer = Anonymizer()
@@ -69,9 +68,9 @@ input_data = AnonymizerInput(
 #
 # - `PrivacyGoal` spells out what to **protect** and what to **preserve** --
 #   this gives the rewriter clear, domain-specific guidance.
-# - `EvaluationCriteria` controls the automated quality gate: `risk_tolerance`
-#   sets the leakage threshold and `max_repair_iterations` caps how many times
-#   the rewriter retries when evaluation fails.
+# - `risk_tolerance` (default `"low"`) and `max_repair_iterations` (default `2`)
+#   control the automated quality gate --
+#   see [Evaluation criteria](../concepts/rewrite.md#evaluation-criteria) for presets.
 
 # %%
 config = AnonymizerConfig(
@@ -79,10 +78,6 @@ config = AnonymizerConfig(
         privacy_goal=PrivacyGoal(
             protect="All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)",
             preserve="Career trajectory, educational background, and professional accomplishments",
-        ),
-        evaluation=EvaluationCriteria(
-            risk_tolerance=RiskTolerance.strict,
-            max_repair_iterations=3,
         ),
     ),
 )
