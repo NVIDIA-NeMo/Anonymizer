@@ -175,7 +175,7 @@ annotate_custom_preview.display_record(0)
 #
 # - Deterministic -- same input always produces the same hash.
 # - Customize with `format_template` (must include `{digest}`),
-#   `algorithm` (`sha256`/`sha1`/`md5`), and `digest_length` (6--64).
+#   `algorithm` (`sha256`/`sha1`/`md5`), and `digest_length` (6-64 characters).
 
 # %%
 hash_config = AnonymizerConfig(replace=Hash())
