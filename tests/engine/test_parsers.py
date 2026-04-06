@@ -15,42 +15,12 @@ from anonymizer.engine.rewrite.parsers import (
     parse_quality_compare,
     parse_quality_qa,
     parse_sensitivity_disposition,
-    render_template,
 )
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswersSchema,
     QACompareResultsSchema,
     QualityQAPairsSchema,
 )
-
-# ---------------------------------------------------------------------------
-# render_template
-# ---------------------------------------------------------------------------
-
-
-def test_render_template_basic() -> None:
-    assert render_template("Hello <<NAME>>!", {"<<NAME>>": "Alice"}) == "Hello Alice!"
-
-
-def test_render_template_multiple_placeholders() -> None:
-    assert render_template("<<A>> and <<B>>", {"<<A>>": "X", "<<B>>": "Y"}) == "X and Y"
-
-
-def test_render_template_no_cross_contamination() -> None:
-    result = render_template(
-        "text: <<TEXT>>, score: <<SCORE>>",
-        {"<<TEXT>>": "contains <<SCORE>> literally", "<<SCORE>>": "0.9"},
-    )
-    assert result == "text: contains <<SCORE>> literally, score: 0.9"
-
-
-def test_render_template_unmatched_placeholder_leave_as_is() -> None:
-    assert render_template("<<A>> and <<B>>", {"<<A>>": "X"}) == "X and <<B>>"
-
-
-def test_render_template_empty_replacements() -> None:
-    assert render_template("no placeholders", {}) == "no placeholders"
-
 
 # ---------------------------------------------------------------------------
 # field

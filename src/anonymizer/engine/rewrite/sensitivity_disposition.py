@@ -18,6 +18,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import SensitivityDispositionSchema
 
 
@@ -153,14 +154,17 @@ QUALITY REQUIREMENTS:
 - protection_reason must be specific to this document (not generic boilerplate).
 - combined_risk_level must consider other entities being retained.
 </output_requirements>"""
-    return (
-        prompt.replace("<<PRIVACY_GOAL>>", privacy_goal_str)
-        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN, key="domain"))
-        .replace("<<DATA_SUMMARY>>", data_summary_line)
-        .replace("<<DOMAIN_SUPPLEMENT>>", _jinja(COL_DOMAIN_SUPPLEMENT))
-        .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))
-        .replace("<<FINAL_ENTITIES>>", _jinja(COL_ENTITIES_BY_VALUE))
-        .replace("<<LATENT_ENTITIES>>", _jinja(COL_LATENT_ENTITIES))
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<PRIVACY_GOAL>>": privacy_goal_str,
+            "<<DOMAIN>>": _jinja(COL_DOMAIN, key="domain"),
+            "<<DATA_SUMMARY>>": data_summary_line,
+            "<<DOMAIN_SUPPLEMENT>>": _jinja(COL_DOMAIN_SUPPLEMENT),
+            "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+            "<<FINAL_ENTITIES>>": _jinja(COL_ENTITIES_BY_VALUE),
+            "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),
+        },
     )
 
 

@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     Domain,
@@ -186,11 +187,14 @@ Sensitivity disposition:
 <<ENTITY_PROTECTION_BLOCK>>
 >>>
 </input>"""
-    return (
-        prompt.replace("<<ENTITY_PROTECTION_BLOCK>>", _jinja(COL_SENSITIVITY_DISPOSITION_BLOCK))
-        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN, key=_DOMAIN_KEY))
-        .replace("<<DOMAIN_SUPPLEMENT>>", _jinja(COL_DOMAIN_SUPPLEMENT))
-        .replace("<<TEXT>>", _jinja(COL_TEXT))
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<ENTITY_PROTECTION_BLOCK>>": _jinja(COL_SENSITIVITY_DISPOSITION_BLOCK),
+            "<<DOMAIN>>": _jinja(COL_DOMAIN, key=_DOMAIN_KEY),
+            "<<DOMAIN_SUPPLEMENT>>": _jinja(COL_DOMAIN_SUPPLEMENT),
+            "<<TEXT>>": _jinja(COL_TEXT),
+        },
     )
 
 
@@ -252,7 +256,10 @@ Meaning units:
 <<MEANING_UNITS_SERIALIZED>>
 ---
 </input>"""
-    return prompt.replace("<<MEANING_UNITS_SERIALIZED>>", _jinja(COL_MEANING_UNITS_SERIALIZED))
+    return substitute_placeholders(
+        prompt,
+        {"<<MEANING_UNITS_SERIALIZED>>": _jinja(COL_MEANING_UNITS_SERIALIZED)},
+    )
 
 
 # ---------------------------------------------------------------------------

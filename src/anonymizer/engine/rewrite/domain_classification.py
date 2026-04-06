@@ -12,6 +12,7 @@ from data_designer.config.column_types import ColumnConfigT
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import COL_DOMAIN, COL_DOMAIN_SUPPLEMENT, COL_TEXT, _jinja
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
 
 # ---------------------------------------------------------------------------
@@ -407,10 +408,13 @@ Choose the domain that best reflects how the text is meant to be used or interpr
 <text_to_classify>
 <<TEXT>>
 </text_to_classify>"""
-    return (
-        prompt.replace("<<TEXT>>", _jinja(COL_TEXT))
-        .replace("<<DOMAINS>>", domains_text)
-        .replace("<<DATA_CONTEXT>>", data_context_section)
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<TEXT>>": _jinja(COL_TEXT),
+            "<<DOMAINS>>": domains_text,
+            "<<DATA_CONTEXT>>": data_context_section,
+        },
     )
 
 

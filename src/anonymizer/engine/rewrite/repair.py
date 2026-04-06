@@ -29,13 +29,13 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
     field,
     normalize_payload,
     parse_privacy_answers,
     parse_privacy_qa,
     parse_sensitivity_disposition,
-    render_template,
 )
 from anonymizer.engine.schemas.rewrite import (
     EntityDispositionSchema,
@@ -184,7 +184,7 @@ Provide ONLY the rewritten text. Do not include explanations, comments, or markd
         "<<LEAKED_ITEMS>>": str(row.get(COL_LEAKED_PRIVACY_ITEMS, "")),
         "<<UTILITY_SCORE>>": str(row.get(COL_UTILITY_SCORE, 0.0)),
     }
-    return render_template(prompt, replacements)
+    return substitute_placeholders(prompt, replacements)
 
 
 # ---------------------------------------------------------------------------

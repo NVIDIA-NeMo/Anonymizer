@@ -15,6 +15,7 @@ from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, ENTITY_LABEL_EXAMPLES
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
@@ -239,7 +240,13 @@ Before generating replacements, verify:
    - That each new_value is clearly different in meaning from the original and is not a synonym or simple rewording.
    - That all geographic replacements remain mutually consistent (cities belong to the replaced state/region, and travel routes remain plausible).
 """
-    return prompt.replace("<<INSTRUCTION_BLOCK>>", instruction_block).replace("<<ENTITIES_COLUMN>>", entities_column)
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<INSTRUCTION_BLOCK>>": instruction_block,
+            "<<ENTITIES_COLUMN>>": entities_column,
+        },
+    )
 
 
 _EXAMPLE_LOOKUP: dict[str, str] = {
