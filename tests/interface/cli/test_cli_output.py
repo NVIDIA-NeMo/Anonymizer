@@ -87,6 +87,24 @@ def test_run_default_output_path(tmp_path: Path, capsys: pytest.CaptureFixture, 
     assert f"data_anonymized{ext}" in capsys.readouterr().out
 
 
+def test_run_rewrite_default_output_path(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """run --rewrite with no --output writes to {stem}_rewritten.csv."""
+    source = tmp_path / "data.csv"
+    pd.DataFrame({"text": ["hello"]}).to_csv(source, index=False)
+
+    mock_anonymizer = MagicMock()
+    mock_anonymizer.run.return_value = _make_result()
+
+    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
+        with pytest.raises(SystemExit) as exc_info:
+            app(["run", "--source", str(source), "--rewrite"])
+    assert exc_info.value.code == 0
+
+    expected = tmp_path / "data_rewritten.csv"
+    assert expected.exists()
+    assert "data_rewritten.csv" in capsys.readouterr().out
+
+
 def test_run_explicit_output(tmp_path: Path, capsys: pytest.CaptureFixture, csv_source: Path) -> None:
     """run with --output writes to the specified path and prints it."""
     out_file = tmp_path / "custom_out.csv"

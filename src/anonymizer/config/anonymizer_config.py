@@ -79,7 +79,6 @@ class Rewrite(BaseModel):
         default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
     )
     instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
-    skip_low_sensitivity_pii: bool = Field(default=False, description="Skip low-sensitivity PII during rewrite.")
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,
         description="Preset controlling repair thresholds and review flagging.",
