@@ -120,7 +120,7 @@ class EvaluationCriteria(BaseModel):
         description="Preset controlling repair and review thresholds.",
     )
     max_repair_iterations: int = Field(
-        default=2,
+        default=3,
         ge=0,
         description="Maximum repair rounds. Set to 0 to disable repair.",
     )

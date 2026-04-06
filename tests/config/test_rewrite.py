@@ -72,7 +72,7 @@ def test_default_is_low() -> None:
     criteria = EvaluationCriteria()
     assert criteria.risk_tolerance == RiskTolerance.low
     assert criteria.repair_threshold == 1.0
-    assert criteria.max_repair_iterations == 2
+    assert criteria.max_repair_iterations == 3
 
 
 def test_minimal_bundles_aggressive_review_flags() -> None:
