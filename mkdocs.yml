@@ -5,12 +5,9 @@
 
 site_name: NeMo Anonymizer
 site_url: https://nvidia-nemo.github.io/Anonymizer/
-site_description: PII detection and anonymization for NeMo Data Designer
+site_description: Detect and anonymize sensitive entities in text using LLM-powered workflows
 repo_url: https://github.com/NVIDIA-NeMo/Anonymizer
-repo_name: NVIDIA-NeMo/Anonymizer
-edit_uri: edit/main/docs/
 
-copyright: Copyright &copy; 2025 NVIDIA CORPORATION & AFFILIATES
 
 theme:
   name: material
@@ -33,12 +30,7 @@ theme:
         name: Switch to dark mode
   features:
     - content.code.copy
-    - content.code.select
-    - content.code.annotate
     - content.tabs.link
-    - navigation.tabs
-    - navigation.sections
-    - navigation.expand
     - navigation.path
     - navigation.top
     - navigation.footer
@@ -46,7 +38,9 @@ theme:
     - search.suggest
     - search.highlight
     - toc.follow
+  favicon: assets/favicon.svg
   icon:
+    logo: material/incognito
     repo: fontawesome/brands/github
 
 extra:
@@ -135,9 +129,8 @@ markdown_extensions:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
       pygments_lang_class: true
+      use_pygments: false
   - pymdownx.inlinehilite
   - pymdownx.keys
   - pymdownx.mark
@@ -160,15 +153,18 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - User Guide:
-      - Getting Started: user-guide/getting-started.md
+  - Concepts:
+      - Models: concepts/models.md
+      - Detect: concepts/detection.md
+      - Replace: concepts/replace.md
+      - Rewrite: concepts/rewrite.md
   - Tutorials:
-      - Replace Mode: notebook_source/01_replace.py
-      - Detection Debug: notebook_source/02_detection_debug.py
-  - Developer Guide:
-      - Architecture: developer-guide/architecture.md
-      - API Reference:
-          - Top-level: reference/anonymizer.md
-          - reference/
+      - Overview: tutorials/index.md
+      - Your First Anonymization: notebooks/01_your_first_anonymization.ipynb
+      - Inspecting Detected Entities: notebooks/02_inspecting_detected_entities.ipynb
+      - Choosing a Replacement Strategy: notebooks/03_choosing_a_replacement_strategy.ipynb
+      - Rewriting Biographies: notebooks/04_rewriting_biographies.ipynb
+      - Rewriting Legal Documents: notebooks/05_rewriting_legal_documents.ipynb
+  - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md

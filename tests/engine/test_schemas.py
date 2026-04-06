@@ -231,7 +231,7 @@ def mixed_disposition() -> SensitivityDispositionSchema:
                     entity_label="city",
                     entity_value="Portland",
                     needs_protection=False,
-                    protection_method_suggestion="left_as_is",
+                    protection_method_suggestion="leave_as_is",
                 ),
             ]
         }
@@ -248,10 +248,10 @@ def test_entity_disposition_invalid_no_protection_but_method_set() -> None:
         )
 
 
-def test_entity_disposition_invalid_needs_protection_but_left_as_is() -> None:
+def test_entity_disposition_invalid_needs_protection_but_leave_as_is() -> None:
     with pytest.raises(ValidationError, match="needs_protection=True"):
         EntityDispositionSchema.model_validate(
-            _make_entity(needs_protection=True, protection_method_suggestion="left_as_is")
+            _make_entity(needs_protection=True, protection_method_suggestion="leave_as_is")
         )
 
 
@@ -294,7 +294,7 @@ def test_sensitivity_disposition_get_entities_by_method(mixed_disposition: Sensi
     replaceable = mixed_disposition.get_entities_by_method("replace")
     assert len(replaceable) == 1
     assert replaceable[0].entity_label == "first_name"
-    left = mixed_disposition.get_entities_by_method("left_as_is")
+    left = mixed_disposition.get_entities_by_method("leave_as_is")
     assert len(left) == 1
     assert left[0].entity_label == "city"
 
@@ -320,7 +320,7 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protec
         {
             "sensitivity_disposition": [
                 _make_entity(
-                    id=1, sensitivity="low", needs_protection=False, protection_method_suggestion="left_as_is"
+                    id=1, sensitivity="low", needs_protection=False, protection_method_suggestion="leave_as_is"
                 ),
             ]
         }
@@ -358,7 +358,14 @@ def test_quality_answers_use_integer_ids() -> None:
 
 def test_privacy_answers_reject_unknown_and_use_integer_ids() -> None:
     with pytest.raises(ValidationError):
-        PrivacyAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "unknown"}]})
+        PrivacyAnswersSchema.model_validate(
+            {"answers": [{"id": 1, "answer": "unknown", "confidence": 0.9, "reason": "unsupported enum value"}]}
+        )
+
+
+def test_privacy_answers_require_confidence_and_reason() -> None:
+    with pytest.raises(ValidationError):
+        PrivacyAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "yes"}]})
 
 
 def test_qa_compare_results_use_integer_ids() -> None:
@@ -393,7 +400,7 @@ def test_quality_answers_no_enforcement_without_context() -> None:
 def test_privacy_answers_reject_missing_ids_with_context() -> None:
     with pytest.raises(ValidationError, match="Missing answer IDs"):
         PrivacyAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "no"}]},
+            {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
             context={"expected_ids": [1, 2]},
         )
 

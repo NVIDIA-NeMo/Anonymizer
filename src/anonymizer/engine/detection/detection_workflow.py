@@ -48,6 +48,7 @@ from anonymizer.engine.detection.custom_columns import (
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import (
     AugmentedEntitiesSchema,
     EntitiesByValueSchema,
@@ -441,14 +442,17 @@ Output: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first
 Input text: <<TAGGED_TEXT>>
 Template: <<VALIDATION_SKELETON>>
 """
-    prompt = (
-        prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
-        .replace("<<TAGGED_TEXT>>", _jinja(COL_MERGED_TAGGED_TEXT))
-        .replace("<<VALIDATION_SKELETON>>", _jinja(COL_VALIDATION_SKELETON))
-        .replace("<<LABEL_EXAMPLES>>", _format_label_examples(labels))
-    )
     context_section = f"\nData context: {data_summary}\n" if data_summary else ""
-    return prompt.replace("<<DATA_SUMMARY>>", context_section)
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<TAG_NOTATION>>": COL_TAG_NOTATION,
+            "<<TAGGED_TEXT>>": _jinja(COL_MERGED_TAGGED_TEXT),
+            "<<VALIDATION_SKELETON>>": _jinja(COL_VALIDATION_SKELETON),
+            "<<LABEL_EXAMPLES>>": _format_label_examples(labels),
+            "<<DATA_SUMMARY>>": context_section,
+        },
+    )
 
 
 def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool = False) -> str:
@@ -521,16 +525,22 @@ Other information:
 Input text: <<TAGGED_TEXT>>
 Already-detected entities: <<SEED_ENTITIES>>
 """
-    prompt = (
-        prompt.replace("<<LABEL_BLOCK>>", label_block)
-        .replace("<<EXAMPLE_BLOCK>>", example_block)
-        .replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
-        .replace("<<TAGGED_TEXT>>", _jinja(COL_INITIAL_TAGGED_TEXT))
-        .replace("<<SEED_ENTITIES>>", _jinja(COL_SEED_ENTITIES_JSON))
-        .replace("<<VALID_CLASSES>>", ", ".join(labels))
-    )
+    # Pre-substitute nested placeholders inside the block strings before
+    # passing them into the single-pass substitution of the main prompt.
+    label_block = label_block.replace("<<VALID_CLASSES>>", ", ".join(labels))
+    example_block = example_block.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
     context_section = data_summary if data_summary else "Not provided"
-    return prompt.replace("<<DATA_SUMMARY>>", context_section)
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<LABEL_BLOCK>>": label_block,
+            "<<EXAMPLE_BLOCK>>": example_block,
+            "<<TAG_NOTATION>>": COL_TAG_NOTATION,
+            "<<TAGGED_TEXT>>": _jinja(COL_INITIAL_TAGGED_TEXT),
+            "<<SEED_ENTITIES>>": _jinja(COL_SEED_ENTITIES_JSON),
+            "<<DATA_SUMMARY>>": context_section,
+        },
+    )
 
 
 def _get_latent_prompt(*, data_summary: str | None, privacy_goal: PrivacyGoal | None) -> str:
@@ -619,11 +629,14 @@ Quality checks before finalizing
 
 Now produce the JSON for the input.
 """
-    return (
-        prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
-        .replace("<<PRIVACY_GOAL>>", privacy_goal_text)
-        .replace("<<DATA_SUMMARY>>", summary_line)
-        .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<TAG_NOTATION>>": COL_TAG_NOTATION,
+            "<<PRIVACY_GOAL>>": privacy_goal_text,
+            "<<DATA_SUMMARY>>": summary_line,
+            "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+        },
     )
 
 

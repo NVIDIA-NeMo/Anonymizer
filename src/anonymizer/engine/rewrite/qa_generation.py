@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     Domain,
@@ -91,7 +92,7 @@ remain true after anonymization.
 You are given a SENSITIVITY DISPOSITION BLOCK, which contains entries like:
 - entity_value (surface form from the original text)
 - does_need_protection (True/False)
-- protection_method_suggestion (replace/remove/generalize/paraphrase/left_as_is)
+- protection_method_suggestion (replace/remove/generalize/suppress_inference/leave_as_is)
 - category (direct_identifier/quasi_identifier/sensitive_attribute/latent_identifier/etc.)
 
 Use it as follows:
@@ -107,10 +108,10 @@ Then treat its entity_value as a BANNED SURFACE FORM:
     (roles, relationships, high-level descriptions).
   - If it cannot be expressed safely without carrying identifying detail, DROP the unit.
 
-B) TRANSFORM-ALLOWED (allowed only if generalized/paraphrased)
+B) TRANSFORM-ALLOWED (allowed only if generalized/suppress_inference)
 If an entry has:
   - does_need_protection = True
-  AND protection_method_suggestion is "generalize" OR "paraphrase"
+  AND protection_method_suggestion is "generalize" OR "suppress_inference"
 Then you MAY still capture the meaning, BUT you must NOT use the entity_value itself.
 Instead: preserve the semantic role while moving to a broader, less identifying level of abstraction.
 This may include:
@@ -186,11 +187,14 @@ Sensitivity disposition:
 <<ENTITY_PROTECTION_BLOCK>>
 >>>
 </input>"""
-    return (
-        prompt.replace("<<ENTITY_PROTECTION_BLOCK>>", _jinja(COL_SENSITIVITY_DISPOSITION_BLOCK))
-        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN, key=_DOMAIN_KEY))
-        .replace("<<DOMAIN_SUPPLEMENT>>", _jinja(COL_DOMAIN_SUPPLEMENT))
-        .replace("<<TEXT>>", _jinja(COL_TEXT))
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<ENTITY_PROTECTION_BLOCK>>": _jinja(COL_SENSITIVITY_DISPOSITION_BLOCK),
+            "<<DOMAIN>>": _jinja(COL_DOMAIN, key=_DOMAIN_KEY),
+            "<<DOMAIN_SUPPLEMENT>>": _jinja(COL_DOMAIN_SUPPLEMENT),
+            "<<TEXT>>": _jinja(COL_TEXT),
+        },
     )
 
 
@@ -252,7 +256,10 @@ Meaning units:
 <<MEANING_UNITS_SERIALIZED>>
 ---
 </input>"""
-    return prompt.replace("<<MEANING_UNITS_SERIALIZED>>", _jinja(COL_MEANING_UNITS_SERIALIZED))
+    return substitute_placeholders(
+        prompt,
+        {"<<MEANING_UNITS_SERIALIZED>>": _jinja(COL_MEANING_UNITS_SERIALIZED)},
+    )
 
 
 # ---------------------------------------------------------------------------

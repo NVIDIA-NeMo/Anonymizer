@@ -128,7 +128,7 @@ def test_needs_human_review_column_uses_evaluation_thresholds(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
     wf = FinalJudgeWorkflow()
-    evaluation = EvaluationCriteria(flag_utility_below=0.6, flag_leakage_mass_above=1.5)
+    evaluation = EvaluationCriteria(risk_tolerance="minimal")
     cols = wf.columns(
         selected_models=stub_rewrite_model_selection,
         privacy_goal=_STUB_PRIVACY_GOAL,
@@ -137,7 +137,7 @@ def test_needs_human_review_column_uses_evaluation_thresholds(
     custom_col = next(c for c in cols if isinstance(c, CustomColumnConfig))
     params = HumanReviewParams.model_validate(custom_col.generator_params)
     assert params.flag_utility_below == 0.6
-    assert params.flag_leakage_mass_above == 1.5
+    assert params.flag_leakage_above == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -161,69 +161,69 @@ def _make_row(
 
 def test_needs_human_review_flags_none_rewrite() -> None:
     row = _make_row(rewritten_text=None)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is True
 
 
 def test_needs_human_review_flags_low_utility() -> None:
     row = _make_row(utility_score=0.3)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is True
 
 
 def test_needs_human_review_flags_high_leakage() -> None:
     row = _make_row(leakage_mass=3.0)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is True
 
 
 def test_needs_human_review_flags_any_high_leaked() -> None:
     row = _make_row(any_high_leaked=True)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is True
 
 
 def test_needs_human_review_false_when_all_good() -> None:
     row = _make_row(utility_score=0.8, leakage_mass=0.5, any_high_leaked=False)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is False
 
 
 def test_needs_human_review_none_thresholds_skip_checks() -> None:
     row = _make_row(utility_score=0.1, leakage_mass=10.0)
-    params = HumanReviewParams(flag_utility_below=None, flag_leakage_mass_above=None)
+    params = HumanReviewParams(flag_utility_below=None, flag_leakage_above=None)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is False
 
 
 def test_needs_human_review_exact_threshold_utility() -> None:
     row = _make_row(utility_score=0.50)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is False
 
 
 def test_needs_human_review_exact_threshold_leakage() -> None:
     row = _make_row(leakage_mass=2.0)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     result = _determine_needs_human_review(row, generator_params=params)
     assert result[COL_NEEDS_HUMAN_REVIEW] is False
 
 
 def test_needs_human_review_raises_on_invalid_utility_score() -> None:
     row = _make_row(utility_score=None)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     with pytest.raises(TypeError):
         _determine_needs_human_review(row, generator_params=params)
 
 
 def test_needs_human_review_raises_on_invalid_leakage_mass() -> None:
     row = _make_row(leakage_mass=None)
-    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_mass_above=2.0)
+    params = HumanReviewParams(flag_utility_below=0.50, flag_leakage_above=2.0)
     with pytest.raises(TypeError):
         _determine_needs_human_review(row, generator_params=params)

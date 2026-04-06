@@ -66,7 +66,7 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             entity_value="Portland",
             needs_protection=False,
             protection_reason="City alone does not create meaningful re-identification risk here.",
-            protection_method_suggestion=ProtectionMethod.left_as_is,
+            protection_method_suggestion=ProtectionMethod.leave_as_is,
             combined_risk_level="low",
         ),
     ]
@@ -180,7 +180,7 @@ def test_generate_privacy_qa_column_no_protected_entities() -> None:
                 entity_value="Portland",
                 needs_protection=False,
                 protection_reason="City alone does not create meaningful re-identification risk.",
-                protection_method_suggestion=ProtectionMethod.left_as_is,
+                protection_method_suggestion=ProtectionMethod.leave_as_is,
                 combined_risk_level="low",
             )
         ]
@@ -211,7 +211,7 @@ def test_generate_privacy_qa_from_disposition_empty_when_nothing_to_protect() ->
                 entity_value="Portland",
                 needs_protection=False,
                 protection_reason="City alone does not create meaningful re-identification risk.",
-                protection_method_suggestion=ProtectionMethod.left_as_is,
+                protection_method_suggestion=ProtectionMethod.leave_as_is,
                 combined_risk_level="low",
             )
         ]
@@ -264,7 +264,7 @@ def test_meaning_unit_prompt_preserves_gitlab_protection_branches() -> None:
     prompt = _get_meaning_unit_extraction_prompt()
     assert "does_need_protection = True" in prompt
     assert 'protection_method_suggestion is "replace" OR "remove"' in prompt
-    assert 'protection_method_suggestion is "generalize" OR "paraphrase"' in prompt
+    assert 'protection_method_suggestion is "generalize" OR "suppress_inference"' in prompt
     assert "does_need_protection = False" in prompt
 
 

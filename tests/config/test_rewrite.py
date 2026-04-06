@@ -49,68 +49,49 @@ def test_privacy_goal_to_prompt_string() -> None:
     assert "PRESERVE:" in prompt
 
 
-def test_effective_threshold_uses_manual_when_set() -> None:
-    criteria = EvaluationCriteria(max_leakage_mass=1.3)
-    assert criteria.get_effective_threshold(domain="medical") == 1.3
-
-
-def test_effective_threshold_uses_risk_tolerance_default() -> None:
-    criteria = EvaluationCriteria(risk_tolerance=RiskTolerance.strict)
-    assert criteria.get_effective_threshold() == 0.6
+# ---------------------------------------------------------------------------
+# EvaluationCriteria: risk_tolerance presets
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "tolerance,expected",
+    "tolerance,expected_threshold",
     [
-        (RiskTolerance.strict, 0.6),
-        (RiskTolerance.conservative, 1.0),
+        (RiskTolerance.minimal, 0.6),
+        (RiskTolerance.low, 1.0),
         (RiskTolerance.moderate, 1.5),
-        (RiskTolerance.permissive, 2.0),
+        (RiskTolerance.high, 2.0),
     ],
 )
-def test_effective_threshold_per_tolerance(tolerance: RiskTolerance, expected: float) -> None:
+def test_repair_threshold_per_tolerance(tolerance: RiskTolerance, expected_threshold: float) -> None:
     criteria = EvaluationCriteria(risk_tolerance=tolerance)
-    assert criteria.get_effective_threshold() == expected
+    assert criteria.repair_threshold == expected_threshold
 
 
-def test_effective_threshold_auto_adjust_by_domain() -> None:
-    criteria = EvaluationCriteria(auto_adjust_by_domain=True)
-    assert criteria.get_effective_threshold(domain="medical") == 0.6  # strict
-    assert criteria.get_effective_threshold(domain="social_media") == 2.0  # permissive
+def test_default_is_low() -> None:
+    criteria = EvaluationCriteria()
+    assert criteria.risk_tolerance == RiskTolerance.low
+    assert criteria.repair_threshold == 1.0
+    assert criteria.max_repair_iterations == 3
 
 
-def test_effective_threshold_auto_adjust_unknown_domain_defaults_to_moderate() -> None:
-    criteria = EvaluationCriteria(auto_adjust_by_domain=True)
-    assert criteria.get_effective_threshold(domain="unknown_domain") == 1.5
+def test_minimal_bundles_aggressive_review_flags() -> None:
+    criteria = EvaluationCriteria(risk_tolerance=RiskTolerance.minimal)
+    assert criteria.flag_utility_below == 0.6
+    assert criteria.flag_leakage_above == 1.0
+    assert criteria.repair_any_high_leak is True
 
 
-def test_effective_threshold_auto_adjust_normalizes_domain_string() -> None:
-    """Hyphens, spaces, and case should be normalized."""
-    criteria = EvaluationCriteria(auto_adjust_by_domain=True)
-    assert criteria.get_effective_threshold(domain="Human Resources") == 1.0  # conservative
-    assert criteria.get_effective_threshold(domain="MEDICAL") == 0.6
+def test_high_does_not_repair_individual_high_leaks() -> None:
+    criteria = EvaluationCriteria(risk_tolerance=RiskTolerance.high)
+    assert criteria.repair_any_high_leak is False
 
 
-def test_effective_threshold_auto_adjust_ignored_without_domain() -> None:
-    criteria = EvaluationCriteria(auto_adjust_by_domain=True, risk_tolerance=RiskTolerance.permissive)
-    assert criteria.get_effective_threshold(domain=None) == 2.0
-
-
-def test_effective_threshold_manual_overrides_auto_adjust() -> None:
-    criteria = EvaluationCriteria(max_leakage_mass=0.8, auto_adjust_by_domain=True)
-    assert criteria.get_effective_threshold(domain="medical") == 0.8
-
-
-def test_sensitivity_weights_defaults() -> None:
+def test_sensitivity_weights_have_required_keys() -> None:
     criteria = EvaluationCriteria()
     assert set(criteria.sensitivity_weights.keys()) == {"high", "medium", "low"}
 
 
-def test_sensitivity_weights_rejects_missing_level() -> None:
-    with pytest.raises(ValueError, match="missing required levels"):
-        EvaluationCriteria(sensitivity_weights={"high": 1.0, "medium": 0.6})
-
-
-def test_sensitivity_weights_rejects_negative() -> None:
-    with pytest.raises(ValueError, match="non-negative"):
-        EvaluationCriteria(sensitivity_weights={"high": 1.0, "medium": -0.5, "low": 0.3})
+def test_max_repair_iterations_rejects_negative() -> None:
+    with pytest.raises(ValueError):
+        EvaluationCriteria(max_repair_iterations=-1)

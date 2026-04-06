@@ -377,12 +377,18 @@ def _render_scores_section(row: pd.Series) -> str:
 
     utility = row.get("utility_score")
     leakage = row.get("leakage_mass")
+    weighted_leakage_rate = row.get("weighted_leakage_rate")
     needs_review = row.get("needs_human_review")
 
     if utility is not None:
         parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {float(utility):.2f}</span>")
     if leakage is not None:
         parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {float(leakage):.2f}</span>")
+    if weighted_leakage_rate is not None:
+        parts.append(
+            "<span style='margin-right:16px'><strong>Weighted Leakage Rate:</strong> "
+            f"{float(weighted_leakage_rate):.2f}</span>"
+        )
     if needs_review is not None:
         badge_color = "#ef4444" if needs_review else "#22c55e"
         badge_text = "Yes" if needs_review else "No"

@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     EntityReplacementMapSchema,
@@ -97,7 +98,7 @@ Apply each protection method as follows:
 - "generalize": Replace with a broader category or range
   (e.g., a specific city → "a city in the Pacific Northwest", exact age → "in their late 30s").
 - "remove": Omit the detail entirely. Rewrite the surrounding sentence so it reads naturally without it.
-- "paraphrase": Rewrite the surrounding context to obscure the entity without explicitly referencing it.
+- "suppress_inference": Modify the text so the attribute cannot be reliably inferred by a motivated reader.
 
 Rules:
 1. ALL entity tags (as described above) must be removed. Output must be plain text.
@@ -106,14 +107,17 @@ Rules:
 4. The rewritten text must flow naturally and preserve the meaning and narrative structure of the original.
 5. Do not introduce new identifying details not present in the original.
 </output_requirements>"""
-    return (
-        prompt.replace("<<PRIVACY_GOAL>>", privacy_goal.to_prompt_string())
-        .replace("<<DATA_CONTEXT>>", data_context_section)
-        .replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
-        .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))
-        .replace("<<REWRITE_DISPOSITION_BLOCK>>", COL_REWRITE_DISPOSITION_BLOCK)
-        .replace("<<REPLACEMENT_MAP_COL>>", COL_REPLACEMENT_MAP_FOR_PROMPT)
-        .replace("<<REPLACEMENT_MAP>>", _jinja(COL_REPLACEMENT_MAP_FOR_PROMPT))
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
+            "<<DATA_CONTEXT>>": data_context_section,
+            "<<TAG_NOTATION>>": COL_TAG_NOTATION,
+            "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+            "<<REWRITE_DISPOSITION_BLOCK>>": COL_REWRITE_DISPOSITION_BLOCK,
+            "<<REPLACEMENT_MAP_COL>>": COL_REPLACEMENT_MAP_FOR_PROMPT,
+            "<<REPLACEMENT_MAP>>": _jinja(COL_REPLACEMENT_MAP_FOR_PROMPT),
+        },
     )
 
 

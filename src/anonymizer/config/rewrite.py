@@ -1,46 +1,33 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# This file is forward looking, and will support future rewrite mode.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class RiskTolerance(str, Enum):
-    """Risk tolerance presets for leakage mass thresholds."""
+    """Risk tolerance presets for leakage mass thresholds.
 
-    strict = "strict"
-    conservative = "conservative"
+    Each preset bundles a coherent set of repair and review thresholds:
+
+    - **minimal** — Tight leakage threshold (0.6), flags for review aggressively.
+      Good for medical, legal, and financial data.
+    - **low** — Default. Moderate leakage threshold (1.0).
+      Good for most privacy-sensitive data.
+    - **moderate** — Relaxed leakage threshold (1.5), lower review bar.
+    - **high** — High leakage threshold (2.0), does not auto-repair
+      individual high-sensitivity leaks.
+    """
+
+    minimal = "minimal"
+    low = "low"
     moderate = "moderate"
-    permissive = "permissive"
+    high = "high"
 
-
-RISK_TOLERANCE_THRESHOLDS: dict[RiskTolerance, float] = {
-    RiskTolerance.strict: 0.6,
-    RiskTolerance.conservative: 1.0,
-    RiskTolerance.moderate: 1.5,
-    RiskTolerance.permissive: 2.0,
-}
-
-DOMAIN_RISK_TOLERANCE: dict[str, RiskTolerance] = {
-    "medical": RiskTolerance.strict,
-    "clinical": RiskTolerance.strict,
-    "healthcare": RiskTolerance.strict,
-    "legal": RiskTolerance.strict,
-    "financial": RiskTolerance.strict,
-    "banking": RiskTolerance.strict,
-    "insurance": RiskTolerance.strict,
-    "hr": RiskTolerance.conservative,
-    "human_resources": RiskTolerance.conservative,
-    "education": RiskTolerance.conservative,
-    "customer_service": RiskTolerance.conservative,
-    "general": RiskTolerance.moderate,
-    "social_media": RiskTolerance.permissive,
-    "entertainment": RiskTolerance.permissive,
-}
 
 SENSITIVITY_WEIGHTS: dict[str, float] = {
     "high": 1.0,
@@ -52,6 +39,44 @@ DEFAULT_PROTECT_TEXT = (
     "Direct identifiers, quasi-identifier combinations, and latent inferences that could enable re-identification"
 )
 DEFAULT_PRESERVE_TEXT = "General utility, content quality, and semantic meaning of the original text"
+
+
+@dataclass(frozen=True)
+class _RiskToleranceBundle:
+    """Internal: all derived evaluation parameters for a risk_tolerance preset."""
+
+    repair_threshold: float
+    repair_any_high_leak: bool
+    flag_utility_below: float
+    flag_leakage_above: float
+
+
+_RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
+    RiskTolerance.minimal: _RiskToleranceBundle(
+        repair_threshold=0.6,
+        repair_any_high_leak=True,
+        flag_utility_below=0.6,
+        flag_leakage_above=1.0,
+    ),
+    RiskTolerance.low: _RiskToleranceBundle(
+        repair_threshold=1.0,
+        repair_any_high_leak=True,
+        flag_utility_below=0.5,
+        flag_leakage_above=2.0,
+    ),
+    RiskTolerance.moderate: _RiskToleranceBundle(
+        repair_threshold=1.5,
+        repair_any_high_leak=True,
+        flag_utility_below=0.4,
+        flag_leakage_above=2.5,
+    ),
+    RiskTolerance.high: _RiskToleranceBundle(
+        repair_threshold=2.0,
+        repair_any_high_leak=False,
+        flag_utility_below=0.3,
+        flag_leakage_above=3.0,
+    ),
+}
 
 
 class PrivacyGoal(BaseModel):
@@ -78,43 +103,53 @@ class PrivacyGoal(BaseModel):
 
 
 class EvaluationCriteria(BaseModel):
-    """Criteria and thresholds for privacy leakage and utility scoring."""
+    """Criteria for privacy leakage evaluation and repair.
 
-    risk_tolerance: RiskTolerance = RiskTolerance.conservative
-    max_leakage_mass: float | None = Field(default=None, ge=0.0)
-    auto_adjust_by_domain: bool = False
+    ``risk_tolerance`` controls the leakage threshold that triggers repair,
+    whether individual high-sensitivity leaks trigger repair, and the
+    thresholds for flagging records for human review. See ``RiskTolerance``
+    for preset descriptions.
 
-    repair_any_high_leak: bool = True
-    max_repair_iterations: int = Field(default=2, ge=0)
-    auto_repair_privacy: bool = True
+    ``max_repair_iterations`` caps how many repair rounds are attempted
+    (each round = one LLM call per failing row). Set to 0 to disable repair
+    while still producing evaluation metrics.
+    """
 
-    flag_utility_below: float | None = Field(default=0.50, ge=0.0, le=1.0)
-    flag_leakage_mass_above: float | None = Field(default=2.0, ge=0.0)
-    sensitivity_weights: dict[str, float] = Field(default_factory=lambda: dict(SENSITIVITY_WEIGHTS))
+    risk_tolerance: RiskTolerance = Field(
+        default=RiskTolerance.low,
+        description="Preset controlling repair and review thresholds.",
+    )
+    max_repair_iterations: int = Field(
+        default=3,
+        ge=0,
+        description="Maximum repair rounds. Set to 0 to disable repair.",
+    )
 
-    @field_validator("sensitivity_weights")
-    @classmethod
-    def validate_sensitivity_weights(cls, value: dict[str, float]) -> dict[str, float]:
-        required_levels = {"high", "medium", "low"}
-        missing_levels = required_levels - set(value.keys())
-        if missing_levels:
-            missing = ", ".join(sorted(missing_levels))
-            raise ValueError(f"sensitivity_weights is missing required levels: {missing}")
+    @property
+    def _bundle(self) -> _RiskToleranceBundle:
+        return _RISK_TOLERANCE_BUNDLES[self.risk_tolerance]
 
-        negative_weights = [level for level, weight in value.items() if weight < 0]
-        if negative_weights:
-            labels = ", ".join(sorted(negative_weights))
-            raise ValueError(f"sensitivity_weights must be non-negative for all levels, invalid: {labels}")
-        return value
+    @property
+    def repair_threshold(self) -> float:
+        """Leakage mass above which a row is sent for repair."""
+        return self._bundle.repair_threshold
 
-    def get_effective_threshold(self, domain: str | None = None) -> float:
-        """Return the effective leakage-mass threshold for a run."""
-        if self.max_leakage_mass is not None:
-            return self.max_leakage_mass
+    @property
+    def repair_any_high_leak(self) -> bool:
+        """Whether any single high-sensitivity leak triggers repair."""
+        return self._bundle.repair_any_high_leak
 
-        if self.auto_adjust_by_domain and domain:
-            domain_key = domain.lower().replace(" ", "_").replace("-", "_")
-            domain_tolerance = DOMAIN_RISK_TOLERANCE.get(domain_key, RiskTolerance.moderate)
-            return RISK_TOLERANCE_THRESHOLDS[domain_tolerance]
+    @property
+    def flag_utility_below(self) -> float:
+        """Flag for human review if utility score is below this."""
+        return self._bundle.flag_utility_below
 
-        return RISK_TOLERANCE_THRESHOLDS[self.risk_tolerance]
+    @property
+    def flag_leakage_above(self) -> float:
+        """Flag for human review if leakage mass exceeds this."""
+        return self._bundle.flag_leakage_above
+
+    @property
+    def sensitivity_weights(self) -> dict[str, float]:
+        """Weights for high/medium/low sensitivity levels in leakage mass computation."""
+        return dict(SENSITIVITY_WEIGHTS)

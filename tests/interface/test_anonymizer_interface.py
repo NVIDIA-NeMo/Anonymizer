@@ -62,6 +62,7 @@ def _make_anonymizer(
             COL_REWRITTEN_TEXT: ["Beth works at Globex"],
             "utility_score": [0.85],
             "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
             "any_high_leaked": [False],
             "needs_human_review": [False],
         }
@@ -427,6 +428,7 @@ def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:
     assert "text_rewritten" in result.dataframe.columns
     assert "utility_score" in result.dataframe.columns
     assert "leakage_mass" in result.dataframe.columns
+    assert "weighted_leakage_rate" in result.dataframe.columns
     assert "any_high_leaked" in result.dataframe.columns
     assert "needs_human_review" in result.dataframe.columns
 
@@ -440,6 +442,7 @@ def test_run_rewrite_internal_columns_only_in_trace(stub_input: AnonymizerInput)
             "_sensitivity_disposition": [None],
             "utility_score": [0.85],
             "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
             "any_high_leaked": [False],
             "needs_human_review": [False],
         }
@@ -471,6 +474,7 @@ def test_run_rewrite_merges_failed_records(stub_input: AnonymizerInput) -> None:
             COL_REWRITTEN_TEXT: ["Beth"],
             "utility_score": [0.85],
             "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
             "any_high_leaked": [False],
             "needs_human_review": [False],
         }

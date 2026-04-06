@@ -14,6 +14,7 @@ from anonymizer.config.rewrite import (
     DEFAULT_PROTECT_TEXT,
     EvaluationCriteria,
     PrivacyGoal,
+    RiskTolerance,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,9 +79,14 @@ class Rewrite(BaseModel):
         default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
     )
     instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
-    evaluation: EvaluationCriteria = Field(
-        default_factory=EvaluationCriteria,
-        description="Criteria and thresholds for privacy leakage and utility scoring.",
+    risk_tolerance: RiskTolerance = Field(
+        default=RiskTolerance.low,
+        description="Preset controlling repair thresholds and review flagging.",
+    )
+    max_repair_iterations: int = Field(
+        default=2,
+        ge=0,
+        description="Maximum repair rounds. Set to 0 to disable repair.",
     )
 
     @model_validator(mode="after")
@@ -92,13 +98,22 @@ class Rewrite(BaseModel):
             )
         return self
 
+    @property
+    def evaluation(self) -> EvaluationCriteria:
+        """Internal: construct EvaluationCriteria for the engine."""
+        return EvaluationCriteria(
+            risk_tolerance=self.risk_tolerance,
+            max_repair_iterations=self.max_repair_iterations,
+        )
+
 
 class AnonymizerConfig(BaseModel):
     """Primary user-facing config for anonymization behavior."""
 
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(
-        default=None, description="Replacement method (Redact(), Annotate(), Hash(), or Substitute())."
+        default=None,
+        description="Replacement method (Substitute(), Redact(), Annotate(), or Hash()).",
     )
     rewrite: Rewrite | None = Field(default=None, description="Optional rewrite-mode parameters. ")
 

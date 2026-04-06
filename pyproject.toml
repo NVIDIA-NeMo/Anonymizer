@@ -1,5 +1,5 @@
 [project]
-name = "anonymizer"
+name = "nemo-anonymizer"
 dynamic = ["version"]
 description = "NeMo Anonymizer"
 readme = "README.md"
@@ -59,6 +59,7 @@ style = "pep440"
 packages = ["src/anonymizer"]
 
 [tool.uv]
+required-version = ">=0.5.0"
 package = true
 
 override-dependencies = [

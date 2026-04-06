@@ -62,7 +62,7 @@ _STUB_DISPOSITION = {
             "entity_label": "city",
             "entity_value": "Seattle",
             "needs_protection": False,
-            "protection_method_suggestion": "left_as_is",
+            "protection_method_suggestion": "leave_as_is",
             "protection_reason": "Low risk, not identifying alone",
             "combined_risk_level": "low",
         },
@@ -90,15 +90,17 @@ _STUB_PRIVACY_QA = {
 
 class TestLeakedItemsText:
     def test_leaked_item_formatted(self) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="yes")]
+        answers = [PrivacyAnswerItemSchema(id=1, answer="yes", confidence=0.9, reason="Name remains explicit")]
         qa = PrivacyQAPairsSchema.model_validate(_STUB_PRIVACY_QA)
         result = _leaked_items_text(answers, qa)
         assert "[HIGH]" in result
         assert "first_name" in result
         assert "Alice" in result
+        assert "confidence_leakage_occurred: 0.90" in result
+        assert "reason: Name remains explicit" in result
 
     def test_no_leaks_returns_empty(self) -> None:
-        answers = [PrivacyAnswerItemSchema(id=1, answer="no")]
+        answers = [PrivacyAnswerItemSchema(id=1, answer="no", confidence=0.0, reason="Not inferable")]
         qa = PrivacyQAPairsSchema.model_validate(_STUB_PRIVACY_QA)
         assert _leaked_items_text(answers, qa) == ""
 
@@ -128,7 +130,7 @@ class TestFormatProtectionBlock:
                         "entity_label": "city",
                         "entity_value": "Portland",
                         "needs_protection": False,
-                        "protection_method_suggestion": "left_as_is",
+                        "protection_method_suggestion": "leave_as_is",
                         "protection_reason": "Low risk location",
                         "combined_risk_level": "low",
                     },
@@ -155,7 +157,9 @@ class TestRenderRepairPrompt:
             COL_LEAKAGE_MASS: 1.0,
             COL_ANY_HIGH_LEAKED: True,
             COL_UTILITY_SCORE: 0.85,
-            COL_PRIVACY_QA_REANSWER: {"answers": [{"id": 1, "answer": "yes"}]},
+            COL_PRIVACY_QA_REANSWER: {
+                "answers": [{"id": 1, "answer": "yes", "confidence": 0.9, "reason": "Name remains explicit"}]
+            },
             COL_PRIVACY_QA: _STUB_PRIVACY_QA,
             "_leaked_privacy_items": '- [HIGH] first_name: "Alice"',
         }

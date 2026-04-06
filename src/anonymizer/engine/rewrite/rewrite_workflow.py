@@ -13,7 +13,6 @@ from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelectio
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
-    COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
@@ -24,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -36,24 +36,19 @@ from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
+from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
     COL_LEAKAGE_MASS: 0.0,
+    COL_WEIGHTED_LEAKAGE_RATE: 0.0,
     COL_ANY_HIGH_LEAKED: False,
     COL_NEEDS_HUMAN_REVIEW: False,
     COL_JUDGE_EVALUATION: None,
     COL_REPAIR_ITERATIONS: 0,
 }
-
-_ROW_ORDER_COL = "_anonymizer_row_order"
-
-
-# ---------------------------------------------------------------------------
-# Row split / merge helpers — TODO(#60): move to shared module
-# ---------------------------------------------------------------------------
 
 
 def _has_entities(entities_by_value: object) -> bool:
@@ -65,31 +60,6 @@ def _has_entities(entities_by_value: object) -> bool:
     if not isinstance(items, list):
         return False
     return len(items) > 0
-
-
-def _split_by_entities(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Partition df into (entity_rows, passthrough_rows) with row-order tracking."""
-    working = df.copy()
-    working[_ROW_ORDER_COL] = range(len(working))
-    mask = working[COL_ENTITIES_BY_VALUE].apply(_has_entities)
-    return working[mask].copy(), working[~mask].copy()
-
-
-def _merge_and_reorder(
-    *parts: pd.DataFrame,
-    attrs: dict,
-) -> pd.DataFrame:
-    """Concat partitions, restore original row order, drop the tracking column."""
-    combined = (
-        pd.concat(list(parts), ignore_index=True)
-        .sort_values(_ROW_ORDER_COL)
-        .drop(columns=[_ROW_ORDER_COL])
-        .reset_index(drop=True)
-    )
-    combined.attrs = {**attrs}
-    return combined
 
 
 def _join_new_columns(
@@ -227,12 +197,12 @@ class RewriteWorkflow:
     ) -> RewriteResult:
         all_failed: list[FailedRecord] = []
 
-        entity_rows, passthrough_rows = _split_by_entities(dataframe)
+        entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
 
         # Fast path: no entities anywhere
         if entity_rows.empty:
             _apply_passthrough_defaults(passthrough_rows)
-            result_df = _merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            result_df = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
             return RewriteResult(dataframe=result_df, failed_records=all_failed)
 
         # --- Step 1: replacement map (needs only detection output) ---
@@ -273,14 +243,12 @@ class RewriteWorkflow:
         all_failed.extend(pipeline_result.failed_records)
 
         # --- Step 5: evaluate-repair loop ---
-        domain = self._extract_domain(entity_rows)
         entity_rows, eval_repair_failed = self._run_evaluate_repair_loop(
             entity_rows,
             model_configs=model_configs,
             selected_models=selected_models,
             privacy_goal=privacy_goal,
             evaluation=evaluation,
-            domain=domain,
             preview_num_records=preview_num_records,
         )
         all_failed.extend(eval_repair_failed)
@@ -298,7 +266,7 @@ class RewriteWorkflow:
 
         # --- Merge and return ---
         _apply_passthrough_defaults(passthrough_rows)
-        combined = _merge_and_reorder(entity_rows, passthrough_rows, attrs=dataframe.attrs)
+        combined = merge_and_reorder(entity_rows, passthrough_rows, attrs=dataframe.attrs)
         return RewriteResult(dataframe=combined, failed_records=all_failed)
 
     # ---------------------------------------------------------------------------
@@ -313,11 +281,9 @@ class RewriteWorkflow:
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         evaluation: EvaluationCriteria,
-        domain: str | None,
         preview_num_records: int | None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         all_failed: list[FailedRecord] = []
-        effective_threshold = evaluation.get_effective_threshold(domain)
 
         if COL_REPAIR_ITERATIONS not in df.columns:
             df[COL_REPAIR_ITERATIONS] = 0
@@ -325,7 +291,6 @@ class RewriteWorkflow:
         eval_columns = self._evaluate_wf.columns(
             selected_models=selected_models,
             evaluation=evaluation,
-            domain=domain,
         )
         eval_seed_cols = derive_seed_columns(eval_columns, df)
 
@@ -344,7 +309,7 @@ class RewriteWorkflow:
         repair_columns = self._repair_wf.columns(
             selected_models=selected_models,
             privacy_goal=privacy_goal,
-            effective_threshold=effective_threshold,
+            effective_threshold=evaluation.repair_threshold,
         )
 
         for iteration in range(evaluation.max_repair_iterations):
@@ -435,34 +400,3 @@ class RewriteWorkflow:
             df[COL_JUDGE_EVALUATION] = None
             df[COL_NEEDS_HUMAN_REVIEW] = True
             return df, []
-
-    # ---------------------------------------------------------------------------
-    # Helpers
-    # ---------------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_domain(df: pd.DataFrame) -> str | None:
-        """Extract the most common domain from the domain classification column, if present."""
-        if COL_DOMAIN not in df.columns:
-            return None
-        try:
-            domains = (
-                df[COL_DOMAIN]
-                .dropna()
-                .apply(
-                    lambda raw: (
-                        str(raw.domain)
-                        if hasattr(raw, "domain")
-                        else str(raw.get("domain", ""))
-                        if isinstance(raw, dict)
-                        else str(raw)
-                    )
-                )
-            )
-            domains = domains[domains != ""]
-            if domains.empty:
-                return None
-            return str(domains.mode().iloc[0])
-        except Exception:
-            logger.debug("Could not extract domain from COL_DOMAIN", exc_info=True)
-            return None

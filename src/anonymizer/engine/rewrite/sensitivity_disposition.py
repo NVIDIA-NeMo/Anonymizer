@@ -18,6 +18,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import SensitivityDispositionSchema
 
 
@@ -122,6 +123,7 @@ LATENT IDENTIFIERS (inferred)
 <protection_principles>
 1. MINIMUM NECESSARY CHANGE: If a detail doesn't meaningfully increase re-identification risk
    and isn't a sensitive attribute, leave it unchanged.
+   EXCEPTION: Always replace the names of people regardless of re-identification risk.
 
 2. CONTEXTUAL EVALUATION: A tag does NOT automatically require action. Every change must be
    justified by contextual privacy risk under the threat model.
@@ -137,8 +139,8 @@ LATENT IDENTIFIERS (inferred)
 
 <output_requirements>
 CONSISTENCY RULES:
-- If needs_protection=false → protection_method_suggestion MUST be "left_as_is".
-- If needs_protection=true → protection_method_suggestion MUST NOT be "left_as_is".
+- If needs_protection=false → protection_method_suggestion MUST be "leave_as_is".
+- If needs_protection=true → protection_method_suggestion MUST NOT be "leave_as_is".
 - For latent entities, "replace" is rarely appropriate (value not in text).
 - For source="tagged": entity_value MUST match tag exactly.
 - For source="latent": entity_label/value MUST match the provided latent entity.
@@ -152,14 +154,17 @@ QUALITY REQUIREMENTS:
 - protection_reason must be specific to this document (not generic boilerplate).
 - combined_risk_level must consider other entities being retained.
 </output_requirements>"""
-    return (
-        prompt.replace("<<PRIVACY_GOAL>>", privacy_goal_str)
-        .replace("<<DOMAIN>>", _jinja(COL_DOMAIN, key="domain"))
-        .replace("<<DATA_SUMMARY>>", data_summary_line)
-        .replace("<<DOMAIN_SUPPLEMENT>>", _jinja(COL_DOMAIN_SUPPLEMENT))
-        .replace("<<TAGGED_TEXT>>", _jinja(COL_TAGGED_TEXT))
-        .replace("<<FINAL_ENTITIES>>", _jinja(COL_ENTITIES_BY_VALUE))
-        .replace("<<LATENT_ENTITIES>>", _jinja(COL_LATENT_ENTITIES))
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<PRIVACY_GOAL>>": privacy_goal_str,
+            "<<DOMAIN>>": _jinja(COL_DOMAIN, key="domain"),
+            "<<DATA_SUMMARY>>": data_summary_line,
+            "<<DOMAIN_SUPPLEMENT>>": _jinja(COL_DOMAIN_SUPPLEMENT),
+            "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+            "<<FINAL_ENTITIES>>": _jinja(COL_ENTITIES_BY_VALUE),
+            "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),
+        },
     )
 
 

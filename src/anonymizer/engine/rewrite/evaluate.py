@@ -26,16 +26,17 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_REWRITTEN_TEXT,
     COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
     parse_privacy_qa,
     parse_quality_answers,
     parse_quality_compare,
     parse_quality_qa,
-    render_template,
 )
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswer,
@@ -59,7 +60,6 @@ class MetricsParams(BaseModel):
 
 
 class RepairNeedsParams(BaseModel):
-    auto_repair_privacy: bool
     repair_any_high_leak: bool
     effective_threshold: float
 
@@ -93,7 +93,7 @@ Fill in the "answer" field for each item. Do not add or remove items.
 <<SKELETON>>
 </answer_template>
 """
-    return render_template(
+    return substitute_placeholders(
         prompt,
         {
             "<<SKELETON>>": json.dumps({"answers": skeleton}, indent=2),
@@ -104,7 +104,9 @@ Fill in the "answer" field for each item. Do not add or remove items.
 
 def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
     qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
-    skeleton = [{"id": item.id, "question": item.question, "answer": ""} for item in qa.items]
+    skeleton = [
+        {"id": item.id, "question": item.question, "answer": "", "confidence": 1.0, "reason": ""} for item in qa.items
+    ]
 
     prompt = """You are a privacy auditor. Read the text and answer each question with "yes" or "no".
 
@@ -112,7 +114,9 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 - Answer "yes" if the specific entity value can be identified or reasonably inferred from the text
 - Answer "no" if it cannot
 - You must commit to "yes" or "no". Do not hedge.
-- You MUST provide an answer for EVERY item in the template below
+- Set confidence from 0.0 to 1.0 reflecting how strongly the answer is supported
+- Provide a brief reason grounded in the text
+- You MUST provide answer, confidence, and reason for EVERY item in the template below
 </rules>
 
 <text>
@@ -120,13 +124,14 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 </text>
 
 <task>
-Fill in the "answer" field for each item with "yes" or "no". Do not add or remove items.
+Fill in the "answer" ("yes"/"no"), "confidence" (0.0-1.0), and "reason" fields for each item.
+Do not add or remove items.
 </task>
 <answer_template>
 <<SKELETON>>
 </answer_template>
 """
-    return render_template(
+    return substitute_placeholders(
         prompt,
         {
             "<<SKELETON>>": json.dumps({"answers": skeleton}, indent=2),
@@ -177,7 +182,7 @@ Fill in the "score" (0.0-1.0) and "reason" fields for each item. Do not add or r
 <<SKELETON>>
 </answer_template>
 """
-    return render_template(
+    return substitute_placeholders(
         prompt,
         {
             "<<SKELETON>>": json.dumps({"per_item": skeleton}, indent=2),
@@ -222,7 +227,12 @@ def _make_privacy_answer_parser(
             payload.get("answers"),
             expected_ids=expected_ids,
             label="privacy answer",
-            default_item_factory=lambda item_id: {"id": item_id, "answer": "yes"},
+            default_item_factory=lambda item_id: {
+                "id": item_id,
+                "answer": "yes",
+                "confidence": 1.0,
+                "reason": "Model omitted this item; defaulted to highest-confidence leak.",
+            },
         )
         return PrivacyAnswersSchema.model_validate(
             payload,
@@ -324,7 +334,7 @@ def compute_leakage_mass(
     privacy_qa: PrivacyQAPairsSchema,
     sensitivity_weights: dict[str, float],
 ) -> float:
-    """Weighted sum of leaked entities.
+    """Confidence-weighted sum of leaked entities.
 
     An entity is "leaked" when the privacy re-answer is ``yes``.
     Answer coverage is enforced upstream by the context-validated parser
@@ -337,7 +347,7 @@ def compute_leakage_mass(
             sensitivity = qa_lookup.get(answer.id)
             if sensitivity is None:
                 continue
-            total += sensitivity_weights[sensitivity]
+            total += sensitivity_weights[sensitivity] * answer.confidence
     return total
 
 
@@ -353,17 +363,26 @@ def compute_any_high_leaked(
     )
 
 
+def compute_weighted_leakage_rate(
+    leakage_mass: float,
+    privacy_qa: PrivacyQAPairsSchema,
+    sensitivity_weights: dict[str, float],
+) -> float:
+    """Normalized leakage in [0, 1] relative to maximum possible leakage mass."""
+    max_possible_mass = sum(sensitivity_weights[item.sensitivity] for item in privacy_qa.items)
+    if max_possible_mass <= 0.0:
+        return 0.0
+    return leakage_mass / max_possible_mass
+
+
 def determine_repair_needs(
     *,
     any_high_leaked: bool,
     leakage_mass: float,
-    auto_repair_privacy: bool,
     repair_any_high_leak: bool,
     effective_threshold: float,
 ) -> bool:
     """Decide whether a single row needs repair."""
-    if not auto_repair_privacy:
-        return False
     if repair_any_high_leak and any_high_leaked:
         return True
     return leakage_mass > effective_threshold
@@ -438,16 +457,20 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
 
 @custom_column_generator(
     required_columns=[COL_QUALITY_QA_COMPARE, COL_PRIVACY_QA_REANSWER, COL_PRIVACY_QA, COL_QUALITY_QA],
-    side_effect_columns=[COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED],
+    side_effect_columns=[COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE, COL_ANY_HIGH_LEAKED],
 )
 def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParams) -> dict[str, Any]:
-    """Compute utility_score, leakage_mass, and any_high_leaked from evaluation outputs."""
+    """Compute utility_score, leakage_mass, weighted_leakage_rate, and any_high_leaked from evaluation outputs."""
     _, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
 
     row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores)
-    row[COL_LEAKAGE_MASS] = compute_leakage_mass(privacy_answers, privacy_qa, generator_params.sensitivity_weights)
+    leakage_mass = compute_leakage_mass(privacy_answers, privacy_qa, generator_params.sensitivity_weights)
+    row[COL_LEAKAGE_MASS] = leakage_mass
+    row[COL_WEIGHTED_LEAKAGE_RATE] = compute_weighted_leakage_rate(
+        leakage_mass, privacy_qa, generator_params.sensitivity_weights
+    )
     row[COL_ANY_HIGH_LEAKED] = compute_any_high_leaked(privacy_answers, privacy_qa)
     return row
 
@@ -458,7 +481,6 @@ def _determine_repair_needs_column(row: dict[str, Any], generator_params: Repair
     row[COL_NEEDS_REPAIR] = determine_repair_needs(
         any_high_leaked=bool(row.get(COL_ANY_HIGH_LEAKED, False)),
         leakage_mass=float(row.get(COL_LEAKAGE_MASS, 0.0)),
-        auto_repair_privacy=generator_params.auto_repair_privacy,
         repair_any_high_leak=generator_params.repair_any_high_leak,
         effective_threshold=generator_params.effective_threshold,
     )
@@ -492,10 +514,8 @@ class EvaluateWorkflow:
         *,
         selected_models: RewriteModelSelection,
         evaluation: EvaluationCriteria,
-        domain: str | None = None,
     ) -> list[ColumnConfigT]:
         evaluator_alias = resolve_model_alias("evaluator", selected_models)
-        effective_threshold = evaluation.get_effective_threshold(domain)
 
         return [
             # Step 1 -- Quality re-answer (LLM with context-validated parser)
@@ -524,9 +544,8 @@ class EvaluateWorkflow:
                 name=COL_NEEDS_REPAIR,
                 generator_function=_determine_repair_needs_column,
                 generator_params=RepairNeedsParams(
-                    auto_repair_privacy=evaluation.auto_repair_privacy,
                     repair_any_high_leak=evaluation.repair_any_high_leak,
-                    effective_threshold=effective_threshold,
+                    effective_threshold=evaluation.repair_threshold,
                 ),
             ),
         ]

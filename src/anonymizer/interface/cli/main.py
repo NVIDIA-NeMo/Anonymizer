@@ -36,10 +36,10 @@ ReplaceChoice = Literal["redact", "hash", "annotate", "substitute"]
 RiskToleranceChoice = Literal["strict", "conservative", "moderate", "permissive"]
 
 _STRATEGY_CLS = {
+    "substitute": Substitute,
     "redact": Redact,
     "hash": Hash,
     "annotate": Annotate,
-    "substitute": Substitute,
 }
 
 
@@ -120,7 +120,7 @@ def _cli_error_handler(fn):
     return wrapper
 
 
-def _build_replace_strategy(opts: CliOpts) -> Redact | Hash | Annotate | Substitute:
+def _build_replace_strategy(opts: CliOpts) -> Substitute | Redact | Hash | Annotate:
     """Build a replace strategy instance from CLI args.
 
     Only passes non-default kwargs so Pydantic field defaults are preserved.

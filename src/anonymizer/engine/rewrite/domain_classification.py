@@ -12,6 +12,7 @@ from data_designer.config.column_types import ColumnConfigT
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import COL_DOMAIN, COL_DOMAIN_SUPPLEMENT, COL_TEXT, _jinja
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
 
 # ---------------------------------------------------------------------------
@@ -228,17 +229,22 @@ DOMAIN_SUPPLEMENT_MAP: dict[Domain, str] = {
         "When the text is a legal form, authorization document, contract template, or "
         "procedural instrument, also treat the following as meaning-bearing elements that "
         "must be extracted in abstract form: "
-        "- The presence of a 'customer information' or 'party information' section, "
+        "\n- The presence of a 'customer information' or 'party information' section, "
         "captured abstractly (e.g., the form includes fields for the individual's identifying "
         "and account-related information). "
-        "- The presence of financial or account-related fields needed to execute the "
+        "\n- The presence of financial or account-related fields needed to execute the "
         "authorization (e.g., payment instruments, account relationships, routing elements), "
         "expressed generically without repeating sensitive identifiers. "
-        "- The structural components of the document such as required fields, placeholders, "
+        "\n- The structural components of the document such as required fields, placeholders, "
         "or sections (e.g., signature block, date field, merchant details, amount fields), "
         "when they define the meaning or operation of the document. "
-        "- The fact that the form is a template requiring user-provided inputs (e.g., amount, "
-        "date, merchant details), expressed abstractly."
+        "\n- The fact that the form is a template requiring user-provided inputs (e.g., amount, "
+        "date, merchant details), expressed abstractly. "
+        "\n- Unique record locators (e.g., case numbers, docket numbers, application numbers, "
+        " record IDs) should be treated as high-risk even if they identify the record rather "
+        " than naming the person directly. They should ALWAYS be replaced. "
+        "\n- Lawyer's names must always be replaced."
+        "\n- Court names and monetary amounts must always be either replaced, dropped or generalized."
         "\n\n"
         "Demographic quasi-identifiers (e.g., age, education level, nationality, ethnicity, "
         "gender) must be DROPPED unless they are CENTRAL to the legal reasoning, eligibility "
@@ -402,10 +408,13 @@ Choose the domain that best reflects how the text is meant to be used or interpr
 <text_to_classify>
 <<TEXT>>
 </text_to_classify>"""
-    return (
-        prompt.replace("<<TEXT>>", _jinja(COL_TEXT))
-        .replace("<<DOMAINS>>", domains_text)
-        .replace("<<DATA_CONTEXT>>", data_context_section)
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<TEXT>>": _jinja(COL_TEXT),
+            "<<DOMAINS>>": domains_text,
+            "<<DATA_CONTEXT>>": data_context_section,
+        },
     )
 
 

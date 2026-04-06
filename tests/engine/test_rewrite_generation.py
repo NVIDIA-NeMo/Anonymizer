@@ -93,7 +93,7 @@ def test_format_rewrite_disposition_block_excludes_unprotected_entities() -> Non
                 "entity_value": "Portland",
                 "needs_protection": False,
                 "protection_reason": "Not identifying alone",
-                "protection_method_suggestion": "left_as_is",
+                "protection_method_suggestion": "leave_as_is",
                 "combined_risk_level": "low",
             }
         ]
@@ -131,7 +131,7 @@ def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> 
                 "entity_value": "Portland",
                 "needs_protection": False,
                 "protection_reason": "Not identifying alone",
-                "protection_method_suggestion": "left_as_is",
+                "protection_method_suggestion": "leave_as_is",
                 "combined_risk_level": "low",
             }
         ]

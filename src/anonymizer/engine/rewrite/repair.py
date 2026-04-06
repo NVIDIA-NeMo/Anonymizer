@@ -29,13 +29,13 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
     field,
     normalize_payload,
     parse_privacy_answers,
     parse_privacy_qa,
     parse_sensitivity_disposition,
-    render_template,
 )
 from anonymizer.engine.schemas.rewrite import (
     EntityDispositionSchema,
@@ -93,7 +93,8 @@ def _leaked_items_text(
             item = qa_lookup.get(answer.id)
             if item:
                 lines.append(
-                    f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question}'
+                    f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question} '
+                    f"(confidence_leakage_occurred: {answer.confidence:.2f}; reason: {answer.reason})"
                 )
     return "\n".join(lines)
 
@@ -156,7 +157,13 @@ Fix the privacy leaks by following the protection decisions above:
 1. For "replace" - use synthetic values from the replacement map
 2. For "generalize" - use broader categories
 3. For "remove" - omit the detail entirely
-4. For "paraphrase" - rewrite surrounding context
+4. For "suppress_inference" - modify text so the attribute cannot be reliably inferred
+
+If privacy issues remain, you may override earlier "leave_as_is" decisions when needed to satisfy privacy goals.
+You may modify surrounding context beyond the explicit entity span to break inferential leakage.
+Modify the text such that latent attributes cannot be reliably inferred by a motivated reader.
+This may involve reducing specificity, removing or weakening key details, breaking causal or identifying linkages,
+or introducing ambiguity, while preserving overall narrative coherence.
 
 Maintain content quality (utility score: <<UTILITY_SCORE>>), consistency, and naturalness.
 
@@ -177,7 +184,7 @@ Provide ONLY the rewritten text. Do not include explanations, comments, or markd
         "<<LEAKED_ITEMS>>": str(row.get(COL_LEAKED_PRIVACY_ITEMS, "")),
         "<<UTILITY_SCORE>>": str(row.get(COL_UTILITY_SCORE, 0.0)),
     }
-    return render_template(prompt, replacements)
+    return substitute_placeholders(prompt, replacements)
 
 
 # ---------------------------------------------------------------------------
