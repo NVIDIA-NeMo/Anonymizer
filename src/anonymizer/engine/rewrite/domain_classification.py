@@ -10,7 +10,13 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
-from anonymizer.engine.constants import COL_DOMAIN, COL_DOMAIN_SUPPLEMENT, COL_DOMAIN_SUPPLEMENT_PRIVACY, COL_TEXT, _jinja
+from anonymizer.engine.constants import (
+    COL_DOMAIN,
+    COL_DOMAIN_SUPPLEMENT,
+    COL_DOMAIN_SUPPLEMENT_PRIVACY,
+    COL_TEXT,
+    _jinja,
+)
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
 
@@ -212,49 +218,15 @@ DOMAIN_SUPPLEMENT_PRIVACY_MAP: dict[Domain, str] = {
         "are essential exemplars."
     ),
     Domain.LEGAL: (
-    "Apply the following domain-specific privacy guidance for LEGAL text.\n\n"
-
-    "0. MANDATORY PROTECTION OVERRIDES (TAKE PRECEDENCE OVER ALL OTHER RULES)\n"
-    "The following MUST always be protected (generalized, replaced, or removed), regardless of context or perceived risk:\n"
-    "- Exact court names, tribunal names, and adjudicating bodies.\n"
-    "- Names of prison detention facilities.\n"
-    "- Exact sentencing.\n"
-    "- Names of parties, applicants, defendants, witnesses, relatives, lawyers, judges, and other individuals.\n"
-    "- Unique case or record locators (case numbers, docket numbers, application numbers, file numbers, reference numbers, record IDs).\n"
-    "- Exact addresses, email addresses, phone numbers, signatures, and direct contact details.\n"
-    "- Use generalized forms such as \"a regional court\", \"an appellate court\", or \"a national court\" instead of specific court names.\n\n"
-
-    "1. DIRECT IDENTIFIERS IN THIS DOMAIN\n"
-    "- Includes all uniquely identifying personal or record-level information listed above.\n"
-    "- These function as strong standalone identifiers and must be protected.\n\n"
-
-    "2. QUASI-IDENTIFIERS IN THIS DOMAIN\n"
-    "- Place names, exact dates, exact monetary amounts, institutional affiliations, family relationships, demographic attributes, charge types, sentence details, hearing counts, and procedural milestones.\n"
-    "- These may not identify alone but can become identifying when combined.\n"
-    "- Protect or generalize them when they contribute to linkage risk, especially in combination.\n\n"
-
-    "3. LATENT IDENTIFIERS IN THIS DOMAIN\n"
-    "- Rare combinations of allegations, procedural history, court progression, sentence structure, appeal outcomes, remedies sought, and institutional context.\n"
-    "- Distinctive bundles (e.g., specific counts of hearings, co-defendants, witnesses, or unusual sentencing patterns) may uniquely identify a case.\n"
-    "- If a combination would allow a motivated reader to narrow the case to a small set, you MUST modify or generalize one or more elements to break the linkage.\n\n"
-
-    "4. STRUCTURAL OR FUNCTIONAL INFORMATION THAT MAY BE PRESERVED\n"
-    "- Preserve abstract legal meaning: roles (e.g., applicant, prosecutor), existence of procedural stages, and high-level chronology.\n"
-    "- Preserve structure (e.g., that hearings occurred, that an appeal happened), but not the exact identifying details.\n"
-    "- In legal forms or templates, preserve field types (e.g., signature field, date field, party section) while protecting populated values.\n"
-    "- NEVER protect the occupation lawyer, always leave as is.\n\n"
-
-    "5. VALUES THAT REQUIRE STRONG DEFAULT PROTECTION\n"
-    "- Exact place names (cities, regions, detention centers).\n"
-    "- Exact dates (especially full dates tied to events).\n"
-    "- Exact monetary amounts.\n"
-    "- Detailed procedural counts (e.g., exact number of hearings, witnesses, co-defendants) when specific.\n"
-    "- These should generally be generalized unless clearly non-identifying in context.\n\n"
-
-    "DECISION PRINCIPLE\n"
-    "- Prioritize preventing person-, case-, and record-level linkage over preserving surface detail.\n"
-    "- When in doubt, generalize.\n"
-    "- Ensure the rewritten text cannot be reliably matched back to a specific real-world case using publicly available information.\n"
+        "Apply the following domain-specific privacy guidance for LEGAL text.\n\n"
+        "- Treat exact court names, tribunal names, exact monetary amouts, adjudicating bodies, prison or detention-facility names, unique case or record locators, and exact sentencing details as high-risk legal anchors that MUST be protected.\n"
+        "- ALWAYS protect names of lawyers and other legal professionals when they refer to specific individuals.\n"
+        '- Use generalized forms such as "a trial court", "an appellate court", "a national court", "a detention facility", or "a prison" instead of specific institutional names.\n'
+        '- Do NOT treat generic institutional references (e.g., "the court", "a regional court", "an appellate court") as identifiers. These are structural terms and MUST be preserved.\n'
+        "- In legal text, exact place names, exact dates, charge details, procedural milestones, and detailed counts may become identifying in combination and should be generalized when they materially increase person-, case-, or record-linkage risk.\n"
+        "- Rare combinations of allegations, procedural history, court progression, sentence structure, appeal outcomes, remedies sought, and institutional context may function as latent identifiers; break these bundles by generalizing or suppressing one or more supporting details.\n"
+        "- Preserve abstract legal meaning, party roles, and high-level procedural chronology where possible without retaining exact identifying detail.\n"
+        '- Preserve generic professional roles such as "lawyer", "judge", or "prosecutor" ONLY when used as role labels and not tied to identifiable individuals, law firms, or specific cases.\n'
     ),
     Domain.HR_PEOPLE_OPS: (
         "Focus on: roles, responsibilities, performance dimensions, behavioral expectations, "
@@ -713,13 +685,13 @@ def _enrich_domain(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_DOMAIN_SUPPLEMENT] = DOMAIN_SUPPLEMENT_MAP[parsed_domain.domain]
     return row
 
-@custom_column_generator(required_columns=[COL_DOMAIN])                   
+
+@custom_column_generator(required_columns=[COL_DOMAIN])
 def _enrich_domain_privacy(row: dict[str, Any]) -> dict[str, Any]:
     """Look up privacy-specific guidance from DOMAIN_SUPPLEMENT_PRIVACY_MAP."""
     parsed_domain = DomainClassificationSchema.model_validate(row[COL_DOMAIN])
     row[COL_DOMAIN_SUPPLEMENT_PRIVACY] = DOMAIN_SUPPLEMENT_PRIVACY_MAP[parsed_domain.domain]
-    return row 
-
+    return row
 
 
 # ---------------------------------------------------------------------------

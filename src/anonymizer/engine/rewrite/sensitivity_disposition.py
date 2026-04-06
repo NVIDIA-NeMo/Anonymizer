@@ -10,7 +10,6 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DOMAIN,
-    COL_DOMAIN_SUPPLEMENT,
     COL_DOMAIN_SUPPLEMENT_PRIVACY,
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
@@ -146,7 +145,7 @@ CONSISTENCY RULES:
 - For source="latent": entity_label/value MUST match the provided latent entity.
 
 COVERAGE REQUIREMENTS:
-- Include ONE entry for EVERY tagged entity in the text.
+- Include ONE entry for EVERY unique listed entity
 - Include ONE entry for EVERY provided latent entity.
 - IDs must be sequential starting from 1.
 
