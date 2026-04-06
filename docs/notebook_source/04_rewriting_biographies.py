@@ -80,7 +80,7 @@ input_data = AnonymizerInput(
 #   this gives the rewriter clear, domain-specific guidance.
 # - `risk_tolerance` (default `"low"`) and `max_repair_iterations` (default `2`)
 #   control the automated quality gate --
-#   see [Evaluation criteria](../concepts/rewrite.md#evaluation-criteria) for presets.
+#   see [Risk tolerance](../concepts/rewrite.md#risk-tolerance) for presets.
 
 # %%
 config = AnonymizerConfig(

@@ -113,7 +113,7 @@ Roles you don't override keep their default alias selections, but those aliases 
 
 For Anonymizer, the best overall leaderboard model is not always the best default for every role.
 Some roles are simple classification or constrained JSON generation tasks, while others require deeper
-reasoning about privacy risk, long-context rewriting, and leakage repair (see [Rewrite evaluation criteria](rewrite.md#evaluation-criteria)).
+reasoning about privacy risk, long-context rewriting, and leakage repair (see [Risk tolerance](rewrite.md#risk-tolerance)).
 
 Use benchmarks as signals for role fit, not as a single global ranking.
 
