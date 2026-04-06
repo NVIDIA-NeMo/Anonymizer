@@ -12,23 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Validate PR title
+name: Conventional Commit
 
 # No path filter: this check validates the PR title against the conventional
 # commit format, which is independent of which files changed.
 on:
   pull_request_target:
-    types:
-      - opened
-      - edited
-      - synchronize
-      - reopened
+    types: [opened, edited, synchronize, reopened]
   pull_request:
-    types:
-      - opened
-      - edited
-      - synchronize
-      - reopened
+    types: [opened, edited, synchronize, reopened]
 
 defaults:
   run:
@@ -38,5 +30,5 @@ permissions:
   pull-requests: read
 
 jobs:
-  semantic-pull-request:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_semantic_pull_request.yml@v0.66.6
+  conventional-commit:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_semantic_pull_request.yml@v0.83.0
