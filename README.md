@@ -39,15 +39,6 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 > Tip: All examples below use `uv run` to invoke commands. If you prefer, activate the venv with `source .venv/bin/activate` and run commands directly.
 ```bash
 # Preview on a small sample
-anonymizer preview --source data.csv --replace redact
-
-# Full run with output file
-anonymizer run --source data.csv --replace redact --output result.csv
-
-# Validate config without running
-anonymizer validate --source data.csv --replace hash
-```bash
-# Preview on a small sample
 uv run anonymizer preview --source data.csv --replace redact
 
 # Full run with output file
@@ -55,6 +46,7 @@ uv run anonymizer run --source data.csv --replace redact --output result.csv
 
 # Validate config without running
 uv run anonymizer validate --source data.csv --replace hash
+```
 
 Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
 
