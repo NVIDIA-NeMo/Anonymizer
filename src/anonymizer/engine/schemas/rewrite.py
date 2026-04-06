@@ -38,9 +38,12 @@ Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -304,22 +307,23 @@ class RewriteOutputSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _validate_id_coverage(expected_ids: list[int], returned_ids: list[int], label: str) -> None:
-    """Enforce exact ID coverage: no missing, duplicate, or extra IDs."""
+def _validate_id_coverage(expected_ids: list[int], returned_ids: list[int], label: str) -> list[int]:
+    """Check ID coverage and return missing IDs (for backfill by caller).
+
+    Duplicates and extra IDs are silently deduplicated/ignored.
+    Missing IDs are logged as warnings — callers backfill them with
+    conservative defaults so the record survives.
+    """
     expected_set = set(expected_ids)
     returned_set = set(returned_ids)
 
     missing = sorted(expected_set - returned_set)
     if missing:
-        raise ValueError(f"Missing {label} IDs: {missing}")
+        logger.warning(
+            "Evaluator skipped %d %s IDs %s — backfilling with conservative defaults", len(missing), label, missing
+        )
 
-    duplicates = sorted(id for id in returned_set if returned_ids.count(id) > 1)
-    if duplicates:
-        raise ValueError(f"Duplicate {label} IDs: {duplicates}")
-
-    extra = sorted(returned_set - expected_set)
-    if extra:
-        raise ValueError(f"Extra {label} IDs not in expected set: {extra}")
+    return missing
 
 
 class QualityAnswerSchema(BaseModel):
@@ -331,7 +335,7 @@ class QualityAnswersSchema(BaseModel):
     """LLM output schema for quality QA re-answer step (on rewritten text).
 
     When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    backfills missing IDs with empty answers (utility penalty, not record loss).
     """
 
     answers: list[QualityAnswerSchema]
@@ -340,7 +344,9 @@ class QualityAnswersSchema(BaseModel):
     def _check_coverage(self, info: ValidationInfo) -> QualityAnswersSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            missing = _validate_id_coverage(expected_ids, [a.id for a in self.answers], "quality answer")
+            for mid in missing:
+                self.answers.append(QualityAnswerSchema(id=mid, answer=""))
         return self
 
 
@@ -355,7 +361,8 @@ class PrivacyAnswersSchema(BaseModel):
     """LLM output schema for privacy QA re-answer step (on rewritten text).
 
     When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    backfills missing IDs with answer=yes, confidence=1.0 (assumes leaked —
+    triggers repair or review rather than dropping the record).
     """
 
     answers: list[PrivacyAnswerItemSchema]
@@ -364,7 +371,16 @@ class PrivacyAnswersSchema(BaseModel):
     def _check_coverage(self, info: ValidationInfo) -> PrivacyAnswersSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            missing = _validate_id_coverage(expected_ids, [a.id for a in self.answers], "privacy answer")
+            for mid in missing:
+                self.answers.append(
+                    PrivacyAnswerItemSchema(
+                        id=mid,
+                        answer=PrivacyAnswer.yes,
+                        confidence=1.0,
+                        reason="Evaluator failed to assess this entity — assuming leaked",
+                    )
+                )
         return self
 
 
@@ -378,7 +394,7 @@ class QACompareResultsSchema(BaseModel):
     """LLM output schema for quality QA comparison step.
 
     When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    backfills missing IDs with score=0.0 (utility penalty, not record loss).
     """
 
     per_item: list[QACompareItemSchema]
@@ -387,5 +403,13 @@ class QACompareResultsSchema(BaseModel):
     def _check_coverage(self, info: ValidationInfo) -> QACompareResultsSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
+            missing = _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "quality compare")
+            for mid in missing:
+                self.per_item.append(
+                    QACompareItemSchema(
+                        id=mid,
+                        score=0.0,
+                        reason="Evaluator failed to assess this item — assuming no preservation",
+                    )
+                )
         return self

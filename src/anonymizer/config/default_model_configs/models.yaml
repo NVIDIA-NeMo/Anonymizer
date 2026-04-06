@@ -15,16 +15,65 @@ model_configs:
     inference_parameters:
       max_parallel_requests: 2
       max_tokens: 16384
-      temperature: 0.3
+      temperature: 0.2
       top_p: 0.95
       timeout: 300
 
-  - alias: nemotron-30b-thinking
+  - alias: nemotron-30b
     model: nvidia/nemotron-3-nano-30b-a3b
     provider: nvidia
     inference_parameters:
-      max_parallel_requests: 16
+      max_parallel_requests: 2
+      max_tokens: 16384
+      temperature: 0.2
+      top_p: 0.95
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+      timeout: 300
+
+  - alias: nemotron-super
+    model: nvidia/nemotron-3-super-120b-a12b
+    provider: nvidia
+    inference_parameters:
+      max_parallel_requests: 2
+      max_tokens: 16384
+      temperature: 0.2
+      top_p: 0.95
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+      timeout: 300
+
+  - alias: nemotron-super-creative
+    model: nvidia/nemotron-3-super-120b-a12b
+    provider: nvidia
+    inference_parameters:
+      max_parallel_requests: 2
+      max_tokens: 16384
+      temperature: 0.7
+      top_p: 0.95
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+      timeout: 300
+
+  - alias: qwen397-rewriter
+    model: qwen/qwen3.5-397b-a17b
+    provider: nvidia
+    inference_parameters:
+      max_parallel_requests: 2
       max_tokens: 8192
-      temperature: 0.4
-      top_p: 1.0
+      temperature: 0.5
+      top_p: 0.95
+      timeout: 600
+
+  - alias: kimi-judge
+    model: moonshotai/kimi-k2.5
+    provider: nvidia
+    inference_parameters:
+      max_parallel_requests: 2
+      max_tokens: 16384
+      temperature: 0.1
+      top_p: 0.95
       timeout: 300

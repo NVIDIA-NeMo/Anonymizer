@@ -131,7 +131,8 @@ Also consider operational constraints like latency, output speed, and verbosity,
 
 #### Practical guidance
 
-- Use your strongest models for `latent_detector`, `disposition_analyzer`, `rewriter`, and `repairer`.
-- Use mid-tier models for `entity_augmenter`, `meaning_extractor`, and `replacement_generator`.
-- Use smaller or faster models for `entity_validator`, `domain_classifier`, `qa_generator`, and `evaluator`.
-- Do not optimize every role for peak leaderboard rank. Optimize the hard-to-recover privacy and rewrite steps for quality. Optimize bounded steps for reliability per token.
+- Use your **strongest reasoning models** for `rewriter` and `repairer` — these are long-context generation tasks where privacy and naturalness depend on model quality.
+- Use **reliable structured-output models** for `entity_validator`, `disposition_analyzer`, `meaning_extractor`, and `evaluator` — these produce large JSON arrays with strict coverage requirements. Reliability matters more than raw reasoning power.
+- Use **mid-tier models** for `latent_detector` and `replacement_generator` — moderate structured output with some reasoning.
+- Use **smaller or faster models** for `entity_augmenter`, `domain_classifier`, and `qa_generator` — simple classification or short generation tasks where even small models achieve 0% failure rates.
+- Do not optimize every role for peak leaderboard rank. Optimize the hard-to-recover privacy and rewrite steps for quality. Optimize bounded structured-output steps for reliability per token.

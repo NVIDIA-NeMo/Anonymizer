@@ -376,12 +376,14 @@ def test_qa_compare_results_use_integer_ids() -> None:
 # Context-validated answer coverage
 
 
-def test_quality_answers_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_backfill_missing_ids_with_context() -> None:
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    assert len(result.answers) == 2
+    backfilled = next(a for a in result.answers if a.id == 2)
+    assert backfilled.answer == ""
 
 
 def test_quality_answers_accept_complete_with_context() -> None:
@@ -397,33 +399,38 @@ def test_quality_answers_no_enforcement_without_context() -> None:
     assert len(result.answers) == 1
 
 
-def test_privacy_answers_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing answer IDs"):
-        PrivacyAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_privacy_answers_backfill_missing_ids_with_context() -> None:
+    result = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    assert len(result.answers) == 2
+    backfilled = next(a for a in result.answers if a.id == 2)
+    assert backfilled.answer.value == "yes"
+    assert backfilled.confidence == 1.0
 
 
-def test_qa_compare_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing compare IDs"):
-        QACompareResultsSchema.model_validate(
-            {"per_item": [{"id": 1, "score": 0.9}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_qa_compare_backfill_missing_ids_with_context() -> None:
+    result = QACompareResultsSchema.model_validate(
+        {"per_item": [{"id": 1, "score": 0.9}]},
+        context={"expected_ids": [1, 2]},
+    )
+    assert len(result.per_item) == 2
+    backfilled = next(a for a in result.per_item if a.id == 2)
+    assert backfilled.score == 0.0
 
 
-def test_quality_answers_reject_duplicate_ids() -> None:
-    with pytest.raises(ValidationError, match="Duplicate answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_tolerate_duplicate_ids() -> None:
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    assert len(result.answers) == 3
 
 
-def test_quality_answers_reject_extra_ids() -> None:
-    with pytest.raises(ValidationError, match="Extra answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_tolerate_extra_ids() -> None:
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    assert len(result.answers) == 3

@@ -2,4 +2,4 @@
 # SPDX-License-Identifier: Apache-2.0
 
 selected_models:
-  replacement_generator: gpt-oss-120b
+  replacement_generator: nemotron-super-creative

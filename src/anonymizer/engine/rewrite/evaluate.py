@@ -79,7 +79,8 @@ def _render_quality_reanswer_prompt(row: dict[str, Any]) -> str:
 - If the text does not state the answer, use "unknown"
 - Keep answers concise and factual
 - Do not invent details
-- You MUST provide an answer for EVERY item in the template below
+- You MUST provide an answer for EVERY item in the template below — do not skip any IDs
+- CRITICAL: Missing IDs will be scored as 0.0 (total information loss). Respond to every single item.
 </rules>
 
 <text>
@@ -116,7 +117,8 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 - You must commit to "yes" or "no". Do not hedge.
 - Set confidence from 0.0 to 1.0 reflecting how strongly the answer is supported
 - Provide a brief reason grounded in the text
-- You MUST provide answer, confidence, and reason for EVERY item in the template below
+- You MUST provide answer, confidence, and reason for EVERY item in the template below — do not skip any IDs
+- CRITICAL: Any missing ID will be assumed to be a confirmed privacy leak (answer=yes, confidence=1.0). Respond to every single item.
 </rules>
 
 <text>
@@ -173,6 +175,7 @@ Compare the student's answer to the reference answer and grade each on a 0.0-1.0
 * No credit for invented/contradictory info
 * Semantically equivalent answers get full credit
 * "unknown" answers get 0.0 score
+* CRITICAL: You MUST score EVERY item — do not skip any IDs. Missing scores default to 0.0 (total quality loss).
 </grading_rules>
 
 <task>

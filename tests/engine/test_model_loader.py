@@ -89,7 +89,7 @@ model_configs:
 """
     result = parse_model_configs(yaml_str)
     assert result.selected_models.detection.entity_detector == "custom-detector"
-    assert result.selected_models.replace.replacement_generator == "gpt-oss-120b"
+    assert result.selected_models.replace.replacement_generator == "nemotron-super-creative"
     assert len(result.model_configs) == 2
 
 

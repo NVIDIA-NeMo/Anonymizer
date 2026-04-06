@@ -100,11 +100,14 @@ class ValidationSkeletonSchema(BaseModel):
 
 
 class ValidationDecisionSchema(BaseModel):
-    """Per-entity validation decision from the LLM validator."""
+    """Per-entity validation decision from the LLM validator.
+
+    Only the fields the LLM needs to *produce*. ``value`` and ``label`` are
+    intentionally omitted — ``enrich_validation_decisions`` recovers them
+    from the candidate lookup, keeping the structured output small.
+    """
 
     id: str
-    value: str = Field(default="", description="Entity value (echoed from skeleton)")
-    label: str = Field(default="", description="Entity label (echoed from skeleton)")
     decision: ValidationChoice
     proposed_label: str = Field(
         default="",
@@ -158,7 +161,7 @@ class LatentEntitySchema(BaseModel):
     )
     rationale: str = Field(
         min_length=20,
-        max_length=150,
+        max_length=300,
         description="One sentence explaining the inference without adding new facts",
     )
 
