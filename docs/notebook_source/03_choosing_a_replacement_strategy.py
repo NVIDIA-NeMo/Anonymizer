@@ -72,8 +72,7 @@ input_data = AnonymizerInput(
 # ## 🔄 Substitute
 #
 # - Uses an LLM to generate contextually appropriate synthetic replacements.
-# - Unlike the strategies above, the LLM considers the full document context --
-#   matching names with emails, cities to states, etc.
+#   - The LLM considers the full document context matching names with emails, cities to states, etc.
 # - Customize with `instructions` to steer the LLM's replacement choices.
 
 # %%

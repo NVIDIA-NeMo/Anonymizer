@@ -42,6 +42,16 @@
 # - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
 # %%
+import getpass
+import os
+
+if not os.getenv("NVIDIA_API_KEY"):
+    key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
+    if not key:
+        raise RuntimeError("NVIDIA_API_KEY is required to run these notebooks.")
+    os.environ["NVIDIA_API_KEY"] = key
+
+# %%
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite, configure_logging
 from anonymizer.config.rewrite import PrivacyGoal
 
