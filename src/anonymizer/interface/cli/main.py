@@ -20,7 +20,6 @@ from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substit
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
     DEFAULT_PROTECT_TEXT,
-    EvaluationCriteria,
     PrivacyGoal,
     RiskTolerance,
 )
@@ -33,7 +32,7 @@ from anonymizer.logging import LoggingConfig, configure_logging
 app = cyclopts.App(help="NeMo Anonymizer CLI")
 
 ReplaceChoice = Literal["redact", "hash", "annotate", "substitute"]
-RiskToleranceChoice = Literal["strict", "conservative", "moderate", "permissive"]
+RiskToleranceChoice = Literal["minimal", "low", "moderate", "high"]
 
 _STRATEGY_CLS = {
     "substitute": Substitute,
@@ -77,7 +76,7 @@ class CliOpts:
     # -- rewrite-specific --
     protect: Annotated[str | None, cyclopts.Parameter(help="What to protect (privacy goal).")] = None
     preserve: Annotated[str | None, cyclopts.Parameter(help="What to preserve (utility goal).")] = None
-    risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = "conservative"
+    risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = "low"
     max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = 2
 
     # -- shared between substitute (replace) and rewrite --
@@ -147,14 +146,11 @@ def _build_rewrite_config(opts: CliOpts) -> Rewrite:
             protect=opts.protect or DEFAULT_PROTECT_TEXT,
             preserve=opts.preserve or DEFAULT_PRESERVE_TEXT,
         )
-    evaluation = EvaluationCriteria(
-        risk_tolerance=RiskTolerance(opts.risk_tolerance),
-        max_repair_iterations=opts.max_repair_iterations,
-    )
     return Rewrite(
         privacy_goal=privacy_goal,
         instructions=opts.instructions,
-        evaluation=evaluation,
+        risk_tolerance=RiskTolerance(opts.risk_tolerance),
+        max_repair_iterations=opts.max_repair_iterations,
     )
 
 

@@ -156,17 +156,17 @@ def test_build_rewrite_partial_goal_uses_defaults() -> None:
 
 
 def test_build_rewrite_risk_tolerance() -> None:
-    """--risk-tolerance strict is forwarded to EvaluationCriteria."""
-    opts = CliOpts(rewrite=True, risk_tolerance="strict")
+    """--risk-tolerance minimal is forwarded to Rewrite."""
+    opts = CliOpts(rewrite=True, risk_tolerance="minimal")
     rewrite = _build_rewrite_config(opts)
-    assert rewrite.evaluation.risk_tolerance == RiskTolerance.strict
+    assert rewrite.risk_tolerance == RiskTolerance.minimal
 
 
 def test_build_rewrite_max_repair_iterations() -> None:
     """--max-repair-iterations is forwarded."""
     opts = CliOpts(rewrite=True, max_repair_iterations=5)
     rewrite = _build_rewrite_config(opts)
-    assert rewrite.evaluation.max_repair_iterations == 5
+    assert rewrite.max_repair_iterations == 5
 
 
 def test_build_rewrite_instructions() -> None:
