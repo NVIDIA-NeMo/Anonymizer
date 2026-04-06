@@ -112,7 +112,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: nemo-anonymizer-${{ needs.publish-wheel.outputs.version }}
           path: dist/
@@ -129,6 +129,6 @@ jobs:
 
           gh release create "v${VERSION}" \
             dist/*.whl \
+            --generate-notes \
             --title "v${VERSION}" \
-            --notes-file CHANGELOG.md \
             $PRERELEASE_FLAG
