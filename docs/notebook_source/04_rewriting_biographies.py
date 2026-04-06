@@ -81,7 +81,7 @@ input_data = AnonymizerInput(
 #
 # - `PrivacyGoal` spells out what to **protect** and what to **preserve** --
 #   this gives the rewriter clear, domain-specific guidance.
-# - `risk_tolerance` (default `"low"`) and `max_repair_iterations` (default `2`)
+# - `risk_tolerance` (default `"low"`) and `max_repair_iterations` (default `3`)
 #   control the automated quality gate --
 #   see [Risk tolerance](../concepts/rewrite.md#risk-tolerance) for presets.
 

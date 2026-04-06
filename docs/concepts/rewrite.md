@@ -38,7 +38,7 @@ preview.display_record()
 | `privacy_goal` | Auto-populated | What to protect and what to preserve. |
 | `instructions` | `None` | Additional instructions for the rewrite LLM. |
 | `risk_tolerance` | `low` | Preset controlling repair and review thresholds: `minimal`, `low`, `moderate`, `high`. |
-| `max_repair_iterations` | `2` | Maximum repair rounds. Set to 0 to disable repair. |
+| `max_repair_iterations` | `3` | Maximum repair rounds. Set to 0 to disable repair. |
 
 ### Privacy goal
 
