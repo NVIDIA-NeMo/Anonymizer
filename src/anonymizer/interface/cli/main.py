@@ -161,7 +161,8 @@ def _build_rewrite_config(opts: CliOpts) -> Rewrite:
 def _build_config_and_anonymizer(opts: CliOpts) -> tuple[AnonymizerConfig, Anonymizer]:
     """Build the shared AnonymizerConfig and Anonymizer from CLI args."""
     if opts.rewrite:
-        config = AnonymizerConfig(rewrite=_build_rewrite_config(opts), detect=opts.detect)
+        strategy = _build_rewrite_config(opts)
+        config = AnonymizerConfig(rewrite=strategy, detect=opts.detect)
     elif opts.replace:
         strategy = _build_replace_strategy(opts)
         config = AnonymizerConfig(replace=strategy, detect=opts.detect)
