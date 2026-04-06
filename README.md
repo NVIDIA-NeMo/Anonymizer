@@ -47,7 +47,15 @@ anonymizer run --source data.csv --replace redact --output result.csv
 
 # Validate config without running
 anonymizer validate --source data.csv --replace hash
-```
+```bash
+# Preview on a small sample
+uv run anonymizer preview --source data.csv --replace redact
+
+# Full run with output file
+uv run anonymizer run --source data.csv --replace redact --output result.csv
+
+# Validate config without running
+uv run anonymizer validate --source data.csv --replace hash
 
 Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
 
