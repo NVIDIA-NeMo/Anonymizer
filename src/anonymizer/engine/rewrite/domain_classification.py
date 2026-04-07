@@ -10,7 +10,13 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
-from anonymizer.engine.constants import COL_DOMAIN, COL_DOMAIN_SUPPLEMENT, COL_TEXT, _jinja
+from anonymizer.engine.constants import (
+    COL_DOMAIN,
+    COL_DOMAIN_SUPPLEMENT,
+    COL_DOMAIN_SUPPLEMENT_PRIVACY,
+    COL_TEXT,
+    _jinja,
+)
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
@@ -82,6 +88,264 @@ _DOMAIN_LIST: list[tuple[Domain, str]] = [
 # sensitivity disposition prompts via COL_DOMAIN_SUPPLEMENT to tell the LLM
 # what to preserve vs. drop when processing text in each domain.
 # ---------------------------------------------------------------------------
+
+DOMAIN_SUPPLEMENT_PRIVACY_MAP: dict[Domain, str] = {
+    Domain.BIOGRAPHY: (
+        "Focus on: core life roles and occupations; long-term activities and commitments; "
+        "career trajectory and development (including training, education, major transitions, "
+        "and advancement into current roles); distinctive skills or ways of doing things "
+        "in those roles (e.g., creative methods, sourcing philosophy, technical or artistic "
+        "approach); central motivations and formative influences rooted in early experience; "
+        "and key, ongoing relationships or family structures that shape the individual's life "
+        "or work.\n\n"
+        "You MUST capture high-level educational background and professional trajectory when "
+        "present, expressed in abstract terms (e.g., advanced study, early-stage training, "
+        "work at major observatory, move into leadership), even if specific institutions or "
+        "dates must be generalized.\n\n"
+        "Also capture signature outputs or recurring creations that represent the individual's "
+        "identity or history (e.g., a recurring research theme, a major discovery focus, a "
+        "signature dish), especially when tied to motivation or heritage.\n\n"
+        "Drop: street-level or hyper-local locations, exact ages, precise institutions, and "
+        "identifying anecdotes that do not materially affect development, output, values, "
+        "or long-term identity."
+    ),
+    Domain.CHAT_EMAIL_CSAT: (
+        "Focus on: what problem is being discussed, key actions taken, decisions made, and "
+        "final outcomes or resolutions. Drop: greetings, sign-offs, small talk, exact phone "
+        "numbers, ticket IDs, and email signatures unless truly critical for understanding."
+    ),
+    Domain.PRODUCT_REVIEW: (
+        "Focus on: product features, qualities, user experience, clear pros/cons, issues, "
+        "and overall evaluation or recommendation. Drop: specific order IDs, store locations, "
+        "shipping details, and identifying anecdotes about the reviewer or third parties."
+    ),
+    Domain.NEWS_JOURNALISM: (
+        "Extract every distinct information-bearing unit from the article. Do NOT summarize or compress multiple "
+        "claims into one unit. A meaning unit is ONE independent idea: a fact, stance, causal link, prediction, "
+        "stakeholder impact, trend, or description of who is doing what at a role/group/institution level.\n\n"
+        "Always capture, if present:\n"
+        "1) Policy or event: stances, approvals, bans, reversals, regulatory shifts, key decisions.\n"
+        "2) Actors as roles or groups: parties, governments, business sectors, lobbies, institutions (never names).\n"
+        "3) Motivations and reasoning: economic, political, ideological justifications on all sides.\n"
+        "4) Polarity: who supports, who opposes, and on what grounds.\n"
+        "5) Evidence and analogies used to support arguments (paraphrased, not quoted verbatim).\n"
+        "6) Stakeholder impacts: effects on farmers, workers, retailers, investors, consumers, or public services.\n"
+        "7) System-level consequences: investor confidence, monopoly risk, inflation, growth, governance stability.\n"
+        "8) Broader trends: membership growth, reform momentum, shifts in public sentiment or party credibility.\n"
+        "9) Policy lineage: how the current stance differs from previous governments or earlier policy.\n"
+        "10) Temporal framing: before/after elections, reforms, court rulings, crises, or other milestones.\n\n"
+        "11) Extract historical/political lineage when present (election wins, shifts from prior ruling party).\n\n"
+        "Segmentation rules:\n"
+        "• If a sentence contains multiple independent ideas (e.g., a reason AND a separate consequence), split them.\n"
+        "• If two sentences express one tightly bound idea that cannot stand alone if split, keep them as one unit.\n"
+        "• When in doubt about splitting, err on the side of creating MORE, smaller units rather than fewer, larger ones.\n\n"
+        "Do NOT use personal names or specific PII. Refer to actors only by their roles or affiliations "
+        "(e.g., 'the party', 'a business-sector recruit', 'small-trader lobbies', 'the previous government').\n\n"
+        "There is NO fixed number of units required. Continue extracting meaning units until no substantial claim, "
+        "stance, cause, effect, or stakeholder-impact statement remains unrepresented."
+    ),
+    Domain.MARKETING_ADVERTISING: (
+        "Capture the product or service being promoted, the key features being offered, and the "
+        "benefits or value claims made to the customer.\n\n"
+        "Always extract distinct meaning units for:\n"
+        "- Core features or capabilities of the product or service,\n"
+        "- Stated benefits such as convenience, security, flexibility, or ease of use,\n"
+        "- Access conditions (e.g., availability windows, 24/7 access, multi-channel access),\n"
+        "- Optional enhancements (e.g., linking cards, authentication options, bonus features),\n"
+        "- Any security mechanisms or protection features referenced.\n\n"
+        "If sensitive identifiers (e.g., account numbers, card numbers, routing/codes, biometric IDs) "
+        "appear in the text, DO NOT reproduce their values. Instead retain the meaning at an abstract level — "
+        "e.g., 'an associated payment card exists', 'the account supports direct deposits', "
+        "'a biometric credential is available for login'.\n\n"
+        "Do not collapse multiple features into a single unit. Marketing content is feature-enumerative — "
+        "so keep features separate unless they are truly inseparable in meaning."
+    ),
+    Domain.TECHNICAL_ENGINEERING_SOFTWARE: (
+        "Focus on: inputs, outputs, constraints, assumptions, requirements, algorithms, "
+        "interfaces, failure modes, and key configuration logic. Drop: machine hostnames, "
+        "internal user handles, and environment-specific paths unless essential to semantics."
+    ),
+    Domain.SCIENTIFIC_ACADEMIC: (
+        "Focus on: research questions, hypotheses, methods, datasets (at an abstract level), "
+        "core findings, limitations, and implications. Drop: reviewer comments, individual "
+        "participant anecdotes, and unnecessary bibliographic minutiae."
+    ),
+    Domain.SECURITY_INFOSEC: (
+        "Focus on: threat models, vulnerabilities, attack vectors, mitigations, and incident "
+        "flows. Drop: live credentials, specific machine identifiers, and any data that could "
+        "enable real-world compromise."
+    ),
+    Domain.FINANCIAL: (
+        "Capture any information relevant to financial decision-making, risk assessment, customer needs, "
+        "or product evaluation. This includes (when present):\n"
+        "- The type and scope of financial products (mortgages, loans, credit lines, investment portfolios, "
+        "account summaries),\n"
+        "- Customer actions such as exploring rates, repayment plans, contribution levels, or product options,\n"
+        "- Communication channels or engagement with the institution (abstracted),\n"
+        "- Evidence of a financial relationship or account ownership (described generically),\n"
+        "- Portfolio or loan structure (diversification, term options, repayment strategy),\n"
+        "- Generalized demographic or residency context when relevant to suitability or risk (e.g., 'a young "
+        "adult borrower', 'a customer in a regional market'),\n"
+        "- High-level financial totals or outcomes such as total income, total expenses, projected balance, "
+        "net surplus/deficit, or reported aggregates.\n\n"
+        "For account statements, investment reports, or portfolio summaries, ALWAYS capture:\n"
+        "1) That a statement/report exists or has been generated,\n"
+        "2) What it covers (e.g., holdings across asset classes),\n"
+        "3) What categories of metrics it reports (values, acquisition dates, performance metrics),\n"
+        "4) The presence of a reporting date or period (generalized if needed).\n\n"
+        "Demographic or geographic attributes should be preserved only in abstract form and only when "
+        "relevant to financial interpretation. Remove any exact surface forms listed in the sensitive "
+        "entities block.\n\n"
+        "When accounts, emails, routing numbers, card numbers, URLs, or institution-specific markers appear, "
+        "treat them only as evidence of a customer relationship or account linkage — DO NOT retain any exact "
+        "identifier values.\n\n"
+        "Always extract:\n"
+        "1) The financial scenario (product, purpose, or portfolio scope),\n"
+        "2) Customer actions or evaluation behaviors,\n"
+        "3) Communication or engagement channels (abstracted),\n"
+        "4) Attributes that materially influence financial suitability,\n"
+        "5) The existence of a financial account or relationship,\n"
+        "6) Any reporting period or financial outcome that provides meaningful context.\n\n"
+        "Prefer abstraction over deletion: preserve high-level financial meaning even when specifics must be removed."
+    ),
+    Domain.ECONOMIC: (
+        "Focus on: macro or sector-level drivers, indicators, models, and causal reasoning. "
+        "Drop: overly specific personal anecdotes or local identifiers that don't affect the "
+        "analysis."
+    ),
+    Domain.POLICY_REGULATORY_COMPLIANCE: (
+        "Focus on: obligations, rights, conditions, thresholds, exceptions, and enforcement "
+        "mechanisms. Keep rule structure clear. Drop: individual case anecdotes unless they "
+        "are essential exemplars."
+    ),
+    Domain.LEGAL: (
+        "Apply the following domain-specific privacy guidance for LEGAL text.\n\n"
+        "- Treat exact court names, tribunal names, exact monetary amounts, adjudicating bodies, prison or detention-facility names, unique case or record locators, and exact sentencing details as high-risk legal anchors that MUST be protected.\n"
+        "- ALWAYS protect names of lawyers and other legal professionals when they refer to specific individuals.\n"
+        '- Use generalized forms such as "a trial court", "an appellate court", "a national court", "a detention facility", or "a prison" instead of specific institutional names.\n'
+        '- Do NOT treat generic institutional references (e.g., "the court", "a regional court", "an appellate court") as identifiers. These are structural terms and MUST be preserved.\n'
+        "- In legal text, exact place names, exact dates, charge details, procedural milestones, and detailed counts may become identifying in combination and should be generalized when they materially increase person-, case-, or record-linkage risk.\n"
+        "- Rare combinations of allegations, procedural history, court progression, sentence structure, appeal outcomes, remedies sought, and institutional context may function as latent identifiers; break these bundles by generalizing or suppressing one or more supporting details.\n"
+        "- Preserve abstract legal meaning, party roles, and high-level procedural chronology where possible without retaining exact identifying detail.\n"
+        '- Preserve generic professional roles such as "lawyer", "judge", or "prosecutor" ONLY when used as role labels and not tied to identifiable individuals, law firms, or specific cases.\n'
+    ),
+    Domain.HR_PEOPLE_OPS: (
+        "Focus on: roles, responsibilities, performance dimensions, behavioral expectations, "
+        "and process structure (e.g., review cycles). Drop: personal gossip, unnecessary "
+        "names, and exact dates of incidents unless structurally important."
+    ),
+    Domain.MANAGEMENT_OPERATIONS: (
+        "Focus on: goals, KPIs, processes, decision criteria, resource allocation, and "
+        "coordination patterns. Drop: individual identities and low-level scheduling minutiae "
+        "unless essential."
+    ),
+    Domain.CLINICAL_EHR_MEDICAL: (
+        "Focus on: symptoms, diagnoses, assessments, clinical reasoning, interventions, timelines of care, "
+        "and outcomes. The goal is to preserve the clinical story and decision-making logic while removing "
+        "or abstracting details that could contribute to re-identification.\n\n"
+        "Always keep, in appropriately abstract form:\n"
+        "- Presenting symptoms, key past history elements that drive current assessment, and relevant exam findings,\n"
+        "- The main working diagnoses or differential diagnoses (generalized when needed),\n"
+        "- The clinician's reasoning about cause, risk, and prognosis,\n"
+        "- Interventions, medications, and monitoring plans (prefer generic drug classes or roles over brand names "
+        "unless the specific agent is critical to the clinical meaning),\n"
+        "- High-level timelines of care (e.g., 'during childhood', 'over several years', 'at follow-up') rather than "
+        "exact dates or ages.\n\n"
+        "Clarification and education requests:\n"
+        "- When a patient explicitly asks for explanations or definitions of medical, anatomical, imaging, or diagnostic "
+        "terms (e.g., nerve root abutment, annular bulge or tear, MRI findings), you MUST preserve those terms in "
+        "generalized clinical language rather than collapsing them into vague references.\n"
+        "- Treat these as diagnostic-understanding or clinical-education intents, not as symptom reports. Capture both "
+        "what concept the patient is asking about and how the clinician responds (explains, defers, or refers).\n\n"
+        "Named conditions and findings:\n"
+        "- Preserve non-identifying anatomical and pathological terms (e.g., nerve root contact, disc bulge, annular tear) "
+        "when they are central to the patient's question or the clinician's reasoning.\n"
+        "- Do NOT drop or over-generalize such terms if doing so would remove the substantive clinical concept or the "
+        "educational value of the exchange.\n\n"
+        "Short clinical exchanges:\n"
+        "- In brief patient–clinician interactions (such as single-question consultations), prioritize capturing:\n"
+        "  • The specific medical concepts or findings being asked about,\n"
+        "  • The nature of the clinician's response (explanation, reassurance, deferral, or referral),\n"
+        "  even if no formal diagnosis or complete treatment plan is provided.\n\n"
+        "Benign viral conditions:\n"
+        "- When benign, self-limited viral illnesses are mentioned (e.g., 'viral upper respiratory infection', "
+        "'common cold', 'flu-like viral illness'), you MUST generalize them to a high-level phrase such as "
+        "'a common viral illness' or 'a routine viral respiratory infection'.\n"
+        "- Do NOT repeat the exact surface form from the sensitive entities block for these conditions, unless the "
+        "specific named pathogen or syndrome is central to the clinical reasoning (e.g., a disease-specific treatment "
+        "or public-health implication). In most primary-care-style counseling notes, abstraction to 'a common viral illness' "
+        "is preferred.\n\n"
+        "Handle sensitive attributes carefully:\n"
+        "- Demographics (age, gender, ethnicity, detailed location) should be represented only in coarse categories "
+        "(e.g., 'a young adult', 'an older adult') and only when they materially influence risk, diagnosis, or management.\n"
+        "- Family medical history and genetic predispositions should be preserved only at the level needed for clinical "
+        "logic (e.g., 'a family history of a related endocrine disorder') without copying exact surface forms.\n"
+        "- Stigmatizing or highly sensitive conditions (e.g., certain mental health diagnoses, sexually transmitted "
+        "infections, substance use) should be abstracted to category-level descriptions unless the specific label is "
+        "necessary to understand the clinical decision-making.\n\n"
+        "Abstract or drop:\n"
+        "- Highly identifying combinations of demographics, rare conditions, and free-text anecdotes that are not "
+        "essential to the clinical interpretation,\n"
+        "- Exact dates, precise ages, and detailed timelines when a higher-level temporal description suffices,\n"
+        "- Institution names, clinician names, and operational details that do not affect assessment or plan.\n\n"
+        "When in doubt, preserve the clinical reasoning, the key medical concepts, and the care trajectory in generalized "
+        "language, and prefer abstraction over deletion so that the medical meaning remains intact while sensitive surface "
+        "forms are removed."
+    ),
+    Domain.EDUCATIONAL_PEDAGOGICAL: (
+        "Focus on: learning objectives, knowledge structure, exercises, and evaluation "
+        "criteria. Drop: specific student identifiers or one-off comments that do not "
+        "change the instructional content."
+    ),
+    Domain.FICTION_CREATIVE: (
+        "Focus on: key plot events, character arcs, world rules, and central themes. Drop: "
+        "extraneous descriptive flourishes and minor side characters that do not affect "
+        "story coherence."
+    ),
+    Domain.ENTERTAINMENT_MEDIA: (
+        "Focus on extracting distinct information-bearing units about media content, formats, "
+        "celebrity behavior, and cultural themes. Do NOT summarize or compress multiple ideas "
+        "into one unit if they can be separated.\n\n"
+        "Treat as separate meaning units when possible:\n"
+        "• Each show, segment, or series mentioned (news specials, talk shows, documentaries, reality shows).\n"
+        "• Each description of format or style (dramatic reconstructions, panel debate, visual style, tone).\n"
+        "• Each opinion or evaluative judgment about a show, season, host, or guest.\n"
+        "• Each notable celebrity appearance or interaction (who appears with whom, in what context, doing what).\n"
+        "• Each cultural or social theme raised (gender roles, sexuality, family dynamics, fame, audience tastes).\n"
+        "• Each programming or scheduling decision (special coverage, repeats tied to new releases, new feature launches).\n"
+        "• Each observed trend in channel or industry behavior (early election coverage, increasingly suggestive content, etc.).\n\n"
+        "Segmentation bias: when a sentence contains multiple shows, guests, format choices, or opinions, "
+        "prefer splitting into multiple meaning units rather than merging them, as long as each unit still "
+        "conveys a coherent, self-contained claim."
+    ),
+    Domain.SOCIAL_CULTURAL_OPED: (
+        "Focus on: main argument, supporting points, evidence, and counterpoints. Drop: "
+        "gratuitous personal attacks, identifying anecdotes about third parties, and "
+        "unnecessary specifics that don't change the argument."
+    ),
+    Domain.PROCEDURAL_INSTRUCTIONAL: (
+        "Focus on: step-by-step actions, prerequisites, warnings, and success criteria. "
+        "Drop: personal narratives or identifiers that aren't needed to follow the procedure."
+    ),
+    Domain.META_TEXT: (
+        "Focus on: labels, annotation schemas, instructions, and configuration semantics. "
+        "Drop: incidental examples that leak real-world identifiers if they are not central "
+        "to understanding the schema."
+    ),
+    Domain.SOCIAL_MEDIA: (
+        "Focus on: core claim, sentiment, and key entities or events referenced at an "
+        "abstract level. Drop: handles, hashtags that encode identities, and specific URLs "
+        "unless structurally essential."
+    ),
+    Domain.TRANSCRIPTS_INTERVIEWS: (
+        "Focus on: questions, answers, decisions, commitments, and key reasoning steps. "
+        "Drop: greetings, small talk, and side chatter that do not influence outcomes."
+    ),
+    Domain.OTHER: (
+        "When the text doesn't clearly fit any domain, use general judgment: keep the "
+        "core purpose, main actions, decisions, and outcomes; drop hyper-specific identifiers."
+    ),
+}
 
 DOMAIN_SUPPLEMENT_MAP: dict[Domain, str] = {
     Domain.BIOGRAPHY: (
@@ -240,11 +504,6 @@ DOMAIN_SUPPLEMENT_MAP: dict[Domain, str] = {
         "when they define the meaning or operation of the document. "
         "\n- The fact that the form is a template requiring user-provided inputs (e.g., amount, "
         "date, merchant details), expressed abstractly. "
-        "\n- Unique record locators (e.g., case numbers, docket numbers, application numbers, "
-        " record IDs) should be treated as high-risk even if they identify the record rather "
-        " than naming the person directly. They should ALWAYS be replaced. "
-        "\n- Lawyer's names must always be replaced."
-        "\n- Court names and monetary amounts must always be either replaced, dropped or generalized."
         "\n\n"
         "Demographic quasi-identifiers (e.g., age, education level, nationality, ethnicity, "
         "gender) must be DROPPED unless they are CENTRAL to the legal reasoning, eligibility "
@@ -431,6 +690,14 @@ def _enrich_domain(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+@custom_column_generator(required_columns=[COL_DOMAIN])
+def _enrich_domain_privacy(row: dict[str, Any]) -> dict[str, Any]:
+    """Look up privacy-specific guidance from DOMAIN_SUPPLEMENT_PRIVACY_MAP."""
+    parsed_domain = DomainClassificationSchema.model_validate(row[COL_DOMAIN])
+    row[COL_DOMAIN_SUPPLEMENT_PRIVACY] = DOMAIN_SUPPLEMENT_PRIVACY_MAP[parsed_domain.domain]
+    return row
+
+
 # ---------------------------------------------------------------------------
 # Workflow
 # ---------------------------------------------------------------------------
@@ -454,5 +721,9 @@ class DomainClassificationWorkflow:
             CustomColumnConfig(
                 name=COL_DOMAIN_SUPPLEMENT,
                 generator_function=_enrich_domain,
+            ),
+            CustomColumnConfig(
+                name=COL_DOMAIN_SUPPLEMENT_PRIVACY,
+                generator_function=_enrich_domain_privacy,
             ),
         ]
