@@ -21,8 +21,8 @@ Consider this short passage:
 
 | Type | Value | Description |
 | --- | --- | --- |
-| Standard entity | Sarah | first_name |
-| Latent entity | ringing the bell | Reveals something sensitive - nearing the end of cancer treatment. It is only inferable from surrounding context (e.g. the passage never says "cancer"). |
+| Standard entity | Sarah | A directly stated first name. |
+| Latent entity | cancer treatment | Inferred from context. The passage never explicitly says "cancer," but "ringing the bell" can imply nearing the end of cancer treatment. |
 
 ---
 
