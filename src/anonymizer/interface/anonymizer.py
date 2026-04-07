@@ -41,7 +41,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
-from anonymizer.logging import LOG_INDENT, configure_logging
+from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -102,6 +102,7 @@ class Anonymizer:
             artifact_path=resolved_artifact_path,
             model_providers=_resolve_model_providers(model_providers),
         )
+        reapply_log_levels()
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
         self._replace_runner = replace_runner or ReplacementWorkflow(

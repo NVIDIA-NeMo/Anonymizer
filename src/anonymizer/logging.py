@@ -24,6 +24,7 @@ _DEFAULT_NOISY_LOGGERS = [
 
 _anonymizer_handler: logging.Handler | None = None
 _configured = False
+_active_config: LoggingConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,7 @@ def configure_logging(
         enabled: Set to ``False`` to prevent Anonymizer from adding any log
             handlers. Useful when the caller manages logging independently.
     """
-    global _anonymizer_handler, _configured
+    global _anonymizer_handler, _configured, _active_config
     _configured = True
 
     if not enabled:
@@ -72,6 +73,8 @@ def configure_logging(
 
     if config is None:
         config = LoggingConfig.verbose() if verbose else LoggingConfig.default()
+
+    _active_config = config
 
     anon_logger = logging.getLogger("anonymizer")
     dd_logger = logging.getLogger("data_designer")
@@ -96,6 +99,21 @@ def configure_logging(
     dd_logger.propagate = False
     dd_logger.setLevel(config.data_designer_level)
 
+    for name in _DEFAULT_NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def reapply_log_levels() -> None:
+    """Re-apply logger levels after third-party init may have overwritten them.
+
+    DataDesigner's ``_initialize_interface_runtime`` resets the
+    ``data_designer`` logger level and noisy-logger suppression.
+    Call this after creating a ``DataDesigner`` instance to restore
+    the levels chosen by the user's ``LoggingConfig``.
+    """
+    if _active_config is None:
+        return
+    logging.getLogger("data_designer").setLevel(_active_config.data_designer_level)
     for name in _DEFAULT_NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
