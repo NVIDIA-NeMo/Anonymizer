@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # ---
 # jupyter:
 #   jupytext:
@@ -93,7 +96,7 @@ LEGAL_ENTITY_LABELS = [
 ]
 
 input_data = AnonymizerInput(
-    source="../data/TAB_legal_sample25.csv",
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/TAB_legal_sample25.csv",
     text_column="text",
     data_summary="Legal court decisions containing personal identifiers, case numbers, and institutional references",
 )

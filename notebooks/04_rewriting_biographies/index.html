@@ -2405,6 +2405,47 @@ privacy-safe transformation of the entire text. The pipeline:</p>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4f1bc6fa">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">getpass</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">getpass</span><span class="o">.</span><span class="n">getpass</span><span class="p">(</span><span class="s2">"Enter NVIDIA_API_KEY from build.nvidia.com: "</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY is required to run these notebooks."</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-1">import getpass
+import os
+
+if not os.getenv("NVIDIA_API_KEY"):
+    key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
+    if not key:
+        raise RuntimeError("NVIDIA_API_KEY is required to run these notebooks.")
+    os.environ["NVIDIA_API_KEY"] = key</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
 <div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d90c1cab">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
@@ -2413,7 +2454,7 @@ privacy-safe transformation of the entire text. The pipeline:</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [1]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2428,7 +2469,7 @@ privacy-safe transformation of the entire text. The pipeline:</p>
 
 <span class="n">configure_logging</span><span class="p">(</span><span class="n">LoggingConfig</span><span class="o">.</span><span class="n">default</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite, configure_logging, LoggingConfig
+<div class="clipboard-copy-txt" id="cell-2">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite, configure_logging, LoggingConfig
 from anonymizer.config.rewrite import PrivacyGoal
 
 configure_logging(LoggingConfig.default())</div>
@@ -2446,7 +2487,7 @@ configure_logging(LoggingConfig.default())</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [2]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2458,7 +2499,7 @@ configure_logging(LoggingConfig.default())</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">anonymizer = Anonymizer()</div>
+<div class="clipboard-copy-txt" id="cell-3">anonymizer = Anonymizer()</div>
 </div>
 </div>
 </div>
@@ -2503,7 +2544,7 @@ easy to compare rewrite output against replace output.</li>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [3]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2514,13 +2555,13 @@ easy to compare rewrite output against replace output.</li>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
-    <span class="n">source</span><span class="o">=</span><span class="s2">"../data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
+    <span class="n">source</span><span class="o">=</span><span class="s2">"https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
     <span class="n">text_column</span><span class="o">=</span><span class="s2">"biography"</span><span class="p">,</span>
     <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Biographical profiles"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">input_data = AnonymizerInput(
-    source="../data/NVIDIA_synthetic_biographies.csv",
+<div class="clipboard-copy-txt" id="cell-4">input_data = AnonymizerInput(
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
     text_column="biography",
     data_summary="Biographical profiles",
 )</div>
@@ -2539,9 +2580,9 @@ easy to compare rewrite output against replace output.</li>
 <h2 id="configure">🎛️ Configure<a class="anchor-link" href="#configure">¶</a></h2><ul>
 <li><code>PrivacyGoal</code> spells out what to <strong>protect</strong> and what to <strong>preserve</strong> --
 this gives the rewriter clear, domain-specific guidance.</li>
-<li><code>risk_tolerance</code> (default <code>"low"</code>) and <code>max_repair_iterations</code> (default <code>2</code>)
+<li><code>risk_tolerance</code> (default <code>"low"</code>) and <code>max_repair_iterations</code> (default <code>3</code>)
 control the automated quality gate --
-see <a href="../concepts/rewrite.md#evaluation-criteria">Evaluation criteria</a> for presets.</li>
+see <a href="../concepts/rewrite.md#risk-tolerance">Risk tolerance</a> for presets.</li>
 </ul>
 </div>
 </div>
@@ -2555,7 +2596,7 @@ see <a href="../concepts/rewrite.md#evaluation-criteria">Evaluation criteria</a>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [4]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2574,7 +2615,7 @@ see <a href="../concepts/rewrite.md#evaluation-criteria">Evaluation criteria</a>
     <span class="p">),</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">config = AnonymizerConfig(
+<div class="clipboard-copy-txt" id="cell-5">config = AnonymizerConfig(
     rewrite=Rewrite(
         privacy_goal=PrivacyGoal(
             protect="All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)",
@@ -2610,7 +2651,7 @@ and evaluation criteria before committing to a full run.</li>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [5]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2628,7 +2669,7 @@ and evaluation criteria before committing to a full run.</li>
 
 <span class="n">preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">preview = anonymizer.preview(
+<div class="clipboard-copy-txt" id="cell-6">preview = anonymizer.preview(
     config=config,
     data=input_data,
     num_records=3,
@@ -2646,7 +2687,7 @@ preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[16:16:07] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[16:16:07] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 [16:16:07] [INFO] detection labels in scope: (default: 65 labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)
 [16:16:07] [INFO]   |-- 👀 Preview mode: processing 3 of 25 records
 [16:16:07] [INFO] 🔍 Running entity detection on 3 records
@@ -2711,7 +2752,7 @@ Since finishing his training, Diego has worked at a veterinary hospital and late
 <div class="jp-InputPrompt jp-InputArea-prompt">In [6]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2723,7 +2764,7 @@ Since finishing his training, Diego has worked at a veterinary hospital and late
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">preview.display_record(1)</div>
+<div class="clipboard-copy-txt" id="cell-7">preview.display_record(1)</div>
 </div>
 </div>
 </div>
@@ -2792,7 +2833,7 @@ Outside the lab, Mateo shares a modest house on East Monroe Avenue with their sp
 <div class="jp-InputPrompt jp-InputArea-prompt">In [7]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2806,7 +2847,7 @@ Outside the lab, Mateo shares a modest house on East Monroe Avenue with their sp
 
 <span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">result = anonymizer.run(config=config, data=input_data)
+<div class="clipboard-copy-txt" id="cell-8">result = anonymizer.run(config=config, data=input_data)
 
 result.dataframe.head()</div>
 </div>
@@ -2820,7 +2861,7 @@ result.dataframe.head()</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[16:22:12] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[16:22:12] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 [16:22:12] [INFO] detection labels in scope: (default: 65 labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)
 [16:22:12] [INFO] 🔍 Running entity detection on 25 records
 [16:29:31] [INFO]   |-- 📋 Detection complete — 667 entities found across 25 records (0 failed) [438.9s]
@@ -2931,7 +2972,7 @@ result.dataframe.head()</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [8]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2943,7 +2984,7 @@ result.dataframe.head()</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="p">[[</span><span class="s2">"biography_rewritten"</span><span class="p">,</span> <span class="s2">"utility_score"</span><span class="p">,</span> <span class="s2">"leakage_mass"</span><span class="p">,</span> <span class="s2">"needs_human_review"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">result.dataframe[["biography_rewritten", "utility_score", "leakage_mass", "needs_human_review"]].head()</div>
+<div class="clipboard-copy-txt" id="cell-9">result.dataframe[["biography_rewritten", "utility_score", "leakage_mass", "needs_human_review"]].head()</div>
 </div>
 </div>
 </div>
@@ -3032,7 +3073,7 @@ result.dataframe.head()</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [11]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3044,7 +3085,7 @@ result.dataframe.head()</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">trace_dataframe</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">result.trace_dataframe.columns.tolist()</div>
+<div class="clipboard-copy-txt" id="cell-10">result.trace_dataframe.columns.tolist()</div>
 </div>
 </div>
 </div>
@@ -3132,7 +3173,7 @@ for guidance on diagnosing and resolving flagged records.</li>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [10]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3147,7 +3188,7 @@ for guidance on diagnosing and resolving flagged records.</li>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">flagged</span><span class="p">)</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2"> records flagged for human review"</span><span class="p">)</span>
 <span class="n">flagged</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">df = result.dataframe
+<div class="clipboard-copy-txt" id="cell-11">df = result.dataframe
 flagged = df[df["needs_human_review"] == True]  # noqa: E712
 print(f"{len(flagged)} of {len(df)} records flagged for human review")
 flagged.head()</div>

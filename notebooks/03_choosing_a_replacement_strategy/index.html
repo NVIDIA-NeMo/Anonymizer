@@ -2720,13 +2720,13 @@ on identical input.</li>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
-    <span class="n">source</span><span class="o">=</span><span class="s2">"../data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
+    <span class="n">source</span><span class="o">=</span><span class="s2">"https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
     <span class="n">text_column</span><span class="o">=</span><span class="s2">"biography"</span><span class="p">,</span>
     <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Biographical profiles"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-4">input_data = AnonymizerInput(
-    source="../data/NVIDIA_synthetic_biographies.csv",
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
     text_column="biography",
     data_summary="Biographical profiles",
 )</div>
@@ -2743,9 +2743,10 @@ on identical input.</li>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="substitute">🔄 Substitute<a class="anchor-link" href="#substitute">¶</a></h2><ul>
-<li>Uses an LLM to generate contextually appropriate synthetic replacements.</li>
-<li>Unlike the strategies above, the LLM considers the full document context --
-matching names with emails, cities to states, etc.</li>
+<li>Uses an LLM to generate contextually appropriate synthetic replacements.<ul>
+<li>The LLM considers the full document context matching names with emails, cities to states, etc.</li>
+</ul>
+</li>
 <li>Customize with <code>instructions</code> to steer the LLM's replacement choices.</li>
 </ul>
 </div>
@@ -2796,7 +2797,7 @@ substitute_preview = anonymizer.preview(
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:40:20] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:40:20] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
@@ -2985,7 +2986,7 @@ substitute_custom_preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:41:18] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:41:18] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
@@ -3141,7 +3142,7 @@ redact_preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:42:12] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:42:12] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
@@ -3296,7 +3297,7 @@ custom_preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:43:00] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:43:00] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
@@ -3454,7 +3455,7 @@ annotate_preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:43:41] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:43:41] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
@@ -3605,7 +3606,7 @@ annotate_custom_preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:44:26] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:44:26] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
@@ -3762,7 +3763,7 @@ hash_preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:45:13] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:45:13] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
@@ -3913,7 +3914,7 @@ hash_custom_preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:45:56] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:45:56] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>

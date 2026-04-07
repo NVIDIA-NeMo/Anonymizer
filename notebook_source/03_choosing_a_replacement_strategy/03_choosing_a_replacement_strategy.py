@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # ---
 # jupyter:
 #   jupytext:
@@ -21,7 +24,7 @@
 # | **Substitute** | LLM-generated contextual replacements |
 # | **Redact** | Label-based markers (`[REDACTED_FIRST_NAME]`) |
 # | **Annotate** | Tags entities but keeps original text |
-# # | **Hash** | Deterministic hash digest |
+# | **Hash** | Deterministic hash digest |
 # #### 📚 What you'll learn
 #
 # - Compare **Redact**, **Annotate**, **Hash**, and **Substitute** on the same input
@@ -63,7 +66,7 @@ anonymizer = Anonymizer()
 
 # %%
 input_data = AnonymizerInput(
-    source="../data/NVIDIA_synthetic_biographies.csv",
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
     text_column="biography",
     data_summary="Biographical profiles",
 )
@@ -72,8 +75,7 @@ input_data = AnonymizerInput(
 # ## 🔄 Substitute
 #
 # - Uses an LLM to generate contextually appropriate synthetic replacements.
-# - Unlike the strategies above, the LLM considers the full document context --
-#   matching names with emails, cities to states, etc.
+#   - The LLM considers the full document context matching names with emails, cities to states, etc.
 # - Customize with `instructions` to steer the LLM's replacement choices.
 
 # %%

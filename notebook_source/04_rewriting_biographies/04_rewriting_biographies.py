@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # ---
 # jupyter:
 #   jupytext:
@@ -42,6 +45,16 @@
 # - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
 
 # %%
+import getpass
+import os
+
+if not os.getenv("NVIDIA_API_KEY"):
+    key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
+    if not key:
+        raise RuntimeError("NVIDIA_API_KEY is required to run these notebooks.")
+    os.environ["NVIDIA_API_KEY"] = key
+
+# %%
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite, configure_logging
 from anonymizer.config.rewrite import PrivacyGoal
 
@@ -58,7 +71,7 @@ anonymizer = Anonymizer()
 
 # %%
 input_data = AnonymizerInput(
-    source="../data/NVIDIA_synthetic_biographies.csv",
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
     text_column="biography",
     data_summary="Biographical profiles",
 )
@@ -68,9 +81,9 @@ input_data = AnonymizerInput(
 #
 # - `PrivacyGoal` spells out what to **protect** and what to **preserve** --
 #   this gives the rewriter clear, domain-specific guidance.
-# - `risk_tolerance` (default `"low"`) and `max_repair_iterations` (default `2`)
+# - `risk_tolerance` (default `"low"`) and `max_repair_iterations` (default `3`)
 #   control the automated quality gate --
-#   see [Evaluation criteria](../concepts/rewrite.md#evaluation-criteria) for presets.
+#   see [Risk tolerance](../concepts/rewrite.md#risk-tolerance) for presets.
 
 # %%
 config = AnonymizerConfig(

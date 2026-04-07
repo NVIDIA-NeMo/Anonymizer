@@ -2537,7 +2537,7 @@ This replaces the default label set with one tailored to legal text.</li>
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [5]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
 <clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
@@ -2579,7 +2579,7 @@ This replaces the default label set with one tailored to legal text.</li>
 <span class="p">]</span>
 
 <span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
-    <span class="n">source</span><span class="o">=</span><span class="s2">"../data/TAB_legal_sample25.csv"</span><span class="p">,</span>
+    <span class="n">source</span><span class="o">=</span><span class="s2">"https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/TAB_legal_sample25.csv"</span><span class="p">,</span>
     <span class="n">text_column</span><span class="o">=</span><span class="s2">"text"</span><span class="p">,</span>
     <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Legal court decisions containing personal identifiers, case numbers, and institutional references"</span><span class="p">,</span>
 <span class="p">)</span>
@@ -2613,7 +2613,7 @@ This replaces the default label set with one tailored to legal text.</li>
 ]
 
 input_data = AnonymizerInput(
-    source="../data/TAB_legal_sample25.csv",
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/TAB_legal_sample25.csv",
     text_column="text",
     data_summary="Legal court decisions containing personal identifiers, case numbers, and institutional references",
 )</div>
@@ -2748,7 +2748,7 @@ preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[16:41:39] [INFO] 📂 Loaded 25 records from ../data/TAB_legal_sample25.csv (column: 'text')
+<pre>[16:41:39] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/TAB_legal_sample25.csv (column: 'text')
 [16:41:39] [INFO] detection labels in scope: ['age', 'application_number', 'case_number', 'city', 'company_name', 'country', 'court_name', 'date', 'date_of_birth', 'date_time', 'email', 'first_name', 'last_name', 'legal_role', 'monetary_amount', 'nationality', 'organization_name', 'phone_number', 'prison_detention_facility', 'sentence_duration', 'ssn', 'state', 'street_address', 'time', 'unique_id']
 [16:41:39] [INFO]   |-- 👀 Preview mode: processing 3 of 25 records
 [16:41:39] [INFO] 🔍 Running entity detection on 3 records
@@ -3057,7 +3057,7 @@ result.dataframe.head()</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[16:47:13] [INFO] 📂 Loaded 25 records from ../data/TAB_legal_sample25.csv (column: 'text')
+<pre>[16:47:13] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/TAB_legal_sample25.csv (column: 'text')
 [16:47:13] [INFO] detection labels in scope: ['age', 'application_number', 'case_number', 'city', 'company_name', 'country', 'court_name', 'date', 'date_of_birth', 'date_time', 'email', 'first_name', 'last_name', 'legal_role', 'monetary_amount', 'nationality', 'organization_name', 'phone_number', 'prison_detention_facility', 'sentence_duration', 'ssn', 'state', 'street_address', 'time', 'unique_id']
 [16:47:13] [INFO] 🔍 Running entity detection on 25 records
 [16:51:28] [INFO]   |-- 📋 Detection complete — 1285 entities found across 25 records (0 failed) [254.7s]

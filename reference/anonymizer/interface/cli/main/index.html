@@ -1681,14 +1681,14 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              CliOpts(replace, detect=Detect(), format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, instructions=None, model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False)
+            <td><code><a class="autorefs autorefs-internal" title="              CliOpts(replace=None, rewrite=False, detect=Detect(), model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False, format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, protect=None, preserve=None, risk_tolerance='low', max_repair_iterations=2, instructions=None, _REPLACE_ONLY_FLAGS=('format_template',), _REWRITE_ONLY_FLAGS=('protect', 'preserve'))
 
   
       dataclass
    (anonymizer.interface.cli.main.CliOpts)" href="#anonymizer.interface.cli.main.CliOpts">CliOpts</a></code></td>
             <td>
               <div class="doc-md-description">
-                <p>Parameters shared across all CLI subcommands.</p>
+                <p>CLI options for anonymizer commands.</p>
               </div>
             </td>
           </tr>
@@ -1708,15 +1708,15 @@
       </thead>
       <tbody>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            run(*, data, opts, output=None) (anonymizer.interface.cli.main.run)" href="#anonymizer.interface.cli.main.run">run</a></code></td>
+              <td><code><a class="autorefs autorefs-internal" title="            run(*, data, opts=CliOpts(), output=None) (anonymizer.interface.cli.main.run)" href="#anonymizer.interface.cli.main.run">run</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>Run the full anonymization pipeline (detection + replacement).</p>
+                  <p>Run the full anonymization pipeline (detection + replacement or rewrite).</p>
                 </div>
               </td>
             </tr>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            preview(*, data, opts, num_records=10) (anonymizer.interface.cli.main.preview)" href="#anonymizer.interface.cli.main.preview">preview</a></code></td>
+              <td><code><a class="autorefs autorefs-internal" title="            preview(*, data, opts=CliOpts(), num_records=10) (anonymizer.interface.cli.main.preview)" href="#anonymizer.interface.cli.main.preview">preview</a></code></td>
               <td>
                 <div class="doc-md-description">
                   <p>Run the pipeline on a subset of records for quick inspection.</p>
@@ -1724,7 +1724,7 @@
               </td>
             </tr>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            validate(*, data, opts) (anonymizer.interface.cli.main.validate)" href="#anonymizer.interface.cli.main.validate">validate</a></code></td>
+              <td><code><a class="autorefs autorefs-internal" title="            validate(*, data, opts=CliOpts()) (anonymizer.interface.cli.main.validate)" href="#anonymizer.interface.cli.main.validate">validate</a></code></td>
               <td>
                 <div class="doc-md-description">
                   <p>Validate that the active config is compatible with model selections.</p>
@@ -1761,7 +1761,7 @@
 
 
 <h3 id="anonymizer.interface.cli.main.CliOpts" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">CliOpts(replace, detect=Detect(), format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, instructions=None, model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">CliOpts(replace=None, rewrite=False, detect=Detect(), model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False, format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, protect=None, preserve=None, risk_tolerance='low', max_repair_iterations=2, instructions=None, _REPLACE_ONLY_FLAGS=('format_template',), _REWRITE_ONLY_FLAGS=('protect', 'preserve'))</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -1774,7 +1774,12 @@
 
 
 
-        <p>Parameters shared across all CLI subcommands.</p>
+        <p>CLI options for anonymizer commands.</p>
+<p>Exactly one of <code>--replace</code> or <code>--rewrite</code> must be provided.</p>
+<p>Replace-specific flags (<code>format_template</code>, <code>normalize_label</code>,
+<code>algorithm</code>, <code>digest_length</code>) only apply when <code>--replace</code> is set.</p>
+<p>Rewrite-specific flags (<code>protect</code>, <code>preserve</code>, <code>risk_tolerance</code>,
+<code>max_repair_iterations</code>) only apply when <code>--rewrite</code> is set.</p>
 
 
 
@@ -1815,14 +1820,14 @@
 
 
 <h3 id="anonymizer.interface.cli.main.run" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">run(*, data, opts, output=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">run(*, data, opts=CliOpts(), output=None)</code>
 
 <a href="#anonymizer.interface.cli.main.run" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
 
-        <p>Run the full anonymization pipeline (detection + replacement).</p>
+        <p>Run the full anonymization pipeline (detection + replacement or rewrite).</p>
 
 
             <details class="mkdocstrings-source">
@@ -1832,16 +1837,24 @@
 def run(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")],
+    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
     output: str | None = None,
 ) -&gt; None:
-    """Run the full anonymization pipeline (detection + replacement)."""
+    """Run the full anonymization pipeline (detection + replacement or rewrite)."""
+    if output is None:
+        source = Path(data.source)
+        suffix = "_rewritten" if opts.rewrite else "_anonymized"
+        output = str(source.parent / f"{source.stem}{suffix}{source.suffix}")
+    output_path = Path(output).resolve()
+    if output_path.suffix.lower() not in SUPPORTED_IO_FORMATS:
+        raise InvalidConfigError(
+            f"Unsupported output format: {output_path.suffix!r}. Use one of {SUPPORTED_IO_FORMATS}"
+        )
+    if output_path == Path(data.source).resolve():
+        raise InvalidConfigError(f"Output path must differ from source: {output_path}")
     _configure_logging(opts)
     config, anonymizer = _build_config_and_anonymizer(opts)
     result = anonymizer.run(config=config, data=data)
-    if output is None:
-        source = Path(data.source)
-        output = str(source.parent / f"{source.stem}_anonymized{source.suffix}")
     written = write_result(result, output)
     print(f"Output written to: {written}")</code></pre>
             </details>
@@ -1853,7 +1866,7 @@ def run(
 
 
 <h3 id="anonymizer.interface.cli.main.preview" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">preview(*, data, opts, num_records=10)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">preview(*, data, opts=CliOpts(), num_records=10)</code>
 
 <a href="#anonymizer.interface.cli.main.preview" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -1870,7 +1883,7 @@ def run(
 def preview(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")],
+    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
     num_records: int = 10,
 ) -&gt; None:
     """Run the pipeline on a subset of records for quick inspection."""
@@ -1887,7 +1900,7 @@ def preview(
 
 
 <h3 id="anonymizer.interface.cli.main.validate" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">validate(*, data, opts)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">validate(*, data, opts=CliOpts())</code>
 
 <a href="#anonymizer.interface.cli.main.validate" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -1904,7 +1917,7 @@ def preview(
 def validate(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")],
+    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
 ) -&gt; None:
     """Validate that the active config is compatible with model selections."""
     _configure_logging(opts)

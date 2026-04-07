@@ -2639,7 +2639,7 @@ alongside entity labels -- ideal for debugging.</li>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span><span class="n">replace</span><span class="o">=</span><span class="n">Annotate</span><span class="p">())</span>
 
 <span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
-    <span class="n">source</span><span class="o">=</span><span class="s2">"../data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
+    <span class="n">source</span><span class="o">=</span><span class="s2">"https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
     <span class="n">text_column</span><span class="o">=</span><span class="s2">"biography"</span><span class="p">,</span>
     <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Biographical profiles"</span><span class="p">,</span>
 <span class="p">)</span>
@@ -2653,7 +2653,7 @@ alongside entity labels -- ideal for debugging.</li>
 <div class="clipboard-copy-txt" id="cell-4">config = AnonymizerConfig(replace=Annotate())
 
 input_data = AnonymizerInput(
-    source="../data/NVIDIA_synthetic_biographies.csv",
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
     text_column="biography",
     data_summary="Biographical profiles",
 )
@@ -2674,7 +2674,7 @@ result = anonymizer.preview(
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[13:39:37] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[13:39:37] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
