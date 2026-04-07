@@ -220,7 +220,7 @@ DOMAIN_SUPPLEMENT_PRIVACY_MAP: dict[Domain, str] = {
     ),
     Domain.LEGAL: (
         "Apply the following domain-specific privacy guidance for LEGAL text.\n\n"
-        "- Treat exact court names, tribunal names, exact monetary amouts, adjudicating bodies, prison or detention-facility names, unique case or record locators, and exact sentencing details as high-risk legal anchors that MUST be protected.\n"
+        "- Treat exact court names, tribunal names, exact monetary amounts, adjudicating bodies, prison or detention-facility names, unique case or record locators, and exact sentencing details as high-risk legal anchors that MUST be protected.\n"
         "- ALWAYS protect names of lawyers and other legal professionals when they refer to specific individuals.\n"
         '- Use generalized forms such as "a trial court", "an appellate court", "a national court", "a detention facility", or "a prison" instead of specific institutional names.\n'
         '- Do NOT treat generic institutional references (e.g., "the court", "a regional court", "an appellate court") as identifiers. These are structural terms and MUST be preserved.\n'
