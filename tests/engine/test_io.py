@@ -93,6 +93,12 @@ def test_read_input_from_remote_csv_url_with_fragment(monkeypatch: pytest.Monkey
     assert result.attrs["original_text_column"] == "text"
 
 
+def test_read_input_remote_url_with_unsupported_format_raises() -> None:
+    inp = AnonymizerInput(source="https://example.com/data.json")
+    with pytest.raises(InvalidInputError, match="Unsupported input format"):
+        read_input(inp)
+
+
 def test_read_input_renames_text_column(tmp_path: Path) -> None:
     df = pd.DataFrame({"content": ["hello world"]})
     file_path = tmp_path / "data.csv"
@@ -166,6 +172,18 @@ def test_read_input_pandas_failure_raises_anonymizer_io_error(tmp_path: Path, mo
 
     monkeypatch.setattr(pd, "read_csv", _raise_read_error)
     inp = AnonymizerInput(source=str(file_path))
+    with pytest.raises(AnonymizerIOError, match="Failed to read input data"):
+        read_input(inp)
+
+
+def test_read_input_remote_csv_failure_raises_anonymizer_io_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = "https://example.com/data.csv"
+
+    def _raise_read_error(*args: object, **kwargs: object) -> None:
+        raise OSError("network failure")
+
+    monkeypatch.setattr(pd, "read_csv", _raise_read_error)
+    inp = AnonymizerInput(source=source)
     with pytest.raises(AnonymizerIOError, match="Failed to read input data"):
         read_input(inp)
 

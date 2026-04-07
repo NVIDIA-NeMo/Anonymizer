@@ -48,6 +48,11 @@ def test_input_source_accepts_http_url_with_fragment() -> None:
     assert inp.source == "https://example.com/data.csv#preview"
 
 
+def test_input_source_rejects_unsupported_url_scheme() -> None:
+    with pytest.raises(ValidationError, match="Unsupported input URL scheme"):
+        AnonymizerInput(source="ftp://example.com/data.csv")
+
+
 def test_replace_and_rewrite_together_raises() -> None:
     with pytest.raises(ValueError, match="Cannot use both replace and rewrite"):
         AnonymizerConfig(replace=Redact(), rewrite=Rewrite())

@@ -27,6 +27,12 @@ def is_remote_input_source(value: str) -> bool:
     return parsed.scheme in {"http", "https"}
 
 
+def has_unsupported_url_scheme(value: str) -> bool:
+    """Return True when the input looks like a URL but uses an unsupported scheme."""
+    parsed = urlparse(value)
+    return "://" in value and bool(parsed.scheme) and parsed.scheme not in {"http", "https"}
+
+
 def infer_input_source_suffix(value: str) -> str:
     """Infer the lowercase file suffix from a local path or remote URL path."""
     if is_remote_input_source(value):
@@ -52,6 +58,9 @@ class AnonymizerInput(BaseModel):
     def validate_source_path(cls, value: str) -> str:
         if is_remote_input_source(value):
             return value
+        if has_unsupported_url_scheme(value):
+            scheme = urlparse(value).scheme
+            raise ValueError(f"Unsupported input URL scheme: {scheme!r}. Use http:// or https:// URLs.")
         source = Path(value)
         if not source.exists():
             raise ValueError(f"Input path does not exist: {source}")
