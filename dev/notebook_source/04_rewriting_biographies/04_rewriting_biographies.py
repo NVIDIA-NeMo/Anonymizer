@@ -40,6 +40,8 @@
 # ## ⚙️ Setup
 #
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
+#   - Treat the default `build.nvidia.com` setup as a convenient experimentation path. For privacy-sensitive or production data, switch to a secure endpoint you trust and to which you are comfortable sending data.
+#   - Request/token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full runs. Start with `preview()` on a small sample.
 # - Import `Rewrite` and `PrivacyGoal`.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
 # - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.

@@ -1410,6 +1410,11 @@
 <p><pre class="highlight"><code class="language-bash"># Get an API key from build.nvidia.com
 export NVIDIA_API_KEY="your-nvidia-api-key"</code></pre>
 By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based anonymization. You can also <a href="concepts/models/">bring your own models</a>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Default hosted models are best for experimentation</p>
+<p>The default <code>build.nvidia.com</code> setup is a convenient way to try Anonymizer and iterate on previews. For privacy-sensitive or production data, configure Anonymizer to use a secure endpoint you trust and to which you are comfortable sending data.</p>
+<p>Request and token rate limits on <code>build.nvidia.com</code> vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with <code>preview()</code> on a small sample, then move to your own endpoint if you need stronger privacy guarantees or higher throughput.</p>
+</div>
 <div class="admonition info">
 <p class="admonition-title">Record length</p>
 <p>Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs. </p>
@@ -1466,6 +1471,10 @@ anonymizer run \
 <p class="admonition-title"><code>data_summary</code> improves detection</p>
 <p><code>data_summary</code> is optional but recommended for domain-specific data. It helps the LLM find more entities and reduce false drops.</p>
 </div>
+<h2 id="language-and-regional-coverage">Language And Regional Coverage<a class="headerlink" href="#language-and-regional-coverage" title="Permanent link">&para;</a></h2>
+<p>Anonymizer has been tested most extensively on English-language data. Multilingual quality has not yet been evaluated systematically across languages, domains, and models.</p>
+<p>Although testing so far has been primarily in English, the supported entity set is not limited to U.S.-specific identifiers. Detection and anonymization can also apply to international formats such as non-U.S. phone numbers, addresses, legal references, and national or regional identification numbers, though coverage will vary by language, region, and model configuration.</p>
+<p>If you are working with another language, we encourage you to experiment on a small sample first with <code>preview()</code>, validate detected entities and transformed output carefully, and adjust your <a href="concepts/models/">model providers and model configs</a> as needed.</p>
 <h2 id="inspect">Inspect<a class="headerlink" href="#inspect" title="Permanent link">&para;</a></h2>
 <p>View an interactive visualization with entity highlights.
 <pre class="highlight"><code class="language-python">preview.display_record()</code></pre>

@@ -2389,7 +2389,11 @@ and custom entity labels tailored for legal proceedings.</p>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="setup">⚙️ Setup<a class="anchor-link" href="#setup">¶</a></h2><ul>
-<li>Check if your <code>NVIDIA_API_KEY</code> from <a href="https://build.nvidia.com">build.nvidia.com</a> is registered for model access.</li>
+<li>Check if your <code>NVIDIA_API_KEY</code> from <a href="https://build.nvidia.com">build.nvidia.com</a> is registered for model access.<ul>
+<li>Treat the default <code>build.nvidia.com</code> setup as a convenient experimentation path. For privacy-sensitive or production data, switch to a secure endpoint you trust and to which you are comfortable sending data.</li>
+<li>Request/token rate limits on <code>build.nvidia.com</code> vary by account and model access, and lower-volume development access can be slow for full runs. Start with <code>preview()</code> on a small sample.</li>
+</ul>
+</li>
 <li>Import <code>Detect</code> (for custom entity labels), <code>Rewrite</code>, and its config classes.</li>
 <li><code>Anonymizer()</code> initializes with the default model provider -- no extra config needed.</li>
 <li><code>configure_logging(enabled=False)</code> suppresses pipeline logs for cleaner output.
