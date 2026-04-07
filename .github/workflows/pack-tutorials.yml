@@ -1,0 +1,75 @@
+name: Pack tutorials
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build-notebooks:
+    uses: ./.github/workflows/build-notebooks.yml
+    secrets: inherit
+
+  zip-and-upload:
+    needs: build-notebooks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact from previous step
+        uses: actions/download-artifact@v5
+        with:
+          name: notebooks
+          path: anonymizer_tutorial
+
+      - name: Set up environment variables
+        run: |
+          echo "SOURCE_FOLDER_PATH=anonymizer_tutorial" >> $GITHUB_ENV
+          echo "ZIP_FILE_NAME=anonymizer_tutorial.zip" >> $GITHUB_ENV
+
+      - name: Check if source folder exists
+        run: |
+          if [ ! -d "${{ env.SOURCE_FOLDER_PATH }}" ]; then
+            echo "::error::Source folder '${{ env.SOURCE_FOLDER_PATH }}' not found."
+            exit 1
+          fi
+
+      - name: Zip the target folder
+        run: |
+          zip -r "${{ env.ZIP_FILE_NAME }}" "${{ env.SOURCE_FOLDER_PATH }}"
+          echo "Successfully created ${{ env.ZIP_FILE_NAME }}"
+
+      - name: Find the latest existing release tag
+        id: get_release
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            LATEST_TAG="${{ github.event.release.tag_name }}"
+          else
+            echo "::notice::Running manually via workflow_dispatch. Fetching latest release tag..."
+
+            gh auth status || echo "GitHub CLI is not authenticated, relying on GITHUB_TOKEN."
+            LATEST_TAG=$(gh release view --json tagName -q .tagName 2>/dev/null)
+
+            if [ -z "$LATEST_TAG" ]; then
+              echo "::error::Could not find the latest published release tag. Ensure a release exists."
+              exit 1
+            fi
+          fi
+
+          echo "Latest release tag found: $LATEST_TAG"
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload zip file as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_release.outputs.tag }}
+          files: ${{ env.ZIP_FILE_NAME }}
+          draft: false
+          prerelease: false
+
+      - name: Cleanup
+        if: always()
+        run: rm -f "${{ env.ZIP_FILE_NAME }}"

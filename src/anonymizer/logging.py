@@ -35,14 +35,17 @@ class LoggingConfig:
 
     @classmethod
     def default(cls) -> LoggingConfig:
+        """Anonymizer at INFO, Data Designer at WARNING."""
         return cls(anonymizer_level="INFO", data_designer_level="WARNING")
 
     @classmethod
     def verbose(cls) -> LoggingConfig:
+        """Both Anonymizer and Data Designer at INFO."""
         return cls(anonymizer_level="INFO", data_designer_level="INFO")
 
     @classmethod
     def debug(cls) -> LoggingConfig:
+        """Anonymizer at DEBUG, Data Designer at INFO."""
         return cls(anonymizer_level="DEBUG", data_designer_level="INFO")
 
 
@@ -106,6 +109,13 @@ class ProgressTracker:
     """Log-based progress tracker for sequential record processing."""
 
     def __init__(self, total: int, label: str, log_interval_percent: int = 10) -> None:
+        """Create a progress tracker.
+
+        Args:
+            total: Total number of records to process.
+            label: Human-readable label for the progress messages.
+            log_interval_percent: How often to log, as a percentage of total.
+        """
         self.total = total
         self.label = label
         self.completed = 0
@@ -119,12 +129,15 @@ class ProgressTracker:
         self._enabled = total >= _PROGRESS_THRESHOLD
 
     def record_success(self) -> None:
+        """Record a successfully processed record and log progress if due."""
         self._record(success=True)
 
     def record_failure(self) -> None:
+        """Record a failed record and log progress if due."""
         self._record(success=False)
 
     def log_final(self) -> None:
+        """Emit a final progress line summarizing the run."""
         if self._enabled and self.completed > 0:
             self._log_progress()
 

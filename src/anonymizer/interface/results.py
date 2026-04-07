@@ -44,7 +44,13 @@ class _DisplayMixin:
 
 @dataclass
 class AnonymizerResult(_DisplayMixin):
-    """Result returned by full anonymization runs."""
+    """Result returned by full anonymization runs.
+
+    Attributes:
+        dataframe: User-facing columns only (text, replaced/rewritten text, scores).
+        trace_dataframe: Full pipeline trace including all internal columns.
+        failed_records: Records that failed during pipeline processing.
+    """
 
     dataframe: pd.DataFrame
     trace_dataframe: pd.DataFrame
@@ -64,7 +70,14 @@ class AnonymizerResult(_DisplayMixin):
 
 @dataclass
 class PreviewResult(_DisplayMixin):
-    """Result returned by preview runs."""
+    """Result returned by preview runs.
+
+    Attributes:
+        dataframe: User-facing columns only (text, replaced/rewritten text, scores).
+        trace_dataframe: Full pipeline trace including all internal columns.
+        failed_records: Records that failed during pipeline processing.
+        preview_num_records: Number of records requested for the preview.
+    """
 
     dataframe: pd.DataFrame
     trace_dataframe: pd.DataFrame
