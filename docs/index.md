@@ -47,6 +47,12 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 ```
 By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based anonymization. You can also [bring your own models](concepts/models.md).
 
+!!! warning "Default hosted models are best for experimentation"
+
+    The default `build.nvidia.com` setup is a convenient way to try Anonymizer and iterate on previews. For privacy-sensitive or production data, configure Anonymizer to use a secure endpoint you trust and to which you are comfortable sending data.
+
+    Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint if you need stronger privacy guarantees or higher throughput.
+
 !!! info "Record length"
 
     Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs. 

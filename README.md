@@ -29,6 +29,8 @@ make install
 
 By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — GLiNER-PII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
 
+Use the default build.nvidia.com setup as a convenient way to experiment with Anonymizer and iterate on small samples. For privacy-sensitive or production data, point Anonymizer at a secure endpoint you trust and to which you are comfortable sending data. Request and token rate limits on build.nvidia.com vary by account and model access, and lower-volume development access can be slow for full-dataset runs.
+
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
 ```
