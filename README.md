@@ -29,6 +29,8 @@ make install
 
 By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — GLiNER-PII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
 
+Use the default build.nvidia.com setup as a convenient way to experiment with Anonymizer and iterate on small samples. For privacy-sensitive or production data, point Anonymizer at a secure endpoint you trust and to which you are comfortable sending data. Request and token rate limits on build.nvidia.com vary by account and model access, and lower-volume development access can be slow for full-dataset runs.
+
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
 ```
@@ -81,6 +83,14 @@ For custom model endpoints, pass a providers YAML:
 ```python
 anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 ```
+
+## Language And Regional Coverage
+
+Anonymizer has been tested most extensively on English-language data. Multilingual quality has not yet been evaluated systematically across languages, domains, and models.
+
+Although testing so far has been primarily in English, the supported entity set is not limited to U.S.-specific identifiers. Detection and anonymization can also apply to international formats such as non-U.S. phone numbers, addresses, legal references, and national or regional identification numbers, though coverage will vary by language, region, and model configuration.
+
+If you are working with another language, we encourage you to experiment on a small sample first with `preview()`, validate detected entities and transformed output carefully, and adjust your model providers and model configs as needed.
 
 ---
 
