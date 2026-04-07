@@ -162,7 +162,7 @@ result.dataframe[["text_rewritten", "utility_score", "leakage_mass", "needs_huma
 #
 # - Records where automated metrics exceed thresholds are flagged for manual review.
 # - Use this to prioritize human attention on the records that need it most.
-# - See [Working with flagged records](../concepts/rewrite.md#working-with-flagged-records)
+# - See [Working with flagged records](../../concepts/rewrite/#working-with-flagged-records)
 #   for guidance on diagnosing and resolving flagged records.
 
 # %%
@@ -174,7 +174,7 @@ flagged.head()
 # %% [markdown]
 # ## ⏭️ Next steps
 #
-# - **[🔍 Inspecting Detected Entities](02_inspecting_detected_entities.ipynb)** --
+# - **[🔍 Inspecting Detected Entities](../02_inspecting_detected_entities/)** --
 #   debug what the detection pipeline found before rewriting.
 # - **Try it on your own data!** Swap in your CSV, define entity labels for your
 #   domain, and set a `PrivacyGoal` that fits -- you've got all the building blocks.

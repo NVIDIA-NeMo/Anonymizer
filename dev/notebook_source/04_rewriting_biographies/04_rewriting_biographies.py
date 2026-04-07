@@ -85,7 +85,7 @@ input_data = AnonymizerInput(
 #   this gives the rewriter clear, domain-specific guidance.
 # - `risk_tolerance` (default `"low"`) and `max_repair_iterations` (default `3`)
 #   control the automated quality gate --
-#   see [Risk tolerance](../concepts/rewrite.md#risk-tolerance) for presets.
+#   see [Risk tolerance](../../concepts/rewrite/#risk-tolerance) for presets.
 
 # %%
 config = AnonymizerConfig(
@@ -137,7 +137,7 @@ result.trace_dataframe.columns.tolist()
 #
 # - Records where automated metrics exceed thresholds are flagged for manual review.
 # - Use this to prioritize human attention on the records that need it most.
-# - See [Working with flagged records](../concepts/rewrite.md#working-with-flagged-records)
+# - See [Working with flagged records](../../concepts/rewrite/#working-with-flagged-records)
 #   for guidance on diagnosing and resolving flagged records.
 
 # %%
@@ -149,9 +149,9 @@ flagged.head()
 # %% [markdown]
 # ## ⏭️ Next steps
 #
-# - **[⚖️ Rewriting Legal Documents](05_rewriting_legal_documents.ipynb)** --
+# - **[⚖️ Rewriting Legal Documents](../05_rewriting_legal_documents/)** --
 #   rewrite legal text with custom entity labels and domain-specific privacy goals.
-# - **[🎯 Choosing a Replacement Strategy](03_choosing_a_replacement_strategy.ipynb)** --
+# - **[🎯 Choosing a Replacement Strategy](../03_choosing_a_replacement_strategy/)** --
 #   compare Redact, Annotate, Hash, and Substitute if you prefer token-level replacement.
-# - **[🔍 Inspecting Detected Entities](02_inspecting_detected_entities.ipynb)** --
+# - **[🔍 Inspecting Detected Entities](../02_inspecting_detected_entities/)** --
 #   debug what the detection pipeline found before rewriting.
