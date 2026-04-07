@@ -116,9 +116,9 @@ result.dataframe.head()
 # %% [markdown]
 # ## ⏭️ Next steps
 #
-# - **[🔍 Inspecting Detected Entities](02_inspecting_detected_entities.ipynb)** --
+# - **[🔍 Inspecting Detected Entities](../02_inspecting_detected_entities/)** --
 #   dig into what the detection pipeline found and debug quality.
-# - **[🎯 Choosing a Replacement Strategy](03_choosing_a_replacement_strategy.ipynb)** --
+# - **[🎯 Choosing a Replacement Strategy](../03_choosing_a_replacement_strategy/)** --
 #   compare Redact, Annotate, Hash, and Substitute side-by-side.
-# - **[✏️ Rewriting Biographies](04_rewriting_biographies.ipynb)** --
+# - **[✏️ Rewriting Biographies](../04_rewriting_biographies/)** --
 #   generate privacy-safe paraphrases instead of token-level replacements.

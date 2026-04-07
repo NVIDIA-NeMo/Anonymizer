@@ -189,9 +189,9 @@ else:
 # %% [markdown]
 # ## ⏭️ Next steps
 #
-# - **[🕵️ Your First Anonymization](01_your_first_anonymization.ipynb)** --
+# - **[🕵️ Your First Anonymization](../01_your_first_anonymization/)** --
 #   the simplest end-to-end replace workflow if you haven't run it yet.
-# - **[🎯 Choosing a Replacement Strategy](03_choosing_a_replacement_strategy.ipynb)** --
+# - **[🎯 Choosing a Replacement Strategy](../03_choosing_a_replacement_strategy/)** --
 #   compare Redact, Annotate, Hash, and Substitute side-by-side.
-# - **[✏️ Rewriting Biographies](04_rewriting_biographies.ipynb)** --
+# - **[✏️ Rewriting Biographies](../04_rewriting_biographies/)** --
 #   generate privacy-safe paraphrases instead of token-level replacements.
