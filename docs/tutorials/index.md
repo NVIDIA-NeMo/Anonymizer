@@ -67,22 +67,22 @@ Set your `NVIDIA_API_KEY` in the same shell where you launch Jupyter. If `NVIDIA
 
 ## 📚 Tutorial Series
 
-### 1. [Your First Anonymization](../notebooks/02_inspecting_detected_entities.ipynb)
+### 1. [Your First Anonymization](../notebooks/01_your_first_anonymization/)
 
 Learn the basic end-to-end flow: load data, configure replace mode, preview, inspect, and run.
 
-### 2. [Inspecting Detected Entities](../notebooks/02_inspecting_detected_entities.ipynb)
+### 2. [Inspecting Detected Entities](../notebooks/02_inspecting_detected_entities/)
 
 Understand what detection produced, how entities are labeled, and where they came from.
 
-### 3. [Choosing a Replacement Strategy](../notebooks/03_choosing_a_replacement_strategy.ipynb)
+### 3. [Choosing a Replacement Strategy](../notebooks/03_choosing_a_replacement_strategy/)
 
 Compare replace mode options -- Redact, Annotate, Hash, and Substitute -- side by side, including custom templates.
 
-### 4. [Rewriting Biographies](../notebooks/04_rewriting_biographies.ipynb)
+### 4. [Rewriting Biographies](../notebooks/04_rewriting_biographies/)
 
 Use rewrite mode with privacy goals, evaluation criteria, and review-flag triage.
 
-### 5. [Rewriting Legal Documents](../notebooks/05_rewriting_legal_documents.ipynb)
+### 5. [Rewriting Legal Documents](../notebooks/05_rewriting_legal_documents/)
 
 Apply rewrite mode to legal-domain text with custom entity labels and stricter protection goals.

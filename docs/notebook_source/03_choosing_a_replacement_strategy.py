@@ -17,7 +17,7 @@
 # %% [markdown]
 # # 🕵️ Choosing a Replacement Strategy
 #
-# Four [replace mode](../concepts/replace.md) strategies compared side-by-side on the same data.
+# Four [replace mode](../../concepts/replace/) strategies compared side-by-side on the same data.
 #
 # | Strategy | What it does |
 # |----------|-------------|
@@ -210,9 +210,9 @@ hash_custom_preview.display_record(0)
 # %% [markdown]
 # ## ⏭️ Next steps
 #
-# - **[🕵️ Inspecting Detected Entities](02_inspecting_detected_entities.ipynb)** --
+# - **[🕵️ Inspecting Detected Entities](../02_inspecting_detected_entities/)** --
 #   dig into what the detection pipeline found and debug quality.
-# - **[✏️ Rewriting Biographies](04_rewriting_biographies.ipynb)** --
+# - **[✏️ Rewriting Biographies](../04_rewriting_biographies/)** --
 #   generate privacy-safe paraphrases instead of token-level replacements.
-# - **[⚖️ Rewriting Legal Documents](05_rewriting_legal_documents.ipynb)** --
+# - **[⚖️ Rewriting Legal Documents](../05_rewriting_legal_documents/)** --
 #   rewrite legal text with domain-specific privacy goals.
