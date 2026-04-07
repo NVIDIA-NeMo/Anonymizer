@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, infer_input_source_suffix
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -46,6 +46,10 @@ def test_input_source_accepts_http_url_without_local_path_check() -> None:
 def test_input_source_accepts_http_url_with_fragment() -> None:
     inp = AnonymizerInput(source="https://example.com/data.csv#preview")
     assert inp.source == "https://example.com/data.csv#preview"
+
+
+def test_infer_input_source_suffix_ignores_url_fragment() -> None:
+    assert infer_input_source_suffix("https://example.com/data.csv#preview") == ".csv"
 
 
 def test_input_source_rejects_unsupported_url_scheme() -> None:
