@@ -1099,6 +1099,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.is_remote_input_source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;is_remote_input_source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.has_unsupported_url_scheme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;has_unsupported_url_scheme
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.infer_input_source_suffix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;infer_input_source_suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1863,6 +1896,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.is_remote_input_source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;is_remote_input_source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.has_unsupported_url_scheme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;has_unsupported_url_scheme
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.infer_input_source_suffix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;infer_input_source_suffix
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2052,6 +2118,43 @@
 
 
 
+<p><span class="doc-section-title">Functions:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            is_remote_input_source(value) (anonymizer.config.anonymizer_config.is_remote_input_source)" href="#anonymizer.config.anonymizer_config.is_remote_input_source">is_remote_input_source</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Return True when the input source is an HTTP(S) URL.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            has_unsupported_url_scheme(value) (anonymizer.config.anonymizer_config.has_unsupported_url_scheme)" href="#anonymizer.config.anonymizer_config.has_unsupported_url_scheme">has_unsupported_url_scheme</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Return True when the input looks like a URL but uses an unsupported scheme.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            infer_input_source_suffix(value) (anonymizer.config.anonymizer_config.infer_input_source_suffix)" href="#anonymizer.config.anonymizer_config.infer_input_source_suffix">infer_input_source_suffix</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Infer the lowercase file suffix from a local path or remote URL path.</p>
+                </div>
+              </td>
+            </tr>
+      </tbody>
+    </table>
+
+
 
 
 
@@ -2085,7 +2188,7 @@
               Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
 
         <p>Input source definition for the anonymizer pipeline.</p>
-<p>Format is inferred from file extension (.csv or .parquet).</p>
+<p>Format is inferred from the file extension of a local path or HTTP(S) URL.</p>
 
     
 
@@ -2163,7 +2266,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Path to input file (.csv or .parquet).</p>
+        <p>Local path or HTTP(S) URL for a .csv or .parquet input file.</p>
 
     </div>
 
@@ -2723,6 +2826,82 @@
 
 </div>
 
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="anonymizer.config.anonymizer_config.is_remote_input_source" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">is_remote_input_source(value)</code>
+
+<a href="#anonymizer.config.anonymizer_config.is_remote_input_source" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return True when the input source is an HTTP(S) URL.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/config/anonymizer_config.py</code></summary>
+              <pre class="highlight"><code class="language-python">def is_remote_input_source(value: str) -&gt; bool:
+    """Return True when the input source is an HTTP(S) URL."""
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"}</code></pre>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="anonymizer.config.anonymizer_config.has_unsupported_url_scheme" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">has_unsupported_url_scheme(value)</code>
+
+<a href="#anonymizer.config.anonymizer_config.has_unsupported_url_scheme" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return True when the input looks like a URL but uses an unsupported scheme.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/config/anonymizer_config.py</code></summary>
+              <pre class="highlight"><code class="language-python">def has_unsupported_url_scheme(value: str) -&gt; bool:
+    """Return True when the input looks like a URL but uses an unsupported scheme."""
+    parsed = urlparse(value)
+    return "://" in value and bool(parsed.scheme) and parsed.scheme not in {"http", "https"}</code></pre>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="anonymizer.config.anonymizer_config.infer_input_source_suffix" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">infer_input_source_suffix(value)</code>
+
+<a href="#anonymizer.config.anonymizer_config.infer_input_source_suffix" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Infer the lowercase file suffix from a local path or remote URL path.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/config/anonymizer_config.py</code></summary>
+              <pre class="highlight"><code class="language-python">def infer_input_source_suffix(value: str) -&gt; str:
+    """Infer the lowercase file suffix from a local path or remote URL path."""
+    if is_remote_input_source(value):
+        return Path(urlparse(value).path).suffix.lower()
+    return Path(value).suffix.lower()</code></pre>
+            </details>
+    </div>
+
+</div>
 
 
 

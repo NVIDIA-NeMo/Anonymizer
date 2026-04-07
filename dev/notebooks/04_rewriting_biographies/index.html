@@ -2555,13 +2555,13 @@ easy to compare rewrite output against replace output.</li>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
-    <span class="n">source</span><span class="o">=</span><span class="s2">"../data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
+    <span class="n">source</span><span class="o">=</span><span class="s2">"https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
     <span class="n">text_column</span><span class="o">=</span><span class="s2">"biography"</span><span class="p">,</span>
     <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Biographical profiles"</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-4">input_data = AnonymizerInput(
-    source="../data/NVIDIA_synthetic_biographies.csv",
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
     text_column="biography",
     data_summary="Biographical profiles",
 )</div>
@@ -2687,7 +2687,7 @@ preview.display_record(0)</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[16:16:07] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[16:16:07] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 [16:16:07] [INFO] detection labels in scope: (default: 65 labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)
 [16:16:07] [INFO]   |-- 👀 Preview mode: processing 3 of 25 records
 [16:16:07] [INFO] 🔍 Running entity detection on 3 records
@@ -2861,7 +2861,7 @@ result.dataframe.head()</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
-<pre>[16:22:12] [INFO] 📂 Loaded 25 records from ../data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<pre>[16:22:12] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 [16:22:12] [INFO] detection labels in scope: (default: 65 labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)
 [16:22:12] [INFO] 🔍 Running entity detection on 25 records
 [16:29:31] [INFO]   |-- 📋 Detection complete — 667 entities found across 25 records (0 failed) [438.9s]
