@@ -92,7 +92,7 @@ test:
 
 test-e2e:
 	@echo "Running end-to-end tests..."
-	uv run --group dev pytest -m e2e
+	uv run python tests_e2e/test_e2e.py
 
 coverage:
 	@echo "Running tests with coverage analysis..."
