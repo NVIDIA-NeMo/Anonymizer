@@ -112,6 +112,14 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
 
     `data_summary` is optional but recommended for domain-specific data. It helps the LLM find more entities and reduce false drops.
 
+## Language And Regional Coverage
+
+Anonymizer has been tested most extensively on English-language data. Multilingual quality has not yet been evaluated systematically across languages, domains, and models.
+
+Although testing so far has been primarily in English, the supported entity set is not limited to U.S.-specific identifiers. Detection and anonymization can also apply to international formats such as non-U.S. phone numbers, addresses, legal references, and national or regional identification numbers, though coverage will vary by language, region, and model configuration.
+
+If you are working with another language, we encourage you to experiment on a small sample first with `preview()`, validate detected entities and transformed output carefully, and adjust your [model providers and model configs](concepts/models.md) as needed.
+
 ## Inspect
 View an interactive visualization with entity highlights.
 ```python
