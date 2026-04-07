@@ -535,7 +535,6 @@ Already-detected entities: <<SEED_ENTITIES>>
         {
             "<<LABEL_BLOCK>>": label_block,
             "<<EXAMPLE_BLOCK>>": example_block,
-            "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(COL_INITIAL_TAGGED_TEXT),
             "<<SEED_ENTITIES>>": _jinja(COL_SEED_ENTITIES_JSON),
             "<<DATA_SUMMARY>>": context_section,
