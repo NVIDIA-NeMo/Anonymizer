@@ -50,6 +50,17 @@ def test_verbose_bool_backward_compat() -> None:
     assert logging.getLogger("data_designer").level == logging.INFO
 
 
+def test_enabled_false_clears_active_config() -> None:
+    """configure_logging(enabled=False) must not leave stale config for reapply_log_levels."""
+    from anonymizer import logging as _logging_mod
+
+    configure_logging(LoggingConfig.debug())
+    assert _logging_mod._active_config is not None
+
+    configure_logging(enabled=False)
+    assert _logging_mod._active_config is None
+
+
 def test_user_config_survives_anonymizer_init() -> None:
     """configure_logging() before Anonymizer() should not be overwritten."""
     from anonymizer.interface.anonymizer import Anonymizer

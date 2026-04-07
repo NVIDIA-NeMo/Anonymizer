@@ -69,6 +69,7 @@ def configure_logging(
     _configured = True
 
     if not enabled:
+        _active_config = None
         return
 
     if config is None:
