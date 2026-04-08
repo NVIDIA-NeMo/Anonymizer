@@ -1372,6 +1372,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.logging.reapply_log_levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;reapply_log_levels
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1639,6 +1650,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.logging.reapply_log_levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;reapply_log_levels
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1794,6 +1816,14 @@
               <td>
                 <div class="doc-md-description">
                   <p>Set up logging for Anonymizer.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            reapply_log_levels() (anonymizer.logging.reapply_log_levels)" href="#anonymizer.logging.reapply_log_levels">reapply_log_levels</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Re-apply logger levels after third-party init may have overwritten them.</p>
                 </div>
               </td>
             </tr>
@@ -2352,14 +2382,17 @@ handlers. Useful when the caller manages logging independently.</p>
         enabled: Set to ``False`` to prevent Anonymizer from adding any log
             handlers. Useful when the caller manages logging independently.
     """
-    global _anonymizer_handler, _configured
+    global _anonymizer_handler, _configured, _active_config
     _configured = True
 
     if not enabled:
+        _active_config = None
         return
 
     if config is None:
         config = LoggingConfig.verbose() if verbose else LoggingConfig.default()
+
+    _active_config = config
 
     anon_logger = logging.getLogger("anonymizer")
     dd_logger = logging.getLogger("data_designer")
@@ -2384,6 +2417,44 @@ handlers. Useful when the caller manages logging independently.</p>
     dd_logger.propagate = False
     dd_logger.setLevel(config.data_designer_level)
 
+    for name in _DEFAULT_NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)</code></pre>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="anonymizer.logging.reapply_log_levels" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">reapply_log_levels()</code>
+
+<a href="#anonymizer.logging.reapply_log_levels" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Re-apply logger levels after third-party init may have overwritten them.</p>
+<p>DataDesigner's <code>_initialize_interface_runtime</code> resets the
+<code>data_designer</code> logger level and noisy-logger suppression.
+Call this after creating a <code>DataDesigner</code> instance to restore
+the levels chosen by the user's <code>LoggingConfig</code>.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/logging.py</code></summary>
+              <pre class="highlight"><code class="language-python">def reapply_log_levels() -&gt; None:
+    """Re-apply logger levels after third-party init may have overwritten them.
+
+    DataDesigner's ``_initialize_interface_runtime`` resets the
+    ``data_designer`` logger level and noisy-logger suppression.
+    Call this after creating a ``DataDesigner`` instance to restore
+    the levels chosen by the user's ``LoggingConfig``.
+    """
+    if _active_config is None:
+        return
+    logging.getLogger("data_designer").setLevel(_active_config.data_designer_level)
     for name in _DEFAULT_NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)</code></pre>
             </details>
