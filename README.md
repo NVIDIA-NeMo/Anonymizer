@@ -40,14 +40,16 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 #### CLI
 > Tip: All examples below use `uv run` to invoke commands. If you prefer, activate the venv with `source .venv/bin/activate` and run commands directly.
 ```bash
+DATA_URL="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"
+
 # Preview on a small sample
-uv run anonymizer preview --source data.csv --replace redact
+uv run anonymizer preview --source $DATA_URL --text-column biography --replace redact --num_records 3
 
 # Full run with output file
-uv run anonymizer run --source data.csv --replace redact --output result.csv
+uv run anonymizer run --source $DATA_URL --text-column biography --replace redact --output result.csv 
 
 # Validate config without running
-uv run anonymizer validate --source data.csv --replace hash
+uv run anonymizer validate --source $DATA_URL --text-column biography --replace hash
 ```
 
 Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
@@ -56,6 +58,7 @@ Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
 
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
+DATA_URL = "https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"
 
 # Uses default model providers (build.nvidia.com) via NVIDIA_API_KEY env var
 anonymizer = Anonymizer()
@@ -64,7 +67,7 @@ config = AnonymizerConfig(replace=Redact())
 
 preview = anonymizer.preview(
     config=config,
-    data=AnonymizerInput(source="data.csv", text_column="text"),
+    data=AnonymizerInput(source=DATA_URL, text_column="biography"),
     num_records=3,
 )
 
@@ -106,14 +109,17 @@ If you are working with another language, we encourage you to experiment on a sm
 ```python
 from anonymizer import Redact, Annotate, Hash, Substitute
 
+# LLM-generated contextual replacements
+AnonymizerConfig(replace=Substitute())
+
 # Constant redaction
 AnonymizerConfig(replace=Redact(format_template="****"))
 
+# Annotation with entities tagging
+AnonymizerConfig(replace=Annotate(format_template="<{text}-|-{label}>"))
+
 # Deterministic hash with short digest
 AnonymizerConfig(replace=Hash(algorithm="sha256", digest_length=8))
-
-# LLM-generated contextual replacements
-AnonymizerConfig(replace=Substitute())
 ```
 
 ---
@@ -124,7 +130,7 @@ AnonymizerConfig(replace=Substitute())
 make install-dev          # Install with dev dependencies
 make test                 # Run tests
 make coverage             # Run with coverage report
-make check-all            # Lint + format check
+make format-check         # Lint + format check (read-only)
 anonymizer --help         # CLI usage
 make install-pre-commit   # Install pre-commit hooks
 ```
