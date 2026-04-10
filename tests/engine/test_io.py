@@ -199,3 +199,72 @@ def test_write_output_unwritable_path_raises_anonymizer_io_error(
     monkeypatch.setattr(pd.DataFrame, "to_csv", _raise_write_error)
     with pytest.raises(AnonymizerIOError, match="Failed to write output data"):
         write_output(stub_dataframe, out_path)
+
+
+# ---------------------------------------------------------------------------
+# nrows (preview row limit) tests
+# ---------------------------------------------------------------------------
+
+
+def test_read_input_nrows_truncates_csv(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": [f"row {i}" for i in range(20)]})
+    file_path = tmp_path / "big.csv"
+    df.to_csv(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=5)
+    assert len(result) == 5
+    assert result[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
+
+
+def test_read_input_nrows_truncates_parquet(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": [f"row {i}" for i in range(20)]})
+    file_path = tmp_path / "big.parquet"
+    df.to_parquet(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=5)
+    assert len(result) == 5
+    assert result[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
+
+
+def test_read_input_nrows_larger_than_file_returns_all(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": ["a", "b", "c"]})
+    file_path = tmp_path / "small.csv"
+    df.to_csv(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=100)
+    assert len(result) == 3
+
+
+def test_read_input_nrows_none_returns_all(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": [f"row {i}" for i in range(20)]})
+    file_path = tmp_path / "full.csv"
+    df.to_csv(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=None)
+    assert len(result) == 20
+
+
+def test_read_input_nrows_preserves_attrs(tmp_path: Path) -> None:
+    df = pd.DataFrame({"bio": [f"row {i}" for i in range(10)]})
+    file_path = tmp_path / "data.csv"
+    df.to_csv(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path), text_column="bio"), nrows=3)
+    assert len(result) == 3
+    assert result.attrs["original_text_column"] == "bio"
+    assert COL_TEXT in result.columns
+
+
+def test_read_input_nrows_remote_csv(monkeypatch: pytest.MonkeyPatch) -> None:
+    full_df = pd.DataFrame({"text": [f"row {i}" for i in range(50)]})
+    source = "https://example.com/data.csv"
+
+    def _read_csv(url: str, *args: object, **kwargs: object) -> pd.DataFrame:
+        nrows = kwargs.get("nrows")
+        if nrows is not None:
+            return full_df.head(nrows)
+        return full_df
+
+    monkeypatch.setattr(pd, "read_csv", _read_csv)
+    result = read_input(AnonymizerInput(source=source), nrows=5)
+    assert len(result) == 5
