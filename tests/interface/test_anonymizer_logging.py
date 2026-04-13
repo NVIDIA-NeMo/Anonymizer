@@ -157,6 +157,34 @@ def test_preview_logs_preview_mode(stub_input: AnonymizerInput, caplog: pytest.L
     assert "👀 Preview mode: 📂 Loaded 2 records" in messages
 
 
+def test_preview_passes_preview_num_records_to_workflows(stub_input: AnonymizerInput) -> None:
+    """preview() must propagate preview_num_records so downstream workflows use DataDesigner.preview()."""
+    anonymizer = _make_logging_anonymizer()
+    config = AnonymizerConfig(replace=Redact())
+
+    anonymizer.preview(config=config, data=stub_input, num_records=5)
+
+    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    assert det_call_kwargs["preview_num_records"] == 5
+
+    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    assert rep_call_kwargs["preview_num_records"] == 5
+
+
+def test_run_skips_preview_num_records_to_workflows(stub_input: AnonymizerInput) -> None:
+    """run() must pass preview_num_records=None so workflows use full execution."""
+    anonymizer = _make_logging_anonymizer()
+    config = AnonymizerConfig(replace=Redact())
+
+    anonymizer.run(config=config, data=stub_input)
+
+    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    assert det_call_kwargs["preview_num_records"] is None
+
+    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    assert rep_call_kwargs["preview_num_records"] is None
+
+
 def test_configure_logging_with_config_object() -> None:
     from anonymizer.logging import LoggingConfig, configure_logging
 

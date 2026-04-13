@@ -127,7 +127,7 @@ class Anonymizer:
         """
         self._validate_preflight_config(config)
         input_df = read_input(data)
-        return self._run_internal(config=config, data=data, input_df=input_df)
+        return self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=None)
 
     def preview(
         self,
@@ -145,7 +145,7 @@ class Anonymizer:
         """
         self._validate_preflight_config(config)
         input_df = read_input(data, nrows=num_records)
-        result = self._run_internal(config=config, data=data, input_df=input_df)
+        result = self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=num_records)
         return PreviewResult(
             dataframe=result.dataframe,
             trace_dataframe=result.trace_dataframe,
@@ -163,6 +163,7 @@ class Anonymizer:
         config: AnonymizerConfig,
         data: AnonymizerInput,
         input_df: pd.DataFrame,
+        preview_num_records: int | None,
     ) -> AnonymizerResult:
         num_records = len(input_df)
         if logger.isEnabledFor(logging.DEBUG):
@@ -199,6 +200,7 @@ class Anonymizer:
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
             compute_grouped_entities=config.replace is not None or config.rewrite is not None,
+            preview_num_records=preview_num_records,
         )
         detection_elapsed = time.perf_counter() - t0
         entity_count = _count_entities(detection_result.dataframe)
@@ -224,6 +226,7 @@ class Anonymizer:
                 replace_method=config.replace,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
+                preview_num_records=preview_num_records,
             )
             replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe
@@ -244,6 +247,7 @@ class Anonymizer:
                 privacy_goal=config.rewrite.privacy_goal,
                 evaluation=config.rewrite.evaluation,
                 data_summary=data.data_summary,
+                preview_num_records=preview_num_records,
             )
             rewrite_elapsed = time.perf_counter() - t0
             final_df = rewrite_result.dataframe

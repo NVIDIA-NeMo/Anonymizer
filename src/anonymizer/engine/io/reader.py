@@ -51,6 +51,8 @@ def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) ->
         if suffix == ".csv":
             df = pd.read_csv(source_str, nrows=nrows)
         else:
+            # TODO: pd.read_parquet loads the entire file; for a true partial
+            # read use pyarrow.parquet.ParquetFile(...).iter_batches(...).
             df = pd.read_parquet(source_str)
             if nrows is not None:
                 df = df.head(nrows)
