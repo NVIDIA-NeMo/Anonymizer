@@ -170,14 +170,18 @@ class Anonymizer:
             effective_records = min(preview_num_records, num_records)
             if effective_records < preview_num_records:
                 logger.info(
-                    LOG_INDENT + "👀 Preview mode: capped to %d records (requested %d, available %d)",
+                    LOG_INDENT + "🔍 Running entity detection on capped %d records (requested %d, available %d)",
                     effective_records,
                     preview_num_records,
                     num_records,
                 )
             else:
-                logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", effective_records, num_records)
+                logger.info(
+                    LOG_INDENT + "🔍 Running entity detection on %d of %d records", effective_records, num_records
+                )
             preview_num_records = effective_records
+        else:
+            logger.info("🔍 Running entity detection on %d records", num_records)
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
             logger.debug(
@@ -200,7 +204,6 @@ class Anonymizer:
                 or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
             )
 
-        logger.info("🔍 Running entity detection on %d records", num_records)
         t0 = time.perf_counter()
         detection_result = self._detection_workflow.run(
             input_df,
