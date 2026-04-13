@@ -6,6 +6,8 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from anonymizer.config.anonymizer_config import AnonymizerInput, infer_input_source_suffix
 from anonymizer.engine.constants import COL_TEXT
@@ -41,6 +43,22 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
     )
 
 
+def _read_parquet_partial(source: str, *, nrows: int | None = None) -> pd.DataFrame:
+    """Read a Parquet file, stopping early when *nrows* is set."""
+    if nrows is None:
+        return pd.read_parquet(source)
+    pf = pq.ParquetFile(source)
+    batches: list[pa.RecordBatch] = []
+    rows_so_far = 0
+    for batch in pf.iter_batches(batch_size=nrows):
+        batches.append(batch)
+        rows_so_far += len(batch)
+        if rows_so_far >= nrows:
+            break
+    table = pa.Table.from_batches(batches, schema=pf.schema_arrow)
+    return table.slice(0, nrows).to_pandas()
+
+
 def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.DataFrame:
     source_str = str(input_data.source)
     suffix = infer_input_source_suffix(source_str)
@@ -51,11 +69,7 @@ def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) ->
         if suffix == ".csv":
             df = pd.read_csv(source_str, nrows=nrows)
         else:
-            # TODO: pd.read_parquet loads the entire file; for a true partial
-            # read use pyarrow.parquet.ParquetFile(...).iter_batches(...).
-            df = pd.read_parquet(source_str)
-            if nrows is not None:
-                df = df.head(nrows)
+            df = _read_parquet_partial(source_str, nrows=nrows)
     except (OSError, pd.errors.ParserError, ValueError) as error:
         raise AnonymizerIOError(f"Failed to read input data from: {source_str}") from error
     if nrows is not None:
