@@ -166,6 +166,18 @@ class Anonymizer:
         preview_num_records: int | None,
     ) -> AnonymizerResult:
         num_records = len(input_df)
+        if preview_num_records is not None and preview_num_records != num_records:
+            effective_records = min(preview_num_records, num_records)
+            if effective_records < preview_num_records:
+                logger.info(
+                    LOG_INDENT + "👀 Preview mode: capped to %d records (requested %d, available %d)",
+                    effective_records,
+                    preview_num_records,
+                    num_records,
+                )
+            else:
+                logger.info(LOG_INDENT + "👀 Preview mode: processing %d of %d records", effective_records, num_records)
+            preview_num_records = effective_records
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
             logger.debug(

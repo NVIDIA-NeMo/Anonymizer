@@ -157,21 +157,37 @@ def test_preview_logs_preview_mode(stub_input: AnonymizerInput, caplog: pytest.L
     assert "👀 Preview mode: 📂 Loaded 2 records" in messages
 
 
-def test_preview_passes_preview_num_records_to_workflows(stub_input: AnonymizerInput) -> None:
+def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> None:
     """preview() must propagate preview_num_records so downstream workflows use DataDesigner.preview()."""
     anonymizer = _make_logging_anonymizer()
     config = AnonymizerConfig(replace=Redact())
 
+    # stub_input has 2 rows; num_records=5 is clamped to min(5, 2) = 2
     anonymizer.preview(config=config, data=stub_input, num_records=5)
 
     det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
-    assert det_call_kwargs["preview_num_records"] == 5
+    assert det_call_kwargs["preview_num_records"] == 2
 
     rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
-    assert rep_call_kwargs["preview_num_records"] == 5
+    assert rep_call_kwargs["preview_num_records"] == 2
 
 
-def test_run_skips_preview_num_records_to_workflows(stub_input: AnonymizerInput) -> None:
+def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput) -> None:
+    """When num_records < available rows, preview_num_records is forwarded as-is."""
+    anonymizer = _make_logging_anonymizer()
+    config = AnonymizerConfig(replace=Redact())
+
+    # stub_input has 2 rows; num_records=1 fits, so no clamping
+    anonymizer.preview(config=config, data=stub_input, num_records=1)
+
+    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    assert det_call_kwargs["preview_num_records"] == 1
+
+    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    assert rep_call_kwargs["preview_num_records"] == 1
+
+
+def test_run_set_preview_num_records(stub_input: AnonymizerInput) -> None:
     """run() must pass preview_num_records=None so workflows use full execution."""
     anonymizer = _make_logging_anonymizer()
     config = AnonymizerConfig(replace=Redact())
