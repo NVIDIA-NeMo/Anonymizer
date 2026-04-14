@@ -74,6 +74,8 @@ def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) ->
     if suffix not in SUPPORTED_IO_FORMATS:
         supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
         raise InvalidInputError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
+    if nrows is not None and nrows <= 0:
+        logger.debug("nrows=%d; returning empty DataFrame for %s", nrows, source_str)
     try:
         if suffix == ".csv":
             df = pd.read_csv(source_str, nrows=nrows)
