@@ -21,15 +21,15 @@ from anonymizer.engine.constants import (
     COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
-    COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
+    COL_SEED_TAGGED_TEXT,
+    COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
-    COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
@@ -121,7 +121,7 @@ class EntityDetectionWorkflow:
                     generator_function=parse_detected_entities,
                 ),
                 CustomColumnConfig(
-                    name=COL_VALIDATION_CANDIDATES,
+                    name=COL_SEED_VALIDATION_CANDIDATES,
                     generator_function=prepare_validation_inputs,
                 ),
                 CustomColumnConfig(
@@ -443,7 +443,7 @@ Template: <<VALIDATION_SKELETON>>
 """
     prompt = (
         prompt.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
-        .replace("<<TAGGED_TEXT>>", _jinja(COL_MERGED_TAGGED_TEXT))
+        .replace("<<TAGGED_TEXT>>", _jinja(COL_SEED_TAGGED_TEXT))
         .replace("<<VALIDATION_SKELETON>>", _jinja(COL_VALIDATION_SKELETON))
         .replace("<<LABEL_EXAMPLES>>", _format_label_examples(labels))
     )

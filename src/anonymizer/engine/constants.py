@@ -24,6 +24,10 @@ COL_TAG_NOTATION = "_tag_notation"
 # Step 3: LLM augmentation
 COL_AUGMENTED_ENTITIES = "_augmented_entities"
 
+# Step 3b: prepare_validation_inputs (seed-only, pre-augmentation)
+COL_SEED_TAGGED_TEXT = "_seed_tagged_text"
+COL_SEED_VALIDATION_CANDIDATES = "_seed_validation_candidates"
+
 # Step 4: merge_and_build_candidates
 COL_MERGED_ENTITIES = "_merged_entities"
 COL_MERGED_TAGGED_TEXT = "_merged_tagged_text"
