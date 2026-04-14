@@ -268,3 +268,48 @@ def test_read_input_nrows_remote_csv(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pd, "read_csv", _read_csv)
     result = read_input(AnonymizerInput(source=source), nrows=5)
     assert len(result) == 5
+
+
+# ---------------------------------------------------------------------------
+# nrows edge-cases: zero, negative, and empty input
+# ---------------------------------------------------------------------------
+
+
+def test_read_input_nrows_zero_returns_empty_parquet(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": ["a", "b", "c"]})
+    file_path = tmp_path / "data.parquet"
+    df.to_parquet(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=0)
+    assert len(result) == 0
+    assert COL_TEXT in result.columns
+
+
+def test_read_input_nrows_zero_returns_empty_csv(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": ["a", "b", "c"]})
+    file_path = tmp_path / "data.csv"
+    df.to_csv(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=0)
+    assert len(result) == 0
+    assert COL_TEXT in result.columns
+
+
+def test_read_input_nrows_negative_returns_empty_parquet(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": ["a", "b", "c"]})
+    file_path = tmp_path / "data.parquet"
+    df.to_parquet(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=-5)
+    assert len(result) == 0
+    assert COL_TEXT in result.columns
+
+
+def test_read_input_empty_parquet_returns_empty(tmp_path: Path) -> None:
+    df = pd.DataFrame({"text": pd.Series([], dtype="object")})
+    file_path = tmp_path / "empty.parquet"
+    df.to_parquet(file_path, index=False)
+
+    result = read_input(AnonymizerInput(source=str(file_path)), nrows=5)
+    assert len(result) == 0
+    assert COL_TEXT in result.columns

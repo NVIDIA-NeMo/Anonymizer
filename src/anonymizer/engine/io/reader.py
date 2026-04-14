@@ -44,9 +44,18 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
 
 
 def _read_parquet_partial(source: str, *, nrows: int | None = None) -> pd.DataFrame:
-    """Read a Parquet file, stopping early when *nrows* is set."""
+    """Read a Parquet file, stopping early when *nrows* is set.
+
+    Returns a schema-preserving empty DataFrame when *nrows* is zero or negative.
+    """
     if nrows is None:
         return pd.read_parquet(source)
+    if nrows <= 0:
+        schema = pq.ParquetFile(source).schema_arrow
+        empty = pa.table(
+            {name: pa.array([], type=field.type) for name, field in zip(schema.names, schema)},
+        )
+        return empty.to_pandas()
     pf = pq.ParquetFile(source)
     batches: list[pa.RecordBatch] = []
     rows_so_far = 0
