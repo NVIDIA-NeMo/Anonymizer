@@ -8,7 +8,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
-    COL_DOMAIN_SUPPLEMENT,
+    COL_DOMAIN_SUPPLEMENT_PRIVACY,
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
@@ -62,5 +62,5 @@ def test_prompt_references_required_columns() -> None:
     assert _jinja(COL_TAGGED_TEXT) in prompt
     assert _jinja(COL_ENTITIES_BY_VALUE) in prompt
     assert _jinja(COL_LATENT_ENTITIES) in prompt
-    assert _jinja(COL_DOMAIN_SUPPLEMENT) in prompt
+    assert _jinja(COL_DOMAIN_SUPPLEMENT_PRIVACY) in prompt
     assert _jinja("_domain", key="domain") in prompt

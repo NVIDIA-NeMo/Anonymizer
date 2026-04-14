@@ -24,6 +24,7 @@ _DEFAULT_NOISY_LOGGERS = [
 
 _anonymizer_handler: logging.Handler | None = None
 _configured = False
+_active_config: LoggingConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -35,14 +36,17 @@ class LoggingConfig:
 
     @classmethod
     def default(cls) -> LoggingConfig:
+        """Anonymizer at INFO, Data Designer at WARNING."""
         return cls(anonymizer_level="INFO", data_designer_level="WARNING")
 
     @classmethod
     def verbose(cls) -> LoggingConfig:
+        """Both Anonymizer and Data Designer at INFO."""
         return cls(anonymizer_level="INFO", data_designer_level="INFO")
 
     @classmethod
     def debug(cls) -> LoggingConfig:
+        """Anonymizer at DEBUG, Data Designer at INFO."""
         return cls(anonymizer_level="DEBUG", data_designer_level="INFO")
 
 
@@ -61,14 +65,17 @@ def configure_logging(
         enabled: Set to ``False`` to prevent Anonymizer from adding any log
             handlers. Useful when the caller manages logging independently.
     """
-    global _anonymizer_handler, _configured
+    global _anonymizer_handler, _configured, _active_config
     _configured = True
 
     if not enabled:
+        _active_config = None
         return
 
     if config is None:
         config = LoggingConfig.verbose() if verbose else LoggingConfig.default()
+
+    _active_config = config
 
     anon_logger = logging.getLogger("anonymizer")
     dd_logger = logging.getLogger("data_designer")
@@ -97,6 +104,21 @@ def configure_logging(
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
+def reapply_log_levels() -> None:
+    """Re-apply logger levels after third-party init may have overwritten them.
+
+    DataDesigner's ``_initialize_interface_runtime`` resets the
+    ``data_designer`` logger level and noisy-logger suppression.
+    Call this after creating a ``DataDesigner`` instance to restore
+    the levels chosen by the user's ``LoggingConfig``.
+    """
+    if _active_config is None:
+        return
+    logging.getLogger("data_designer").setLevel(_active_config.data_designer_level)
+    for name in _DEFAULT_NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 _PROGRESS_THRESHOLD = 50
 
 _progress_logger = logging.getLogger("anonymizer")
@@ -106,6 +128,13 @@ class ProgressTracker:
     """Log-based progress tracker for sequential record processing."""
 
     def __init__(self, total: int, label: str, log_interval_percent: int = 10) -> None:
+        """Create a progress tracker.
+
+        Args:
+            total: Total number of records to process.
+            label: Human-readable label for the progress messages.
+            log_interval_percent: How often to log, as a percentage of total.
+        """
         self.total = total
         self.label = label
         self.completed = 0
@@ -119,12 +148,15 @@ class ProgressTracker:
         self._enabled = total >= _PROGRESS_THRESHOLD
 
     def record_success(self) -> None:
+        """Record a successfully processed record and log progress if due."""
         self._record(success=True)
 
     def record_failure(self) -> None:
+        """Record a failed record and log progress if due."""
         self._record(success=False)
 
     def log_final(self) -> None:
+        """Emit a final progress line summarizing the run."""
         if self._enabled and self.completed > 0:
             self._log_progress()
 

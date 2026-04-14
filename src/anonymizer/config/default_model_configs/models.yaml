@@ -6,14 +6,14 @@ model_configs:
     model: nvidia/gliner-pii
     provider: nvidia
     inference_parameters:
-      max_parallel_requests: 16
+      max_parallel_requests: 1
       timeout: 120
 
   - alias: gpt-oss-120b
-    model: nvdev/openai/gpt-oss-120b
+    model: openai/gpt-oss-120b
     provider: nvidia
     inference_parameters:
-      max_parallel_requests: 16
+      max_parallel_requests: 2
       max_tokens: 16384
       temperature: 0.3
       top_p: 0.95

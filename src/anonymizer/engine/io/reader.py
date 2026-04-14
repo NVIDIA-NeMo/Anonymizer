@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
-from anonymizer.config.anonymizer_config import AnonymizerInput
+from anonymizer.config.anonymizer_config import AnonymizerInput, infer_input_source_suffix
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
@@ -35,14 +33,14 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
 
 
 def _load_dataframe(input_data: AnonymizerInput) -> pd.DataFrame:
-    source = Path(str(input_data.source))
-    suffix = source.suffix.lower()
+    source_str = str(input_data.source)
+    suffix = infer_input_source_suffix(source_str)
     if suffix not in SUPPORTED_IO_FORMATS:
         supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
         raise InvalidInputError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
     try:
         if suffix == ".csv":
-            return pd.read_csv(source)
-        return pd.read_parquet(source)
+            return pd.read_csv(source_str)
+        return pd.read_parquet(source_str)
     except (OSError, pd.errors.ParserError, ValueError) as error:
-        raise AnonymizerIOError(f"Failed to read input data from path: {source}") from error
+        raise AnonymizerIOError(f"Failed to read input data from: {source_str}") from error

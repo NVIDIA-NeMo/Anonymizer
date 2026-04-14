@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, infer_input_source_suffix
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -36,6 +36,25 @@ def test_data_summary_on_input(tmp_path: Path) -> None:
         data_summary="Medical clinic visit notes from outpatient encounters.",
     )
     assert inp.data_summary is not None
+
+
+def test_input_source_accepts_http_url_without_local_path_check() -> None:
+    inp = AnonymizerInput(source="https://example.com/data.csv")
+    assert inp.source == "https://example.com/data.csv"
+
+
+def test_input_source_accepts_http_url_with_fragment() -> None:
+    inp = AnonymizerInput(source="https://example.com/data.csv#preview")
+    assert inp.source == "https://example.com/data.csv#preview"
+
+
+def test_infer_input_source_suffix_ignores_url_fragment() -> None:
+    assert infer_input_source_suffix("https://example.com/data.csv#preview") == ".csv"
+
+
+def test_input_source_rejects_unsupported_url_scheme() -> None:
+    with pytest.raises(ValidationError, match="Unsupported input URL scheme"):
+        AnonymizerInput(source="ftp://example.com/data.csv")
 
 
 def test_replace_and_rewrite_together_raises() -> None:

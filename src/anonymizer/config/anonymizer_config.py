@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -20,13 +21,32 @@ from anonymizer.config.rewrite import (
 logger = logging.getLogger(__name__)
 
 
+def is_remote_input_source(value: str) -> bool:
+    """Return True when the input source is an HTTP(S) URL."""
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"}
+
+
+def has_unsupported_url_scheme(value: str) -> bool:
+    """Return True when the input looks like a URL but uses an unsupported scheme."""
+    parsed = urlparse(value)
+    return "://" in value and bool(parsed.scheme) and parsed.scheme not in {"http", "https"}
+
+
+def infer_input_source_suffix(value: str) -> str:
+    """Infer the lowercase file suffix from a local path or remote URL path."""
+    if is_remote_input_source(value):
+        return Path(urlparse(value).path).suffix.lower()
+    return Path(value).suffix.lower()
+
+
 class AnonymizerInput(BaseModel):
     """Input source definition for the anonymizer pipeline.
 
-    Format is inferred from file extension (.csv or .parquet).
+    Format is inferred from the file extension of a local path or HTTP(S) URL.
     """
 
-    source: str = Field(description="Path to input file (.csv or .parquet).")
+    source: str = Field(description="Local path or HTTP(S) URL for a .csv or .parquet input file.")
     text_column: str = Field(default="text", min_length=1, description="Column containing the text to anonymize.")
     id_column: str | None = Field(default=None, description="Optional column to use as record identifier.")
     data_summary: str | None = Field(
@@ -36,6 +56,11 @@ class AnonymizerInput(BaseModel):
     @field_validator("source")
     @classmethod
     def validate_source_path(cls, value: str) -> str:
+        if is_remote_input_source(value):
+            return value
+        if has_unsupported_url_scheme(value):
+            scheme = urlparse(value).scheme
+            raise ValueError(f"Unsupported input URL scheme: {scheme!r}. Use http:// or https:// URLs.")
         source = Path(value)
         if not source.exists():
             raise ValueError(f"Input path does not exist: {source}")
@@ -79,13 +104,12 @@ class Rewrite(BaseModel):
         default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
     )
     instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
-    skip_low_sensitivity_pii: bool = Field(default=False, description="Skip low-sensitivity PII during rewrite.")
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,
         description="Preset controlling repair thresholds and review flagging.",
     )
     max_repair_iterations: int = Field(
-        default=2,
+        default=3,
         ge=0,
         description="Maximum repair rounds. Set to 0 to disable repair.",
     )

@@ -60,6 +60,9 @@ jobs:
       - name: Check copyright headers
         run: make copyright-check
 
+      - name: Check uv.lock is up to date
+        run: make lock-check
+
   typecheck:
     name: Type Check (advisory)
     runs-on: ubuntu-latest

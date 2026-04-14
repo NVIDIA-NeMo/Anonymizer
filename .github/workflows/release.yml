@@ -1,6 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# ---------------------------------------------------------------------------
+# Release: build wheel, publish to PyPI (or Test PyPI on dry-run), and
+# optionally create a GitHub release.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   TEST_PYPI_PERSONAL_TOKEN  – API token scoped to nemo-anonymizer on Test PyPI
+#   PYPI_PERSONAL_TOKEN       – API token scoped to nemo-anonymizer on PyPI
+# ---------------------------------------------------------------------------
+
 name: "Release NeMo Anonymizer"
 
 on:
@@ -11,7 +20,7 @@ on:
         required: true
         type: string
       dry-run:
-        description: "Dry Run: only publish to test PyPI"
+        description: "Dry Run: only publish to Test PyPI"
         required: true
         default: true
         type: boolean
@@ -20,34 +29,106 @@ on:
         required: true
         default: true
         type: boolean
-      version-bump-branch:
-        description: Branch to push the version bump
-        required: true
-        type: string
+
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.78.0
-    with:
-      release-ref: ${{ inputs.release-ref }}
-      python-package: nemo-anonymizer
-      library-name: NeMo Anonymizer
-      dry-run: ${{ inputs.dry-run }}
-      version-bump-branch: ${{ inputs.version-bump-branch }}
-      create-gh-release: ${{ inputs.create-gh-release }}
-      packaging: uv
-      has-src-dir: true
-      app-id: ${{ vars.BOT_ID }}
-    secrets:
-      TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
-      TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
-      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
-      PAT: ${{ secrets.PAT }}
-      SSH_KEY: ${{ secrets.SSH_KEY }}
-      SSH_PWD: ${{ secrets.SSH_PWD }}
-      BOT_KEY: ${{ secrets.BOT_KEY }}
+  publish-wheel:
+    name: Publish wheel (${{ inputs.dry-run && 'Test PyPI' || 'PyPI' }})
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    steps:
+      - name: Checkout at release ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - name: Build wheel
+        id: build
+        run: |
+          make build-wheel
+          WHEEL=$(ls dist/*.whl)
+          VERSION=$(echo "$WHEEL" | sed -n 's/.*-\([0-9][^-]*\)-.*/\1/p')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Built: $WHEEL (version $VERSION)"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nemo-anonymizer-${{ steps.build.outputs.version }}
+          path: dist/*.whl
+          retention-days: 90
+
+      - name: Publish to Test PyPI (always, as pre-flight)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_PERSONAL_TOKEN }}
+        run: |
+          uvx twine upload \
+            --repository-url https://test.pypi.org/legacy/ \
+            --skip-existing \
+            --non-interactive \
+            --verbose \
+            dist/*.whl
+
+      - name: Publish to PyPI
+        if: ${{ !inputs.dry-run }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_PERSONAL_TOKEN }}
+        run: |
+          uvx twine upload \
+            --non-interactive \
+            --verbose \
+            dist/*.whl
+
+  create-gh-release:
+    name: Create GitHub release
+    needs: publish-wheel
+    if: ${{ inputs.create-gh-release }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout at release ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-ref }}
+          fetch-depth: 0
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: nemo-anonymizer-${{ needs.publish-wheel.outputs.version }}
+          path: dist/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.publish-wheel.outputs.version }}
+        run: |
+          PRERELEASE_FLAG=""
+          if echo "$VERSION" | grep -qE '(rc|alpha|beta|\.dev)'; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "v${VERSION}" \
+            dist/*.whl \
+            --generate-notes \
+            --title "v${VERSION}" \
+            $PRERELEASE_FLAG

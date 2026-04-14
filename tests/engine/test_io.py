@@ -51,6 +51,54 @@ def test_read_input_from_file(suffix: str, writer: object, tmp_path: Path) -> No
     assert COL_TEXT in result.columns
 
 
+def test_read_input_from_remote_csv_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"]})
+    source = "https://example.com/data.csv"
+
+    def _read_csv(url: str, *args: object, **kwargs: object) -> pd.DataFrame:
+        assert url == source
+        return input_df
+
+    monkeypatch.setattr(pd, "read_csv", _read_csv)
+    result = read_input(AnonymizerInput(source=source))
+    assert result[COL_TEXT].tolist() == ["Alice works at Acme"]
+    assert result.attrs["original_text_column"] == "text"
+
+
+def test_read_input_from_remote_parquet_url_with_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"]})
+    source = "https://example.com/data.parquet?download=1"
+
+    def _read_parquet(url: str, *args: object, **kwargs: object) -> pd.DataFrame:
+        assert url == source
+        return input_df
+
+    monkeypatch.setattr(pd, "read_parquet", _read_parquet)
+    result = read_input(AnonymizerInput(source=source))
+    assert result[COL_TEXT].tolist() == ["Alice works at Acme"]
+    assert result.attrs["original_text_column"] == "text"
+
+
+def test_read_input_from_remote_csv_url_with_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"]})
+    source = "https://example.com/data.csv#section-1"
+
+    def _read_csv(url: str, *args: object, **kwargs: object) -> pd.DataFrame:
+        assert url == source
+        return input_df
+
+    monkeypatch.setattr(pd, "read_csv", _read_csv)
+    result = read_input(AnonymizerInput(source=source))
+    assert result[COL_TEXT].tolist() == ["Alice works at Acme"]
+    assert result.attrs["original_text_column"] == "text"
+
+
+def test_read_input_remote_url_with_unsupported_format_raises() -> None:
+    inp = AnonymizerInput(source="https://example.com/data.json")
+    with pytest.raises(InvalidInputError, match="Unsupported input format"):
+        read_input(inp)
+
+
 def test_read_input_renames_text_column(tmp_path: Path) -> None:
     df = pd.DataFrame({"content": ["hello world"]})
     file_path = tmp_path / "data.csv"
@@ -124,6 +172,18 @@ def test_read_input_pandas_failure_raises_anonymizer_io_error(tmp_path: Path, mo
 
     monkeypatch.setattr(pd, "read_csv", _raise_read_error)
     inp = AnonymizerInput(source=str(file_path))
+    with pytest.raises(AnonymizerIOError, match="Failed to read input data"):
+        read_input(inp)
+
+
+def test_read_input_remote_csv_failure_raises_anonymizer_io_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = "https://example.com/data.csv"
+
+    def _raise_read_error(*args: object, **kwargs: object) -> None:
+        raise OSError("network failure")
+
+    monkeypatch.setattr(pd, "read_csv", _raise_read_error)
+    inp = AnonymizerInput(source=source)
     with pytest.raises(AnonymizerIOError, match="Failed to read input data"):
         read_input(inp)
 

@@ -19,6 +19,8 @@ on:
       - "src/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -28,7 +30,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-notebooks:
+    if: github.event_name == 'release'
+    uses: ./.github/workflows/build-notebooks.yml
+    secrets: inherit
+
   deploy:
+    if: github.event_name != 'release'
     name: Deploy docs to GitHub Pages
     runs-on: ubuntu-latest
     steps:
@@ -56,3 +64,40 @@ jobs:
       - name: Deploy docs with mike
         if: github.event_name == 'push'
         run: uv run --group docs mike deploy --push --update-aliases dev latest
+
+  deploy-release:
+    if: github.event_name == 'release'
+    needs: build-notebooks
+    name: Deploy release docs to GitHub Pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          fetch-depth: "0"
+
+      - name: Install docs dependencies
+        run: uv sync --group dev --group docs
+
+      - name: Download notebook artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: notebooks
+          path: docs/notebooks
+
+      - name: Configure git for mike
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build docs
+        run: make docs-build
+
+      - name: Deploy release docs with mike
+        run: |
+          VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//' | sed 's/ .*$//')
+          uv run --group docs mike deploy --push --update-aliases "$VERSION" latest

@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared parse helpers, schema field validation, and prompt utilities for rewrite workflows."""
+"""Shared parse helpers and schema field validation for rewrite workflows."""
 
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -21,19 +20,6 @@ from anonymizer.engine.schemas.rewrite import (
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
 )
-
-
-def render_template(template: str, replacements: dict[str, str]) -> str:
-    """Single-pass placeholder substitution.
-
-    All ``<<PLACEHOLDER>>`` markers are replaced simultaneously so that
-    user-controlled values inserted for one placeholder cannot collide
-    with markers intended for a later placeholder.
-    """
-    if not replacements:
-        return template
-    pattern = re.compile("|".join(re.escape(k) for k in replacements))
-    return pattern.sub(lambda m: replacements[m.group(0)], template)
 
 
 def field(model: type, name: str) -> str:

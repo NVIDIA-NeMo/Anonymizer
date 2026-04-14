@@ -23,7 +23,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.rewrite.parsers import render_template
+from anonymizer.engine.prompt_utils import substitute_placeholders
 
 # ---------------------------------------------------------------------------
 # Generator params
@@ -128,7 +128,7 @@ Score each dimension independently.
       changes content, and it can preserve content while still sounding awkward.
 </naturalness_scoring_instructions>
 """
-    return render_template(
+    return substitute_placeholders(
         prompt,
         {
             "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
