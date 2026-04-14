@@ -90,6 +90,8 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
 
 === "CLI"
 
+    !!! tip "For the best experience, we recommend using the Python SDK."
+    
     ```bash
     # Preview a few rows first
     anonymizer preview \
