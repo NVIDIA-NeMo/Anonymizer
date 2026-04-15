@@ -2029,7 +2029,8 @@ Each provider maps a name to an endpoint and API key.</p>
         data: Input source with file path, text column, and optional data summary.
     """
     self._validate_preflight_config(config)
-    return self._run_internal(config=config, data=data, preview_num_records=None)</code></pre>
+    input_df = read_input(data)
+    return self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=None)</code></pre>
             </details>
     </div>
 
@@ -2139,7 +2140,8 @@ Each provider maps a name to an endpoint and API key.</p>
         num_records: Maximum records to process (default 10).
     """
     self._validate_preflight_config(config)
-    result = self._run_internal(config=config, data=data, preview_num_records=num_records)
+    input_df = read_input(data, nrows=num_records)
+    result = self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=num_records)
     return PreviewResult(
         dataframe=result.dataframe,
         trace_dataframe=result.trace_dataframe,
