@@ -15,6 +15,23 @@ from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.io.writer import write_output
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
+_WRITERS = {
+    ".csv": lambda df, p: df.to_csv(p, index=False),
+    ".parquet": lambda df, p: df.to_parquet(p, index=False),
+}
+
+
+def _write_input(
+    df: pd.DataFrame,
+    tmp_path: Path,
+    suffix: str = ".csv",
+    **input_kwargs: object,
+) -> AnonymizerInput:
+    """Write *df* to a temp file and return a ready-to-use ``AnonymizerInput``."""
+    file_path = tmp_path / f"data{suffix}"
+    _WRITERS[suffix](df, file_path)
+    return AnonymizerInput(source=str(file_path), **input_kwargs)
+
 
 def test_write_output_csv_roundtrips(stub_dataframe: pd.DataFrame, tmp_path: Path) -> None:
     out_path = tmp_path / "out.csv"
@@ -100,29 +117,20 @@ def test_read_input_remote_url_with_unsupported_format_raises() -> None:
 
 
 def test_read_input_renames_text_column(tmp_path: Path) -> None:
-    df = pd.DataFrame({"content": ["hello world"]})
-    file_path = tmp_path / "data.csv"
-    df.to_csv(file_path, index=False)
-    inp = AnonymizerInput(source=str(file_path), text_column="content")
+    inp = _write_input(pd.DataFrame({"content": ["hello world"]}), tmp_path, text_column="content")
     result = read_input(inp)
     assert COL_TEXT in result.columns
     assert result.attrs["original_text_column"] == "content"
 
 
 def test_read_input_missing_text_column_raises(tmp_path: Path) -> None:
-    df = pd.DataFrame({"other": ["hello"]})
-    file_path = tmp_path / "data.csv"
-    df.to_csv(file_path, index=False)
-    inp = AnonymizerInput(source=str(file_path), text_column="missing_col")
+    inp = _write_input(pd.DataFrame({"other": ["hello"]}), tmp_path, text_column="missing_col")
     with pytest.raises(InvalidInputError, match="Input text column 'missing_col' not found"):
         read_input(inp)
 
 
 def test_read_input_internal_text_collision_raises(tmp_path: Path) -> None:
-    df = pd.DataFrame({COL_TEXT: ["hello"], "bio": ["other"]})
-    file_path = tmp_path / "data.csv"
-    df.to_csv(file_path, index=False)
-    inp = AnonymizerInput(source=str(file_path), text_column="bio")
+    inp = _write_input(pd.DataFrame({COL_TEXT: ["hello"], "bio": ["other"]}), tmp_path, text_column="bio")
     with pytest.raises(InvalidInputError, match="reserved internal column"):
         read_input(inp)
 
@@ -136,10 +144,7 @@ def test_read_input_unsupported_format_raises(tmp_path: Path) -> None:
 
 
 def test_read_input_preserves_text_attr_when_column_exists(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": ["hello"]})
-    file_path = tmp_path / "data.csv"
-    df.to_csv(file_path, index=False)
-    inp = AnonymizerInput(source=str(file_path))
+    inp = _write_input(pd.DataFrame({"text": ["hello"]}), tmp_path)
     result = read_input(inp)
     assert result.attrs["original_text_column"] == "text"
 
@@ -164,14 +169,12 @@ def test_anonymizer_input_directory_path_raises_validation_error(tmp_path: Path)
 
 
 def test_read_input_pandas_failure_raises_anonymizer_io_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file_path = tmp_path / "data.csv"
-    file_path.write_text("text\nhello\n")
+    inp = _write_input(pd.DataFrame({"text": ["hello"]}), tmp_path)
 
     def _raise_read_error(*args: object, **kwargs: object) -> None:
         raise OSError("permission denied")
 
     monkeypatch.setattr(pd, "read_csv", _raise_read_error)
-    inp = AnonymizerInput(source=str(file_path))
     with pytest.raises(AnonymizerIOError, match="Failed to read input data"):
         read_input(inp)
 
@@ -207,49 +210,34 @@ def test_write_output_unwritable_path_raises_anonymizer_io_error(
 
 
 def test_read_input_nrows_truncates_csv(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": [f"row {i}" for i in range(20)]})
-    file_path = tmp_path / "big.csv"
-    df.to_csv(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=5)
+    inp = _write_input(pd.DataFrame({"text": [f"row {i}" for i in range(20)]}), tmp_path)
+    result = read_input(inp, nrows=5)
     assert len(result) == 5
     assert result[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
 
 
 def test_read_input_nrows_truncates_parquet(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": [f"row {i}" for i in range(20)]})
-    file_path = tmp_path / "big.parquet"
-    df.to_parquet(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=5)
+    inp = _write_input(pd.DataFrame({"text": [f"row {i}" for i in range(20)]}), tmp_path, suffix=".parquet")
+    result = read_input(inp, nrows=5)
     assert len(result) == 5
     assert result[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
 
 
 def test_read_input_nrows_larger_than_file_returns_all(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": ["a", "b", "c"]})
-    file_path = tmp_path / "small.csv"
-    df.to_csv(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=100)
+    inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path)
+    result = read_input(inp, nrows=100)
     assert len(result) == 3
 
 
 def test_read_input_nrows_none_returns_all(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": [f"row {i}" for i in range(20)]})
-    file_path = tmp_path / "full.csv"
-    df.to_csv(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=None)
+    inp = _write_input(pd.DataFrame({"text": [f"row {i}" for i in range(20)]}), tmp_path)
+    result = read_input(inp, nrows=None)
     assert len(result) == 20
 
 
 def test_read_input_nrows_preserves_attrs(tmp_path: Path) -> None:
-    df = pd.DataFrame({"bio": [f"row {i}" for i in range(10)]})
-    file_path = tmp_path / "data.csv"
-    df.to_csv(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path), text_column="bio"), nrows=3)
+    inp = _write_input(pd.DataFrame({"bio": [f"row {i}" for i in range(10)]}), tmp_path, text_column="bio")
+    result = read_input(inp, nrows=3)
     assert len(result) == 3
     assert result.attrs["original_text_column"] == "bio"
     assert COL_TEXT in result.columns
@@ -276,40 +264,28 @@ def test_read_input_nrows_remote_csv(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_read_input_nrows_zero_returns_empty_parquet(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": ["a", "b", "c"]})
-    file_path = tmp_path / "data.parquet"
-    df.to_parquet(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=0)
+    inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path, suffix=".parquet")
+    result = read_input(inp, nrows=0)
     assert len(result) == 0
     assert COL_TEXT in result.columns
 
 
 def test_read_input_nrows_zero_returns_empty_csv(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": ["a", "b", "c"]})
-    file_path = tmp_path / "data.csv"
-    df.to_csv(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=0)
+    inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path)
+    result = read_input(inp, nrows=0)
     assert len(result) == 0
     assert COL_TEXT in result.columns
 
 
 def test_read_input_nrows_negative_returns_empty_parquet(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": ["a", "b", "c"]})
-    file_path = tmp_path / "data.parquet"
-    df.to_parquet(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=-5)
+    inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path, suffix=".parquet")
+    result = read_input(inp, nrows=-5)
     assert len(result) == 0
     assert COL_TEXT in result.columns
 
 
 def test_read_input_empty_parquet_returns_empty(tmp_path: Path) -> None:
-    df = pd.DataFrame({"text": pd.Series([], dtype="object")})
-    file_path = tmp_path / "empty.parquet"
-    df.to_parquet(file_path, index=False)
-
-    result = read_input(AnonymizerInput(source=str(file_path)), nrows=5)
+    inp = _write_input(pd.DataFrame({"text": pd.Series([], dtype="object")}), tmp_path, suffix=".parquet")
+    result = read_input(inp, nrows=5)
     assert len(result) == 0
     assert COL_TEXT in result.columns

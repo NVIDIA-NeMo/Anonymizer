@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import re
-import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -208,13 +207,13 @@ def test_configure_logging_with_config_object() -> None:
     assert logging.getLogger("data_designer").level == logging.INFO
 
 
-def _create_csv(num_records: int, *, tmp_dir: str | None = None) -> str:
-    path = tempfile.mktemp(suffix=".csv", dir=tmp_dir)
+def _create_csv(num_records: int, tmp_path: Path) -> str:
+    path = tmp_path / "input.csv"
     pd.DataFrame({"text": [f"Name{i} works here" for i in range(num_records)]}).to_csv(path, index=False)
-    return path
+    return str(path)
 
 
-def test_preview_with_large_input_only_loads_preview_rows(caplog: pytest.LogCaptureFixture) -> None:
+def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """preview() should truncate during input loading, not after."""
     num_total = 100
     num_preview = 5
@@ -244,7 +243,7 @@ def test_preview_with_large_input_only_loads_preview_rows(caplog: pytest.LogCapt
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())
 
-    csv_path = _create_csv(num_total)
+    csv_path = _create_csv(num_total, tmp_path)
     input_data = AnonymizerInput(source=csv_path)
 
     with caplog.at_level(logging.INFO, logger="anonymizer"):
@@ -257,7 +256,7 @@ def test_preview_with_large_input_only_loads_preview_rows(caplog: pytest.LogCapt
     assert f"Running entity detection on {num_preview} records" in messages
 
 
-def test_local_replace_logs_progress_for_large_datasets(caplog: pytest.LogCaptureFixture) -> None:
+def test_local_replace_logs_progress_for_large_datasets(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """When record count >= 50, ProgressTracker emits interval logs."""
     num_records = 100
     entities = [
@@ -278,7 +277,7 @@ def test_local_replace_logs_progress_for_large_datasets(caplog: pytest.LogCaptur
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())
 
-    csv_path = _create_csv(num_records)
+    csv_path = _create_csv(num_records, tmp_path)
     input_data = AnonymizerInput(source=csv_path)
 
     with caplog.at_level(logging.INFO, logger="anonymizer"):
