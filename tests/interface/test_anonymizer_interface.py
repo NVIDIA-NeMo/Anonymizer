@@ -239,6 +239,21 @@ def test_run_with_colliding_internal_text_column_raises(
         )
 
 
+def test_run_with_colliding_output_column_raises(
+    stub_anonymizer_config: AnonymizerConfig,
+    tmp_path: Path,
+) -> None:
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame({"bio": ["Alice bio text"], "bio_replaced": ["pre-existing"]}).to_csv(input_csv, index=False)
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    with pytest.raises(InvalidInputError, match="collide with Anonymizer output column names"):
+        anonymizer.run(
+            config=stub_anonymizer_config,
+            data=AnonymizerInput(source=str(input_csv), text_column="bio"),
+        )
+
+
 def test_validate_config_passes_for_valid_replace_config(stub_anonymizer_config: AnonymizerConfig) -> None:
     anonymizer, _, _, _ = _make_anonymizer()
     anonymizer.validate_config(stub_anonymizer_config)

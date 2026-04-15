@@ -135,6 +135,39 @@ def test_read_input_internal_text_collision_raises(tmp_path: Path) -> None:
         read_input(inp)
 
 
+@pytest.mark.parametrize("suffix", ["_replaced", "_with_spans", "_rewritten"])
+def test_read_input_output_column_collision_raises(tmp_path: Path, suffix: str) -> None:
+    colliding_col = f"bio{suffix}"
+    inp = _write_input(
+        pd.DataFrame({"bio": ["hello"], colliding_col: ["existing"]}),
+        tmp_path,
+        text_column="bio",
+    )
+    with pytest.raises(InvalidInputError, match="collide with Anonymizer output column names"):
+        read_input(inp)
+
+
+def test_read_input_output_column_collision_lists_all(tmp_path: Path) -> None:
+    inp = _write_input(
+        pd.DataFrame({"bio": ["hello"], "bio_replaced": ["x"], "bio_rewritten": ["y"]}),
+        tmp_path,
+        text_column="bio",
+    )
+    with pytest.raises(InvalidInputError, match="'bio_replaced'.*'bio_rewritten'"):
+        read_input(inp)
+
+
+def test_read_input_non_colliding_columns_pass(tmp_path: Path) -> None:
+    inp = _write_input(
+        pd.DataFrame({"bio": ["hello"], "other_replaced": ["x"], "score": [0.5]}),
+        tmp_path,
+        text_column="bio",
+    )
+    result = read_input(inp)
+    assert COL_TEXT in result.columns
+    assert "other_replaced" in result.columns
+
+
 def test_read_input_unsupported_format_raises(tmp_path: Path) -> None:
     file_path = tmp_path / "data.json"
     file_path.write_text('{"a":[1]}')

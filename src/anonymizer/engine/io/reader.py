@@ -34,13 +34,26 @@ def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.D
     return dataframe
 
 
+_OUTPUT_COLUMN_SUFFIXES = ("_replaced", "_with_spans", "_rewritten")
+
+
 def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_text_column: str) -> None:
-    if COL_TEXT not in dataframe.columns or selected_text_column == COL_TEXT:
-        return
-    raise InvalidInputError(
-        f"Input contains reserved internal column {COL_TEXT!r} while text_column={selected_text_column!r}. "
-        f"Either set text_column={COL_TEXT!r} or remove/rename {COL_TEXT!r} from input."
-    )
+    if COL_TEXT in dataframe.columns and selected_text_column != COL_TEXT:
+        raise InvalidInputError(
+            f"Input contains reserved internal column {COL_TEXT!r} while text_column={selected_text_column!r}. "
+            f"Either set text_column={COL_TEXT!r} or remove/rename {COL_TEXT!r} from input."
+        )
+    collisions = [
+        f"{selected_text_column}{suffix}"
+        for suffix in _OUTPUT_COLUMN_SUFFIXES
+        if f"{selected_text_column}{suffix}" in dataframe.columns
+    ]
+    if collisions:
+        names = ", ".join(repr(c) for c in collisions)
+        raise InvalidInputError(
+            f"Input column(s) {names} collide with Anonymizer output column names. "
+            f"Please rename or remove these columns from your input data."
+        )
 
 
 def _read_parquet_partial(source: str, *, nrows: int | None = None) -> pd.DataFrame:
