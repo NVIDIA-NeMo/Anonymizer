@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import re
-import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -154,7 +153,51 @@ def test_preview_logs_preview_mode(stub_input: AnonymizerInput, caplog: pytest.L
         anonymizer.preview(config=config, data=stub_input, num_records=5)
 
     messages = caplog.text
-    assert "👀 Preview mode: processing 2 of 2 records" in messages
+    assert "👀 Preview mode: 📂 Loaded 2 records" in messages
+
+
+def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> None:
+    """preview() must propagate preview_num_records so downstream workflows use DataDesigner.preview()."""
+    anonymizer = _make_logging_anonymizer()
+    config = AnonymizerConfig(replace=Redact())
+
+    # stub_input has 2 rows; num_records=5 is clamped to min(5, 2) = 2
+    anonymizer.preview(config=config, data=stub_input, num_records=5)
+
+    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    assert det_call_kwargs["preview_num_records"] == 2
+
+    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    assert rep_call_kwargs["preview_num_records"] == 2
+
+
+def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput) -> None:
+    """When num_records < available rows, preview_num_records is forwarded as-is."""
+    anonymizer = _make_logging_anonymizer()
+    config = AnonymizerConfig(replace=Redact())
+
+    # stub_input has 2 rows; num_records=1 fits, so no clamping
+    anonymizer.preview(config=config, data=stub_input, num_records=1)
+
+    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    assert det_call_kwargs["preview_num_records"] == 1
+
+    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    assert rep_call_kwargs["preview_num_records"] == 1
+
+
+def test_run_set_preview_num_records(stub_input: AnonymizerInput) -> None:
+    """run() must pass preview_num_records=None so workflows use full execution."""
+    anonymizer = _make_logging_anonymizer()
+    config = AnonymizerConfig(replace=Redact())
+
+    anonymizer.run(config=config, data=stub_input)
+
+    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    assert det_call_kwargs["preview_num_records"] is None
+
+    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    assert rep_call_kwargs["preview_num_records"] is None
 
 
 def test_configure_logging_with_config_object() -> None:
@@ -164,13 +207,56 @@ def test_configure_logging_with_config_object() -> None:
     assert logging.getLogger("data_designer").level == logging.INFO
 
 
-def _create_csv(num_records: int) -> str:
-    path = tempfile.mktemp(suffix=".csv")
+def _create_csv(num_records: int, tmp_path: Path) -> str:
+    path = tmp_path / "input.csv"
     pd.DataFrame({"text": [f"Name{i} works here" for i in range(num_records)]}).to_csv(path, index=False)
-    return path
+    return str(path)
 
 
-def test_local_replace_logs_progress_for_large_datasets(caplog: pytest.LogCaptureFixture) -> None:
+def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """preview() should truncate during input loading, not after."""
+    num_total = 100
+    num_preview = 5
+    entities = [
+        [{"value": f"Name{i}", "label": "first_name", "start_position": 0, "end_position": 5}]
+        for i in range(num_preview)
+    ]
+    det_df = pd.DataFrame(
+        {
+            COL_TEXT: [f"Name{i} works here" for i in range(num_preview)],
+            COL_DETECTED_ENTITIES: entities,
+            COL_FINAL_ENTITIES: entities,
+        }
+    )
+    det_df.attrs["original_text_column"] = "text"
+    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
+    _replace_df = pd.DataFrame(
+        {
+            COL_TEXT: [f"Name{i} works here" for i in range(num_preview)],
+            COL_REPLACED_TEXT: ["[REDACTED] works here" for _ in range(num_preview)],
+        }
+    )
+    _replace_df.attrs["original_text_column"] = "text"
+    replace_runner = Mock(spec=ReplacementWorkflow)
+    replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=[])
+    anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
+    config = AnonymizerConfig(replace=Redact())
+
+    csv_path = _create_csv(num_total, tmp_path)
+    input_data = AnonymizerInput(source=csv_path)
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        anonymizer.preview(config=config, data=input_data, num_records=num_preview)
+
+    messages = caplog.text
+    assert "Preview mode:" in messages
+    assert f"Loaded {num_preview} records" in messages
+    assert f"Loaded {num_total} records" not in messages
+    assert f"Running entity detection on {num_preview} records" in messages
+
+
+def test_local_replace_logs_progress_for_large_datasets(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """When record count >= 50, ProgressTracker emits interval logs."""
     num_records = 100
     entities = [
@@ -191,7 +277,7 @@ def test_local_replace_logs_progress_for_large_datasets(caplog: pytest.LogCaptur
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())
 
-    csv_path = _create_csv(num_records)
+    csv_path = _create_csv(num_records, tmp_path)
     input_data = AnonymizerInput(source=csv_path)
 
     with caplog.at_level(logging.INFO, logger="anonymizer"):

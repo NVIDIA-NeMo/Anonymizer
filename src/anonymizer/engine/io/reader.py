@@ -3,17 +3,28 @@
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from anonymizer.config.anonymizer_config import AnonymizerInput, infer_input_source_suffix
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
+logger = logging.getLogger("anonymizer")
 
-def read_input(input_data: AnonymizerInput) -> pd.DataFrame:
-    """Load input into a normalized dataframe with canonical internal text column."""
-    dataframe = _load_dataframe(input_data)
+
+def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.DataFrame:
+    """Load input into a normalized dataframe with canonical internal text column.
+
+    Args:
+        input_data: Input source definition.
+        nrows: Maximum rows to read.  ``None`` reads the entire file.
+    """
+    dataframe = _load_dataframe(input_data, nrows=nrows)
     selected_text_column = input_data.text_column
     if selected_text_column not in dataframe.columns:
         raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
@@ -32,15 +43,53 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
     )
 
 
-def _load_dataframe(input_data: AnonymizerInput) -> pd.DataFrame:
+def _read_parquet_partial(source: str, *, nrows: int | None = None) -> pd.DataFrame:
+    """Read a Parquet file, stopping early when *nrows* is set.
+
+    Returns a schema-preserving empty DataFrame when *nrows* is zero or negative.
+    """
+    if nrows is None:
+        return pd.read_parquet(source)
+    if nrows <= 0:
+        schema = pq.ParquetFile(source).schema_arrow
+        empty = pa.table(
+            {name: pa.array([], type=field.type) for name, field in zip(schema.names, schema)},
+        )
+        return empty.to_pandas()
+    pf = pq.ParquetFile(source)
+    batches: list[pa.RecordBatch] = []
+    rows_so_far = 0
+    for batch in pf.iter_batches(batch_size=nrows):
+        batches.append(batch)
+        rows_so_far += len(batch)
+        if rows_so_far >= nrows:
+            break
+    table = pa.Table.from_batches(batches, schema=pf.schema_arrow)
+    return table.slice(0, nrows).to_pandas()
+
+
+def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.DataFrame:
     source_str = str(input_data.source)
     suffix = infer_input_source_suffix(source_str)
     if suffix not in SUPPORTED_IO_FORMATS:
         supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
         raise InvalidInputError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
+    if nrows is not None and nrows <= 0:
+        logger.debug("nrows=%d; returning empty DataFrame for %s", nrows, source_str)
     try:
         if suffix == ".csv":
-            return pd.read_csv(source_str)
-        return pd.read_parquet(source_str)
+            df = pd.read_csv(source_str, nrows=nrows)
+        else:
+            df = _read_parquet_partial(source_str, nrows=nrows)
     except (OSError, pd.errors.ParserError, ValueError) as error:
         raise AnonymizerIOError(f"Failed to read input data from: {source_str}") from error
+    if nrows is not None:
+        logger.info(
+            "👀 Preview mode: 📂 Loaded %d records from %s (column: '%s')",
+            len(df),
+            source_str,
+            input_data.text_column,
+        )
+    else:
+        logger.info("📂 Loaded %d records from %s (column: '%s')", len(df), source_str, input_data.text_column)
+    return df
