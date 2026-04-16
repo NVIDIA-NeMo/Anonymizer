@@ -52,7 +52,11 @@ def parse_model_configs(raw: str | Path | None) -> ParsedModelConfigs:
     if isinstance(raw, Path):
         parsed = _load_yaml_dict(raw)
     else:
-        parsed = _parse_yaml_string(raw)
+        candidate = Path(raw.strip())
+        if "\n" not in raw and candidate.suffix in (".yaml", ".yml"):
+            parsed = _load_yaml_dict(candidate)
+        else:
+            parsed = _parse_yaml_string(raw)
 
     user_selections = parsed.pop("selected_models", None)
     return ParsedModelConfigs(

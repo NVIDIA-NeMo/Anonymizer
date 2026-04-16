@@ -345,6 +345,12 @@ def _resolve_model_providers(
         return None
     if isinstance(model_providers, list):
         return model_providers
+    if isinstance(model_providers, str) and "\n" not in model_providers:
+        candidate = Path(model_providers.strip())
+        if candidate.suffix in (".yaml", ".yml"):
+            if not candidate.exists():
+                raise FileNotFoundError(f"Providers config file not found: {candidate}")
+            model_providers = candidate
     config_dict = load_config_file(model_providers)
     raw_providers = config_dict.get("providers")
     if not isinstance(raw_providers, list):
