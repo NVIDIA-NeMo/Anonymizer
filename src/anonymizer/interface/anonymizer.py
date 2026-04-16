@@ -251,6 +251,7 @@ class Anonymizer:
                 evaluation=config.rewrite.evaluation,
                 data_summary=data.data_summary,
                 preview_num_records=preview_num_records,
+                strict_entity_protection=config.rewrite.strict_entity_protection,
             )
             rewrite_elapsed = time.perf_counter() - t0
             final_df = rewrite_result.dataframe
