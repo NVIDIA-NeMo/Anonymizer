@@ -23,7 +23,6 @@ from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.interface.anonymizer import _resolve_model_providers
 from anonymizer.interface.cli.main import app
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
