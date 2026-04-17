@@ -10,7 +10,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from anonymizer.config.anonymizer_config import AnonymizerInput, infer_input_source_suffix
-from anonymizer.engine.constants import COL_TEXT
+from anonymizer.engine.constants import (
+    COL_ANY_HIGH_LEAKED,
+    COL_FINAL_ENTITIES,
+    COL_LEAKAGE_MASS,
+    COL_NEEDS_HUMAN_REVIEW,
+    COL_TEXT,
+    COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
+)
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
@@ -29,31 +37,86 @@ def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.D
     if selected_text_column not in dataframe.columns:
         raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
     _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
+    dataframe = _resolve_output_column_collisions(dataframe, selected_text_column=selected_text_column)
     dataframe = dataframe.rename(columns={selected_text_column: COL_TEXT})
     dataframe.attrs["original_text_column"] = selected_text_column
     return dataframe
 
 
-_OUTPUT_COLUMN_SUFFIXES = ("_replaced", "_with_spans", "_rewritten")
+# Suffixes appended to the user's text column to form per-mode output columns
+# (see ``_rename_output_columns`` in ``anonymizer.interface.anonymizer``).
+_OUTPUT_COLUMN_SUFFIXES: tuple[str, ...] = ("_replaced", "_with_spans", "_rewritten")
+
+# Fixed user-facing output column names that don't depend on the text column
+# (see ``_build_user_dataframe`` in ``anonymizer.interface.anonymizer``).
+_STATIC_OUTPUT_COLUMNS: tuple[str, ...] = (
+    COL_FINAL_ENTITIES,
+    COL_UTILITY_SCORE,
+    COL_LEAKAGE_MASS,
+    COL_WEIGHTED_LEAKAGE_RATE,
+    COL_ANY_HIGH_LEAKED,
+    COL_NEEDS_HUMAN_REVIEW,
+)
+
+# Suffix appended to input columns whose names collide with anonymizer output
+# columns; mirrors how pandas disambiguates duplicate column names on read.
+_INPUT_RENAME_SUFFIX = "__input"
 
 
 def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_text_column: str) -> None:
+    """Hard-error if the user's input contains the reserved internal text column."""
     if COL_TEXT in dataframe.columns and selected_text_column != COL_TEXT:
         raise InvalidInputError(
             f"Input contains reserved internal column {COL_TEXT!r} while text_column={selected_text_column!r}. "
             f"Either set text_column={COL_TEXT!r} or remove/rename {COL_TEXT!r} from input."
         )
-    collisions = [
-        f"{selected_text_column}{suffix}"
-        for suffix in _OUTPUT_COLUMN_SUFFIXES
-        if f"{selected_text_column}{suffix}" in dataframe.columns
-    ]
-    if collisions:
-        names = ", ".join(repr(c) for c in collisions)
-        raise InvalidInputError(
-            f"Input column(s) {names} collide with Anonymizer output column names. "
-            f"Please rename or remove these columns from your input data."
-        )
+
+
+def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_column: str) -> pd.DataFrame:
+    """Rename input columns whose names collide with Anonymizer output columns.
+
+    The pipeline writes a known set of output columns derived from the text
+    column (e.g. ``{text_col}_replaced``) plus a few fixed names such as
+    ``final_entities``. If the input already contains any of those names the
+    output would silently overwrite the user's data, so we rename the input
+    column in place by appending ``__input`` (with a numeric suffix if needed
+    to avoid a secondary collision) and emit a warning. This matches how
+    pandas disambiguates duplicate column names on read and keeps the
+    pipeline runnable without forcing the user to edit their input file.
+    """
+    candidate_output_columns: list[str] = [f"{selected_text_column}{suffix}" for suffix in _OUTPUT_COLUMN_SUFFIXES]
+    for static_column in _STATIC_OUTPUT_COLUMNS:
+        if static_column != selected_text_column:
+            candidate_output_columns.append(static_column)
+
+    existing_columns: set[str] = set(dataframe.columns)
+    collisions: list[str] = [name for name in candidate_output_columns if name in existing_columns]
+    if not collisions:
+        return dataframe
+
+    rename_map: dict[str, str] = {}
+    for original_name in collisions:
+        new_name = _next_available_name(f"{original_name}{_INPUT_RENAME_SUFFIX}", existing_columns)
+        rename_map[original_name] = new_name
+        existing_columns.add(new_name)
+
+    formatted = ", ".join(f"{old!r} -> {new!r}" for old, new in rename_map.items())
+    logger.warning(
+        "Renamed input column(s) that collide with Anonymizer output column names: %s. "
+        "Update your input schema to remove this warning.",
+        formatted,
+    )
+    return dataframe.rename(columns=rename_map)
+
+
+def _next_available_name(candidate: str, existing: set[str]) -> str:
+    """Return *candidate*, or ``candidate_2``/``_3``/... if it's already taken."""
+    if candidate not in existing:
+        return candidate
+    counter = 2
+    while f"{candidate}_{counter}" in existing:
+        counter += 1
+    return f"{candidate}_{counter}"
 
 
 def _read_parquet_partial(source: str, *, nrows: int | None = None) -> pd.DataFrame:

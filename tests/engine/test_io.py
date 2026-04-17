@@ -136,25 +136,82 @@ def test_read_input_internal_text_collision_raises(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("suffix", ["_replaced", "_with_spans", "_rewritten"])
-def test_read_input_output_column_collision_raises(tmp_path: Path, suffix: str) -> None:
+def test_read_input_output_column_collision_renames_with_warning(
+    tmp_path: Path, suffix: str, caplog: pytest.LogCaptureFixture
+) -> None:
     colliding_col = f"bio{suffix}"
     inp = _write_input(
         pd.DataFrame({"bio": ["hello"], colliding_col: ["existing"]}),
         tmp_path,
         text_column="bio",
     )
-    with pytest.raises(InvalidInputError, match="collide with Anonymizer output column names"):
-        read_input(inp)
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert COL_TEXT in result.columns
+    assert colliding_col not in result.columns
+    renamed = f"{colliding_col}__input"
+    assert renamed in result.columns
+    assert result[renamed].tolist() == ["existing"]
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
 
 
-def test_read_input_output_column_collision_lists_all(tmp_path: Path) -> None:
+@pytest.mark.parametrize("static_column", ["final_entities", "utility_score", "needs_human_review"])
+def test_read_input_static_output_column_collision_renames_with_warning(
+    tmp_path: Path, static_column: str, caplog: pytest.LogCaptureFixture
+) -> None:
     inp = _write_input(
-        pd.DataFrame({"bio": ["hello"], "bio_replaced": ["x"], "bio_rewritten": ["y"]}),
+        pd.DataFrame({"bio": ["hello"], static_column: ["existing"]}),
         tmp_path,
         text_column="bio",
     )
-    with pytest.raises(InvalidInputError, match="'bio_replaced'.*'bio_rewritten'"):
-        read_input(inp)
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert static_column not in result.columns
+    assert f"{static_column}__input" in result.columns
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+
+def test_read_input_output_column_collision_renames_all(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "bio": ["hello"],
+                "bio_replaced": ["x"],
+                "bio_rewritten": ["y"],
+                "final_entities": ["z"],
+            }
+        ),
+        tmp_path,
+        text_column="bio",
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert {"bio_replaced__input", "bio_rewritten__input", "final_entities__input"}.issubset(result.columns)
+    warning = next(
+        rec.message for rec in caplog.records if "collide with Anonymizer output column names" in rec.message
+    )
+    for original in ("bio_replaced", "bio_rewritten", "final_entities"):
+        assert f"'{original}'" in warning
+
+
+def test_read_input_output_column_collision_disambiguates_when_input_suffix_taken(
+    tmp_path: Path,
+) -> None:
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "bio": ["hello"],
+                "bio_replaced": ["new"],
+                "bio_replaced__input": ["already_renamed"],
+            }
+        ),
+        tmp_path,
+        text_column="bio",
+    )
+    result = read_input(inp)
+    assert "bio_replaced" not in result.columns
+    assert result["bio_replaced__input"].tolist() == ["already_renamed"]
+    assert result["bio_replaced__input_2"].tolist() == ["new"]
 
 
 def test_read_input_non_colliding_columns_pass(tmp_path: Path) -> None:
@@ -166,6 +223,7 @@ def test_read_input_non_colliding_columns_pass(tmp_path: Path) -> None:
     result = read_input(inp)
     assert COL_TEXT in result.columns
     assert "other_replaced" in result.columns
+    assert "score" in result.columns
 
 
 def test_read_input_unsupported_format_raises(tmp_path: Path) -> None:

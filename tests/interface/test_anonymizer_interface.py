@@ -239,19 +239,43 @@ def test_run_with_colliding_internal_text_column_raises(
         )
 
 
-def test_run_with_colliding_output_column_raises(
+def test_run_with_colliding_output_column_renames_input_and_warns(
     stub_anonymizer_config: AnonymizerConfig,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Colliding input columns are renamed (not blocked) and a warning is logged.
+
+    We use a custom ``replace_return`` that propagates the renamed input column
+    so we can verify that it survives into the trace dataframe alongside the
+    fresh pipeline output. This documents the lossless behaviour: the user's
+    original ``bio_replaced`` data ends up under ``bio_replaced__input`` while
+    the pipeline writes its own ``bio_replaced``.
+    """
     input_csv = tmp_path / "input.csv"
     pd.DataFrame({"bio": ["Alice bio text"], "bio_replaced": ["pre-existing"]}).to_csv(input_csv, index=False)
-    anonymizer, _, _, _ = _make_anonymizer()
 
-    with pytest.raises(InvalidInputError, match="collide with Anonymizer output column names"):
-        anonymizer.run(
+    replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice bio text"],
+            COL_REPLACED_TEXT: ["[REDACTED] bio text"],
+            "bio_replaced__input": ["pre-existing"],
+        }
+    )
+    replace_df.attrs["original_text_column"] = "bio"
+    anonymizer, _, _, _ = _make_anonymizer(
+        replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
+    )
+
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = anonymizer.run(
             config=stub_anonymizer_config,
             data=AnonymizerInput(source=str(input_csv), text_column="bio"),
         )
+
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+    assert result.dataframe["bio_replaced"].iloc[0] == "[REDACTED] bio text"
+    assert result.trace_dataframe["bio_replaced__input"].iloc[0] == "pre-existing"
 
 
 def test_validate_config_passes_for_valid_replace_config(stub_anonymizer_config: AnonymizerConfig) -> None:
