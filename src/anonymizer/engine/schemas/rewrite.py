@@ -39,6 +39,7 @@ Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
@@ -207,6 +208,42 @@ class SensitivityDispositionSchema(BaseModel):
                 f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion} (Reason: {e.protection_reason})'
             )
         return "\n".join(lines)
+
+
+class StrictProtectionMethod(str, Enum):
+    replace = "replace"
+    generalize = "generalize"
+    remove = "remove"
+    suppress_inference = "suppress_inference"
+
+
+class StrictEntityDispositionSchema(BaseModel):
+    """Strict variant: needs_protection is always True and leave_as_is is excluded."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    id: int = Field(ge=1)
+    source: EntitySource
+    category: EntityCategory
+    sensitivity: SensitivityLevel
+    entity_label: str = Field(min_length=1)
+    entity_value: str = Field(min_length=1)
+    needs_protection: Literal[True]
+    protection_reason: str = Field(min_length=10, max_length=500)
+    protection_method_suggestion: StrictProtectionMethod
+    combined_risk_level: CombinedRiskLevel
+
+
+class StrictSensitivityDispositionSchema(BaseModel):
+    """Strict variant container: every entity must have needs_protection=True."""
+
+    sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_ids(self) -> StrictSensitivityDispositionSchema:
+        for i, entry in enumerate(self.sensitivity_disposition, start=1):
+            entry.id = i
+        return self
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ from anonymizer.engine.schemas.rewrite import (
     QualityAnswersSchema,
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
+    StrictSensitivityDispositionSchema,
 )
 
 
@@ -108,9 +109,9 @@ def parse_privacy_qa(raw: Any) -> PrivacyQAPairsSchema:
     raise TypeError(f"Expected PrivacyQAPairsSchema or dict, got {type(raw).__name__}")
 
 
-def parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema:
+def parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema | StrictSensitivityDispositionSchema:
     raw = normalize_payload(raw)
-    if isinstance(raw, SensitivityDispositionSchema):
+    if isinstance(raw, (SensitivityDispositionSchema, StrictSensitivityDispositionSchema)):
         return raw
     if isinstance(raw, dict):
         return SensitivityDispositionSchema.model_validate(raw)

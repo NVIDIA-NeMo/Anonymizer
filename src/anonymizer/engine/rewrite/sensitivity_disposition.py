@@ -19,7 +19,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.schemas import SensitivityDispositionSchema
+from anonymizer.engine.schemas import SensitivityDispositionSchema, StrictSensitivityDispositionSchema
 
 
 def _get_sensitivity_disposition_prompt(
@@ -202,6 +202,7 @@ class SensitivityDispositionWorkflow:
         strict_entity_protection: bool = False,
     ) -> list[ColumnConfigT]:
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
+        output_schema = StrictSensitivityDispositionSchema if strict_entity_protection else SensitivityDispositionSchema
         return [
             LLMStructuredColumnConfig(
                 name=COL_SENSITIVITY_DISPOSITION,
@@ -211,6 +212,6 @@ class SensitivityDispositionWorkflow:
                     strict_entity_protection=strict_entity_protection,
                 ),
                 model_alias=disposition_alias,
-                output_format=SensitivityDispositionSchema,
+                output_format=output_schema,
             ),
         ]
