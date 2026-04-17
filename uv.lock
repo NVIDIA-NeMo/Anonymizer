@@ -707,9 +707,9 @@ dependencies = [
     { name = "prompt-toolkit" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/73/9f1ce61b9cf2a65ac7eaef79d5fcd2a7ea27eed0590c5ab6188bc874aa43/data_designer-0.5.6.tar.gz", hash = "sha256:5e56ce7f5356470d3087972a8fd9245d20cf8ebe4c2d6007f5c7780b19e3e179", size = 119614, upload-time = "2026-04-09T19:36:02.684399Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/73/9f1ce61b9cf2a65ac7eaef79d5fcd2a7ea27eed0590c5ab6188bc874aa43/data_designer-0.5.6.tar.gz", hash = "sha256:5e56ce7f5356470d3087972a8fd9245d20cf8ebe4c2d6007f5c7780b19e3e179", size = 119614, upload-time = "2026-04-09T19:36:02.684Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/d6/11bb554853e1fdb80f62095fb6f7bfdd5c053633249f1cb1be721f186f7d/data_designer-0.5.6-py3-none-any.whl", hash = "sha256:5277ec6ccf58538b30cd6582b38d5caae4c68063917ac7a9d60daa8e7a157558", size = 99004, upload-time = "2026-04-09T19:36:01.484992Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/d6/11bb554853e1fdb80f62095fb6f7bfdd5c053633249f1cb1be721f186f7d/data_designer-0.5.6-py3-none-any.whl", hash = "sha256:5277ec6ccf58538b30cd6582b38d5caae4c68063917ac7a9d60daa8e7a157558", size = 99004, upload-time = "2026-04-09T19:36:01.484Z" },
 ]
 
 [[package]]
@@ -729,9 +729,9 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e8/43/97612aff088445f7b72253055c223f09098a4ec8935c55385864623764aa/data_designer_config-0.5.6.tar.gz", hash = "sha256:aee679db4168be19e81d0cfa9a9e8015d20d1b31a3f09d3b1c93c143f0c3e91e", size = 125172, upload-time = "2026-04-09T19:35:48.523707Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/43/97612aff088445f7b72253055c223f09098a4ec8935c55385864623764aa/data_designer_config-0.5.6.tar.gz", hash = "sha256:aee679db4168be19e81d0cfa9a9e8015d20d1b31a3f09d3b1c93c143f0c3e91e", size = 125172, upload-time = "2026-04-09T19:35:48.523Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/fd/928305d0202ad2b8aaadad4080b88271fe9bee0c69235f41e9212c79fd64/data_designer_config-0.5.6-py3-none-any.whl", hash = "sha256:15e431da4c9eb7deabaef69469f6e0d390476c401fcd1c7f8c4a996647e2d99e", size = 112155, upload-time = "2026-04-09T19:35:46.980717Z" },
+    { url = "https://files.pythonhosted.org/packages/61/fd/928305d0202ad2b8aaadad4080b88271fe9bee0c69235f41e9212c79fd64/data_designer_config-0.5.6-py3-none-any.whl", hash = "sha256:15e431da4c9eb7deabaef69469f6e0d390476c401fcd1c7f8c4a996647e2d99e", size = 112155, upload-time = "2026-04-09T19:35:46.98Z" },
 ]
 
 [[package]]
@@ -760,9 +760,9 @@ dependencies = [
     { name = "sqlfluff" },
     { name = "tiktoken" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/df/cd/d27fe6f58fb6836595bc208e9cd4b6baaecf24c92e0f10003a15b4f4dfb5/data_designer_engine-0.5.6.tar.gz", hash = "sha256:ae208c04f8a6d900337d3b35bc83d26d913490d911b0998bc13d1995dabcaf7c", size = 777435, upload-time = "2026-04-09T19:35:59.487750Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/cd/d27fe6f58fb6836595bc208e9cd4b6baaecf24c92e0f10003a15b4f4dfb5/data_designer_engine-0.5.6.tar.gz", hash = "sha256:ae208c04f8a6d900337d3b35bc83d26d913490d911b0998bc13d1995dabcaf7c", size = 777435, upload-time = "2026-04-09T19:35:59.487Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/6d/dfccb76fb4f5d565f8612e5b9e765bd83b3c472472abeab22ff93b5d7779/data_designer_engine-0.5.6-py3-none-any.whl", hash = "sha256:70a8468be3001d4df8b5f3c1ae3eaa78137113f2fe93d464f40cd17e45468feb", size = 621662, upload-time = "2026-04-09T19:35:52.683917Z" },
+    { url = "https://files.pythonhosted.org/packages/81/6d/dfccb76fb4f5d565f8612e5b9e765bd83b3c472472abeab22ff93b5d7779/data_designer_engine-0.5.6-py3-none-any.whl", hash = "sha256:70a8468be3001d4df8b5f3c1ae3eaa78137113f2fe93d464f40cd17e45468feb", size = 621662, upload-time = "2026-04-09T19:35:52.683Z" },
 ]
 
 [[package]]
@@ -2448,7 +2448,7 @@ notebooks = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
-    { name = "data-designer", specifier = "==0.5.6" },
+    { name = "data-designer", specifier = ">=0.5.6" },
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "pygments", specifier = ">=2.20.0" },
 ]

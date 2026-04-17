@@ -28,7 +28,6 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.ndd.model_compat import model_generate
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
@@ -221,7 +220,7 @@ def _make_repair_column(repairer_alias: str) -> Any:
     def _repair_column(row: dict[str, Any], generator_params: RepairParams, models: dict) -> dict[str, Any]:
         recipe = PydanticResponseRecipe(data_type=RewriteOutputSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_repair_prompt(row, generator_params))
-        result, _ = model_generate(models[repairer_alias], prompt=prompt, parser=recipe.parse, max_correction_steps=3)
+        result, _ = models[repairer_alias].generate(prompt=prompt, parser=recipe.parse, max_correction_steps=3)
         row[COL_REWRITTEN_TEXT_NEXT] = result.rewritten_text
         return row
 

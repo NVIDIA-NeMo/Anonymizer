@@ -29,7 +29,6 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.ndd.model_compat import model_generate
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
@@ -406,7 +405,7 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=QualityAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_reanswer_prompt(row))
         parser = _make_quality_answer_parser(recipe, expected_ids)
-        result, _ = model_generate(models[evaluator_alias], prompt=prompt, parser=parser, max_correction_steps=3)
+        result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
         row[COL_QUALITY_QA_REANSWER] = result.model_dump()
         return row
 
@@ -425,7 +424,7 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=PrivacyAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_privacy_reanswer_prompt(row))
         parser = _make_privacy_answer_parser(recipe, expected_ids)
-        result, _ = model_generate(models[evaluator_alias], prompt=prompt, parser=parser, max_correction_steps=3)
+        result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
         row[COL_PRIVACY_QA_REANSWER] = result.model_dump()
         return row
 
@@ -444,7 +443,7 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=QACompareResultsSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_compare_prompt(row))
         parser = _make_qa_compare_parser(recipe, expected_ids)
-        result, _ = model_generate(models[evaluator_alias], prompt=prompt, parser=parser, max_correction_steps=3)
+        result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
         row[COL_QUALITY_QA_COMPARE] = result.model_dump()
         return row
 
