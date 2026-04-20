@@ -1,16 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for --model-configs and --model-providers file-path handling in the CLI.
-
-Covers:
-- File paths (existing and missing) for both flags
-- Directory paths with .yaml extension are rejected cleanly (is_file check)
-- Inline YAML strings still work (regression)
-- OSError (and subclasses) is caught by _cli_error_handler (no traceback)
-- Non-YAML-extension strings are treated as inline YAML, not file paths
-"""
-
 from __future__ import annotations
 
 import textwrap
