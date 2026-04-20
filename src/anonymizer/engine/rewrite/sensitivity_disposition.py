@@ -37,8 +37,8 @@ def _get_sensitivity_disposition_prompt(
 <strict_entity_protection>
 STRICT PROTECTION MODE IS ENABLED.
 
-needs_protection MUST be True for every entity, no exceptions.
-Do NOT output needs_protection=False under any circumstances.
+All entities MUST be protected — you only decide HOW. Choose the most appropriate
+protection_method_suggestion for each entity. leave_as_is is not available.
 
 Ignore the MINIMUM NECESSARY CHANGE principle — it does not apply in strict mode.
 Ignore the QUASI-IDENTIFIERS guidance that says "NOT automatically sensitive" —
