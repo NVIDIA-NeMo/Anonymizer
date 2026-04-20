@@ -346,7 +346,7 @@ def _resolve_model_providers(
     if isinstance(model_providers, list):
         return model_providers
     if isinstance(model_providers, str) and "\n" not in model_providers:
-        candidate = Path(model_providers.strip())
+        candidate = Path(model_providers.strip()).expanduser()
         if candidate.suffix in (".yaml", ".yml"):
             if not candidate.is_file():
                 raise FileNotFoundError(f"Providers config file not found: {candidate}")

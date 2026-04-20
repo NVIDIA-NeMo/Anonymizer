@@ -136,6 +136,39 @@ def test_model_providers_directory_path_raises_file_not_found(tmp_path: Path) ->
         _resolve_model_providers(str(yaml_dir))
 
 
+def test_model_configs_tilde_path_expanded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """~/models.yaml expands to the user's home directory (not treated as a literal ~ path)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / "models.yaml"
+    path.write_text(
+        textwrap.dedent("""\
+            model_configs:
+              - alias: tilde-model
+                model: nvidia/tilde
+                provider: nvidia
+        """)
+    )
+    result = parse_model_configs("~/models.yaml")
+    assert "tilde-model" in {mc.alias for mc in result.model_configs}
+
+
+def test_model_providers_tilde_path_expanded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """~/providers.yaml expands to the user's home directory."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / "providers.yaml"
+    path.write_text(
+        textwrap.dedent("""\
+            providers:
+              - name: tilde-provider
+                endpoint: https://example.com/v1
+                provider_type: openai
+        """)
+    )
+    result = _resolve_model_providers("~/providers.yaml")
+    assert result is not None
+    assert "tilde-provider" in {p.name for p in result}
+
+
 def test_model_configs_non_yaml_extension_string_parsed_as_yaml() -> None:
     """A string without a .yaml/.yml extension is treated as inline YAML, not a file path."""
     with pytest.raises(ValueError, match="Expected YAML mapping"):

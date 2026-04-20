@@ -52,7 +52,7 @@ def parse_model_configs(raw: str | Path | None) -> ParsedModelConfigs:
     if isinstance(raw, Path):
         parsed = _load_yaml_dict(raw)
     else:
-        candidate = Path(raw.strip())
+        candidate = Path(raw.strip()).expanduser()
         if "\n" not in raw and candidate.suffix in (".yaml", ".yml"):
             parsed = _load_yaml_dict(candidate)
         else:
