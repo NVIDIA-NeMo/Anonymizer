@@ -140,7 +140,7 @@ def _cli_error_handler(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (ValidationError, ValueError, InvalidConfigError, AnonymizerIOError, FileNotFoundError) as exc:
+        except (ValidationError, ValueError, InvalidConfigError, AnonymizerIOError, OSError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1)
 

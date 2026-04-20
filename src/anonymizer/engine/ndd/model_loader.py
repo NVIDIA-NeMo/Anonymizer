@@ -212,7 +212,7 @@ def _parse_yaml_string(raw: str) -> dict[str, Any]:
 
 
 def _load_yaml_dict(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not path.is_file():
         raise FileNotFoundError(f"Config file not found: {path}")
     data = load_config_file(path)
     if not isinstance(data, dict):

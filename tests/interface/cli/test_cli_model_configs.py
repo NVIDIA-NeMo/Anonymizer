@@ -5,8 +5,9 @@
 
 Covers:
 - File paths (existing and missing) for both flags
+- Directory paths with .yaml extension are rejected cleanly (is_file check)
 - Inline YAML strings still work (regression)
-- FileNotFoundError is caught by _cli_error_handler (no traceback)
+- OSError (and subclasses) is caught by _cli_error_handler (no traceback)
 - Non-YAML-extension strings are treated as inline YAML, not file paths
 """
 
@@ -119,6 +120,22 @@ def test_model_configs_inline_yaml_still_works() -> None:
     assert "inline-model" in aliases
 
 
+def test_model_configs_directory_path_raises_file_not_found(tmp_path: Path) -> None:
+    """A directory named *.yaml is rejected with FileNotFoundError, not a cryptic open() error."""
+    yaml_dir = tmp_path / "models.yaml"
+    yaml_dir.mkdir()
+    with pytest.raises(FileNotFoundError, match="Config file not found"):
+        parse_model_configs(str(yaml_dir))
+
+
+def test_model_providers_directory_path_raises_file_not_found(tmp_path: Path) -> None:
+    """A directory named *.yaml for providers is rejected with FileNotFoundError."""
+    yaml_dir = tmp_path / "providers.yaml"
+    yaml_dir.mkdir()
+    with pytest.raises(FileNotFoundError, match="Providers config file not found"):
+        _resolve_model_providers(str(yaml_dir))
+
+
 def test_model_configs_non_yaml_extension_string_parsed_as_yaml() -> None:
     """A string without a .yaml/.yml extension is treated as inline YAML, not a file path."""
     with pytest.raises(ValueError, match="Expected YAML mapping"):
@@ -206,7 +223,7 @@ def test_cli_missing_model_configs_exits_cleanly(csv_file: Path, capsys: pytest.
 def test_cli_missing_model_providers_exits_cleanly(csv_file: Path, capsys: pytest.CaptureFixture) -> None:
     """A missing --model-providers file exits with code 1 and prints a useful message."""
     with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
-        mock_cls.side_effect = FileNotFoundError("Providers config file not found: nonexistent/providers.yaml")
+        mock_cls.side_effect = OSError("Providers config file not found: nonexistent/providers.yaml")
         with pytest.raises(SystemExit) as exc_info:
             app(
                 [
@@ -220,6 +237,27 @@ def test_cli_missing_model_providers_exits_cleanly(csv_file: Path, capsys: pytes
                 ]
             )
     assert exc_info.value.code != 0
+
+
+def test_cli_oserror_exits_cleanly(csv_file: Path, capsys: pytest.CaptureFixture) -> None:
+    """Any OSError (e.g. PermissionError) is caught cleanly — no traceback."""
+    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+        mock_cls.side_effect = PermissionError("Permission denied: /secure/models.yaml")
+        with pytest.raises(SystemExit) as exc_info:
+            app(
+                [
+                    "run",
+                    "--source",
+                    str(csv_file),
+                    "--replace",
+                    "redact",
+                    "--model-configs",
+                    "/secure/models.yaml",
+                ]
+            )
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
 
 
 def test_cli_model_configs_file_path_accepted(csv_file: Path, model_configs_yaml: Path) -> None:
