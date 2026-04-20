@@ -95,7 +95,7 @@ class Anonymizer:
         logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
         det = self._selected_models.detection
         logger.info(LOG_INDENT + "🔎 detector:  %s", det.entity_detector)
-        logger.info(LOG_INDENT + "✅ validator: %s", det.entity_validator)
+        logger.info(LOG_INDENT + "✅ validator: %s", ", ".join(det.entity_validator))
         logger.info(LOG_INDENT + "🧩 augmenter: %s", det.entity_augmenter)
 
         if data_designer is not None:

@@ -126,12 +126,34 @@ def resolve_model_alias(
     role: str,
     selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection,
 ) -> str:
-    """Read model alias directly from the selection model.
+    """Read a scalar model alias directly from the selection model.
 
     The selection model is already populated with defaults from YAML
     (via ``load_default_model_selection``) or user overrides.
+
+    For list-valued roles (e.g. ``entity_validator``), use
+    ``resolve_model_aliases`` instead.
     """
-    return getattr(selection_model, role)
+    value = getattr(selection_model, role)
+    if isinstance(value, list):
+        raise TypeError(f"Role {role!r} is list-valued; use resolve_model_aliases() to read it.")
+    return value
+
+
+def resolve_model_aliases(
+    role: str,
+    selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection,
+) -> list[str]:
+    """Read model aliases from the selection model as a list.
+
+    Returns the stored list for list-valued roles (e.g. ``entity_validator``)
+    or a one-element list wrapping the scalar for scalar roles. Callers
+    that need to iterate a possible model pool should prefer this helper.
+    """
+    value = getattr(selection_model, role)
+    if isinstance(value, list):
+        return list(value)
+    return [value]
 
 
 def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> ModelSelection:
@@ -164,21 +186,16 @@ def validate_model_alias_references(
     known_aliases = {model_config.alias for model_config in model_configs}
     detection_roles = selected_models.detection.model_dump()
 
-    roles_to_check: dict[str, str] = {
-        f"detection.{role}": detection_roles[role]
-        for role in ("entity_detector", "entity_validator", "entity_augmenter")
-    }
+    roles_to_check: dict[str, str] = {}
+    for role in ("entity_detector", "entity_validator", "entity_augmenter"):
+        _collect_role(roles_to_check, f"detection.{role}", detection_roles[role])
     if check_rewrite:
-        roles_to_check.update(
-            {
-                "detection.latent_detector": detection_roles["latent_detector"],
-                **{f"rewrite.{role}": alias for role, alias in selected_models.rewrite.model_dump().items()},
-            }
-        )
+        _collect_role(roles_to_check, "detection.latent_detector", detection_roles["latent_detector"])
+        for role, alias in selected_models.rewrite.model_dump().items():
+            _collect_role(roles_to_check, f"rewrite.{role}", alias)
     if check_substitute:
-        roles_to_check.update(
-            {f"replace.{role}": alias for role, alias in selected_models.replace.model_dump().items()}
-        )
+        for role, alias in selected_models.replace.model_dump().items():
+            _collect_role(roles_to_check, f"replace.{role}", alias)
 
     unknown = {path: alias for path, alias in roles_to_check.items() if alias not in known_aliases}
     if unknown:
@@ -186,6 +203,15 @@ def validate_model_alias_references(
         raise ValueError(
             f"Selected model aliases not found in model pool: {unknown_str}. Known aliases: {sorted(known_aliases)}"
         )
+
+
+def _collect_role(bucket: dict[str, str], path: str, value: object) -> None:
+    """Flatten a role entry into ``bucket`` so list-valued roles produce one entry per alias."""
+    if isinstance(value, list):
+        for idx, alias in enumerate(value):
+            bucket[f"{path}[{idx}]"] = str(alias)
+    else:
+        bucket[path] = str(value)
 
 
 def _validate_alias_references(

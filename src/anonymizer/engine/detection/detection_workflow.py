@@ -47,7 +47,7 @@ from anonymizer.engine.detection.custom_columns import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import (
     AugmentedEntitiesSchema,
@@ -99,12 +99,17 @@ class EntityDetectionWorkflow:
         )
 
         detection_alias = resolve_model_alias("entity_detector", selected_models)
-        validator_alias = resolve_model_alias("entity_validator", selected_models)
+        validator_aliases = resolve_model_aliases("entity_validator", selected_models)
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
+        # Commit 2 will replace the LLMStructuredColumnConfig below with a chunked
+        # CustomColumnConfig that rotates across the full validator pool. Until then
+        # the first alias preserves current single-call semantics.
+        validator_alias = validator_aliases[0]
         logger.debug(
-            "detection aliases: detector=%s, validator=%s, augmenter=%s",
+            "detection aliases: detector=%s, validator=%s (pool=%s), augmenter=%s",
             detection_alias,
             validator_alias,
+            validator_aliases,
             augmenter_alias,
         )
 

@@ -30,7 +30,11 @@ from anonymizer.engine.detection.detection_workflow import (
     _resolve_detection_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
-from anonymizer.engine.ndd.model_loader import load_default_model_selection, resolve_model_alias
+from anonymizer.engine.ndd.model_loader import (
+    load_default_model_selection,
+    resolve_model_alias,
+    resolve_model_aliases,
+)
 from anonymizer.engine.schemas import EntitiesSchema
 
 
@@ -326,7 +330,18 @@ def test_resolve_model_alias_reads_from_selection_model() -> None:
     defaults = load_default_model_selection().detection
     selection = defaults.model_copy(update={"entity_detector": "custom-model"})
     assert resolve_model_alias("entity_detector", selection) == "custom-model"
-    assert resolve_model_alias("entity_validator", selection) == defaults.entity_validator
+    assert resolve_model_aliases("entity_validator", selection) == defaults.entity_validator
+
+
+def test_resolve_model_alias_raises_for_list_valued_role() -> None:
+    selection = load_default_model_selection().detection
+    with pytest.raises(TypeError, match="list-valued"):
+        resolve_model_alias("entity_validator", selection)
+
+
+def test_resolve_model_aliases_wraps_scalar_roles() -> None:
+    selection = load_default_model_selection().detection
+    assert resolve_model_aliases("entity_detector", selection) == [selection.entity_detector]
 
 
 def test_resolve_detection_labels_none_uses_defaults() -> None:

@@ -3,16 +3,46 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, field_validator
 
 
 class DetectionModelSelection(BaseModel):
-    """Model aliases for the entity detection pipeline."""
+    """Model aliases for the entity detection pipeline.
+
+    ``entity_validator`` accepts either a single alias or a list of aliases.
+    A list forms a validator *pool*: chunked validation rotates calls
+    across the pool in round-robin order, which is useful for bypassing
+    per-alias TPM/RPM limits. A single scalar is normalized to a
+    one-element list.
+    """
 
     entity_detector: str
-    entity_validator: str
+    entity_validator: list[str]
     entity_augmenter: str
     latent_detector: str
+
+    @field_validator("entity_validator", mode="before")
+    @classmethod
+    def normalize_entity_validator(cls, value: Any) -> list[str]:
+        """Accept either a scalar alias or a list, return a non-empty list.
+
+        Normalizing at parse time keeps every downstream consumer on the
+        same shape (``list[str]``) regardless of whether the user wrote
+        ``entity_validator: some-alias`` or
+        ``entity_validator: [alias-a, alias-b]``.
+        """
+        if isinstance(value, str):
+            aliases: list[str] = [value]
+        elif isinstance(value, (list, tuple)):
+            aliases = [str(item) for item in value]
+        else:
+            raise TypeError(f"entity_validator must be a string or list of strings, got {type(value).__name__}")
+        cleaned = [alias.strip() for alias in aliases if alias.strip()]
+        if not cleaned:
+            raise ValueError("entity_validator must name at least one model alias.")
+        return cleaned
 
 
 class ReplaceModelSelection(BaseModel):

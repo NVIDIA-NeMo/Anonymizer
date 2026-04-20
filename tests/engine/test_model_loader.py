@@ -54,7 +54,9 @@ def test_load_default_model_selection_populates_all_workflows() -> None:
     selection = load_default_model_selection()
     # Detection
     assert selection.detection.entity_detector
-    assert selection.detection.entity_validator
+    assert selection.detection.entity_validator  # list[str]
+    assert isinstance(selection.detection.entity_validator, list)
+    assert all(isinstance(alias, str) and alias for alias in selection.detection.entity_validator)
     assert selection.detection.entity_augmenter
     assert selection.detection.latent_detector
     # Replace
@@ -228,3 +230,93 @@ def test_validate_model_alias_references_skips_rewrite_alias_when_not_enabled(
         stub_known_model_configs,
         selected_models,
     )
+
+
+class TestEntityValidatorNormalization:
+    """``DetectionModelSelection.entity_validator`` accepts scalar or list input.
+
+    Scalars normalize to single-item lists so every downstream consumer
+    sees ``list[str]``.
+    """
+
+    def test_scalar_normalizes_to_single_item_list(self) -> None:
+        selection = DetectionModelSelection(
+            entity_detector="d",
+            entity_validator="v",
+            entity_augmenter="a",
+            latent_detector="l",
+        )
+        assert selection.entity_validator == ["v"]
+
+    def test_list_preserved(self) -> None:
+        selection = DetectionModelSelection(
+            entity_detector="d",
+            entity_validator=["v1", "v2", "v3"],
+            entity_augmenter="a",
+            latent_detector="l",
+        )
+        assert selection.entity_validator == ["v1", "v2", "v3"]
+
+    def test_empty_list_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at least one model alias"):
+            DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=[],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+
+    def test_whitespace_only_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at least one model alias"):
+            DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=["  ", ""],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+
+    def test_non_string_non_list_rejected(self) -> None:
+        with pytest.raises((ValueError, TypeError)):
+            DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=42,  # type: ignore[arg-type]
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+
+
+class TestValidateAliasReferencesHandlesValidatorPool:
+    """``validate_model_alias_references`` must expand list-valued roles to one check per alias."""
+
+    def test_accepts_all_pool_aliases_present(
+        self,
+        stub_slim_model_selection: ModelSelection,
+    ) -> None:
+        """Pool of aliases all present in the model pool — passes."""
+        configs = [
+            ModelConfig(alias="v1", model="test/v1"),
+            ModelConfig(alias="v2", model="test/v2"),
+            ModelConfig(alias="known", model="some/model"),
+        ]
+        selected_models = stub_slim_model_selection.model_copy(
+            update={
+                "detection": stub_slim_model_selection.detection.model_copy(update={"entity_validator": ["v1", "v2"]})
+            }
+        )
+        validate_model_alias_references(configs, selected_models)
+
+    def test_raises_on_any_pool_alias_missing(
+        self,
+        stub_known_model_configs: list[ModelConfig],
+        stub_slim_model_selection: ModelSelection,
+    ) -> None:
+        """If any alias in the validator pool is unknown, error names that alias by index."""
+        selected_models = stub_slim_model_selection.model_copy(
+            update={
+                "detection": stub_slim_model_selection.detection.model_copy(
+                    update={"entity_validator": ["known", "missing-one"]}
+                )
+            }
+        )
+        with pytest.raises(ValueError, match=r"entity_validator\[1\].*missing-one"):
+            validate_model_alias_references(stub_known_model_configs, selected_models)
