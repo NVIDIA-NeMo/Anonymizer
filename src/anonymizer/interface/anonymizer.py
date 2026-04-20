@@ -210,6 +210,8 @@ class Anonymizer:
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
             gliner_detection_threshold=config.detect.gliner_threshold,
+            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
