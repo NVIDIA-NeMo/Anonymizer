@@ -111,7 +111,10 @@ Roles you don't override keep their default alias selections, but those aliases 
 
 ### Validator pools
 
-`entity_validator` accepts either a single alias (shown above) or a list of aliases. A list forms a **validator pool**: [chunked validation](detection.md#chunked-validation) dispatches each chunk to the next alias in round-robin order, which is useful for aggregating quota across equivalent endpoints when a single alias would hit the provider's rate limits (tokens-per-minute or requests-per-minute quotas).
+`entity_validator` accepts either a single alias (shown above) or a list of aliases. A list forms a **validator pool** with two jobs:
+
+1. **Load spreading.** [Chunked validation](detection.md#chunked-validation) dispatches each chunk to the next alias in round-robin order, aggregating quota across equivalent endpoints when a single alias would hit the provider's rate limits (tokens-per-minute or requests-per-minute quotas).
+2. **Failover.** If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A row is only dropped when *every* alias in the pool has failed for the same chunk. Single-alias pools have nothing to fall back to, so they behave the same as not using a pool.
 
 ```yaml
 selected_models:

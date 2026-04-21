@@ -52,7 +52,7 @@ config = AnonymizerConfig(
 
 ## Chunked validation
 
-When a row yields many entity candidates, validating them in a single LLM call can exceed the model's context window or the provider's rate limits (the tokens-per-minute or requests-per-minute quota most hosted models enforce). Anonymizer automatically splits validation for such rows: candidates are grouped in position order into chunks of at most `validation_max_entities_per_call`, and each chunk is validated independently with its own bounded text excerpt (`validation_excerpt_window_chars` before and after the chunk's span). Decisions are merged back into a single per-row set.
+When a row yields many entity candidates, validating them in a single LLM call can often exceed the model's context window or the provider's rate limits (tokens-per-minute or requests-per-minute quotas that many hosted models enforce). Anonymizer automatically splits validation for such rows: candidates are grouped in position order into chunks of at most `validation_max_entities_per_call`, and each chunk is validated independently with its own bounded text excerpt (`validation_excerpt_window_chars` before and after the chunk's span). Decisions are merged back into a single per-row set.
 
 The chunked path is always on; if a row has fewer candidates than the limit, it runs as a single call and is exactly equivalent to the unchunked behavior. Tuning guidance:
 
@@ -64,6 +64,12 @@ The chunked path is always on; if a row has fewer candidates than the limit, it 
 ### Validator pools
 
 `entity_validator` can be a single alias (the default) or a list of aliases — a **pool**. When multiple aliases are configured, each chunk in a row is dispatched to the next alias in round-robin order, which lets you work around per-alias rate limits by spreading requests across equivalent endpoints.
+
+Pools also act as **cross-alias failover**. If a chunk's primary alias raises a terminal exception (5xx after transport retries, connection error, or parser error), the chunk is re-dispatched against the remaining pool members in pool order before giving up. A chunk only fails when every pool member has raised for it. This makes pools a cheap way to harden validation against single-endpoint degradation, in addition to their load-spreading role.
+
+#### Failure contract
+
+When chunked validation cannot get an answer for a row — every pool member raised for at least one of its chunks — the row is **dropped** from the output DataFrame, not silently passed through with unscrubbed text. The dropped row is reported on `result.failed_records` with `step="detection"`, so a downstream reprocessing pass can identify misses by diffing input IDs against output IDs.
 
 See [Validator pools](models.md#validator-pools) for the YAML syntax and caveats.
 
