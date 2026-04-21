@@ -28,7 +28,6 @@ from anonymizer.engine.schemas.detection import (
 )
 from anonymizer.engine.schemas.replace import EntityReplacementMapSchema, EntityReplacementSchema
 from anonymizer.engine.schemas.rewrite import (
-    CombinedRiskLevel,
     Domain,
     DomainClassificationSchema,
     EntityCategory,
@@ -79,7 +78,6 @@ __all__ = [
     "ValidationSkeletonDecisionSchema",
     "ValidationSkeletonSchema",
     # Rewrite
-    "CombinedRiskLevel",
     "Domain",
     "DomainClassificationSchema",
     "EntityCategory",

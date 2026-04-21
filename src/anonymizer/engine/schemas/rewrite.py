@@ -33,7 +33,7 @@ Each schema group corresponds to one pipeline step:
         Uses LLMJudgeColumnConfig with Score rubrics (no custom schema needed)
 
 Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
-                  ProtectionMethod, CombinedRiskLevel, MeaningUnitAspect, PrivacyAnswer
+                  ProtectionMethod, MeaningUnitAspect, PrivacyAnswer
 """
 
 from __future__ import annotations
@@ -112,14 +112,6 @@ class ProtectionMethod(str, Enum):
     remove = "remove"
     suppress_inference = "suppress_inference"
     leave_as_is = "leave_as_is"
-
-
-class CombinedRiskLevel(str, Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
-
-
 
 
 # Best-effort mapping from Anonymizer entity-labels to EntityCategory, used when
@@ -215,8 +207,6 @@ class EntityDispositionSchema(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     # Coerce small-model output before pydantic's strict checks run:
-    #   - default `combined_risk_level` to `sensitivity` when the model omits it
-    #     (common Qwen 3.5 4B failure mode).
     #   - normalize `category` display-label drift (e.g. "DIRECT IDENTIFIERS"
     #     or "last_name") into the expected enum string where possible
     #     (common Gemma-family failure mode).
@@ -227,9 +217,6 @@ class EntityDispositionSchema(BaseModel):
     def _coerce_small_model_output(cls, data):
         if not isinstance(data, dict):
             return data
-        # Default combined_risk_level from sensitivity if missing.
-        if "combined_risk_level" not in data and "sensitivity" in data:
-            data["combined_risk_level"] = data["sensitivity"]
         # Coerce int → str on string fields; drop None so pydantic defaults apply
         # (e.g. protection_reason default kicks in when the model emits null).
         for k in ("entity_label", "entity_value", "protection_reason"):
@@ -336,7 +323,6 @@ class EntityDispositionSchema(BaseModel):
         max_length=500,
     )
     protection_method_suggestion: ProtectionMethod
-    combined_risk_level: CombinedRiskLevel
 
     @field_validator("category", mode="after")
     @classmethod

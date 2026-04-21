@@ -157,20 +157,12 @@ COVERAGE REQUIREMENTS:
 
 QUALITY REQUIREMENTS:
 - protection_reason must be specific to this document (not generic boilerplate).
-- combined_risk_level must consider other entities being retained.
 
 ALLOWED ENUM VALUES (use these exact strings, nothing else):
 - source: "tagged" | "latent"
 - category: "direct_identifier" | "quasi_identifier" | "sensitive_attribute" | "latent_identifier"
 - sensitivity: "low" | "medium" | "high"  (how sensitive this entity is ON ITS OWN)
 - protection_method_suggestion: "replace" | "generalize" | "remove" | "suppress_inference" | "leave_as_is"
-- combined_risk_level: "low" | "medium" | "high"  (risk when this entity is aggregated with OTHER retained entities)
-
-DISTINGUISHING sensitivity from combined_risk_level:
-- sensitivity captures inherent harm of disclosing this one value.
-- combined_risk_level captures how identifying this value BECOMES when combined with others.
-- Example: age=47 has sensitivity="low" on its own, but combined_risk_level="medium" if
-  "retired engineer" + "Seattle" + "47" together narrow the population to a small set.
 
 TYPE RULES (common small-model mistakes to avoid):
 - All string fields must be quoted JSON strings. Do NOT emit bare null or unquoted numbers.
