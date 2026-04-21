@@ -52,7 +52,11 @@ def parse_model_configs(raw: str | Path | None) -> ParsedModelConfigs:
     if isinstance(raw, Path):
         parsed = _load_yaml_dict(raw)
     else:
-        parsed = _parse_yaml_string(raw)
+        candidate = Path(raw.strip()).expanduser()
+        if "\n" not in raw and candidate.suffix in (".yaml", ".yml"):
+            parsed = _load_yaml_dict(candidate)
+        else:
+            parsed = _parse_yaml_string(raw)
 
     user_selections = parsed.pop("selected_models", None)
     return ParsedModelConfigs(
@@ -208,7 +212,7 @@ def _parse_yaml_string(raw: str) -> dict[str, Any]:
 
 
 def _load_yaml_dict(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not path.is_file():
         raise FileNotFoundError(f"Config file not found: {path}")
     data = load_config_file(path)
     if not isinstance(data, dict):

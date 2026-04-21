@@ -8,7 +8,7 @@ import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 logger = logging.getLogger("anonymizer.cli")
 
@@ -61,14 +61,42 @@ class CliOpts:
 
     # -- shared --
     detect: Annotated[Detect, cyclopts.Parameter(name="*")] = field(default_factory=Detect)
-    model_configs: str | None = None
-    model_providers: str | None = None
-    artifact_path: str | None = None
+    model_configs: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            help=(
+                "Path to a YAML file (.yaml/.yml) or inline YAML string defining the model pool "
+                "and optional selected_models overrides. Omit to use bundled defaults."
+            )
+        ),
+    ] = None
+    model_providers: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            help=(
+                "Path to a YAML file (.yaml/.yml) or inline YAML string defining custom provider "
+                "endpoints. Each entry maps a provider name to its API base URL and optional key."
+            )
+        ),
+    ] = None
+    artifact_path: Annotated[
+        str | None,
+        cyclopts.Parameter(help="Directory for intermediate pipeline artifacts. Defaults to .anonymizer-artifacts."),
+    ] = None
     verbose: bool = False
     debug: bool = False
 
     # -- replace-specific --
-    format_template: str | None = None
+    format_template: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            help=(
+                "Output template for the replacement token. "
+                "Redact supports {label}; Annotate requires {text} and {label}; "
+                "Hash requires {digest} and optionally {label}. Not used by substitute."
+            )
+        ),
+    ] = None
     normalize_label: bool = True
     algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256"
     digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12
@@ -77,13 +105,13 @@ class CliOpts:
     protect: Annotated[str | None, cyclopts.Parameter(help="What to protect (privacy goal).")] = None
     preserve: Annotated[str | None, cyclopts.Parameter(help="What to preserve (utility goal).")] = None
     risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = "low"
-    max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = 2
+    max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = 3
 
     # -- shared between substitute (replace) and rewrite --
     instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the LLM.")] = None
 
-    _REPLACE_ONLY_FLAGS: tuple[str, ...] = ("format_template",)
-    _REWRITE_ONLY_FLAGS: tuple[str, ...] = ("protect", "preserve")
+    _REPLACE_ONLY_FLAGS: ClassVar[tuple[str, ...]] = ("format_template",)
+    _REWRITE_ONLY_FLAGS: ClassVar[tuple[str, ...]] = ("protect", "preserve")
 
     def __post_init__(self) -> None:
         if self.replace and self.rewrite:
@@ -112,7 +140,7 @@ def _cli_error_handler(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (ValidationError, ValueError, InvalidConfigError, AnonymizerIOError) as exc:
+        except (ValidationError, ValueError, InvalidConfigError, AnonymizerIOError, OSError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1)
 
@@ -188,7 +216,12 @@ def run(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
     opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
-    output: str | None = None,
+    output: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            help="Output file path (.csv or .parquet). Defaults to source stem + _anonymized or _rewritten."
+        ),
+    ] = None,
 ) -> None:
     """Run the full anonymization pipeline (detection + replacement or rewrite)."""
     if output is None:
