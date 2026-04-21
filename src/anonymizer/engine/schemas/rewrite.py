@@ -209,6 +209,60 @@ class SensitivityDispositionSchema(BaseModel):
         return "\n".join(lines)
 
 
+class StrictProtectionMethod(str, Enum):
+    replace = "replace"
+    generalize = "generalize"
+    remove = "remove"
+    suppress_inference = "suppress_inference"
+
+
+class StrictEntityDispositionSchema(BaseModel):
+    """Strict variant: needs_protection is always True and leave_as_is is excluded."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    id: int = Field(ge=1)
+    source: EntitySource
+    category: EntityCategory
+    sensitivity: SensitivityLevel
+    entity_label: str = Field(min_length=1)
+    entity_value: str = Field(min_length=1)
+    protection_reason: str = Field(min_length=10, max_length=500)
+    protection_method_suggestion: StrictProtectionMethod
+    combined_risk_level: CombinedRiskLevel
+
+    def to_entity_disposition(self) -> EntityDispositionSchema:
+        return EntityDispositionSchema(
+            id=self.id,
+            source=self.source,
+            category=self.category,
+            sensitivity=self.sensitivity,
+            entity_label=self.entity_label,
+            entity_value=self.entity_value,
+            needs_protection=True,
+            protection_reason=self.protection_reason,
+            protection_method_suggestion=self.protection_method_suggestion,
+            combined_risk_level=self.combined_risk_level,
+        )
+
+
+class StrictSensitivityDispositionSchema(BaseModel):
+    """Strict variant container: every entity must have needs_protection=True."""
+
+    sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_ids(self) -> StrictSensitivityDispositionSchema:
+        for i, entry in enumerate(self.sensitivity_disposition, start=1):
+            entry.id = i
+        return self
+
+    def to_sensitivity_disposition(self) -> SensitivityDispositionSchema:
+        return SensitivityDispositionSchema(
+            sensitivity_disposition=[e.to_entity_disposition() for e in self.sensitivity_disposition]
+        )
+
+
 # ---------------------------------------------------------------------------
 # Meaning Units
 # ---------------------------------------------------------------------------

@@ -19,15 +19,33 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.schemas import SensitivityDispositionSchema
+from anonymizer.engine.schemas import SensitivityDispositionSchema, StrictSensitivityDispositionSchema
 
 
-def _get_sensitivity_disposition_prompt(privacy_goal: PrivacyGoal, data_summary: str | None = None) -> str:
+def _get_sensitivity_disposition_prompt(
+    privacy_goal: PrivacyGoal, data_summary: str | None = None, strict_entity_protection: bool = False
+) -> str:
     privacy_goal_str = privacy_goal.to_prompt_string()
     # TODO: align entity detection prompts (validation, augment, latent) to use "Dataset description:" label
     data_summary_line = (
         f"\nDataset description: {data_summary.strip()}" if data_summary and data_summary.strip() else ""
     )
+
+    strict_protection_block = ""
+    if strict_entity_protection:
+        strict_protection_block = """
+<strict_entity_protection>
+STRICT PROTECTION MODE IS ENABLED.
+
+All entities MUST be protected — you only decide HOW. Choose the most appropriate
+protection_method_suggestion for each entity. leave_as_is is not available.
+
+Ignore the MINIMUM NECESSARY CHANGE principle — it does not apply in strict mode.
+Ignore the QUASI-IDENTIFIERS guidance that says "NOT automatically sensitive" —
+all quasi-identifiers must be protected in strict mode.
+
+</strict_entity_protection>
+"""
 
     prompt = """You are responsible for creating a unified sensitivity disposition for privacy-preserving text rewriting.
 
@@ -97,6 +115,7 @@ Do NOT assume the adversary knows the original text or internal annotations.
 Re-identification is successful if the adversary can reasonably narrow identity to a small, plausible set.
 </threat_model>
 
+<<STRICT_PROTECTION_BLOCK>>
 <entity_categories>
 DIRECT IDENTIFIERS (high-risk, standalone)
 - Uniquely identify on their own: full names, exact addresses, SSNs, email, phone.
@@ -136,7 +155,6 @@ LATENT IDENTIFIERS (inferred)
 
 5. DOMAIN-SPECIFIC PRESERVATION: Apply the domain guidance above—preserve what matters for utility.
 </protection_principles>
-
 <output_requirements>
 CONSISTENCY RULES:
 - If needs_protection=false → protection_method_suggestion MUST be "leave_as_is".
@@ -164,6 +182,7 @@ QUALITY REQUIREMENTS:
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
             "<<FINAL_ENTITIES>>": _jinja(COL_ENTITIES_BY_VALUE),
             "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),
+            "<<STRICT_PROTECTION_BLOCK>>": strict_protection_block,
         },
     )
 
@@ -180,13 +199,19 @@ class SensitivityDispositionWorkflow:
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         data_summary: str | None = None,
+        strict_entity_protection: bool = False,
     ) -> list[ColumnConfigT]:
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
+        output_schema = StrictSensitivityDispositionSchema if strict_entity_protection else SensitivityDispositionSchema
         return [
             LLMStructuredColumnConfig(
                 name=COL_SENSITIVITY_DISPOSITION,
-                prompt=_get_sensitivity_disposition_prompt(privacy_goal, data_summary),
+                prompt=_get_sensitivity_disposition_prompt(
+                    privacy_goal,
+                    data_summary,
+                    strict_entity_protection=strict_entity_protection,
+                ),
                 model_alias=disposition_alias,
-                output_format=SensitivityDispositionSchema,
+                output_format=output_schema,
             ),
         ]

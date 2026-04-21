@@ -113,6 +113,10 @@ class Rewrite(BaseModel):
         ge=0,
         description="Maximum repair rounds. Set to 0 to disable repair.",
     )
+    strict_entity_protection: bool = Field(
+        default=False,
+        description="If True, requires every entity to receive a protective disposition during sensitivity analysis.",
+    )
 
     @model_validator(mode="after")
     def populate_default_privacy_goal(self) -> Rewrite:

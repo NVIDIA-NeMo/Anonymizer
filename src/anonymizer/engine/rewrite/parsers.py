@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswerItemSchema,
@@ -19,6 +19,7 @@ from anonymizer.engine.schemas.rewrite import (
     QualityAnswersSchema,
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
+    StrictSensitivityDispositionSchema,
 )
 
 
@@ -110,8 +111,13 @@ def parse_privacy_qa(raw: Any) -> PrivacyQAPairsSchema:
 
 def parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema:
     raw = normalize_payload(raw)
+    if isinstance(raw, StrictSensitivityDispositionSchema):
+        return raw.to_sensitivity_disposition()
     if isinstance(raw, SensitivityDispositionSchema):
         return raw
     if isinstance(raw, dict):
-        return SensitivityDispositionSchema.model_validate(raw)
+        try:
+            return SensitivityDispositionSchema.model_validate(raw)
+        except ValidationError:
+            return StrictSensitivityDispositionSchema.model_validate(raw).to_sensitivity_disposition()
     raise ValueError(f"Cannot parse sensitivity disposition from {type(raw)}")
