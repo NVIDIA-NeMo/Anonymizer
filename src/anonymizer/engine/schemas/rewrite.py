@@ -289,7 +289,18 @@ class EntityDispositionSchema(BaseModel):
 
     id: int = Field(ge=1)
     source: EntitySource
-    category: EntityCategory
+    # NOTE: typed as `str` (not EntityCategory) so DD’s jsonschema pre-check
+    # does not reject small-model enum drift (e.g. "last_name" in category,
+    # "latent_sensitive_attribute" merges) before our @model_validator(mode=
+    # "before") gets to coerce it. Enum membership is re-enforced after
+    # coercion by _validate_category below.
+    category: str = Field(
+        min_length=1,
+        description=(
+            "One of: direct_identifier | quasi_identifier | sensitive_attribute "
+            "| latent_identifier"
+        ),
+    )
     sensitivity: SensitivityLevel
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
@@ -297,6 +308,17 @@ class EntityDispositionSchema(BaseModel):
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
     combined_risk_level: CombinedRiskLevel
+
+    @field_validator("category", mode="after")
+    @classmethod
+    def _validate_category(cls, v: str) -> str:
+        allowed = {c.value for c in EntityCategory}
+        if v not in allowed:
+            raise ValueError(
+                f"category must be one of {sorted(allowed)}; got {v!r} "
+                "(after @model_validator(mode='before') normalization)"
+            )
+        return v
 
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
