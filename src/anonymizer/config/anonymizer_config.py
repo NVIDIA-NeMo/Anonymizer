@@ -115,7 +115,7 @@ class Rewrite(BaseModel):
     )
     strict_entity_protection: bool = Field(
         default=False,
-        description="If True, strongly discourages leave_as_is dispositions in sensitivity analysis.",
+        description="If True, requires every entity to receive a protective disposition during sensitivity analysis.",
     )
 
     @model_validator(mode="after")
