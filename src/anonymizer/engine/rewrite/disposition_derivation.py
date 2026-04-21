@@ -97,9 +97,51 @@ def template_protection_reason(category: str, method: str, sensitivity: str) -> 
 # ---------------------------------------------------------------------------
 
 
+def _coerce_entity_list(raw: object) -> list[dict]:
+    """DataDesigner hands context columns to custom generators in several
+    shapes: a pydantic-dump dict with a keyed list, a raw list, a JSON-
+    encoded string, or None. Normalize to a plain list of dicts.
+    """
+    import json
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return []
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    if isinstance(raw, dict):
+        # pydantic dump of a wrapper schema like EntitiesByValueSchema or
+        # LatentEntitiesSchema — the inner list lives under one of these keys.
+        for key in ("entities_by_value", "latent_entities", "entities", "items"):
+            if key in raw and isinstance(raw[key], list):
+                raw = raw[key]
+                break
+        else:
+            return []
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, dict):
+            out.append(item)
+        elif isinstance(item, str):
+            # JSON-string-per-item (rare but seen).
+            try:
+                parsed = json.loads(item)
+                if isinstance(parsed, dict):
+                    out.append(parsed)
+            except Exception:
+                continue
+    return out
+
+
 def _flatten_context(
-    entities_by_value: list[dict] | None,
-    latent_entities: list[dict] | None,
+    entities_by_value: object,
+    latent_entities: object,
 ) -> list[dict]:
     """Produce a flat, ordered list of {source, entity_label, entity_value}.
 
@@ -108,7 +150,7 @@ def _flatten_context(
     followed by latent entries. The returned list index+1 is the expected id.
     """
     flat: list[dict] = []
-    for ev in entities_by_value or []:
+    for ev in _coerce_entity_list(entities_by_value):
         value = ev.get("value", "")
         labels = ev.get("labels") or []
         if not labels:
@@ -116,7 +158,7 @@ def _flatten_context(
             continue
         for label in labels:
             flat.append({"source": "tagged", "entity_label": label, "entity_value": value})
-    for le in latent_entities or []:
+    for le in _coerce_entity_list(latent_entities):
         flat.append({
             "source": "latent",
             "entity_label": le.get("label", ""),
@@ -132,8 +174,8 @@ def _flatten_context(
 
 def reconstruct_full_disposition(
     simple: SimpleDispositionResult,
-    entities_by_value: list[dict] | None = None,
-    latent_entities: list[dict] | None = None,
+    entities_by_value: object = None,
+    latent_entities: object = None,
 ) -> SensitivityDispositionSchema:
     """Build the strict disposition from the loose LLM output + context columns.
 
@@ -162,17 +204,22 @@ def reconstruct_full_disposition(
             continue
         seen_ids.add(item.id)
 
-        # Resolve (source, entity_label, entity_value): model echo wins,
-        # context lookup is the fallback.
-        src = item.source or ""
-        lbl = item.entity_label or ""
-        val = item.entity_value or ""
+        # Resolve (source, entity_label, entity_value). Context is the
+        # AUTHORITATIVE source when the id falls in range — small models
+        # (gemma4-e2b) routinely echo garbage in these fields (e.g. the
+        # entity_label in the source slot), so trusting the echo there
+        # corrupts the strict schema. Fall back to the LLM echo only when
+        # there is no context entry for this id (orphan).
         idx = item.id - 1
         if 0 <= idx < len(context):
             ctx = context[idx]
-            src = src or ctx["source"]
-            lbl = lbl or ctx["entity_label"]
-            val = val or ctx["entity_value"]
+            src = ctx["source"]
+            lbl = ctx["entity_label"]
+            val = ctx["entity_value"]
+        else:
+            src = item.source or ""
+            lbl = item.entity_label or ""
+            val = item.entity_value or ""
 
         if not src or not lbl or not val:
             logger.warning(

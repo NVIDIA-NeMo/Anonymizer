@@ -194,26 +194,26 @@ def _reconstruct_full_disposition_column(row: dict[str, Any]) -> dict[str, Any]:
     the same column name / shape as before this refactor.
     """
     simple_raw = row.get(COL_SIMPLE_DISPOSITION, {}) or {}
-    # DD may deliver either a dict or the already-parsed pydantic model as
-    # a dict; wrap defensively.
+    # DD may deliver a dict, JSON string, or the pydantic model itself.
+    # model_validate handles dict/model; parse JSON string defensively.
     if isinstance(simple_raw, SimpleDispositionResult):
         simple = simple_raw
     else:
+        if isinstance(simple_raw, str):
+            import json as _json
+            try:
+                simple_raw = _json.loads(simple_raw)
+            except Exception:
+                simple_raw = {}
         simple = SimpleDispositionResult.model_validate(simple_raw)
 
-    ebv = row.get(COL_ENTITIES_BY_VALUE) or {}
-    if isinstance(ebv, dict):
-        tagged_ctx = ebv.get("entities_by_value") or []
-    else:
-        tagged_ctx = ebv or []
-
-    lat = row.get(COL_LATENT_ENTITIES) or {}
-    if isinstance(lat, dict):
-        latent_ctx = lat.get("latent_entities") or []
-    else:
-        latent_ctx = lat or []
-
-    full = reconstruct_full_disposition(simple, tagged_ctx, latent_ctx)
+    # reconstruct_full_disposition's _coerce_entity_list handles every
+    # shape DD might pass (dict wrapper, raw list, JSON string).
+    full = reconstruct_full_disposition(
+        simple,
+        row.get(COL_ENTITIES_BY_VALUE),
+        row.get(COL_LATENT_ENTITIES),
+    )
     row[COL_SENSITIVITY_DISPOSITION] = full.model_dump()
     return row
 
