@@ -349,6 +349,65 @@ class EntityDispositionSchema(BaseModel):
         return self
 
 
+class SimpleDispositionItem(BaseModel):
+    """Loose wire-contract shape for one disposition decision from the LLM.
+
+    Used as the `output_format` for the disposition_analyzer LLM column. A
+    server-side reconstruction column (see engine/rewrite/disposition_derivation.py)
+    then pairs these with the entity context columns to produce the strict
+    EntityDispositionSchema that downstream consumers read.
+
+    Why "loose": every field is typed as `str` (not the corresponding enum)
+    and has a permissive default. This keeps the emitted JSON Schema free of
+    `enum`, `required`, and `minLength` constraints that DataDesigner’s
+    `jsonschema.validate()` runs BEFORE pydantic’s coercion. Small models
+    drift at those constraints; the loose wire gate lets drifted output
+    survive to the server-side reconstruction.
+    """
+
+    id: int = Field(ge=1)
+    # Echoed from the entity context for belt-and-braces pairing. Optional so
+    # the server can fall back to id-based lookup if the model omits them.
+    source: str = Field(default="")
+    entity_label: str = Field(default="")
+    entity_value: str = Field(default="")
+    # LLM judgments; typed str so enum drift ("latent_sensitive_attribute",
+    # "DIRECT IDENTIFIER", etc.) is accepted at the wire layer and
+    # normalized during reconstruction.
+    category: str = Field(default="")
+    sensitivity: str = Field(default="")
+    protection_method_suggestion: str = Field(default="")
+    # Optional: when the model emits a document-specific rationale we keep
+    # it verbatim; otherwise the reconstructor templates one from (category,
+    # method, sensitivity).
+    protection_reason: str = Field(default="")
+
+    @field_validator(
+        "source", "entity_label", "entity_value",
+        "category", "sensitivity", "protection_method_suggestion",
+        "protection_reason",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_scalar_to_str(cls, v: object) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
+
+
+class SimpleDispositionResult(BaseModel):
+    """Wire-contract wrapper around a list of SimpleDispositionItem.
+
+    This is the output_format handed to DataDesigner for the disposition
+    LLM column. The corresponding reconstruction column downstream produces
+    the strict SensitivityDispositionSchema from it.
+    """
+
+    sensitivity_disposition: list[SimpleDispositionItem] = Field(default_factory=list)
+
+
 class SensitivityDispositionSchema(BaseModel):
     """Complete sensitivity disposition for a document — LLM output schema.
 

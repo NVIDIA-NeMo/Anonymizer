@@ -1,0 +1,208 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Server-side reconstruction of the strict EntityDispositionSchema from the
+loose wire-contract SimpleDispositionResult + the per-entity context columns.
+
+The disposition_analyzer LLM now emits a minimal `SimpleDispositionResult`
+(8 optional/loose fields per item). This module rebuilds the strict form
+deterministically: pair each simple item with its entity context (by id,
+with entity_label/value echoes as belt-and-braces), derive needs_protection,
+and template protection_reason when the model did not provide one.
+
+No LLM calls; no I/O. Pure python for the reconstruction column.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from anonymizer.engine.schemas.rewrite import (
+    EntityDispositionSchema,
+    SensitivityDispositionSchema,
+    SimpleDispositionItem,
+    SimpleDispositionResult,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Derivation helpers
+# ---------------------------------------------------------------------------
+
+
+def derive_needs_protection(method: str) -> bool:
+    """Tautological with EntityDispositionSchema._validate_protection_consistency.
+
+    If the model picks any method other than leave_as_is, the entity needs
+    protection; otherwise it does not. Deriving this instead of asking the
+    LLM for it eliminates the consistency-rule drift (class K).
+    """
+    return (method or "").strip() != "leave_as_is"
+
+
+# (category, method) -> template text (without leading sensitivity prefix).
+# Sensitivity fills a prefix ("high-risk ...", "moderate-risk ...", "").
+_REASON_TEMPLATES: dict[tuple[str, str], str] = {
+    ("direct_identifier", "replace"): "direct identifier — replaced with a contextual surrogate",
+    ("direct_identifier", "remove"): "direct identifier — removed to prevent re-identification",
+    ("direct_identifier", "generalize"): "direct identifier — generalized to reduce re-identification",
+    ("direct_identifier", "suppress_inference"): "direct identifier — suppressed to prevent inference",
+    ("quasi_identifier", "generalize"): "quasi-identifier — generalized to reduce re-identification risk",
+    ("quasi_identifier", "replace"): "quasi-identifier — replaced with a plausible surrogate",
+    ("quasi_identifier", "remove"): "quasi-identifier — removed due to re-identification risk",
+    ("quasi_identifier", "suppress_inference"): "quasi-identifier — suppressed to prevent inference",
+    ("sensitive_attribute", "remove"): "sensitive attribute — removed to prevent disclosure harm",
+    ("sensitive_attribute", "generalize"): "sensitive attribute — generalized to reduce harm",
+    ("sensitive_attribute", "suppress_inference"): "sensitive attribute — suppressed to prevent disclosure",
+    ("sensitive_attribute", "replace"): "sensitive attribute — replaced with a less harmful value",
+    ("latent_identifier", "suppress_inference"): "latent inference — suppressed to prevent deduction",
+    ("latent_identifier", "remove"): "latent identifier — removed to prevent inference",
+    ("latent_identifier", "generalize"): "latent identifier — generalized to reduce inference",
+    ("latent_identifier", "replace"): "latent identifier — replaced with a less specific surrogate",
+}
+
+_SENSITIVITY_PREFIX = {"low": "", "medium": "moderate-risk ", "high": "high-risk "}
+
+
+def template_protection_reason(category: str, method: str, sensitivity: str) -> str:
+    """Build a reason string guaranteed ≥10 chars (EntityDispositionSchema min_length).
+
+    Used when the LLM omits or emits a too-short protection_reason. Strong
+    models that provide their own document-specific reason have theirs
+    kept verbatim by the reconstructor.
+    """
+    method = (method or "").strip()
+    category = (category or "").strip()
+    sensitivity = (sensitivity or "").strip().lower()
+
+    if method == "leave_as_is":
+        cat_label = category.replace("_", " ") if category else "entity"
+        return f"Low-risk {cat_label}; retained as-is for utility."
+
+    base = _REASON_TEMPLATES.get((category, method))
+    if base is None:
+        cat_label = category.replace("_", " ") if category else "entity"
+        method_label = method or "an appropriate method"
+        base = f"{cat_label} — protected via {method_label}"
+
+    prefix = _SENSITIVITY_PREFIX.get(sensitivity, "")
+    reason = (prefix + base).strip()
+    # Capitalize first letter; template shapes already make this ≥10 chars.
+    return reason[:1].upper() + reason[1:] if reason else "Protection applied per policy."
+
+
+# ---------------------------------------------------------------------------
+# Entity-context flattening
+# ---------------------------------------------------------------------------
+
+
+def _flatten_context(
+    entities_by_value: list[dict] | None,
+    latent_entities: list[dict] | None,
+) -> list[dict]:
+    """Produce a flat, ordered list of {source, entity_label, entity_value}.
+
+    Order matches how the disposition prompt enumerates entities:
+    tagged entries from entities_by_value (one per (value, label) pair)
+    followed by latent entries. The returned list index+1 is the expected id.
+    """
+    flat: list[dict] = []
+    for ev in entities_by_value or []:
+        value = ev.get("value", "")
+        labels = ev.get("labels") or []
+        if not labels:
+            flat.append({"source": "tagged", "entity_label": "", "entity_value": value})
+            continue
+        for label in labels:
+            flat.append({"source": "tagged", "entity_label": label, "entity_value": value})
+    for le in latent_entities or []:
+        flat.append({
+            "source": "latent",
+            "entity_label": le.get("label", ""),
+            "entity_value": le.get("value", ""),
+        })
+    return flat
+
+
+# ---------------------------------------------------------------------------
+# Reconstruction
+# ---------------------------------------------------------------------------
+
+
+def reconstruct_full_disposition(
+    simple: SimpleDispositionResult,
+    entities_by_value: list[dict] | None = None,
+    latent_entities: list[dict] | None = None,
+) -> SensitivityDispositionSchema:
+    """Build the strict disposition from the loose LLM output + context columns.
+
+    For each SimpleDispositionItem:
+      - prefer the model-echoed source/entity_label/entity_value; fall back
+        to the id-indexed context lookup if the echo is missing or empty.
+      - derive needs_protection from method.
+      - keep the LLM protection_reason if it stripped to ≥10 chars, else
+        template one from (category, method, sensitivity).
+
+    Orphan simple items (id outside the context range AND no usable echoes)
+    are skipped with a warning — better to return a smaller valid schema
+    than to drop the whole record.
+    Duplicate ids are de-duplicated (first occurrence wins).
+    """
+    context = _flatten_context(entities_by_value, latent_entities)
+    seen_ids: set[int] = set()
+    full_items: list[EntityDispositionSchema] = []
+
+    for item in simple.sensitivity_disposition:
+        if item.id in seen_ids:
+            logger.warning(
+                "reconstruct_full_disposition: duplicate id=%s in simple output; keeping first occurrence",
+                item.id,
+            )
+            continue
+        seen_ids.add(item.id)
+
+        # Resolve (source, entity_label, entity_value): model echo wins,
+        # context lookup is the fallback.
+        src = item.source or ""
+        lbl = item.entity_label or ""
+        val = item.entity_value or ""
+        idx = item.id - 1
+        if 0 <= idx < len(context):
+            ctx = context[idx]
+            src = src or ctx["source"]
+            lbl = lbl or ctx["entity_label"]
+            val = val or ctx["entity_value"]
+
+        if not src or not lbl or not val:
+            logger.warning(
+                "reconstruct_full_disposition: orphan simple item id=%s (missing source/label/value, out of context range); skipping",
+                item.id,
+            )
+            continue
+
+        # Derive derived fields.
+        method = (item.protection_method_suggestion or "").strip() or "leave_as_is"
+        needs = derive_needs_protection(method)
+
+        # Keep LLM reason if usable, else template.
+        raw_reason = (item.protection_reason or "").strip()
+        reason = raw_reason if len(raw_reason) >= 10 else template_protection_reason(
+            item.category or "", method, item.sensitivity or ""
+        )
+
+        full_items.append(
+            EntityDispositionSchema(
+                id=item.id,
+                source=src,
+                category=item.category or "",   # strict schema coerces/validates via its own before-validator
+                sensitivity=item.sensitivity or "",
+                entity_label=lbl,
+                entity_value=val,
+                needs_protection=needs,
+                protection_method_suggestion=method,
+                protection_reason=reason,
+            )
+        )
+
+    return SensitivityDispositionSchema(sensitivity_disposition=full_items)
