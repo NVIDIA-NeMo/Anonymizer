@@ -180,9 +180,7 @@ def build_chunk_excerpt(
 def build_chunk_skeleton(chunk_candidates_: list[Any]) -> dict[str, Any]:
     """Build the validation skeleton (``ValidationSkeletonSchema``) for a chunk."""
     skeleton = ValidationSkeletonSchema(
-        decisions=[
-            ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in chunk_candidates_
-        ]
+        decisions=[ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in chunk_candidates_]
     )
     return skeleton.model_dump(mode="json")
 

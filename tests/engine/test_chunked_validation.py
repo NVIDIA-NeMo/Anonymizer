@@ -45,7 +45,6 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
@@ -218,9 +217,9 @@ class TestBuildChunkExcerpt:
         assert "<first_name>" not in excerpt
 
     def test_empty_chunk_returns_empty_string(self) -> None:
-        assert build_chunk_excerpt(
-            text="x", chunk_spans=[], all_spans=[], window_chars=5, notation=TagNotation.xml
-        ) == ""
+        assert (
+            build_chunk_excerpt(text="x", chunk_spans=[], all_spans=[], window_chars=5, notation=TagNotation.xml) == ""
+        )
 
 
 class TestBuildChunkSkeleton:
@@ -229,7 +228,14 @@ class TestBuildChunkSkeleton:
         skeleton = build_chunk_skeleton([candidates.candidates[0]])
         assert skeleton == {
             "decisions": [
-                {"id": "a", "value": "Alice", "label": "first_name", "decision": None, "proposed_label": None, "reason": None}
+                {
+                    "id": "a",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "decision": None,
+                    "proposed_label": None,
+                    "reason": None,
+                }
             ]
         }
 
@@ -316,11 +322,7 @@ def _build_row(
     }
 
 
-_MINIMAL_TEMPLATE = (
-    "TAGGED:{{ _merged_tagged_text }}|"
-    "SKELETON:{{ _validation_skeleton }}|"
-    "NOTATION:{{ _tag_notation }}"
-)
+_MINIMAL_TEMPLATE = "TAGGED:{{ _merged_tagged_text }}|SKELETON:{{ _validation_skeleton }}|NOTATION:{{ _tag_notation }}"
 
 
 class TestChunkedValidateRowPoolOfOne:
@@ -593,9 +595,7 @@ def _tally(before: list[EntitySpan], after: list[EntitySpan], decisions: dict) -
 
 
 def _normalize_decisions(doc: dict) -> list[tuple[str, str, str]]:
-    return sorted(
-        (d["id"], d.get("decision") or "", d.get("proposed_label") or "") for d in doc["decisions"]
-    )
+    return sorted((d["id"], d.get("decision") or "", d.get("proposed_label") or "") for d in doc["decisions"])
 
 
 class TestChunkedValidationRegression:
