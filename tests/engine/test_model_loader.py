@@ -257,6 +257,21 @@ class TestEntityValidatorNormalization:
         )
         assert selection.entity_validator == ["v1", "v2", "v3"]
 
+    def test_tuple_coerced_to_list(self) -> None:
+        # Tuples are accepted for parity with Pydantic v2's default coercion
+        # for ``list[str]`` fields; programmatic callers should not need to
+        # care about the concrete sequence type. The normalizer must return
+        # a real ``list`` so downstream ``isinstance(value, list)`` branches
+        # (e.g. in ``resolve_model_alias``) behave consistently.
+        selection = DetectionModelSelection(
+            entity_detector="d",
+            entity_validator=("v1", "v2"),  # type: ignore[arg-type]
+            entity_augmenter="a",
+            latent_detector="l",
+        )
+        assert selection.entity_validator == ["v1", "v2"]
+        assert isinstance(selection.entity_validator, list)
+
     def test_empty_list_rejected(self) -> None:
         with pytest.raises(ValueError, match="at least one model alias"):
             DetectionModelSelection(

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -154,13 +155,17 @@ def order_candidates_by_position(
 
 
 def chunk_candidates(
-    ordered: list[tuple[Any, EntitySpan]],
+    ordered: Sequence[tuple[Any, EntitySpan]],
     max_entities_per_call: int,
 ) -> list[list[tuple[Any, EntitySpan]]]:
-    """Partition the ordered (candidate, seed) pairs into chunks of at most ``max_entities_per_call``."""
-    if max_entities_per_call <= 0:
-        raise ValueError(f"max_entities_per_call must be > 0, got {max_entities_per_call}.")
-    return [ordered[i : i + max_entities_per_call] for i in range(0, len(ordered), max_entities_per_call)]
+    """Partition the ordered (candidate, seed) pairs into chunks of at most ``max_entities_per_call``.
+
+    ``max_entities_per_call`` is assumed positive. It is validated upstream by
+    ``ChunkedValidationParams`` (``Field(gt=0)``) and by
+    ``AnonymizerDetectConfig.validation_max_entities_per_call`` (``gt=0``), so
+    we do not re-check it here.
+    """
+    return [list(ordered[i : i + max_entities_per_call]) for i in range(0, len(ordered), max_entities_per_call)]
 
 
 def build_chunk_excerpt(
@@ -369,9 +374,20 @@ async def _dispatch_chunk(
                     exc,
                 )
 
-    # Defensive: facades is non-empty (caller guarantees), so the loop either
-    # returned a successful output or recorded last_exc and re-raises here.
-    assert last_exc is not None
+    # Defensive: ``facades`` is non-empty by caller contract
+    # (``chunked_validate_row`` builds it from the configured pool, which the
+    # config validator requires to be non-empty). After a non-empty pool fully
+    # exhausts, ``last_exc`` is guaranteed set and we re-raise it. If we ever
+    # reach this point with ``last_exc is None``, the precondition was
+    # violated — raise a loud ``RuntimeError`` rather than ``raise None``
+    # (which would produce ``TypeError: exceptions must derive from
+    # BaseException``). Using a real check instead of ``assert`` so the guard
+    # survives ``python -O``.
+    if last_exc is None:
+        raise RuntimeError(
+            "_dispatch_chunk was called with an empty facades list; "
+            "this violates the caller contract (a non-empty validator pool)."
+        )
     raise last_exc
 
 

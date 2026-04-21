@@ -148,9 +148,14 @@ class TestChunkCandidates:
     def test_empty_input_yields_no_chunks(self) -> None:
         assert chunk_candidates([], max_entities_per_call=10) == []
 
-    def test_non_positive_limit_raises(self) -> None:
-        with pytest.raises(ValueError):
-            chunk_candidates([(1, None)], max_entities_per_call=0)
+    def test_tuple_input_returns_list_of_lists(self) -> None:
+        # Input-type tolerance: a sequence (not only a list) should work, and
+        # the declared ``list[list[...]]`` return contract must hold even
+        # when the caller hands in a tuple.
+        ordered: tuple[tuple[int, None], ...] = tuple((i, None) for i in range(3))  # type: ignore[misc]
+        chunks = chunk_candidates(ordered, max_entities_per_call=2)
+        assert chunks == [[(0, None), (1, None)], [(2, None)]]
+        assert all(isinstance(c, list) for c in chunks)
 
 
 class TestBuildChunkExcerpt:
@@ -375,6 +380,64 @@ class TestChunkedValidateRowPoolOfOne:
 
         assert facade.calls == []
         assert out[COL_VALIDATION_DECISIONS] == {"decisions": []}
+
+    def test_system_prompt_is_forwarded_to_facade(self) -> None:
+        # ``ChunkedValidationParams.system_prompt`` must reach ``facade.generate``.
+        # The recipe appends JSON task instructions before dispatch, so we assert
+        # substring containment with a distinctive sentinel rather than equality.
+        text = "Alice spoke."
+        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
+        candidates = _candidates_schema(("a", "Alice", "first_name"))
+        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+
+        facade = FakeFacade(
+            "v0",
+            response={"decisions": [{"id": "a", "decision": "keep", "proposed_label": "", "reason": "x"}]},
+        )
+        sentinel = "SYSPROMPT_SENTINEL_CHUNKED_VALIDATION_TEST"
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=10,
+            excerpt_window_chars=50,
+            prompt_template=_MINIMAL_TEMPLATE,
+            system_prompt=f"You are a validator. {sentinel}",
+        )
+
+        asyncio.run(chunked_validate_row(row, params, {"v0": facade}))
+
+        assert len(facade.calls) == 1
+        forwarded = facade.calls[0]["system_prompt"]
+        assert forwarded is not None
+        assert sentinel in forwarded
+
+    def test_system_prompt_default_none_is_forwarded_untouched(self) -> None:
+        # When the caller leaves ``system_prompt`` unset, nothing upstream of
+        # the recipe should synthesize one. Whatever the recipe produces from
+        # ``None`` is what the facade sees (today: ``None``). This test pins
+        # that we don't accidentally inject a placeholder along the way.
+        text = "Alice spoke."
+        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
+        candidates = _candidates_schema(("a", "Alice", "first_name"))
+        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+
+        facade = FakeFacade(
+            "v0",
+            response={"decisions": [{"id": "a", "decision": "keep", "proposed_label": "", "reason": "x"}]},
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=10,
+            excerpt_window_chars=50,
+            prompt_template=_MINIMAL_TEMPLATE,
+            # system_prompt intentionally omitted (default None)
+        )
+
+        asyncio.run(chunked_validate_row(row, params, {"v0": facade}))
+
+        assert len(facade.calls) == 1
+        # The recipe maps ``None`` input to ``None`` output, so the facade
+        # should receive no system prompt.
+        assert facade.calls[0]["system_prompt"] is None
 
 
 class TestChunkedValidateRowPoolOfTwoRoundRobin:

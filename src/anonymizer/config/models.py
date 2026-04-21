@@ -26,12 +26,18 @@ class DetectionModelSelection(BaseModel):
     @field_validator("entity_validator", mode="before")
     @classmethod
     def normalize_entity_validator(cls, value: Any) -> list[str]:
-        """Accept either a scalar alias or a list, return a non-empty list.
+        """Accept a scalar alias, a list of aliases, or a tuple of aliases; return a non-empty list.
 
         Normalizing at parse time keeps every downstream consumer on the
         same shape (``list[str]``) regardless of whether the user wrote
         ``entity_validator: some-alias`` or
-        ``entity_validator: [alias-a, alias-b]``.
+        ``entity_validator: [alias-a, alias-b]``. Tuples are accepted for
+        parity with Pydantic v2's default coercion for ``list[str]`` fields,
+        which lets programmatic callers pass either
+        ``DetectionModelSelection(entity_validator=["a", "b"])`` or
+        ``DetectionModelSelection(entity_validator=("a", "b"))`` without
+        caring about the concrete sequence type. Any other input type
+        raises ``TypeError``.
         """
         if isinstance(value, str):
             aliases: list[str] = [value]
