@@ -278,6 +278,52 @@ def test_run_with_colliding_output_column_renames_input_and_warns(
     assert result.trace_dataframe["bio_replaced__input"].iloc[0] == "pre-existing"
 
 
+def test_run_with_text_column_matching_static_output_preserves_both_columns(
+    stub_anonymizer_config: AnonymizerConfig,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Setting ``text_column`` to a fixed output name (e.g. ``final_entities``)
+    must not produce duplicate columns in the trace/user dataframes.
+
+    The reader renames the input column to ``final_entities__input`` so the
+    pipeline's own ``final_entities`` output (the detected entities dict) and
+    the user's original text live side-by-side as distinct columns.
+    """
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame({"final_entities": ["Alice bio text"]}).to_csv(input_csv, index=False)
+
+    entities_payload = {"entities": [{"value": "Alice", "label": "first_name"}]}
+    replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice bio text"],
+            COL_REPLACED_TEXT: ["[REDACTED] bio text"],
+            COL_TAGGED_TEXT: ["<first_name>Alice</first_name> bio text"],
+            COL_FINAL_ENTITIES: [entities_payload],
+        }
+    )
+    replace_df.attrs["original_text_column"] = "final_entities__input"
+    anonymizer, _, _, _ = _make_anonymizer(
+        replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
+    )
+
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = anonymizer.run(
+            config=stub_anonymizer_config,
+            data=AnonymizerInput(source=str(input_csv), text_column="final_entities"),
+        )
+
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+    for frame_name, frame in (("dataframe", result.dataframe), ("trace_dataframe", result.trace_dataframe)):
+        assert list(frame.columns).count("final_entities") == 1, (
+            f"{frame_name} has duplicate 'final_entities' columns: {list(frame.columns)}"
+        )
+        assert "final_entities__input" in frame.columns, f"{frame_name} missing renamed user text column"
+        assert frame["final_entities__input"].iloc[0] == "Alice bio text"
+        assert frame["final_entities"].iloc[0] == entities_payload
+
+
 def test_validate_config_passes_for_valid_replace_config(stub_anonymizer_config: AnonymizerConfig) -> None:
     anonymizer, _, _, _ = _make_anonymizer()
     anonymizer.validate_config(stub_anonymizer_config)

@@ -171,6 +171,69 @@ def test_read_input_static_output_column_collision_renames_with_warning(
     assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
 
 
+@pytest.mark.parametrize(
+    "static_column",
+    [
+        "final_entities",
+        "utility_score",
+        "leakage_mass",
+        "weighted_leakage_rate",
+        "any_high_leaked",
+        "needs_human_review",
+    ],
+)
+def test_read_input_text_column_equal_to_static_output_renames_with_warning(
+    tmp_path: Path, static_column: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Selecting a text column whose name matches a fixed output column is treated
+    like any other collision: the input column is renamed with the ``__input``
+    suffix and ``original_text_column`` reflects the renamed identifier so the
+    end-of-pipeline rename does not clash with the pipeline's own output column.
+    """
+    inp = _write_input(
+        pd.DataFrame({static_column: ["hello"]}),
+        tmp_path,
+        text_column=static_column,
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert COL_TEXT in result.columns
+    assert static_column not in result.columns
+    renamed = f"{static_column}__input"
+    assert result.attrs["original_text_column"] == renamed
+    assert list(result.columns).count(COL_TEXT) == 1
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+
+def test_read_input_text_column_is_static_plus_other_static_collision(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A static-name text column coexisting with other static collisions: each
+    input column gets its own ``__input`` rename, independent of whether it is
+    the selected text column.
+    """
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "final_entities": ["hello"],
+                "utility_score": [0.9],
+                "needs_human_review": [False],
+            }
+        ),
+        tmp_path,
+        text_column="final_entities",
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert result.attrs["original_text_column"] == "final_entities__input"
+    assert {"utility_score__input", "needs_human_review__input"}.issubset(result.columns)
+    assert "final_entities" not in result.columns
+    assert "utility_score" not in result.columns
+    assert "needs_human_review" not in result.columns
+    assert result["utility_score__input"].iloc[0] == 0.9
+    assert bool(result["needs_human_review__input"].iloc[0]) is False
+
+
 def test_read_input_output_column_collision_renames_all(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     inp = _write_input(
         pd.DataFrame(
