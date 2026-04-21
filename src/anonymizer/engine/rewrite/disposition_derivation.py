@@ -217,13 +217,21 @@ def reconstruct_full_disposition(
             lbl = ctx["entity_label"]
             val = ctx["entity_value"]
         else:
-            src = item.source or ""
+            # Orphan path: id has no context entry. The LLM echoes are the
+            # only source of truth, but they may be drifted (gemma4-e4b
+            # observed emitting prompt section names in source). Validate
+            # the source enum and skip the item if both source and labels
+            # are unusable — a skipped orphan is better than a ValidationError
+            # that drops the whole record.
+            echoed_src = (item.source or "").strip().lower()
+            src = echoed_src if echoed_src in {"tagged", "latent"} else ""
             lbl = item.entity_label or ""
             val = item.entity_value or ""
 
         if not src or not lbl or not val:
             logger.warning(
-                "reconstruct_full_disposition: orphan simple item id=%s (missing source/label/value, out of context range); skipping",
+                "reconstruct_full_disposition: orphan simple item id=%s "
+                "(missing or drifted source/label/value, out of context range); skipping",
                 item.id,
             )
             continue
