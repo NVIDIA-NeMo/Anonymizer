@@ -1681,7 +1681,7 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              CliOpts(replace=None, rewrite=False, detect=Detect(), model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False, format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, protect=None, preserve=None, risk_tolerance='low', max_repair_iterations=2, instructions=None, _REPLACE_ONLY_FLAGS=('format_template',), _REWRITE_ONLY_FLAGS=('protect', 'preserve'))
+            <td><code><a class="autorefs autorefs-internal" title="              CliOpts(replace=None, rewrite=False, detect=Detect(), model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False, format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, protect=None, preserve=None, risk_tolerance='low', max_repair_iterations=3, instructions=None)
 
   
       dataclass
@@ -1761,7 +1761,7 @@
 
 
 <h3 id="anonymizer.interface.cli.main.CliOpts" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">CliOpts(replace=None, rewrite=False, detect=Detect(), model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False, format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, protect=None, preserve=None, risk_tolerance='low', max_repair_iterations=2, instructions=None, _REPLACE_ONLY_FLAGS=('format_template',), _REWRITE_ONLY_FLAGS=('protect', 'preserve'))</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">CliOpts(replace=None, rewrite=False, detect=Detect(), model_configs=None, model_providers=None, artifact_path=None, verbose=False, debug=False, format_template=None, normalize_label=True, algorithm='sha256', digest_length=12, protect=None, preserve=None, risk_tolerance='low', max_repair_iterations=3, instructions=None)</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -1838,7 +1838,12 @@ def run(
     *,
     data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
     opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
-    output: str | None = None,
+    output: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            help="Output file path (.csv or .parquet). Defaults to source stem + _anonymized or _rewritten."
+        ),
+    ] = None,
 ) -&gt; None:
     """Run the full anonymization pipeline (detection + replacement or rewrite)."""
     if output is None:
