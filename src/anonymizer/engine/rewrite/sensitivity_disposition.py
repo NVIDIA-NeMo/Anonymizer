@@ -98,26 +98,31 @@ Re-identification is successful if the adversary can reasonably narrow identity 
 </threat_model>
 
 <entity_categories>
-DIRECT IDENTIFIERS (high-risk, standalone)
+category = "direct_identifier" (high-risk, standalone)
 - Uniquely identify on their own: full names, exact addresses, SSNs, email, phone.
 - Default action: REPLACE with plausible synthetic alternative.
 - Use abstraction/removal only if replacement distorts meaning.
 
-QUASI-IDENTIFIERS (context-dependent)
+category = "quasi_identifier" (context-dependent)
 - Not unique alone, but identifying in combination: age, city, occupation, dates, institutions.
 - NOT automatically sensitive: modify ONLY if combination increases re-identification risk.
 - When modification needed: prefer generalization over removal.
 
-SENSITIVE ATTRIBUTES (harmful to disclose)
+category = "sensitive_attribute" (harmful to disclose)
 - Sensitive because of content, not identifiability: health conditions, sexual orientation,
   mental health, substance use, legal issues, political/religious views.
 - Protect when disclosure itself is harmful, even if identifiability risk is low.
 - Can ALSO function as quasi-identifiers if distinctive in context.
 
-LATENT IDENTIFIERS (inferred)
+category = "latent_identifier" (inferred)
 - Can be deduced from context even if not explicitly stated.
 - Mitigation may require: paraphrasing context, removing supporting details, generalizing facts.
 - Usually cannot use "replace" since value isn't explicitly in text.
+
+IMPORTANT: the `category` field MUST contain one of exactly these four strings:
+"direct_identifier" | "quasi_identifier" | "sensitive_attribute" | "latent_identifier".
+Do NOT put the entity label (e.g. "last_name", "date_of_birth") in the `category` field —
+the entity label goes in `entity_label`.
 </entity_categories>
 
 <protection_principles>
@@ -153,6 +158,25 @@ COVERAGE REQUIREMENTS:
 QUALITY REQUIREMENTS:
 - protection_reason must be specific to this document (not generic boilerplate).
 - combined_risk_level must consider other entities being retained.
+
+ALLOWED ENUM VALUES (use these exact strings, nothing else):
+- source: "tagged" | "latent"
+- category: "direct_identifier" | "quasi_identifier" | "sensitive_attribute" | "latent_identifier"
+- sensitivity: "low" | "medium" | "high"  (how sensitive this entity is ON ITS OWN)
+- protection_method_suggestion: "replace" | "generalize" | "remove" | "suppress_inference" | "leave_as_is"
+- combined_risk_level: "low" | "medium" | "high"  (risk when this entity is aggregated with OTHER retained entities)
+
+DISTINGUISHING sensitivity from combined_risk_level:
+- sensitivity captures inherent harm of disclosing this one value.
+- combined_risk_level captures how identifying this value BECOMES when combined with others.
+- Example: age=47 has sensitivity="low" on its own, but combined_risk_level="medium" if
+  "retired engineer" + "Seattle" + "47" together narrow the population to a small set.
+
+TYPE RULES (common small-model mistakes to avoid):
+- All string fields must be quoted JSON strings. Do NOT emit bare null or unquoted numbers.
+  A missing optional string should be "" (empty string), never null.
+- Numeric-looking values like postcodes ("98101") MUST be quoted strings, not integers.
+- Booleans must be true/false (lowercase), not "true"/"false" as strings.
 </output_requirements>"""
     return substitute_placeholders(
         prompt,

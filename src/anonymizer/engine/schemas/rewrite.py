@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -128,6 +128,44 @@ class EntityDispositionSchema(BaseModel):
     """
 
     model_config = ConfigDict(use_enum_values=True)
+
+    # Coerce small-model output before pydantic's strict checks run:
+    #   - default `combined_risk_level` to `sensitivity` when the model omits it
+    #     (common Qwen 3.5 4B failure mode).
+    #   - normalize `category` display-label drift (e.g. "DIRECT IDENTIFIERS"
+    #     or "last_name") into the expected enum string where possible
+    #     (common Gemma-family failure mode).
+    #   - coerce unquoted ints on string fields (Gemma 4 26B emits postcodes
+    #     like 98101 as bare integers).
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_small_model_output(cls, data):
+        if not isinstance(data, dict):
+            return data
+        # Default combined_risk_level from sensitivity if missing.
+        if "combined_risk_level" not in data and "sensitivity" in data:
+            data["combined_risk_level"] = data["sensitivity"]
+        # Coerce int → str on string fields.
+        for k in ("entity_label", "entity_value", "protection_reason"):
+            v = data.get(k)
+            if isinstance(v, (int, float)):
+                data[k] = str(v)
+            elif v is None:
+                data[k] = ""
+        # Normalize `category` drift: display-label → enum, plural → singular.
+        cat = data.get("category")
+        if isinstance(cat, str):
+            normalized = cat.strip().lower().replace("-", "_").replace(" ", "_")
+            allowed = {"direct_identifier", "quasi_identifier",
+                       "sensitive_attribute", "latent_identifier"}
+            if normalized in allowed:
+                data["category"] = normalized
+            elif normalized.endswith("s") and normalized[:-1] in allowed:
+                data["category"] = normalized[:-1]
+            elif normalized.endswith("_identifiers"):
+                data["category"] = normalized[:-1]   # "direct_identifiers" -> "direct_identifier"
+            # If still not in allowed set, pydantic will raise a clean enum error below.
+        return data
 
     id: int = Field(ge=1)
     source: EntitySource

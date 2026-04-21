@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from anonymizer.engine.schemas.shared import _parse_raw_wrapper
 
@@ -112,6 +112,18 @@ class ValidationDecisionSchema(BaseModel):
     )
     reason: str | None = None
 
+    # Small models (esp. Gemma-family on Ollama) frequently emit `null` where the schema
+    # expects "" for optional strings, or unquoted ints (e.g. postcodes) where it expects
+    # string values. Coerce those into the intended form rather than dropping whole rows.
+    @field_validator("value", "label", "proposed_label", mode="before")
+    @classmethod
+    def _coerce_to_string(cls, v):
+        if v is None:
+            return ""
+        if isinstance(v, (int, float)):
+            return str(v)
+        return v
+
 
 class ValidationDecisionsSchema(BaseModel):
     decisions: list[ValidationDecisionSchema] = Field(default_factory=list)
@@ -157,7 +169,7 @@ class LatentEntitySchema(BaseModel):
         description="One or two short quotes from the text that support this inference",
     )
     rationale: str = Field(
-        min_length=20,
+        min_length=10,
         max_length=150,
         description="One sentence explaining the inference without adding new facts",
     )
