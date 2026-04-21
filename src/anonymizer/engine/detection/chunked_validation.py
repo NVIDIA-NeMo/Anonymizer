@@ -160,10 +160,10 @@ def chunk_candidates(
 ) -> list[list[tuple[Any, EntitySpan]]]:
     """Partition the ordered (candidate, seed) pairs into chunks of at most ``max_entities_per_call``.
 
-    ``max_entities_per_call`` is assumed positive. It is validated upstream by
-    ``ChunkedValidationParams`` (``Field(gt=0)``) and by
-    ``AnonymizerDetectConfig.validation_max_entities_per_call`` (``gt=0``), so
-    we do not re-check it here.
+    Assumes ``max_entities_per_call > 0``; positivity is enforced upstream at
+    ``ChunkedValidationParams.max_entities_per_call`` and
+    ``AnonymizerDetectConfig.validation_max_entities_per_call`` (both
+    ``Field(gt=0)``).
     """
     return [list(ordered[i : i + max_entities_per_call]) for i in range(0, len(ordered), max_entities_per_call)]
 
@@ -321,11 +321,11 @@ async def _dispatch_chunk(
     We use ``PydanticResponseRecipe`` so the facade appends JSON task
     instructions and parses the response into ``RawValidationDecisionsSchema``.
 
-    Single-alias pools get no additional attempts — the loop runs exactly
-    once and re-raises the original exception, matching the pre-failover
-    contract. Multi-alias pools get ``len(pool)`` total attempts. If every
-    pool member raises, the *last* exception propagates so DataDesigner
-    records the row as a ``FailedRecord`` via ``NddAdapter._detect_missing_records``.
+    Single-alias pools run the loop exactly once and re-raise the original
+    exception (no alternate alias to try). Multi-alias pools get
+    ``len(pool)`` total attempts. If every pool member raises, the *last*
+    exception propagates so DataDesigner records the row as a
+    ``FailedRecord`` via ``NddAdapter._detect_missing_records``.
 
     Each failover attempt is logged at WARNING so operators can correlate
     degraded pool members with run-level failure-rate spikes.
@@ -374,15 +374,14 @@ async def _dispatch_chunk(
                     exc,
                 )
 
-    # Defensive: ``facades`` is non-empty by caller contract
-    # (``chunked_validate_row`` builds it from the configured pool, which the
-    # config validator requires to be non-empty). After a non-empty pool fully
-    # exhausts, ``last_exc`` is guaranteed set and we re-raise it. If we ever
-    # reach this point with ``last_exc is None``, the precondition was
-    # violated — raise a loud ``RuntimeError`` rather than ``raise None``
-    # (which would produce ``TypeError: exceptions must derive from
-    # BaseException``). Using a real check instead of ``assert`` so the guard
-    # survives ``python -O``.
+    # ``facades`` is non-empty by caller contract: ``chunked_validate_row``
+    # builds it from the configured pool, and the config validator requires
+    # a non-empty pool. After the loop, ``last_exc`` is therefore set and
+    # we re-raise it. The ``None`` branch exists only to give a loud,
+    # named error if that precondition is ever violated (rather than
+    # ``raise None``, which would surface as ``TypeError: exceptions must
+    # derive from BaseException``) and to keep the guard live under
+    # ``python -O``, which strips ``assert``.
     if last_exc is None:
         raise RuntimeError(
             "_dispatch_chunk was called with an empty facades list; "

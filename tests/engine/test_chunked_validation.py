@@ -411,10 +411,10 @@ class TestChunkedValidateRowPoolOfOne:
         assert sentinel in forwarded
 
     def test_system_prompt_default_none_is_forwarded_untouched(self) -> None:
-        # When the caller leaves ``system_prompt`` unset, nothing upstream of
-        # the recipe should synthesize one. Whatever the recipe produces from
-        # ``None`` is what the facade sees (today: ``None``). This test pins
-        # that we don't accidentally inject a placeholder along the way.
+        # The recipe maps ``None`` input to ``None`` output; this test pins
+        # that no intermediate layer replaces it with a placeholder string
+        # when ``ChunkedValidationParams.system_prompt`` is left at its
+        # default.
         text = "Alice spoke."
         spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
         candidates = _candidates_schema(("a", "Alice", "first_name"))
