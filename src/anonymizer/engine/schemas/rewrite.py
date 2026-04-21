@@ -230,13 +230,16 @@ class EntityDispositionSchema(BaseModel):
         # Default combined_risk_level from sensitivity if missing.
         if "combined_risk_level" not in data and "sensitivity" in data:
             data["combined_risk_level"] = data["sensitivity"]
-        # Coerce int → str on string fields.
+        # Coerce int → str on string fields; drop None so pydantic defaults apply
+        # (e.g. protection_reason default kicks in when the model emits null).
         for k in ("entity_label", "entity_value", "protection_reason"):
-            v = data.get(k)
+            if k not in data:
+                continue
+            v = data[k]
             if isinstance(v, (int, float)):
                 data[k] = str(v)
             elif v is None:
-                data[k] = ""
+                data.pop(k)
         # Normalize `category` drift.
         # (1) display-label → enum, plural → singular;
         # (2) when the model confuses fields and puts the entity_label (e.g.
@@ -305,7 +308,16 @@ class EntityDispositionSchema(BaseModel):
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
     needs_protection: bool
-    protection_reason: str = Field(min_length=10, max_length=500)
+    # Default makes this optional in the emitted JSON Schema so DD’s
+    # jsonschema.validate() does not drop records when small models omit the
+    # field (observed on gemma4-e2b, oncology bench note, 2026-04). A generic
+    # placeholder is strictly better than dropping the row — the record still
+    # flows downstream and the rewrite + judge passes can still evaluate it.
+    protection_reason: str = Field(
+        default="auto: model omitted protection_reason",
+        min_length=10,
+        max_length=500,
+    )
     protection_method_suggestion: ProtectionMethod
     combined_risk_level: CombinedRiskLevel
 
