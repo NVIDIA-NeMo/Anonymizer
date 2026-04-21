@@ -174,6 +174,16 @@ class LatentEntitySchema(BaseModel):
         description="One sentence explaining the inference without adding new facts",
     )
 
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def _cap_rationale(cls, v: object) -> object:
+        """Truncate overlong rationales so verbose models (e.g. Nemotron) do not
+        fail the maxLength=150 constraint on dense notes. Observed on the
+        oncology bench note: a 260-char rationale dropped the whole record."""
+        if isinstance(v, str) and len(v) > 150:
+            return v[:147].rstrip() + "..."
+        return v
+
 
 class LatentEntitiesSchema(BaseModel):
     latent_entities: list[LatentEntitySchema] = Field(default_factory=list)

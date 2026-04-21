@@ -254,15 +254,37 @@ class EntityDispositionSchema(BaseModel):
             elif normalized.endswith("_identifiers"):
                 data["category"] = normalized[:-1]
             else:
-                # Entity-label confusion: model wrote an entity_label value in
-                # the category slot. Map via a best-effort label → category table.
-                mapped = _ENTITY_LABEL_TO_CATEGORY.get(normalized)
-                if mapped is not None:
-                    data["category"] = mapped
-                elif data.get("entity_label") == cat:
-                    # Model definitely confused fields; conservative fallback.
-                    data["category"] = "quasi_identifier"
-                # Otherwise leave as-is; pydantic will raise a clear enum error.
+                # Merged-enum hallucination: e.g. "latent_sensitive_attribute"
+                # (observed from Nemotron on the oncology bench note). The model
+                # splices two legitimate EntityCategory values. Resolve via
+                # substring match; order = strongest protection wins so that
+                # "latent_sensitive_attribute" maps to sensitive_attribute
+                # (harm dimension) rather than latent_identifier (inference).
+                # The `source` field (tagged|latent) preserves the latent
+                # provenance separately.
+                merged = None
+                for sub, target in (
+                    ("direct", "direct_identifier"),
+                    ("sensitive", "sensitive_attribute"),
+                    ("latent", "latent_identifier"),
+                    ("quasi", "quasi_identifier"),
+                ):
+                    if sub in normalized:
+                        merged = target
+                        break
+                if merged is not None:
+                    data["category"] = merged
+                else:
+                    # Entity-label confusion: model wrote an entity_label
+                    # value in the category slot. Map via a best-effort
+                    # label → category table.
+                    mapped = _ENTITY_LABEL_TO_CATEGORY.get(normalized)
+                    if mapped is not None:
+                        data["category"] = mapped
+                    elif data.get("entity_label") == cat:
+                        # Model definitely confused fields; conservative fallback.
+                        data["category"] = "quasi_identifier"
+                    # Otherwise leave as-is; pydantic raises a clear enum error.
         return data
 
     id: int = Field(ge=1)
