@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any, Callable
 
 import pytest
@@ -36,7 +37,7 @@ from anonymizer.engine.detection.chunked_validation import (
     order_candidates_by_position,
     render_chunk_prompt,
 )
-from anonymizer.engine.detection.postprocess import EntitySpan, TagNotation
+from anonymizer.engine.detection.postprocess import EntitySpan, TagNotation, apply_validation_decisions
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     RawValidationDecisionsSchema,
@@ -541,3 +542,168 @@ class TestMakeChunkedValidationGenerator:
         )
         out = asyncio.run(fn(row, params, {"v0": facade}))
         assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
+
+
+# ---------------------------------------------------------------------------
+# Behavioral regression: single-chunk vs multi-chunk parity (pool-of-one).
+# ---------------------------------------------------------------------------
+
+
+def _selective_facade(alias: str, decisions_by_id: dict[str, dict[str, Any]]) -> FakeFacade:
+    """Return a facade whose response depends on the ids embedded in each chunk's prompt.
+
+    The prompt renders ``_validation_skeleton`` as Python ``str(dict)``; we
+    parse ``'id': 'X'`` tokens back out to select which decisions to return.
+    This makes the LLM behaviour a pure function of the *candidate ids in
+    the chunk*, not of chunk shape or sequencing -- which is exactly the
+    assumption a real deterministic validator would satisfy when re-run.
+    """
+
+    def respond(prompt: str) -> dict[str, Any]:
+        ids = re.findall(r"'id':\s*'([^']+)'", prompt)
+        return {"decisions": [decisions_by_id[i] for i in ids if i in decisions_by_id]}
+
+    return FakeFacade(alias, response=respond)
+
+
+def _summarize(validated: list[EntitySpan]) -> list[tuple[str, str]]:
+    return [(e.entity_id, e.label) for e in validated]
+
+
+def _tally(before: list[EntitySpan], after: list[EntitySpan], decisions: dict) -> dict[str, int]:
+    """Count keep/reclass/drop/untouched relative to the decisions the LLM returned."""
+    before_labels = {e.entity_id: e.label for e in before}
+    after_ids = {e.entity_id for e in after}
+    decided_ids: dict[str, dict[str, str]] = {d["id"]: d for d in decisions["decisions"]}
+    counts = {"keep": 0, "reclass": 0, "drop": 0, "untouched": 0}
+    for entity_id, original_label in before_labels.items():
+        decision = decided_ids.get(entity_id)
+        if decision is None:
+            counts["untouched"] += 1
+            continue
+        verdict = decision.get("decision")
+        if verdict == "drop":
+            assert entity_id not in after_ids, f"drop decision for {entity_id} did not remove it"
+            counts["drop"] += 1
+        elif verdict == "reclass":
+            counts["reclass"] += 1
+        elif verdict == "keep":
+            counts["keep"] += 1
+    return counts
+
+
+def _normalize_decisions(doc: dict) -> list[tuple[str, str, str]]:
+    return sorted(
+        (d["id"], d.get("decision") or "", d.get("proposed_label") or "") for d in doc["decisions"]
+    )
+
+
+class TestChunkedValidationRegression:
+    """Partitioning must not change outcomes when the LLM is deterministic per candidate.
+
+    Guards the most important property we promised when we switched from a
+    single ``LLMStructuredColumnConfig`` to chunked ``CustomColumnConfig``
+    dispatch: given the same set of per-id decisions, chunk sizing is an
+    implementation detail of *how* we talk to the validator, not *what*
+    entities survive validation.
+    """
+
+    SCENARIO_TEXT = (
+        # Positions referenced below are into this exact string.
+        "Alice met Bob in Chicago at Acme HQ; Doe introduced Eve to the team later."
+        # 0    5    10   15  20      28    34       43       53  56
+    )
+
+    @pytest.fixture
+    def scenario(self) -> tuple[list[EntitySpan], ValidationCandidatesSchema, dict[str, dict[str, Any]]]:
+        spans = [
+            _entity_span("a", "Alice", "first_name", 0, 5),
+            _entity_span("b", "Bob", "first_name", 10, 13),
+            _entity_span("c", "Chicago", "city", 17, 24),
+            _entity_span("d", "Acme", "organization", 28, 32),
+            _entity_span("e", "Doe", "last_name", 37, 40),
+            _entity_span("f", "Eve", "first_name", 54, 57),
+        ]
+        candidates = _candidates_schema(
+            ("a", "Alice", "first_name"),
+            ("b", "Bob", "first_name"),
+            ("c", "Chicago", "city"),
+            ("d", "Acme", "organization"),
+            ("e", "Doe", "last_name"),
+            ("f", "Eve", "first_name"),
+        )
+        # Deterministic per-id decisions covering all branches.
+        # ``f`` intentionally has no decision: downstream must keep it as-is,
+        # regardless of whether it lands in its own chunk or shares one.
+        decisions_by_id: dict[str, dict[str, Any]] = {
+            "a": {"id": "a", "decision": "keep"},
+            "b": {"id": "b", "decision": "drop"},
+            "c": {"id": "c", "decision": "reclass", "proposed_label": "location"},
+            "d": {"id": "d", "decision": "keep"},
+            "e": {"id": "e", "decision": "reclass", "proposed_label": "surname"},
+        }
+        return spans, candidates, decisions_by_id
+
+    def _run(
+        self,
+        *,
+        spans: list[EntitySpan],
+        candidates: ValidationCandidatesSchema,
+        decisions_by_id: dict[str, dict[str, Any]],
+        max_per_call: int,
+    ) -> tuple[dict, list[EntitySpan], int]:
+        row = _build_row(text=self.SCENARIO_TEXT, seed_entities=spans, candidates=candidates)
+        facade = _selective_facade("solo", decisions_by_id)
+        params = ChunkedValidationParams(
+            pool=["solo"],
+            max_entities_per_call=max_per_call,
+            excerpt_window_chars=200,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+        out = asyncio.run(chunked_validate_row(row, params, {"solo": facade}))
+        decisions_doc = out[COL_VALIDATION_DECISIONS]
+        validated = apply_validation_decisions(spans, decisions_doc)
+        return decisions_doc, validated, len(facade.calls)
+
+    def test_multi_chunk_matches_single_chunk(self, scenario) -> None:
+        spans, candidates, decisions_by_id = scenario
+
+        # 1 chunk -- stands in for the "legacy single-call" path: all
+        # candidates fit into one validator call, no partitioning.
+        single_doc, single_validated, single_calls = self._run(
+            spans=spans, candidates=candidates, decisions_by_id=decisions_by_id, max_per_call=10
+        )
+        # 3 chunks of size 2 -- pool-of-one with real partitioning.
+        multi_doc, multi_validated, multi_calls = self._run(
+            spans=spans, candidates=candidates, decisions_by_id=decisions_by_id, max_per_call=2
+        )
+
+        # Sanity: the two configurations actually differ in *how* they call
+        # the validator. Without this the test is trivially satisfiable.
+        assert single_calls == 1
+        assert multi_calls == 3
+
+        # Decisions merged back together are identical (order-insensitive).
+        assert _normalize_decisions(single_doc) == _normalize_decisions(multi_doc)
+
+        # Final per-entity outcomes (surviving ids + their post-validation
+        # labels) are identical. This is the ``COL_DETECTED_ENTITIES`` parity
+        # claim: downstream stages cannot tell the two runs apart.
+        assert _summarize(single_validated) == _summarize(multi_validated)
+
+        # Keep/reclass/drop/untouched tallies match the fixed decision set.
+        expected_tally = {"keep": 2, "reclass": 2, "drop": 1, "untouched": 1}
+        assert _tally(spans, single_validated, single_doc) == expected_tally
+        assert _tally(spans, multi_validated, multi_doc) == expected_tally
+
+        # Concrete post-validation outcome, pinned so a regression in
+        # ``apply_validation_decisions`` or chunk merging is caught
+        # precisely, not just "something changed".
+        assert _summarize(multi_validated) == [
+            ("a", "first_name"),  # keep
+            ("c", "location"),  # reclass
+            ("d", "organization"),  # keep
+            ("e", "surname"),  # reclass
+            ("f", "first_name"),  # untouched (no decision)
+            # "b" dropped
+        ]

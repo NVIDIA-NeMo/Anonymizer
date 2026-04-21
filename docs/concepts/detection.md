@@ -45,7 +45,27 @@ config = AnonymizerConfig(
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
+| `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
+| `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
 
+---
+
+## Chunked validation
+
+When a row yields many entity candidates, validating them in a single LLM call can exceed the model's context window or the provider's rate limits (the tokens-per-minute or requests-per-minute quota most hosted models enforce). Anonymizer automatically splits validation for such rows: candidates are grouped in position order into chunks of at most `validation_max_entities_per_call`, and each chunk is validated independently with its own bounded text excerpt (`validation_excerpt_window_chars` before and after the chunk's span). Decisions are merged back into a single per-row set.
+
+The chunked path is always on; if a row has fewer candidates than the limit, it runs as a single call and is exactly equivalent to the unchunked behavior. Tuning guidance:
+
+- **Raise `validation_max_entities_per_call`** if your validator has a large context window and you want fewer, larger calls.
+- **Lower it** if you hit provider rate limits or want more uniform per-call latency.
+- **Raise `validation_excerpt_window_chars`** when short windows hide the context needed to disambiguate entities (e.g., `"John"` as first name vs. last name depends on surrounding text).
+- **Lower it** to reduce per-chunk prompt tokens, at the risk of lower validation quality on context-sensitive labels.
+
+### Validator pools
+
+`entity_validator` can be a single alias (the default) or a list of aliases — a **pool**. When multiple aliases are configured, each chunk in a row is dispatched to the next alias in round-robin order, which lets you work around per-alias rate limits by spreading requests across equivalent endpoints.
+
+See [Validator pools](models.md#validator-pools) for the YAML syntax and caveats.
 
 
 ## Entity labels
