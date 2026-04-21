@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from typing import Any
+
+from data_designer.config import custom_column_generator
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -14,12 +17,14 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
+    COL_SIMPLE_DISPOSITION,
     COL_TAGGED_TEXT,
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.schemas import SensitivityDispositionSchema
+from anonymizer.engine.rewrite.disposition_derivation import reconstruct_full_disposition
+from anonymizer.engine.schemas import SimpleDispositionResult
 
 
 def _get_sensitivity_disposition_prompt(privacy_goal: PrivacyGoal, data_summary: str | None = None) -> str:
@@ -29,14 +34,20 @@ def _get_sensitivity_disposition_prompt(privacy_goal: PrivacyGoal, data_summary:
         f"\nDataset description: {data_summary.strip()}" if data_summary and data_summary.strip() else ""
     )
 
+    # Prompt opening kept stable so tools/bench_harness.py::ROLE_PROMPT_PREFIXES
+    # continues to classify this LLM call as disposition_analyzer in tap logs.
     prompt = """You are responsible for creating a unified sensitivity disposition for privacy-preserving text rewriting.
 
-Your task is to analyze ALL entities in the text and produce a structured protection plan that specifies:
-- Which entities need protection.
-- Why they need (or don't need) protection.
-- How they should be protected.
+Your task is to analyze ALL entities in the text and classify each one on two axes:
+  (1) category — what KIND of privacy risk the entity poses.
+  (2) sensitivity — how much harm disclosing this value would cause ON ITS OWN.
+And pick:
+  (3) protection_method_suggestion — what should be done with it.
+Optionally:
+  (4) protection_reason — a short, document-specific rationale (we will template one if you omit this).
 
-Focus on decisions grounded in the specific document and threat model. Do NOT rewrite the text itself.
+Other fields (needs_protection, combined risk, etc.) are derived server-side —
+do not emit them. Focus your budget on the four fields above.
 
 <privacy_goal>
 <<PRIVACY_GOAL>>
@@ -118,11 +129,6 @@ category = "latent_identifier" (inferred)
 - Can be deduced from context even if not explicitly stated.
 - Mitigation may require: paraphrasing context, removing supporting details, generalizing facts.
 - Usually cannot use "replace" since value isn't explicitly in text.
-
-IMPORTANT: the `category` field MUST contain one of exactly these four strings:
-"direct_identifier" | "quasi_identifier" | "sensitive_attribute" | "latent_identifier".
-Do NOT put the entity label (e.g. "last_name", "date_of_birth") in the `category` field —
-the entity label goes in `entity_label`.
 </entity_categories>
 
 <protection_principles>
@@ -142,34 +148,23 @@ the entity label goes in `entity_label`.
 5. DOMAIN-SPECIFIC PRESERVATION: Apply the domain guidance above—preserve what matters for utility.
 </protection_principles>
 
-<output_requirements>
-CONSISTENCY RULES:
-- If needs_protection=false → protection_method_suggestion MUST be "leave_as_is".
-- If needs_protection=true → protection_method_suggestion MUST NOT be "leave_as_is".
-- For latent entities, "replace" is rarely appropriate (value not in text).
-- For source="tagged": entity_value MUST match tag exactly.
-- For source="latent": entity_label/value MUST match the provided latent entity.
+<output_format>
+Produce one list entry per unique entity from <input_detected_entities> plus one per <input_latent_entities>.
+IDs sequential from 1. Each item has these fields:
 
-COVERAGE REQUIREMENTS:
-- Include ONE entry for EVERY unique listed entity
-- Include ONE entry for EVERY provided latent entity.
-- IDs must be sequential starting from 1.
+  id:                             integer, sequential from 1
+  category:                       one of "direct_identifier" | "quasi_identifier" | "sensitive_attribute" | "latent_identifier"
+  sensitivity:                    one of "low" | "medium" | "high"
+  protection_method_suggestion:   one of "replace" | "generalize" | "remove" | "suppress_inference" | "leave_as_is"
+  protection_reason:              (optional) short, document-specific rationale — omit if not useful
 
-QUALITY REQUIREMENTS:
-- protection_reason must be specific to this document (not generic boilerplate).
-
-ALLOWED ENUM VALUES (use these exact strings, nothing else):
-- source: "tagged" | "latent"
-- category: "direct_identifier" | "quasi_identifier" | "sensitive_attribute" | "latent_identifier"
-- sensitivity: "low" | "medium" | "high"  (how sensitive this entity is ON ITS OWN)
-- protection_method_suggestion: "replace" | "generalize" | "remove" | "suppress_inference" | "leave_as_is"
-
-TYPE RULES (common small-model mistakes to avoid):
-- All string fields must be quoted JSON strings. Do NOT emit bare null or unquoted numbers.
-  A missing optional string should be "" (empty string), never null.
-- Numeric-looking values like postcodes ("98101") MUST be quoted strings, not integers.
-- Booleans must be true/false (lowercase), not "true"/"false" as strings.
-</output_requirements>"""
+Guidance:
+- For latent entities, "replace" is rarely appropriate (the value is not literally in the text).
+- When protection_method_suggestion is "leave_as_is", the server records needs_protection=false;
+  for any other method, needs_protection=true. Do not emit needs_protection yourself.
+- You MAY also echo entity_label / entity_value / source to help the server pair ids — but if
+  you do, match the input exactly. These are not required.
+</output_format>"""
     return substitute_placeholders(
         prompt,
         {
@@ -182,6 +177,45 @@ TYPE RULES (common small-model mistakes to avoid):
             "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Reconstruction column
+# ---------------------------------------------------------------------------
+
+
+@custom_column_generator(
+    required_columns=[COL_SIMPLE_DISPOSITION, COL_ENTITIES_BY_VALUE, COL_LATENT_ENTITIES]
+)
+def _reconstruct_full_disposition_column(row: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the strict EntityDispositionSchema list from the loose LLM
+    output in COL_SIMPLE_DISPOSITION plus the entity context columns.
+    Writes COL_SENSITIVITY_DISPOSITION so every downstream consumer reads
+    the same column name / shape as before this refactor.
+    """
+    simple_raw = row.get(COL_SIMPLE_DISPOSITION, {}) or {}
+    # DD may deliver either a dict or the already-parsed pydantic model as
+    # a dict; wrap defensively.
+    if isinstance(simple_raw, SimpleDispositionResult):
+        simple = simple_raw
+    else:
+        simple = SimpleDispositionResult.model_validate(simple_raw)
+
+    ebv = row.get(COL_ENTITIES_BY_VALUE) or {}
+    if isinstance(ebv, dict):
+        tagged_ctx = ebv.get("entities_by_value") or []
+    else:
+        tagged_ctx = ebv or []
+
+    lat = row.get(COL_LATENT_ENTITIES) or {}
+    if isinstance(lat, dict):
+        latent_ctx = lat.get("latent_entities") or []
+    else:
+        latent_ctx = lat or []
+
+    full = reconstruct_full_disposition(simple, tagged_ctx, latent_ctx)
+    row[COL_SENSITIVITY_DISPOSITION] = full.model_dump()
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -199,10 +233,22 @@ class SensitivityDispositionWorkflow:
     ) -> list[ColumnConfigT]:
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
         return [
+            # Step 1 — the LLM call with the SHRUNKEN wire contract. JSON
+            # Schema emitted to the model has no enum / minLength / strict
+            # required, so DataDesigner's jsonschema.validate() cannot
+            # reject small-model drift before our before-validator runs.
             LLMStructuredColumnConfig(
-                name=COL_SENSITIVITY_DISPOSITION,
+                name=COL_SIMPLE_DISPOSITION,
                 prompt=_get_sensitivity_disposition_prompt(privacy_goal, data_summary),
                 model_alias=disposition_alias,
-                output_format=SensitivityDispositionSchema,
+                output_format=SimpleDispositionResult,
+            ),
+            # Step 2 — pure-python reconstruction into the strict schema
+            # that every downstream consumer already reads. No LLM call;
+            # deterministic; handles id pairing, needs_protection
+            # derivation, and protection_reason templating.
+            CustomColumnConfig(
+                name=COL_SENSITIVITY_DISPOSITION,
+                generator_function=_reconstruct_full_disposition_column,
             ),
         ]

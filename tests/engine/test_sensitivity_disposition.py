@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -12,6 +12,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
+    COL_SIMPLE_DISPOSITION,
     COL_TAGGED_TEXT,
     _jinja,
 )
@@ -29,14 +30,21 @@ _STUB_PRIVACY_GOAL = PrivacyGoal(
 def test_columns_uses_disposition_analyzer_alias(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
+    """Workflow now returns two columns: an LLM column with the loose
+    wire-contract schema writing COL_SIMPLE_DISPOSITION, and a pure-python
+    reconstruction column writing COL_SENSITIVITY_DISPOSITION."""
     cols = SensitivityDispositionWorkflow().columns(
         selected_models=stub_rewrite_model_selection,
         privacy_goal=_STUB_PRIVACY_GOAL,
     )
-    assert len(cols) == 1
+    assert len(cols) == 2
+    # Step 1: LLM call with the simple (loose) output format.
     assert isinstance(cols[0], LLMStructuredColumnConfig)
     assert cols[0].model_alias == stub_rewrite_model_selection.disposition_analyzer
-    assert cols[0].name == COL_SENSITIVITY_DISPOSITION
+    assert cols[0].name == COL_SIMPLE_DISPOSITION
+    # Step 2: deterministic server-side reconstruction into the strict schema.
+    assert isinstance(cols[1], CustomColumnConfig)
+    assert cols[1].name == COL_SENSITIVITY_DISPOSITION
 
 
 def test_privacy_goal_interpolated_into_prompt() -> None:
