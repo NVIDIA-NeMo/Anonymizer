@@ -120,6 +120,91 @@ class CombinedRiskLevel(str, Enum):
     high = "high"
 
 
+
+
+# Best-effort mapping from Anonymizer entity-labels to EntityCategory, used when
+# the model outputs an entity_label in the `category` field (observed with small
+# Gemma models on the disposition step). Values are from DEFAULT_ENTITY_LABELS in
+# config/entity_labels.py; any label not in this table falls back to
+# "quasi_identifier" which is the most conservative (protect-cautiously) choice.
+_ENTITY_LABEL_TO_CATEGORY: dict[str, str] = {
+    # Direct identifiers: strong re-id on their own.
+    "first_name": "direct_identifier",
+    "last_name": "direct_identifier",
+    "full_name": "direct_identifier",
+    "email": "direct_identifier",
+    "phone_number": "direct_identifier",
+    "fax_number": "direct_identifier",
+    "ssn": "direct_identifier",
+    "national_id": "direct_identifier",
+    "passport_number": "direct_identifier",
+    "drivers_license": "direct_identifier",
+    "street_address": "direct_identifier",
+    "address": "direct_identifier",
+    "postcode": "direct_identifier",
+    "zip_code": "direct_identifier",
+    "credit_debit_card": "direct_identifier",
+    "credit_card_number": "direct_identifier",
+    "account_number": "direct_identifier",
+    "bank_routing_number": "direct_identifier",
+    "tax_id": "direct_identifier",
+    "medical_record_number": "direct_identifier",
+    "health_plan_beneficiary_number": "direct_identifier",
+    "api_key": "direct_identifier",
+    "password": "direct_identifier",
+    "ipv4": "direct_identifier",
+    "ipv6": "direct_identifier",
+    "mac_address": "direct_identifier",
+    "url": "direct_identifier",
+    "user_name": "direct_identifier",
+    "employee_id": "direct_identifier",
+    "customer_id": "direct_identifier",
+    "unique_id": "direct_identifier",
+    "biometric_identifier": "direct_identifier",
+    "device_identifier": "direct_identifier",
+    "license_plate": "direct_identifier",
+    "vehicle_identifier": "direct_identifier",
+    "swift_bic": "direct_identifier",
+    "pin": "direct_identifier",
+    "cvv": "direct_identifier",
+    "http_cookie": "direct_identifier",
+    # Quasi-identifiers: weaker re-id, combinable with others.
+    "age": "quasi_identifier",
+    "date": "quasi_identifier",
+    "date_of_birth": "quasi_identifier",
+    "date_time": "quasi_identifier",
+    "time": "quasi_identifier",
+    "city": "quasi_identifier",
+    "state": "quasi_identifier",
+    "country": "quasi_identifier",
+    "county": "quasi_identifier",
+    "place_name": "quasi_identifier",
+    "landmark": "quasi_identifier",
+    "coordinate": "quasi_identifier",
+    "occupation": "quasi_identifier",
+    "organization_name": "quasi_identifier",
+    "company_name": "quasi_identifier",
+    "university": "quasi_identifier",
+    "court_name": "quasi_identifier",
+    "prison_detention_facility": "quasi_identifier",
+    "degree": "quasi_identifier",
+    "field_of_study": "quasi_identifier",
+    "education_level": "quasi_identifier",
+    "language": "quasi_identifier",
+    "nationality": "quasi_identifier",
+    "employment_status": "quasi_identifier",
+    "monetary_amount": "quasi_identifier",
+    "certificate_license_number": "quasi_identifier",
+    # Sensitive attributes: harmful to disclose regardless of re-id.
+    "gender": "sensitive_attribute",
+    "sexuality": "sensitive_attribute",
+    "race_ethnicity": "sensitive_attribute",
+    "religious_belief": "sensitive_attribute",
+    "political_view": "sensitive_attribute",
+    "blood_type": "sensitive_attribute",
+}
+
+
 class EntityDispositionSchema(BaseModel):
     """Protection decision for one tagged or latent entity in rewrite planning.
 
@@ -152,7 +237,11 @@ class EntityDispositionSchema(BaseModel):
                 data[k] = str(v)
             elif v is None:
                 data[k] = ""
-        # Normalize `category` drift: display-label → enum, plural → singular.
+        # Normalize `category` drift.
+        # (1) display-label → enum, plural → singular;
+        # (2) when the model confuses fields and puts the entity_label (e.g.
+        #     "last_name", "date_of_birth") into the category slot, map it back
+        #     to the most-likely EntityCategory using a known-labels table.
         cat = data.get("category")
         if isinstance(cat, str):
             normalized = cat.strip().lower().replace("-", "_").replace(" ", "_")
@@ -163,8 +252,17 @@ class EntityDispositionSchema(BaseModel):
             elif normalized.endswith("s") and normalized[:-1] in allowed:
                 data["category"] = normalized[:-1]
             elif normalized.endswith("_identifiers"):
-                data["category"] = normalized[:-1]   # "direct_identifiers" -> "direct_identifier"
-            # If still not in allowed set, pydantic will raise a clean enum error below.
+                data["category"] = normalized[:-1]
+            else:
+                # Entity-label confusion: model wrote an entity_label value in
+                # the category slot. Map via a best-effort label → category table.
+                mapped = _ENTITY_LABEL_TO_CATEGORY.get(normalized)
+                if mapped is not None:
+                    data["category"] = mapped
+                elif data.get("entity_label") == cat:
+                    # Model definitely confused fields; conservative fallback.
+                    data["category"] = "quasi_identifier"
+                # Otherwise leave as-is; pydantic will raise a clear enum error.
         return data
 
     id: int = Field(ge=1)
