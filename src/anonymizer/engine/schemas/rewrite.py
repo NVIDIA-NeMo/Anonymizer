@@ -288,6 +288,23 @@ class EntityDispositionSchema(BaseModel):
                         # Model definitely confused fields; conservative fallback.
                         data["category"] = "quasi_identifier"
                     # Otherwise leave as-is; pydantic raises a clear enum error.
+
+        # Reconcile the needs_protection <=> protection_method_suggestion
+        # consistency rule (enforced by @model_validator(mode="after")
+        # below). Small models frequently emit inconsistent pairs in BOTH
+        # directions: (needs_protection=False, method="suppress_inference")
+        # or (needs_protection=True, method="leave_as_is"). Resolve by
+        # biasing toward protection (privacy-safe):
+        #   * if any non-trivial method is chosen, set needs_protection=True;
+        #   * if needs_protection=True but method="leave_as_is", fall back
+        #     to method="replace" (the most generic protective action).
+        method = data.get("protection_method_suggestion")
+        needs = data.get("needs_protection")
+        if isinstance(method, str) and method and method != "leave_as_is":
+            if needs is False:
+                data["needs_protection"] = True
+        elif method == "leave_as_is" and needs is True:
+            data["protection_method_suggestion"] = "replace"
         return data
 
     id: int = Field(ge=1)
