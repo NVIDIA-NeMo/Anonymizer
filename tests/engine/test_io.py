@@ -135,6 +135,160 @@ def test_read_input_internal_text_collision_raises(tmp_path: Path) -> None:
         read_input(inp)
 
 
+@pytest.mark.parametrize("suffix", ["_replaced", "_with_spans", "_rewritten"])
+def test_read_input_output_column_collision_renames_with_warning(
+    tmp_path: Path, suffix: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    colliding_col = f"bio{suffix}"
+    inp = _write_input(
+        pd.DataFrame({"bio": ["hello"], colliding_col: ["existing"]}),
+        tmp_path,
+        text_column="bio",
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert COL_TEXT in result.columns
+    assert colliding_col not in result.columns
+    renamed = f"{colliding_col}__input"
+    assert renamed in result.columns
+    assert result[renamed].tolist() == ["existing"]
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.parametrize("static_column", ["final_entities", "utility_score", "needs_human_review"])
+def test_read_input_static_output_column_collision_renames_with_warning(
+    tmp_path: Path, static_column: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    inp = _write_input(
+        pd.DataFrame({"bio": ["hello"], static_column: ["existing"]}),
+        tmp_path,
+        text_column="bio",
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert static_column not in result.columns
+    assert f"{static_column}__input" in result.columns
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.parametrize(
+    "static_column",
+    [
+        "final_entities",
+        "utility_score",
+        "leakage_mass",
+        "weighted_leakage_rate",
+        "any_high_leaked",
+        "needs_human_review",
+    ],
+)
+def test_read_input_text_column_equal_to_static_output_renames_with_warning(
+    tmp_path: Path, static_column: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Selecting a text column whose name matches a fixed output column is treated
+    like any other collision: the input column is renamed with the ``__input``
+    suffix and ``original_text_column`` reflects the renamed identifier so the
+    end-of-pipeline rename does not clash with the pipeline's own output column.
+    """
+    inp = _write_input(
+        pd.DataFrame({static_column: ["hello"]}),
+        tmp_path,
+        text_column=static_column,
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert COL_TEXT in result.columns
+    assert static_column not in result.columns
+    renamed = f"{static_column}__input"
+    assert result.attrs["original_text_column"] == renamed
+    assert list(result.columns).count(COL_TEXT) == 1
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+
+def test_read_input_text_column_is_static_plus_other_static_collision(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A static-name text column coexisting with other static collisions: each
+    input column gets its own ``__input`` rename, independent of whether it is
+    the selected text column.
+    """
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "final_entities": ["hello"],
+                "utility_score": [0.9],
+                "needs_human_review": [False],
+            }
+        ),
+        tmp_path,
+        text_column="final_entities",
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert result.attrs["original_text_column"] == "final_entities__input"
+    assert {"utility_score__input", "needs_human_review__input"}.issubset(result.columns)
+    assert "final_entities" not in result.columns
+    assert "utility_score" not in result.columns
+    assert "needs_human_review" not in result.columns
+    assert result["utility_score__input"].iloc[0] == 0.9
+    assert bool(result["needs_human_review__input"].iloc[0]) is False
+
+
+def test_read_input_output_column_collision_renames_all(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "bio": ["hello"],
+                "bio_replaced": ["x"],
+                "bio_rewritten": ["y"],
+                "final_entities": ["z"],
+            }
+        ),
+        tmp_path,
+        text_column="bio",
+    )
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+    assert {"bio_replaced__input", "bio_rewritten__input", "final_entities__input"}.issubset(result.columns)
+    warning = next(
+        rec.message for rec in caplog.records if "collide with Anonymizer output column names" in rec.message
+    )
+    for original in ("bio_replaced", "bio_rewritten", "final_entities"):
+        assert f"'{original}'" in warning
+
+
+def test_read_input_output_column_collision_disambiguates_when_input_suffix_taken(
+    tmp_path: Path,
+) -> None:
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "bio": ["hello"],
+                "bio_replaced": ["new"],
+                "bio_replaced__input": ["already_renamed"],
+            }
+        ),
+        tmp_path,
+        text_column="bio",
+    )
+    result = read_input(inp)
+    assert "bio_replaced" not in result.columns
+    assert result["bio_replaced__input"].tolist() == ["already_renamed"]
+    assert result["bio_replaced__input_2"].tolist() == ["new"]
+
+
+def test_read_input_non_colliding_columns_pass(tmp_path: Path) -> None:
+    inp = _write_input(
+        pd.DataFrame({"bio": ["hello"], "other_replaced": ["x"], "score": [0.5]}),
+        tmp_path,
+        text_column="bio",
+    )
+    result = read_input(inp)
+    assert COL_TEXT in result.columns
+    assert "other_replaced" in result.columns
+    assert "score" in result.columns
+
+
 def test_read_input_unsupported_format_raises(tmp_path: Path) -> None:
     file_path = tmp_path / "data.json"
     file_path.write_text('{"a":[1]}')
