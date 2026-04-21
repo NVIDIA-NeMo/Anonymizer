@@ -65,11 +65,13 @@ The chunked path is always on; if a row has fewer candidates than the limit, it 
 
 `entity_validator` can be a single alias (the default) or a list of aliases — a **pool**. When multiple aliases are configured, each chunk in a row is dispatched to the next alias in round-robin order, which lets you work around per-alias rate limits by spreading requests across equivalent endpoints.
 
-Pools also act as **cross-alias failover**. If a chunk's primary alias raises a terminal exception (5xx after transport retries, connection error, or parser error), the chunk is re-dispatched against the remaining pool members in pool order before giving up. A chunk only fails when every pool member has raised for it. This makes pools a cheap way to harden validation against single-endpoint degradation, in addition to their load-spreading role.
+Pools also act as **failover**. If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A chunk only fails once every alias in the pool has failed for it. This is a cheap way to harden validation against any one endpoint having a bad day, on top of the load-spreading role.
 
-#### Failure contract
+#### What happens when a row can't be validated
 
-When chunked validation cannot get an answer for a row — every pool member raised for at least one of its chunks — the row is **dropped** from the output DataFrame, not silently passed through with unscrubbed text. The dropped row is reported on `result.failed_records` with `step="detection"`, so a downstream reprocessing pass can identify misses by diffing input IDs against output IDs.
+If validation can't get a complete answer for a row — every alias in the pool has failed on at least one of that row's chunks — the row is **dropped from the output** rather than passed through with some entities unvalidated. This is deliberate: the alternative would be writing the original text back out with those entities still un-scrubbed, which is exactly the outcome you're trying to avoid.
+
+Dropped rows show up on `result.failed_records` with `step="detection"`, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.
 
 See [Validator pools](models.md#validator-pools) for the YAML syntax and caveats.
 
