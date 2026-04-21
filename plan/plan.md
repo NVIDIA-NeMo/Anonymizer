@@ -1,16 +1,3 @@
----
-name: ndd-adapter-failure-visibility
-overview: Make NDD adapter failures observable (exception surfacing, silent-drop warnings, detection-bypass warning) and add a bounded retry loop that re-submits records missing from DD output.
-todos:
-  - id: step-1-visibility
-    content: Wrap preview and create in try/except with user-facing WARNING (count, model aliases, exception type+msg) + DEBUG (workflow_name, columns); warn + populate failed_records on preview dataset=None; warn on both _detect_missing_records short-circuits; add five visibility tests
-    status: pending
-  - id: step-2-retry
-    content: Add max_retries kwarg (default 2) to NddAdapter; add retry loop in run_workflow with failed-subset re-submission, merged outputs, and max_retries_exceeded stamp; add four retry tests
-    status: pending
-isProject: false
----
-
 # Implementation Plan: Add Visibility and Retry to Silent Data Designer Failures in `NddAdapter`
 
 ## Problem
