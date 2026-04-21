@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import pandas as pd
 import pyarrow as pa
@@ -37,11 +38,9 @@ def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.D
     if selected_text_column not in dataframe.columns:
         raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
     _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
-    dataframe, selected_text_column = _resolve_output_column_collisions(
-        dataframe, selected_text_column=selected_text_column
-    )
-    dataframe = dataframe.rename(columns={selected_text_column: COL_TEXT})
-    dataframe.attrs["original_text_column"] = selected_text_column
+    resolved = _resolve_output_column_collisions(dataframe, selected_text_column=selected_text_column)
+    dataframe = resolved.dataframe.rename(columns={resolved.selected_text_column: COL_TEXT})
+    dataframe.attrs["original_text_column"] = resolved.selected_text_column
     return dataframe
 
 
@@ -65,6 +64,18 @@ _STATIC_OUTPUT_COLUMNS: tuple[str, ...] = (
 _INPUT_RENAME_SUFFIX = "__input"
 
 
+@dataclass(frozen=True)
+class ResolvedInputColumns:
+    """Result of resolving input/output column name collisions.
+
+    ``selected_text_column`` reflects the (possibly renamed) identifier that
+    downstream steps should treat as the user's text column.
+    """
+
+    dataframe: pd.DataFrame
+    selected_text_column: str
+
+
 def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_text_column: str) -> None:
     """Hard-error if the user's input contains the reserved internal text column."""
     if COL_TEXT in dataframe.columns and selected_text_column != COL_TEXT:
@@ -74,9 +85,7 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
         )
 
 
-def _resolve_output_column_collisions(
-    dataframe: pd.DataFrame, *, selected_text_column: str
-) -> tuple[pd.DataFrame, str]:
+def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_column: str) -> ResolvedInputColumns:
     """Rename input columns whose names collide with Anonymizer output columns.
 
     The pipeline writes a known set of output columns derived from the text
@@ -90,9 +99,9 @@ def _resolve_output_column_collisions(
 
     The selected text column itself is not special-cased: if the user picked a
     text column whose name matches a fixed output column (e.g.
-    ``text_column='final_entities'``) it is renamed the same way, and the
-    returned ``selected_text_column`` reflects its new name so downstream
-    rename steps use the non-colliding identifier.
+    ``text_column='final_entities'``) it is renamed the same way, and
+    ``ResolvedInputColumns.selected_text_column`` reflects its new name so
+    downstream rename steps use the non-colliding identifier.
     """
     candidate_output_columns: list[str] = [f"{selected_text_column}{suffix}" for suffix in _OUTPUT_COLUMN_SUFFIXES]
     candidate_output_columns.extend(_STATIC_OUTPUT_COLUMNS)
@@ -100,7 +109,7 @@ def _resolve_output_column_collisions(
     existing_columns: set[str] = set(dataframe.columns)
     collisions: list[str] = [name for name in candidate_output_columns if name in existing_columns]
     if not collisions:
-        return dataframe, selected_text_column
+        return ResolvedInputColumns(dataframe=dataframe, selected_text_column=selected_text_column)
 
     rename_map: dict[str, str] = {}
     for original_name in collisions:
@@ -115,7 +124,10 @@ def _resolve_output_column_collisions(
         formatted,
     )
     new_selected_text_column = rename_map.get(selected_text_column, selected_text_column)
-    return dataframe.rename(columns=rename_map), new_selected_text_column
+    return ResolvedInputColumns(
+        dataframe=dataframe.rename(columns=rename_map),
+        selected_text_column=new_selected_text_column,
+    )
 
 
 def _next_available_name(candidate: str, existing: set[str]) -> str:
