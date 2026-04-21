@@ -100,29 +100,66 @@ class ValidationSkeletonSchema(BaseModel):
 
 
 class ValidationDecisionSchema(BaseModel):
-    """Per-entity validation decision from the LLM validator."""
+    """Loose wire-contract for per-entity validation decisions from the LLM.
+
+    The strict internal shape has only the three fields the server actually
+    consumes: `id`, `decision`, `proposed_label` (+ optional `reason`). The
+    previous schema also carried `value` and `label`, but those are
+    overridden from the trusted candidate_lookup in
+    enrich_validation_decisions — they were pure drift surface.
+
+    Wire-layer looseness addresses classes M/N/O from the bench:
+      * `decision` is typed `str` (not ValidationChoice) so DD’s
+        jsonschema pre-check cannot reject enum drift; before-validator
+        normalizes to a valid enum. Default "keep" means the field is
+        NOT in `required`, so omission does not drop the record.
+      * `proposed_label` is `str | None` so the emitted JSON Schema is
+        `anyOf: [string, null]` — explicit `null` emissions no longer
+        fail `type: "string"` at the pre-check.
+      * `value`/`label` removed entirely — any int/null drift on those
+        fields is now impossible because they’re not in the schema.
+    """
 
     id: str
-    value: str = Field(default="", description="Entity value (echoed from skeleton)")
-    label: str = Field(default="", description="Entity label (echoed from skeleton)")
-    decision: ValidationChoice
-    proposed_label: str = Field(
+    decision: str = Field(
+        default="keep",
+        description='one of: "keep" | "reclass" | "drop"',
+    )
+    proposed_label: str | None = Field(
         default="",
         description="Correct label when decision is 'reclass', otherwise empty",
     )
     reason: str | None = None
 
-    # Small models (esp. Gemma-family on Ollama) frequently emit `null` where the schema
-    # expects "" for optional strings, or unquoted ints (e.g. postcodes) where it expects
-    # string values. Coerce those into the intended form rather than dropping whole rows.
-    @field_validator("value", "label", "proposed_label", mode="before")
+    @field_validator("proposed_label", mode="before")
     @classmethod
-    def _coerce_to_string(cls, v):
+    def _coerce_proposed_label(cls, v: object) -> object:
+        """Coerce None / non-string to empty string so the strict downstream
+        shape is always a string (RawValidationDecisionSchema expects str)."""
         if v is None:
             return ""
-        if isinstance(v, (int, float)):
+        if isinstance(v, (int, float, bool)):
             return str(v)
         return v
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def _normalize_decision(cls, v: object) -> str:
+        """Coerce drift into a valid ValidationChoice value.
+
+        None / non-string / unknown strings default to 'keep' — the
+        conservative choice that preserves detection. A substring match
+        catches small-model variants like 'Keep.' or 'DROP!'.
+        """
+        if v is None or not isinstance(v, str) or not v.strip():
+            return "keep"
+        cleaned = v.strip().lower()
+        if cleaned in {"keep", "reclass", "drop"}:
+            return cleaned
+        for choice in ("reclass", "drop", "keep"):  # check most-specific first
+            if choice in cleaned:
+                return choice
+        return "keep"
 
 
 class ValidationDecisionsSchema(BaseModel):
