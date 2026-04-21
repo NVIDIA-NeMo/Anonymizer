@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 
 dependencies = [
-    "data-designer>=0.5.6",
+    "data-designer>=0.5.7",
     "pydantic>=2.9,<3",
     "cyclopts>=3",
     "pygments>=2.20.0",
