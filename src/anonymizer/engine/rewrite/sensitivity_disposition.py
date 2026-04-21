@@ -242,6 +242,7 @@ class SensitivityDispositionWorkflow:
                 prompt=_get_sensitivity_disposition_prompt(privacy_goal, data_summary),
                 model_alias=disposition_alias,
                 output_format=SimpleDispositionResult,
+                drop=True,
             ),
             # Step 2 — pure-python reconstruction into the strict schema
             # that every downstream consumer already reads. No LLM call;
