@@ -35,16 +35,26 @@ Per-instance validation is intentional. Every candidate goes to the LLM in
 its own excerpt, even when the same ``(value, label)`` pair appears many
 times in a row. Deduping by ``(value, label)`` and broadcasting one
 canonical decision to every duplicate was considered (it is the single
-largest cost lever on this path) and rejected: it conflates surface form
-with meaning, produces silently-wrong answers when the detector's labels
-are context-dependent, and gives us no signal when it does. See the
-"Validator chunking" section of ``docs/concepts/detection.md`` and the
-``context`` block on the C5 review thread in PR #126 for the full
-reasoning. If cost becomes pressing before we have data on how often
-duplicates genuinely are semantically equivalent, prefer orthogonal
-levers: tighter excerpt windows, larger ``max_entities_per_call`` for
-cheap validators, or token-budget-aware chunking (tracked as C7 in the
-same review thread).
+largest cost lever on this path) and rejected.
+
+The concern is that the same surface form + label can carry different
+correctness across a document. Short names that collide with common
+English words are the canonical case: the detector tags ``"Ira"`` as
+``first_name`` in both "Ira said hello" (true positive) and "he grew
+irate" (false positive from a substring span), producing identical
+``(value, label)`` keys. Same for ``Mark`` / ``mark``, ``Bill`` /
+``bill``, ``Hope`` / ``hope``, ``Art`` / ``art``. The validator is
+precisely the component whose job is to resolve these; deduping erases
+the question before the validator can answer it, and we have no signal
+when it happens. See the "Validator chunking" section of
+``docs/concepts/detection.md`` and the C5 review thread in PR #126 for
+the full reasoning.
+
+If cost becomes pressing before we have data on how often duplicates
+are genuinely semantically equivalent, prefer orthogonal levers:
+tighter excerpt windows, larger ``max_entities_per_call`` for cheap
+validators, or token-budget-aware chunking (tracked as C7 in the same
+review thread).
 
 Concurrency model. ``chunked_validate_row`` dispatches its chunks through a
 ``ThreadPoolExecutor``. Per-alias concurrency is already enforced downstream
