@@ -246,12 +246,18 @@ def reconstruct_full_disposition(
             item.category or "", method, item.sensitivity or ""
         )
 
+        # Default empty LLM-drift slots to sane values so the strict schema
+        # doesn't reject the row. category/sensitivity are enums at the
+        # internal layer; empty strings would fail.
+        category = (item.category or "").strip() or "quasi_identifier"
+        sensitivity = (item.sensitivity or "").strip().lower() or "medium"
+
         full_items.append(
             EntityDispositionSchema(
                 id=item.id,
                 source=src,
-                category=item.category or "",   # strict schema coerces/validates via its own before-validator
-                sensitivity=item.sensitivity or "",
+                category=category,       # strict schema coerces via its before-validator
+                sensitivity=sensitivity,
                 entity_label=lbl,
                 entity_value=val,
                 needs_protection=needs,

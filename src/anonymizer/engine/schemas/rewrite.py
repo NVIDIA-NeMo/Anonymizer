@@ -772,6 +772,17 @@ class PrivacyAnswerItemSchema(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1, max_length=200)
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _truncate_reason(cls, v: object) -> object:
+        """Small-model observed emitting 250+ char reasons (nemotron-3-nano on
+        vLLM). Truncate to fit max_length=200 rather than dropping the record."""
+        if isinstance(v, str) and len(v) > 200:
+            return v[:197].rstrip() + "..."
+        if v is None:
+            return "no reason provided"
+        return v
+
 
 class PrivacyAnswersSchema(BaseModel):
     """LLM output schema for privacy QA re-answer step (on rewritten text).
