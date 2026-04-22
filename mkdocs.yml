@@ -158,6 +158,7 @@ nav:
       - Detect: concepts/detection.md
       - Replace: concepts/replace.md
       - Rewrite: concepts/rewrite.md
+      - Self-hosting GLiNER: concepts/self-hosting-gliner.md
   - Tutorials:
       - Overview: tutorials/index.md
       - Your First Anonymization: notebooks/01_your_first_anonymization.ipynb
