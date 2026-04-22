@@ -10,6 +10,7 @@ from typing import Any
 
 from data_designer.config.models import ModelConfig, load_model_configs
 from data_designer.config.utils.io_helpers import load_config_file
+from pydantic import BaseModel
 
 from anonymizer.config.models import (
     DetectionModelSelection,
@@ -186,21 +187,33 @@ def resolve_model_aliases(
 
 
 def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> ModelSelection:
-    """Merge user-provided role selections onto YAML defaults."""
+    """Merge user-provided role selections onto YAML defaults.
+
+    Re-validates via ``type(section).model_validate(merged)`` rather than
+    ``model_copy(update=...)``. Pydantic v2's ``model_copy`` silently skips
+    field validators, which would let invalid pool configs (empty list,
+    duplicate aliases, whitespace-only entries) bypass
+    ``DetectionModelSelection.normalize_entity_validator`` at parse time
+    and surface as opaque runtime failures later.
+    """
     defaults = load_default_model_selection()
     if not user_selections or not isinstance(user_selections, dict):
         return defaults
+
+    def _merge(section: BaseModel, overrides: dict[str, Any]) -> BaseModel:
+        if not overrides:
+            return section
+        merged = {**section.model_dump(), **overrides}
+        return type(section).model_validate(merged)
 
     detection_overrides = user_selections.get(WorkflowName.detection.value, {})
     replace_overrides = user_selections.get(WorkflowName.replace.value, {})
     rewrite_overrides = user_selections.get(WorkflowName.rewrite.value, {})
 
     return ModelSelection(
-        detection=defaults.detection.model_copy(update=detection_overrides)
-        if detection_overrides
-        else defaults.detection,
-        replace=defaults.replace.model_copy(update=replace_overrides) if replace_overrides else defaults.replace,
-        rewrite=defaults.rewrite.model_copy(update=rewrite_overrides) if rewrite_overrides else defaults.rewrite,
+        detection=_merge(defaults.detection, detection_overrides),
+        replace=_merge(defaults.replace, replace_overrides),
+        rewrite=_merge(defaults.rewrite, rewrite_overrides),
     )
 
 

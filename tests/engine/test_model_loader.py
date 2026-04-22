@@ -149,6 +149,69 @@ model_configs:
     assert result.selected_models.detection.entity_detector == "gliner-pii-detector"
 
 
+class TestParseModelConfigsRevalidatesOverrides:
+    """User overrides in ``selected_models`` must rerun field validators.
+
+    ``model_copy(update=...)`` in Pydantic v2 silently skips validators, so
+    the ``DetectionModelSelection.normalize_entity_validator`` checks
+    (non-empty, deduped, whitespace-stripped) would be bypassed on override
+    unless ``_merge_selections`` re-validates. Each of the three failure
+    modes below is pinned as a regression test so future refactors of the
+    merge path preserve parse-time rejection.
+    """
+
+    def test_empty_entity_validator_override_raises_at_parse_time(self) -> None:
+        yaml_str = """
+selected_models:
+  detection:
+    entity_validator: []
+model_configs:
+  - alias: gliner-pii-detector
+    model: test/gliner
+"""
+        with pytest.raises(ValueError, match="at least one model alias"):
+            parse_model_configs(yaml_str)
+
+    def test_duplicate_aliases_in_override_are_deduped_with_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        yaml_str = """
+selected_models:
+  detection:
+    entity_validator: [v1, v2, v1, v3, v2]
+model_configs:
+  - alias: gliner-pii-detector
+    model: test/gliner
+  - alias: v1
+    model: test/v1
+  - alias: v2
+    model: test/v2
+  - alias: v3
+    model: test/v3
+"""
+        with caplog.at_level("WARNING", logger="anonymizer.config.models"):
+            result = parse_model_configs(yaml_str)
+        assert result.selected_models.detection.entity_validator == ["v1", "v2", "v3"]
+        assert any("duplicate aliases" in r.getMessage() for r in caplog.records)
+
+    def test_whitespace_only_entry_in_override_is_stripped(self) -> None:
+        yaml_str = """
+selected_models:
+  detection:
+    entity_validator: ["  v1  ", "  ", "v2"]
+model_configs:
+  - alias: gliner-pii-detector
+    model: test/gliner
+  - alias: v1
+    model: test/v1
+  - alias: v2
+    model: test/v2
+"""
+        result = parse_model_configs(yaml_str)
+        assert result.selected_models.detection.entity_validator == ["v1", "v2"]
+
+
 def test_validate_model_alias_references_accepts_valid_detection_aliases(
     stub_known_model_configs: list[ModelConfig],
     stub_slim_model_selection: ModelSelection,
