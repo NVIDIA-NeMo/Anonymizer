@@ -77,10 +77,53 @@ class Domain(str, Enum):
 
 
 class DomainClassificationSchema(BaseModel):
-    """LLM output schema for domain classification step."""
+    """LLM output schema for domain classification step.
 
-    domain: Domain
-    domain_confidence: float = Field(ge=0.0, le=1.0)
+    Wire contract is loose (domain: str, confidence accepts string) so DD’s
+    jsonschema pre-check cannot reject enum drift or string-typed floats.
+    A before-validator normalizes drift ("biography" → "BIOGRAPHY"; "0.95"
+    → 0.95); unknown domains fall back to Domain.OTHER.
+    """
+
+    domain: str = Field(
+        default=Domain.OTHER.value,
+        description=(
+            "one of the Domain enum values (see anonymizer.engine.schemas.rewrite.Domain). "
+            "Unknown values coerce to OTHER."
+        ),
+    )
+    domain_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def _normalize_domain(cls, v: object) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            return Domain.OTHER.value
+        cleaned = v.strip().upper().replace(" ", "_").replace("-", "_")
+        allowed = {d.value for d in Domain}
+        if cleaned in allowed:
+            return cleaned
+        # Substring match — pick first Domain that appears as substring.
+        for d in Domain:
+            if d.value in cleaned or cleaned in d.value:
+                return d.value
+        return Domain.OTHER.value
+
+    @field_validator("domain_confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, v: object) -> float:
+        if isinstance(v, (int, float)):
+            return max(0.0, min(1.0, float(v)))
+        if isinstance(v, str):
+            try:
+                raw = v.strip().rstrip("%")
+                val = float(raw)
+                if "%" in v:
+                    val /= 100.0
+                return max(0.0, min(1.0, val))
+            except (ValueError, TypeError):
+                return 0.5
+        return 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -488,16 +531,64 @@ class MeaningUnitAspect(str, Enum):
 
 
 class MeaningUnitSchema(BaseModel):
-    id: int = Field(ge=1)
-    aspect: MeaningUnitAspect
-    unit: str = Field(min_length=1)
+    """Single meaning unit extracted by the meaning_extractor role.
+
+    Loose wire: aspect is str (not MeaningUnitAspect enum) so small-model
+    enum drift ("ROLE" vs "role", "the role", etc.) is accepted at the
+    wire layer and normalized by the before-validator.
+    """
+
+    id: int = Field(ge=1, default=1)
+    aspect: str = Field(
+        default="",
+        description=(
+            "one of the MeaningUnitAspect values (see "
+            "anonymizer.engine.schemas.rewrite.MeaningUnitAspect)"
+        ),
+    )
+    unit: str = Field(default="")
+
+    @field_validator("aspect", mode="before")
+    @classmethod
+    def _normalize_aspect(cls, v: object) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            return ""
+        cleaned = v.strip().lower().replace(" ", "_").replace("-", "_")
+        allowed = {a.value for a in MeaningUnitAspect}
+        if cleaned in allowed:
+            return cleaned
+        for a in MeaningUnitAspect:
+            if a.value in cleaned or cleaned in a.value:
+                return a.value
+        return ""  # unknown aspect falls through; downstream can filter
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _coerce_unit(cls, v: object) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
 
 
 class MeaningUnitsSchema(BaseModel):
-    """LLM output schema for meaning unit extraction step."""
+    """LLM output schema for meaning unit extraction step.
 
-    # Non-empty by design: meaning extraction only runs when entities were detected.
-    units: list[MeaningUnitSchema] = Field(min_length=1)
+    Outer list has default_factory=list (was min_length=1); if the model
+    emits an empty list the record still survives so the pipeline can
+    decide what to do downstream. A @model_validator(mode="before") drops
+    units with empty unit text to reduce noise.
+    """
+
+    units: list[MeaningUnitSchema] = Field(default_factory=list)
+
+    @field_validator("units", mode="before")
+    @classmethod
+    def _ensure_list(cls, v: object) -> list:
+        if not isinstance(v, list):
+            return [v] if isinstance(v, dict) else []
+        return v
 
 
 # ---------------------------------------------------------------------------

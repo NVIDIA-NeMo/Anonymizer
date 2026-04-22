@@ -39,12 +39,14 @@ from anonymizer.engine.schemas import (
 )
 
 # Derived from the schema so the Jinja key stays in sync with the field name.
-_DOMAIN_KEY = next(
-    (name for name, info in DomainClassificationSchema.model_fields.items() if info.annotation is Domain),
-    None,
-)
-if _DOMAIN_KEY is None:
-    raise RuntimeError("DomainClassificationSchema must define a field annotated with Domain")
+# The annotation on DomainClassificationSchema.domain was loosened from
+# Domain to str as part of the wire-schema refactor; find the field by
+# name + description hint instead of annotation class.
+_DOMAIN_KEY = "domain"
+if _DOMAIN_KEY not in DomainClassificationSchema.model_fields:
+    raise RuntimeError(
+        f"DomainClassificationSchema must define field {_DOMAIN_KEY!r}"
+    )
 
 # ---------------------------------------------------------------------------
 # Stage 1 pre-step: format disposition → disposition block

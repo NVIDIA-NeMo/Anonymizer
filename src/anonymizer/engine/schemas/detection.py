@@ -187,39 +187,129 @@ class LatentConfidence(str, Enum):
 
 
 class LatentEntitySchema(BaseModel):
-    category: LatentCategory
+    """Single latent (inferred) entity from the latent_detector role.
+
+    Loose wire contract across every field so small-model drift does not
+    drop records at DataDesigner’s jsonschema pre-check:
+      * category / confidence: typed str (not LatentCategory / LatentConfidence);
+        a before-validator normalizes case and substring-matches drift.
+      * label / value: permissive default "", coerce None/int.
+      * evidence: any list shape accepted at wire; before-validator
+        clamps to [0, 2] non-empty strings.
+      * rationale: wire has no min_length; before-validator truncates if
+        too long and pads with ellipsis if too short.
+    """
+
+    category: str = Field(
+        default="",
+        description=(
+            "one of: latent_identifier | latent_sensitive_attribute "
+            "(see LatentCategory enum)"
+        ),
+    )
     label: str = Field(
-        min_length=1,
+        default="",
         description=(
             "General category/class of the inference in snake_case "
-            "(e.g., employer, specific_institution, home_location, medication, health_condition)"
+            "(e.g., employer, specific_institution, home_location)"
         ),
     )
     value: str = Field(
-        min_length=1,
-        description="Concise inferred value (generalize if not pinned down strongly by evidence)",
+        default="",
+        description="Concise inferred value",
     )
-    confidence: LatentConfidence
+    confidence: str = Field(
+        default="medium",
+        description="one of: high | medium (see LatentConfidence enum)",
+    )
     evidence: list[str] = Field(
-        min_length=1,
-        max_length=2,
-        description="One or two short quotes from the text that support this inference",
+        default_factory=list,
+        description="Up to 2 short quotes supporting this inference",
     )
     rationale: str = Field(
-        min_length=10,
-        max_length=150,
+        default="",
         description="One sentence explaining the inference without adding new facts",
     )
 
+    @field_validator("category", mode="before")
+    @classmethod
+    def _normalize_category(cls, v: object) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            return "latent_identifier"
+        cleaned = v.strip().lower().replace(" ", "_").replace("-", "_")
+        allowed = {c.value for c in LatentCategory}
+        if cleaned in allowed:
+            return cleaned
+        if "sensitive" in cleaned:
+            return LatentCategory.latent_sensitive_attribute.value
+        return LatentCategory.latent_identifier.value
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _normalize_confidence(cls, v: object) -> str:
+        if v is None:
+            return "medium"
+        # Numeric -> band
+        if isinstance(v, (int, float)):
+            f = float(v)
+            if f >= 0.66:
+                return "high"
+            return "medium"
+        if not isinstance(v, str) or not v.strip():
+            return "medium"
+        cleaned = v.strip().lower()
+        if cleaned in {"high", "medium"}:
+            return cleaned
+        if cleaned in {"h", "hi"}:
+            return "high"
+        return "medium"
+
+    @field_validator("label", "value", mode="before")
+    @classmethod
+    def _coerce_to_str(cls, v: object) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _clamp_evidence(cls, v: object) -> list[str]:
+        """Accept any list shape; keep at most 2 non-empty string quotes."""
+        if not isinstance(v, list):
+            return []
+        out: list[str] = []
+        for item in v:
+            if item is None:
+                continue
+            if not isinstance(item, str):
+                item = str(item)
+            item = item.strip()
+            if item:
+                out.append(item)
+            if len(out) >= 2:
+                break
+        return out
+
     @field_validator("rationale", mode="before")
     @classmethod
-    def _cap_rationale(cls, v: object) -> object:
-        """Truncate overlong rationales so verbose models (e.g. Nemotron) do not
-        fail the maxLength=150 constraint on dense notes. Observed on the
-        oncology bench note: a 260-char rationale dropped the whole record."""
-        if isinstance(v, str) and len(v) > 150:
-            return v[:147].rstrip() + "..."
-        return v
+    def _cap_rationale(cls, v: object) -> str:
+        """Truncate verbose (Nemotron-observed 260 chars > 150 max); pad
+        terse (Qwen-observed sub-10 chars) with an ellipsis to reach the
+        10-char soft floor. Exact floor kept as internal expectation but
+        not enforced at wire — server reads rationale for context only.
+        """
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            v = str(v)
+        if not isinstance(v, str):
+            return ""
+        s = v.strip()
+        if len(s) > 150:
+            return s[:147].rstrip() + "..."
+        return s
 
 
 class LatentEntitiesSchema(BaseModel):
