@@ -31,6 +31,7 @@ from anonymizer.engine.constants import (
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
+    COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
@@ -74,18 +75,18 @@ def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
+    required_columns=[COL_TEXT, COL_VALIDATED_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
     side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
 )
 def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
-    """Merge seed + augmented entities, then build tagged text and validation candidates.
+    """Merge validated seed + augmented entities, then build tagged text and validation candidates.
 
     Contract:
-    - ``COL_SEED_ENTITIES`` and ``COL_MERGED_ENTITIES`` store ``EntitiesSchema`` payloads.
+    - ``COL_VALIDATED_SEED_ENTITIES`` and ``COL_MERGED_ENTITIES`` store ``EntitiesSchema`` payloads.
     - ``COL_VALIDATION_CANDIDATES`` stores ``ValidationCandidatesSchema`` payloads.
     """
     text = str(row.get(COL_TEXT, ""))
-    seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
+    seed_spans = _parse_entity_spans(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
     merged = apply_augmented_entities(
         text=text,
         entities=seed_spans,
@@ -102,7 +103,7 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
 
 @custom_column_generator(
     required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
-    side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON],
+    side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
 )
 def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
     """Apply validation decisions to detector entities before augmentation."""
@@ -113,7 +114,7 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     seed_entities = [entity.as_dict() for entity in validated_seed]
-    row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
+    row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
     row[COL_INITIAL_TAGGED_TEXT] = build_tagged_text(text=text, entities=validated_seed)
     return row

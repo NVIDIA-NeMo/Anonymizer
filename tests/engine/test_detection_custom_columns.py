@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
+    COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
@@ -77,7 +78,7 @@ def test_parse_produces_seed_entities_and_notation() -> None:
 def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "Alice works at Acme in Seattle.",
-        COL_SEED_ENTITIES: {
+        COL_VALIDATED_SEED_ENTITIES: {
             "entities": [
                 {
                     "id": "first_name_0_5",
