@@ -3,88 +3,34 @@
 
 """Chunked LLM validation for the entity detection pipeline.
 
-Validation is the step that asks an LLM to keep/reclass/drop each candidate
-entity produced by the detector. Historically we ran one LLM call per row over
-the full tagged text. For long documents with many candidates this hits
-context-window and provider rate limits. This module replaces that single
-call with a fan-out: partition the row's candidates into chunks, build a
-small tagged excerpt of text around each chunk, render the existing
-validation prompt per chunk, and dispatch each chunk to an alias selected
-round-robin from a configured validator pool.
+Partition a row's validation candidates into chunks, build a small tagged
+excerpt around each chunk, render the validation prompt per chunk, and
+dispatch each chunk to an alias selected round-robin from a configured
+validator pool. The per-chunk decisions are merged into a
+``ValidationDecisionsSchema``-shaped payload consumed by
+``enrich_validation_decisions`.
 
-Failure contract. Each chunk attempts its round-robin-assigned alias first
-and, on any terminal exception from that alias (5xx after transport retries,
-connection errors, parser errors), fails over sequentially to the rest of
-the pool. A chunk only fails when every pool member has raised. The first
-failing chunk re-raises out of the custom column generator, at which point
-DataDesigner drops the row from the output DataFrame and
+Public entry point: :func:`make_chunked_validation_generator`, which
+produces a ``@custom_column_generator``-decorated function bound to a
+concrete pool. The helpers below are exposed for unit testing.
+
+Failure contract. Each chunk attempts its round-robin primary first and
+fails over sequentially to the rest of the pool; a chunk only fails when
+every pool member has raised. The first failing chunk re-raises out of
+the generator, DataDesigner drops the row, and
 ``NddAdapter._detect_missing_records`` surfaces it as a ``FailedRecord``.
-This is the "best effort on first pass, identify and reprocess misses"
-contract: raw text never silently leaks through as unscrubbed output.
+Raw text never silently leaks through as unscrubbed output.
 
-The per-chunk decisions are merged into a ``ValidationDecisionsSchema``-shaped
-payload so the downstream ``enrich_validation_decisions`` column keeps
-working unchanged.
-
-The public entry point for DataDesigner wiring is
-:func:`make_chunked_validation_generator`, which produces a generator function
-decorated with ``@custom_column_generator`` and bound to a concrete pool.
-The pure helpers below are exposed for unit testing.
-
-Per-instance validation is intentional. Every candidate goes to the LLM in
-its own excerpt, even when the same ``(value, label)`` pair appears many
-times in a row. Deduping by ``(value, label)`` and broadcasting one
-canonical decision to every duplicate was considered (it is the single
-largest cost lever on this path) and rejected.
-
-The concern is that the same surface form + label can carry different
-correctness across a document. Short names that collide with common
-English words are the canonical case: the detector tags ``"Ira"`` as
-``first_name`` in both "Ira said hello" (true positive) and "he grew
-irate" (false positive from a substring span), producing identical
-``(value, label)`` keys. Same for ``Mark`` / ``mark``, ``Bill`` /
-``bill``, ``Hope`` / ``hope``, ``Art`` / ``art``. The validator is
-precisely the component whose job is to resolve these; deduping erases
-the question before the validator can answer it, and we have no signal
-when it happens. See the "Validator chunking" section of
-``docs/concepts/detection.md`` and the C5 review thread in PR #126 for
-the full reasoning.
-
-If cost becomes pressing before we have data on how often duplicates
-are genuinely semantically equivalent, prefer orthogonal levers:
-tighter excerpt windows, larger ``max_entities_per_call`` for cheap
-validators, or token-budget-aware chunking (tracked as C7 in the same
-review thread).
-
-Concurrency model. ``chunked_validate_row`` dispatches its chunks through a
-``ThreadPoolExecutor``. Per-alias concurrency is already enforced downstream
-by each facade's ``ThrottledModelClient`` (AIMD on 429), so we intentionally
-do not impose a row-level cap here; the pool exists purely to overlap the
-chunks for this single row. Under DataDesigner's opt-in async engine the
-sync ``facade.generate()`` calls we make are transparently bridged to
-``agenerate`` by the DD runtime, so this code path is agnostic to which
-engine is active.
+Concurrency. Chunks dispatch through a ``ThreadPoolExecutor``. Per-alias
+concurrency is already enforced downstream by each facade's
+``ThrottledModelClient`` (AIMD on 429), so there is no row-level cap
+here; the pool exists purely to overlap this row's chunks.
 
 TODO(async-native): once DataDesigner's async engine becomes the default
-(tracking: DATA_DESIGNER_ASYNC_ENGINE opt-in flag flips off), drop the
-``ThreadPoolExecutor`` + sync ``facade.generate()`` pattern here in favour
-of ``async def`` functions calling ``facade.agenerate()`` directly, with
-``asyncio.gather`` replacing the executor. That removes one thread hop per
-chunk and lets DD's scheduler see per-chunk dispatch as first-class async
-work. See the PR #126 review thread (step 2 of Andre's async
-simplification suggestion) for context.
-
-Eager prompt construction. ``chunked_validate_row`` builds the excerpt,
-skeleton, and rendered prompt for every chunk before submitting any worker.
-Peak prompt memory is ``len(chunks) * (2 * excerpt_window_chars + skeleton
-+ ~3KB template overhead)``, i.e. low-MB even at 1000 entities with
-``max_entities_per_call`` in the single digits. At workloads where this
-becomes observable (very small ``max_entities_per_call`` on multi-thousand-
-entity rows, or large ``excerpt_window_chars``), the fix is to move prompt
-construction inside each worker and pair it with a row-level concurrency
-cap (otherwise all workers race the construction phase in parallel and the
-bound is unchanged). Deferred because we have no evidence of memory
-pressure at realistic scale; tracked as C6 in the PR #126 review thread.
+(``DATA_DESIGNER_ASYNC_ENGINE`` flips off), replace the
+``ThreadPoolExecutor`` + sync ``facade.generate()`` pattern with
+``async def`` functions calling ``facade.agenerate()`` under
+``asyncio.gather``.
 """
 
 from __future__ import annotations
@@ -139,15 +85,7 @@ _PROMPT_ENV = Environment(
 
 @functools.lru_cache(maxsize=4)
 def _compile_template(template: str) -> Any:
-    """Return a compiled Jinja2 template, cached by source string.
-
-    A row with ``N`` chunks would otherwise re-parse the same template ``N``
-    times, which is wasteful for the exact workload this module targets
-    (high-entity-count rows). ``maxsize=4`` is deliberately tiny: in practice
-    there is one prompt string per ``EntityDetectionWorkflow`` instance, but
-    tests may instantiate a handful of distinct templates in a single
-    process so we keep a small LRU rather than an unbounded cache.
-    """
+    """Return a compiled Jinja2 template, cached by source string."""
     return _PROMPT_ENV.from_string(template)
 
 
