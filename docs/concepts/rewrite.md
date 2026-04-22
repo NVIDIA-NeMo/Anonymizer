@@ -139,7 +139,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
 - Increase `max_repair_iterations` to give the rewriter more attempts.
 - Refine `privacy_goal` with more specific `protect` / `preserve` instructions for the domain.
 - Lower `risk_tolerance` (e.g. `minimal`) to trigger more aggressive repair.
-- Enable `strict_entity_protection=True` to prevent any entity from being left unchanged during the disposition step.
+- Enable `strict_entity_protection=True` to ensure no detected entity is left unchanged in the output regardless of risk.
 
 **Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. 
 
