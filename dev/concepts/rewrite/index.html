@@ -557,6 +557,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#strict-entity-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strict entity protection
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1544,6 +1555,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#strict-entity-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strict entity protection
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1701,6 +1723,11 @@ preview.display_record()</code></pre>
 <td><code>3</code></td>
 <td>Maximum repair rounds. Set to 0 to disable repair.</td>
 </tr>
+<tr>
+<td><code>strict_entity_protection</code></td>
+<td><code>False</code></td>
+<td>If <code>True</code>, forces every detected entity to be protected regardless of risk. No entity can be left unchanged.</td>
+</tr>
 </tbody>
 </table>
 <h3 id="privacy-goal">Privacy goal<a class="headerlink" href="#privacy-goal" title="Permanent link">&para;</a></h3>
@@ -1773,6 +1800,17 @@ A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full 
         max_repair_iterations=3,
     )
 )</code></pre>
+<h3 id="strict-entity-protection">Strict entity protection<a class="headerlink" href="#strict-entity-protection" title="Permanent link">&para;</a></h3>
+<p>By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting <code>strict_entity_protection=True</code> overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is.</p>
+<pre class="highlight"><code class="language-python">config = AnonymizerConfig(
+    rewrite=Rewrite(
+        strict_entity_protection=True,
+    )
+)</code></pre>
+<div class="admonition tip">
+<p class="admonition-title">When to use this</p>
+<p>Use <code>strict_entity_protection</code> when you need a blanket policy that protects all entities regardless of contextual risk — for example, in medical, legal, or financial data where even seemingly benign attributes (gender, marital status, occupation) must be modified. For finer control over which entity types are always protected, combine this with a specific <a href="#privacy-goal"><code>privacy_goal</code></a>.</p>
+</div>
 <hr />
 <h2 id="output-columns">Output columns<a class="headerlink" href="#output-columns" title="Permanent link">&para;</a></h2>
 <table>
@@ -1825,6 +1863,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
 <li>Increase <code>max_repair_iterations</code> to give the rewriter more attempts.</li>
 <li>Refine <code>privacy_goal</code> with more specific <code>protect</code> / <code>preserve</code> instructions for the domain.</li>
 <li>Lower <code>risk_tolerance</code> (e.g. <code>minimal</code>) to trigger more aggressive repair.</li>
+<li>Enable <code>strict_entity_protection=True</code> to ensure no detected entity is left unchanged in the output regardless of risk.</li>
 </ul>
 <p><strong>Last resort:</strong> Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. </p>
 <hr />
