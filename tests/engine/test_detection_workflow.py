@@ -18,10 +18,10 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_SEED_ENTITIES,
+    COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
 )
@@ -534,7 +534,7 @@ def test_validation_column_is_custom_chunked_generator(
     assert set(metadata["required_columns"]) == {
         COL_TEXT,
         COL_SEED_ENTITIES,
-        COL_VALIDATION_CANDIDATES,
+        COL_SEED_VALIDATION_CANDIDATES,
         COL_TAG_NOTATION,
     }
 

@@ -4,13 +4,12 @@
 """Tests for chunked LLM validation.
 
 The module is layered: pure helpers (ordering, chunking, excerpts, prompt
-rendering, merging) are tested directly; the async dispatch is tested via a
+rendering, merging) are tested directly; the chunk dispatch is tested via a
 fake ``ModelFacade`` that records calls and returns preconfigured responses.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import Any, Callable
@@ -20,6 +19,7 @@ import pytest
 from anonymizer.engine.constants import (
     COL_MERGED_TAGGED_TEXT,
     COL_SEED_ENTITIES,
+    COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TEXT,
     COL_VALIDATION_CANDIDATES,
@@ -53,12 +53,11 @@ from anonymizer.engine.schemas import (
 class FakeFacade:
     """Test double for ``ModelFacade`` recording invocations and replaying canned responses.
 
-    Exposes a *sync* ``generate()`` method because ``_dispatch_chunk`` now
-    calls ``asyncio.to_thread(facade.generate, ...)`` (see the module
-    docstring for why the sync primitive is correct under both DD engines).
-    Tests still drive the pipeline through ``asyncio.run(chunked_validate_row(...))``,
-    which awaits the ``to_thread`` task that invokes this sync method in a
-    worker thread.
+    Exposes a ``generate()`` method because ``_dispatch_chunk`` calls the
+    sync facade primitive directly; per-row chunk concurrency comes from
+    the ``ThreadPoolExecutor`` inside ``chunked_validate_row``. Under DD's
+    async engine the sync ``.generate()`` call is transparently bridged to
+    ``agenerate`` by the DD runtime.
 
     A canned response can be a ``dict`` (auto-wrapped in a ```json fence), a
     raw string, or a callable that receives the prompt and returns either.
@@ -255,7 +254,7 @@ class TestBuildChunkSkeleton:
 class TestRenderChunkPrompt:
     def test_substitutes_excerpt_skeleton_and_notation(self) -> None:
         template = (
-            "Input: {{ _merged_tagged_text }}\n"
+            "Input: {{ _seed_tagged_text }}\n"
             "Skeleton: {{ _validation_skeleton }}\n"
             '{%- if _tag_notation == "xml" -%}notation-is-xml{%- endif -%}'
         )
@@ -329,12 +328,12 @@ def _build_row(
                 for span in seed_entities
             ]
         ).model_dump(mode="json"),
-        COL_VALIDATION_CANDIDATES: candidates.model_dump(mode="json"),
+        COL_SEED_VALIDATION_CANDIDATES: candidates.model_dump(mode="json"),
         COL_TAG_NOTATION: notation.value,
     }
 
 
-_MINIMAL_TEMPLATE = "TAGGED:{{ _merged_tagged_text }}|SKELETON:{{ _validation_skeleton }}|NOTATION:{{ _tag_notation }}"
+_MINIMAL_TEMPLATE = "TAGGED:{{ _seed_tagged_text }}|SKELETON:{{ _validation_skeleton }}|NOTATION:{{ _tag_notation }}"
 
 
 class TestChunkedValidateRowPoolOfOne:
@@ -363,7 +362,7 @@ class TestChunkedValidateRowPoolOfOne:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        out = asyncio.run(chunked_validate_row(row, params, {"v0": facade}))
+        out = chunked_validate_row(row, params, {"v0": facade})
 
         assert len(facade.calls) == 1
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
@@ -376,7 +375,7 @@ class TestChunkedValidateRowPoolOfOne:
             pool=["v0"], max_entities_per_call=10, excerpt_window_chars=50, prompt_template=_MINIMAL_TEMPLATE
         )
 
-        out = asyncio.run(chunked_validate_row(row, params, {"v0": facade}))
+        out = chunked_validate_row(row, params, {"v0": facade})
 
         assert facade.calls == []
         assert out[COL_VALIDATION_DECISIONS] == {"decisions": []}
@@ -403,7 +402,7 @@ class TestChunkedValidateRowPoolOfOne:
             system_prompt=f"You are a validator. {sentinel}",
         )
 
-        asyncio.run(chunked_validate_row(row, params, {"v0": facade}))
+        chunked_validate_row(row, params, {"v0": facade})
 
         assert len(facade.calls) == 1
         forwarded = facade.calls[0]["system_prompt"]
@@ -432,7 +431,7 @@ class TestChunkedValidateRowPoolOfOne:
             # system_prompt intentionally omitted (default None)
         )
 
-        asyncio.run(chunked_validate_row(row, params, {"v0": facade}))
+        chunked_validate_row(row, params, {"v0": facade})
 
         assert len(facade.calls) == 1
         # The recipe maps ``None`` input to ``None`` output, so the facade
@@ -464,7 +463,7 @@ class TestChunkedValidateRowPoolOfTwoRoundRobin:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        asyncio.run(chunked_validate_row(row, params, {"v0": v0, "v1": v1}))
+        chunked_validate_row(row, params, {"v0": v0, "v1": v1})
         # 6 candidates / 2 per chunk = 3 chunks; round-robin → v0,v1,v0
         assert len(v0.calls) == 2
         assert len(v1.calls) == 1
@@ -508,7 +507,7 @@ class TestChunkedValidateRowMultiChunkReassembly:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = asyncio.run(chunked_validate_row(row, params, {"v0": v0, "v1": v1}))
+        out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
         decisions = {d["id"]: d for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
         assert set(decisions) == {"c1", "c2", "c3", "c4"}
         # Chunk 0 (c1,c2) → v0; chunk 1 (c3,c4) → v1.
@@ -543,7 +542,7 @@ class TestChunkedValidateRowFailurePropagation:
         # The last alias tried propagates; order is round-robin + wrap, so
         # chunk 0 starts at v0 → fails → v1 (fails, last) → raises "from v1".
         with pytest.raises(RuntimeError, match="forced failure from v1"):
-            asyncio.run(chunked_validate_row(row, params, {"v0": v0, "v1": v1}))
+            chunked_validate_row(row, params, {"v0": v0, "v1": v1})
 
 
 class TestChunkedValidateRowCrossAliasFailover:
@@ -561,7 +560,7 @@ class TestChunkedValidateRowCrossAliasFailover:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = asyncio.run(chunked_validate_row(row, params, {"v0": v0, "v1": v1}))
+        out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
         assert len(decisions) == 1
         assert decisions[0]["id"] == "a"
@@ -588,7 +587,7 @@ class TestChunkedValidateRowCrossAliasFailover:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         with pytest.raises(RuntimeError, match="forced failure from v0"):
-            asyncio.run(chunked_validate_row(row, params, {"v0": v0}))
+            chunked_validate_row(row, params, {"v0": v0})
         assert len(v0.calls) == 1
 
     def test_failover_wraps_starting_from_round_robin_primary(self) -> None:
@@ -628,7 +627,7 @@ class TestChunkedValidateRowCrossAliasFailover:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = asyncio.run(chunked_validate_row(row, params, {"v0": v0, "v1": v1}))
+        out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
         decisions = {d["id"]: d["decision"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
         assert decisions == {"a": "keep", "b": "keep", "c": "keep"}
         # v0 serviced all three chunks: chunk 0 + chunk 2 directly, chunk 1 via failover.
@@ -655,7 +654,7 @@ class TestChunkedValidateRowMissingIdMirrorsSingleCall:
         params = ChunkedValidationParams(
             pool=["v0"], max_entities_per_call=5, excerpt_window_chars=20, prompt_template=_MINIMAL_TEMPLATE
         )
-        out = asyncio.run(chunked_validate_row(row, params, {"v0": facade}))
+        out = chunked_validate_row(row, params, {"v0": facade})
         ids = [d["id"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]]
         assert ids == ["a"]
 
@@ -672,7 +671,7 @@ class TestChunkedValidateRowGuardsBadConfig:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         with pytest.raises(KeyError, match="missing_alias"):
-            asyncio.run(chunked_validate_row(row, params, {"v0": FakeFacade("v0", response={"decisions": []})}))
+            chunked_validate_row(row, params, {"v0": FakeFacade("v0", response={"decisions": []})})
 
 
 # ---------------------------------------------------------------------------
@@ -688,22 +687,24 @@ class TestMakeChunkedValidationGenerator:
         assert set(meta["required_columns"]) == {
             COL_TEXT,
             COL_SEED_ENTITIES,
-            COL_VALIDATION_CANDIDATES,
+            COL_SEED_VALIDATION_CANDIDATES,
             COL_TAG_NOTATION,
         }
         # Must not declare columns we deliberately don't read; an over-broad
-        # required_columns would distort DAG ordering elsewhere.
+        # required_columns would distort DAG ordering elsewhere. In particular
+        # the post-augmentation views (COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES)
+        # are downstream of this step and would create a cycle if declared.
         assert COL_VALIDATION_SKELETON not in meta["required_columns"]
         assert COL_MERGED_TAGGED_TEXT not in meta["required_columns"]
+        assert COL_VALIDATION_CANDIDATES not in meta["required_columns"]
 
     def test_factory_rejects_empty_pool(self) -> None:
         with pytest.raises(ValueError, match="pool is empty"):
             make_chunked_validation_generator([])
 
     def test_generator_forwards_to_chunked_validate_row(self) -> None:
-        """The DD-exposed wrapper is *sync* (bridges DD's thread-pool fan-out
-        to our async row logic via asyncio.run), so this test calls it
-        directly and asserts it returns a dict, not a coroutine.
+        """The DD-exposed wrapper is sync; calling it directly must return a
+        dict populated by the row logic (not a coroutine).
         """
         spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
         candidates = _candidates_schema(("a", "Alice", "first_name"))
@@ -726,7 +727,6 @@ class TestMakeChunkedValidationGenerator:
         import inspect as _inspect
 
         fn = make_chunked_validation_generator(["v0"])
-        # The decorator wraps the function; unwrap and check the inner target.
         inner = _inspect.unwrap(fn)
         assert not _asyncio.iscoroutinefunction(inner), (
             "DD-exposed generator must be sync; an async outer wrapper breaks the default thread-pool engine."
@@ -847,7 +847,7 @@ class TestChunkedValidationRegression:
             excerpt_window_chars=200,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = asyncio.run(chunked_validate_row(row, params, {"solo": facade}))
+        out = chunked_validate_row(row, params, {"solo": facade})
         decisions_doc = out[COL_VALIDATION_DECISIONS]
         validated = apply_validation_decisions(spans, decisions_doc)
         return decisions_doc, validated, len(facade.calls)

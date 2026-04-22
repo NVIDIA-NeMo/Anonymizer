@@ -15,13 +15,12 @@ round-robin from a configured validator pool.
 Failure contract. Each chunk attempts its round-robin-assigned alias first
 and, on any terminal exception from that alias (5xx after transport retries,
 connection errors, parser errors), fails over sequentially to the rest of
-the pool. A chunk only fails when every pool member has raised. A failed
-chunk cancels sibling chunks (``asyncio.gather`` semantics) and raises out
-of the custom column generator, at which point DataDesigner drops the row
-from the output DataFrame and ``NddAdapter._detect_missing_records``
-surfaces it as a ``FailedRecord``. This is the "best effort on first pass,
-identify and reprocess misses" contract: raw text never silently leaks
-through as unscrubbed output.
+the pool. A chunk only fails when every pool member has raised. The first
+failing chunk re-raises out of the custom column generator, at which point
+DataDesigner drops the row from the output DataFrame and
+``NddAdapter._detect_missing_records`` surfaces it as a ``FailedRecord``.
+This is the "best effort on first pass, identify and reprocess misses"
+contract: raw text never silently leaks through as unscrubbed output.
 
 The per-chunk decisions are merged into a ``ValidationDecisionsSchema``-shaped
 payload so the downstream ``enrich_validation_decisions`` column keeps
@@ -32,25 +31,58 @@ The public entry point for DataDesigner wiring is
 decorated with ``@custom_column_generator`` and bound to a concrete pool.
 The pure helpers below are exposed for unit testing.
 
-Sync/async boundary with DataDesigner. The DD-exposed wrapper is sync
-(DD's default thread-pool engine calls ``generator.generate(record)``
-directly; an async wrapper would return a coroutine and DD would reject it
-with ``"must return a dict, got coroutine"``). The wrapper runs the
-``chunked_validate_row`` coroutine on a fresh event loop per row via
-``asyncio.run``; inside, each chunk dispatch calls the *sync*
-``facade.generate()`` through ``asyncio.to_thread`` because the facades DD
-hands us under the sync engine are sync-mode ``HttpModelClient``s whose
-``agenerate()`` raises. DD#545 (shipped in ``data-designer>=0.5.7``)
-bridges sync ``.generate()`` calls to ``agenerate`` transparently under
-the async engine, so this same code path works both before and after
-Anonymizer#119 turns the async engine on for detection.
+Per-instance validation is intentional. Every candidate goes to the LLM in
+its own excerpt, even when the same ``(value, label)`` pair appears many
+times in a row. Deduping by ``(value, label)`` and broadcasting one
+canonical decision to every duplicate was considered (it is the single
+largest cost lever on this path) and rejected: it conflates surface form
+with meaning, produces silently-wrong answers when the detector's labels
+are context-dependent, and gives us no signal when it does. See the
+"Validator chunking" section of ``docs/concepts/detection.md`` and the
+``context`` block on the C5 review thread in PR #126 for the full
+reasoning. If cost becomes pressing before we have data on how often
+duplicates genuinely are semantically equivalent, prefer orthogonal
+levers: tighter excerpt windows, larger ``max_entities_per_call`` for
+cheap validators, or token-budget-aware chunking (tracked as C7 in the
+same review thread).
+
+Concurrency model. ``chunked_validate_row`` dispatches its chunks through a
+``ThreadPoolExecutor``. Per-alias concurrency is already enforced downstream
+by each facade's ``ThrottledModelClient`` (AIMD on 429), so we intentionally
+do not impose a row-level cap here; the pool exists purely to overlap the
+chunks for this single row. Under DataDesigner's opt-in async engine the
+sync ``facade.generate()`` calls we make are transparently bridged to
+``agenerate`` by the DD runtime, so this code path is agnostic to which
+engine is active.
+
+TODO(async-native): once DataDesigner's async engine becomes the default
+(tracking: DATA_DESIGNER_ASYNC_ENGINE opt-in flag flips off), drop the
+``ThreadPoolExecutor`` + sync ``facade.generate()`` pattern here in favour
+of ``async def`` functions calling ``facade.agenerate()`` directly, with
+``asyncio.gather`` replacing the executor. That removes one thread hop per
+chunk and lets DD's scheduler see per-chunk dispatch as first-class async
+work. See the PR #126 review thread (step 2 of Andre's async
+simplification suggestion) for context.
+
+Eager prompt construction. ``chunked_validate_row`` builds the excerpt,
+skeleton, and rendered prompt for every chunk before submitting any worker.
+Peak prompt memory is ``len(chunks) * (2 * excerpt_window_chars + skeleton
++ ~3KB template overhead)``, i.e. low-MB even at 1000 entities with
+``max_entities_per_call`` in the single digits. At workloads where this
+becomes observable (very small ``max_entities_per_call`` on multi-thousand-
+entity rows, or large ``excerpt_window_chars``), the fix is to move prompt
+construction inside each worker and pair it with a row-level concurrency
+cap (otherwise all workers race the construction phase in parallel and the
+bound is unchanged). Deferred because we have no evidence of memory
+pressure at realistic scale; tracked as C6 in the PR #126 review thread.
 """
 
 from __future__ import annotations
 
-import asyncio
+import functools
 import logging
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -59,11 +91,11 @@ from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
 
 from anonymizer.engine.constants import (
-    COL_MERGED_TAGGED_TEXT,
     COL_SEED_ENTITIES,
+    COL_SEED_TAGGED_TEXT,
+    COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TEXT,
-    COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
 )
@@ -85,7 +117,7 @@ logger = logging.getLogger("anonymizer.detection.chunked_validation")
 
 # Jinja2 environment used to render the per-chunk validation prompt.
 # The template mirrors the production prompt exactly: we substitute the same
-# placeholders (``_merged_tagged_text``, ``_validation_skeleton``,
+# placeholders (``_seed_tagged_text``, ``_validation_skeleton``,
 # ``_tag_notation``) but with per-chunk values.
 _PROMPT_ENV = Environment(
     loader=BaseLoader(),
@@ -93,6 +125,20 @@ _PROMPT_ENV = Environment(
     undefined=StrictUndefined,
     keep_trailing_newline=True,
 )
+
+
+@functools.lru_cache(maxsize=4)
+def _compile_template(template: str) -> Any:
+    """Return a compiled Jinja2 template, cached by source string.
+
+    A row with ``N`` chunks would otherwise re-parse the same template ``N``
+    times, which is wasteful for the exact workload this module targets
+    (high-entity-count rows). ``maxsize=4`` is deliberately tiny: in practice
+    there is one prompt string per ``EntityDetectionWorkflow`` instance, but
+    tests may instantiate a handful of distinct templates in a single
+    process so we keep a small LRU rather than an unbounded cache.
+    """
+    return _PROMPT_ENV.from_string(template)
 
 
 class ChunkedValidationParams(BaseModel):
@@ -109,7 +155,7 @@ class ChunkedValidationParams(BaseModel):
         excerpt_window_chars: Chars of surrounding raw text included in each
             chunk's excerpt on either side of the chunk span.
         prompt_template: Jinja2 source for the validation prompt (with
-            ``_merged_tagged_text``, ``_validation_skeleton``, ``_tag_notation``
+            ``_seed_tagged_text``, ``_validation_skeleton``, ``_tag_notation``
             placeholders). Typically produced by ``_get_validation_prompt``.
         system_prompt: Optional system prompt forwarded to each chunk call.
     """
@@ -229,10 +275,10 @@ def render_chunk_prompt(
     call: dicts are rendered with Python ``str()`` (Jinja2 default), which is
     how the existing prompt has always served ``{{ _validation_skeleton }}``.
     """
-    compiled = _PROMPT_ENV.from_string(template)
+    compiled = _compile_template(template)
     return compiled.render(
         **{
-            COL_MERGED_TAGGED_TEXT: excerpt,
+            COL_SEED_TAGGED_TEXT: excerpt,
             COL_VALIDATION_SKELETON: skeleton,
             COL_TAG_NOTATION: notation.value,
         }
@@ -286,11 +332,11 @@ def merge_chunk_decisions(
 
 
 # ---------------------------------------------------------------------------
-# Async dispatch. Testable by passing fake ``models``.
+# Chunk dispatch. Testable by passing fake ``models``.
 # ---------------------------------------------------------------------------
 
 
-async def _dispatch_chunk(
+def _dispatch_chunk(
     *,
     facades: list[tuple[str, Any]],
     prompt: str,
@@ -306,17 +352,6 @@ async def _dispatch_chunk(
     (``RetryConfig.max_retries`` + exponential backoff on 5xx and connection
     errors) and its own AIMD throttling on 429, so by the time an exception
     escapes the facade call we consider that alias exhausted for this chunk.
-
-    We call the *sync* ``facade.generate()`` inside ``asyncio.to_thread`` on
-    purpose. Under DataDesigner's default thread-pool engine the facades
-    DD hands us are sync-mode ``HttpModelClient``s, and calling
-    ``facade.agenerate()`` on them raises
-    ``"Async methods are not available on a sync-mode HttpModelClient"``.
-    The sync call works under both engines: DD#545 (shipped in
-    ``data-designer>=0.5.7``) bridges sync ``.generate()`` calls from
-    custom column generators to ``agenerate`` under the async engine, so
-    wrapping in ``asyncio.to_thread`` gives us per-row chunk concurrency
-    today and forward-compatibility after Anonymizer#119 lands.
 
     We use ``PydanticResponseRecipe`` so the facade appends JSON task
     instructions and parses the response into ``RawValidationDecisionsSchema``.
@@ -337,8 +372,7 @@ async def _dispatch_chunk(
     last_exc: BaseException | None = None
     for attempt_index, (alias, facade) in enumerate(facades):
         try:
-            output, _messages = await asyncio.to_thread(
-                facade.generate,
+            output, _messages = facade.generate(
                 prompt=final_prompt,
                 parser=recipe.parse,
                 system_prompt=final_system,
@@ -390,14 +424,14 @@ async def _dispatch_chunk(
     raise last_exc
 
 
-async def chunked_validate_row(
+def chunked_validate_row(
     row: dict[str, Any],
     params: ChunkedValidationParams,
     models: dict[str, Any],
 ) -> dict[str, Any]:
     """Run chunked validation for a single row and write ``COL_VALIDATION_DECISIONS``.
 
-    This is the async workhorse. Call it directly in tests with fake ``models``;
+    This is the workhorse. Call it directly in tests with fake ``models``;
     the DataDesigner-decorated wrapper produced by
     :func:`make_chunked_validation_generator` just forwards to it.
     """
@@ -410,7 +444,7 @@ async def chunked_validate_row(
         )
 
     text = str(row.get(COL_TEXT, ""))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, {}))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
     seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
     notation_raw = row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value
     notation = TagNotation(str(notation_raw))
@@ -436,7 +470,7 @@ async def chunked_validate_row(
     ordered = order_candidates_by_position(candidates, all_spans)
     chunks = chunk_candidates(ordered, params.max_entities_per_call)
 
-    tasks: list[Any] = []
+    dispatch_kwargs_per_chunk: list[dict[str, Any]] = []
     for chunk_index, chunk in enumerate(chunks):
         chunk_candidates_ = [pair[0] for pair in chunk]
         chunk_spans = [pair[1] for pair in chunk]
@@ -462,18 +496,28 @@ async def chunked_validate_row(
         start = chunk_index % len(params.pool)
         rotated_aliases = [params.pool[(start + offset) % len(params.pool)] for offset in range(len(params.pool))]
         chunk_facades = [(alias, models[alias]) for alias in rotated_aliases]
-        tasks.append(
-            _dispatch_chunk(
-                facades=chunk_facades,
-                prompt=prompt,
-                system_prompt=params.system_prompt,
-                chunk_index=chunk_index,
-            )
+        dispatch_kwargs_per_chunk.append(
+            {
+                "facades": chunk_facades,
+                "prompt": prompt,
+                "system_prompt": params.system_prompt,
+                "chunk_index": chunk_index,
+            }
         )
 
-    # gather() propagates the first exception, cancelling siblings. That's the
-    # all-or-nothing row contract: a single terminal chunk failure fails the row.
-    chunk_results = await asyncio.gather(*tasks)
+    # Dispatch all chunks concurrently via a ThreadPoolExecutor. Per-alias
+    # concurrency is still capped downstream by each facade's
+    # ``ThrottledModelClient`` (AIMD on 429), so the pool's only job here is
+    # to overlap one row's chunks. ``f.result()`` re-raises the first chunk
+    # exception, which is what we want: a single terminal chunk failure
+    # fails the row. Pending workers finish naturally as the ``with`` block
+    # exits — we just stop observing their results once we re-raise.
+    if not chunks:
+        chunk_results: list[RawValidationDecisionsSchema] = []
+    else:
+        with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
+            futures = [executor.submit(_dispatch_chunk, **kwargs) for kwargs in dispatch_kwargs_per_chunk]
+            chunk_results = [f.result() for f in futures]
 
     row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
     return row
@@ -485,7 +529,7 @@ async def chunked_validate_row(
 
 
 def make_chunked_validation_generator(pool: list[str]) -> Any:
-    """Build a ``@custom_column_generator``-decorated sync function bound to ``pool``.
+    """Build a ``@custom_column_generator``-decorated function bound to ``pool``.
 
     ``model_aliases`` must be declared statically on the decorator so
     DataDesigner knows which facades to materialise for the generator. Since
@@ -493,19 +537,6 @@ def make_chunked_validation_generator(pool: list[str]) -> Any:
     The required_columns are exhaustive for DataDesigner's DAG ordering: the
     generator reads the raw text, seed entities (for positions), the candidate
     list (what to decide), and the tag notation (for excerpt tagging).
-
-    Why the outer wrapper is sync. DataDesigner routes cell-by-cell custom
-    generators through a ThreadPoolExecutor by default (the async engine is
-    opt-in via ``DATA_DESIGNER_ASYNC_ENGINE=1``). The thread-pool path calls
-    ``generator.generate(record)`` which synchronously invokes our function
-    and passes its return value straight into ``_postprocess_result``. If the
-    outer function were ``async``, the sync caller would receive a coroutine
-    object and DD would reject it with ``"must return a dict, got coroutine"``.
-    The sync wrapper here runs the async row logic on a fresh event loop
-    (safe because each DD worker thread has no ambient loop) and returns the
-    resolved dict, so this works under both the default thread engine and
-    the opt-in async engine (which wraps sync generators in
-    ``asyncio.to_thread``).
     """
     if not pool:
         raise ValueError("Cannot build chunked validation generator: pool is empty.")
@@ -514,7 +545,7 @@ def make_chunked_validation_generator(pool: list[str]) -> Any:
         required_columns=[
             COL_TEXT,
             COL_SEED_ENTITIES,
-            COL_VALIDATION_CANDIDATES,
+            COL_SEED_VALIDATION_CANDIDATES,
             COL_TAG_NOTATION,
         ],
         model_aliases=list(pool),
@@ -524,6 +555,6 @@ def make_chunked_validation_generator(pool: list[str]) -> Any:
         generator_params: ChunkedValidationParams,
         models: dict[str, Any],
     ) -> dict[str, Any]:
-        return asyncio.run(chunked_validate_row(row, generator_params, models))
+        return chunked_validate_row(row, generator_params, models)
 
     return chunked_validate
