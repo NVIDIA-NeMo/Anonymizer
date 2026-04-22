@@ -25,10 +25,13 @@ from anonymizer.engine.constants import (
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
+    COL_SEED_TAGGED_TEXT,
+    COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
+    COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
@@ -56,10 +59,10 @@ from anonymizer.engine.schemas import (
 
 @custom_column_generator(
     required_columns=[COL_TEXT, COL_RAW_DETECTED],
-    side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_TAG_NOTATION],
+    side_effect_columns=[COL_TAG_NOTATION],
 )
 def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
-    """Parse detector payload and emit initial tagged text + seed entities JSON."""
+    """Parse detector payload and produce seed entities."""
     text = str(row.get(COL_TEXT, ""))
     entities = parse_raw_entities(
         raw_response=str(row.get(COL_RAW_DETECTED, "")),
@@ -67,26 +70,23 @@ def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
     )
     seed_entities = [entity.as_dict() for entity in entities]
     row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
-    row[COL_INITIAL_TAGGED_TEXT] = build_tagged_text(text=text, entities=entities)
-    # Keep this as a plain JSON list for prompt template readability/stability.
-    row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
     row[COL_TAG_NOTATION] = get_tag_notation(text=text)
     return row
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
+    required_columns=[COL_TEXT, COL_VALIDATED_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
     side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
 )
 def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
-    """Merge seed + augmented entities, then build tagged text and validation candidates.
+    """Merge validated seed + augmented entities, then build tagged text and validation candidates.
 
     Contract:
-    - ``COL_SEED_ENTITIES`` and ``COL_MERGED_ENTITIES`` store ``EntitiesSchema`` payloads.
+    - ``COL_VALIDATED_SEED_ENTITIES`` and ``COL_MERGED_ENTITIES`` store ``EntitiesSchema`` payloads.
     - ``COL_VALIDATION_CANDIDATES`` stores ``ValidationCandidatesSchema`` payloads.
     """
     text = str(row.get(COL_TEXT, ""))
-    seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
+    seed_spans = _parse_entity_spans(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
     merged = apply_augmented_entities(
         text=text,
         entities=seed_spans,
@@ -103,7 +103,7 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
 
 @custom_column_generator(
     required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
-    side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON],
+    side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
 )
 def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
     """Apply validation decisions to detector entities before augmentation."""
@@ -114,7 +114,7 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     seed_entities = [entity.as_dict() for entity in validated_seed]
-    row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
+    row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
     row[COL_INITIAL_TAGGED_TEXT] = build_tagged_text(text=text, entities=validated_seed)
     return row
@@ -122,23 +122,23 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
 
 @custom_column_generator(
     required_columns=[COL_TEXT, COL_SEED_ENTITIES],
-    side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
+    side_effect_columns=[COL_SEED_TAGGED_TEXT],
 )
 def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
-    """Build validation prompt inputs from detector entities only."""
+    """Build validation prompt inputs from detector entities only (pre-augmentation)."""
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
-    row[COL_MERGED_TAGGED_TEXT] = build_tagged_text(text=text, entities=seed_spans)
-    row[COL_VALIDATION_CANDIDATES] = ValidationCandidatesSchema(
+    row[COL_SEED_TAGGED_TEXT] = build_tagged_text(text=text, entities=seed_spans)
+    row[COL_SEED_VALIDATION_CANDIDATES] = ValidationCandidatesSchema(
         candidates=build_validation_candidates(text=text, entities=seed_spans)
     ).model_dump(mode="json")
     return row
 
 
-@custom_column_generator(required_columns=[COL_VALIDATION_CANDIDATES])
+@custom_column_generator(required_columns=[COL_SEED_VALIDATION_CANDIDATES])
 def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-populate the decisions template with candidate IDs so the LLM only fills in decision/reason."""
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, {}))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
     skeleton = ValidationSkeletonSchema(
         decisions=[
             ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in candidates.candidates
@@ -149,12 +149,12 @@ def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[COL_VALIDATION_DECISIONS, COL_VALIDATION_CANDIDATES],
+    required_columns=[COL_VALIDATION_DECISIONS, COL_SEED_VALIDATION_CANDIDATES],
 )
 def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
     """Enrich validation decisions with entity value and filter to known candidate IDs only."""
     raw_decisions = RawValidationDecisionsSchema.from_raw(row.get(COL_VALIDATION_DECISIONS, {}))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_VALIDATION_CANDIDATES, {}))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
 
     candidate_lookup = {c.id: c for c in candidates.candidates}
     valid_ids = set(candidate_lookup)
