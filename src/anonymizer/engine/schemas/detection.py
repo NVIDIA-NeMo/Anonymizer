@@ -315,6 +315,18 @@ class LatentEntitySchema(BaseModel):
 class LatentEntitiesSchema(BaseModel):
     latent_entities: list[LatentEntitySchema] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _ensure_parquet_writable(self) -> "LatentEntitiesSchema":
+        """DataDesigner writes this column to parquet; an empty list of
+        structs makes pyarrow fail with 'Cannot write struct type with no
+        child field' because it can't infer the nested schema. Inject a
+        single all-defaults sentinel when empty — downstream code (e.g.
+        reconstruct_full_disposition) already filters entries with empty
+        label/value so the sentinel is invisible semantically."""
+        if not self.latent_entities:
+            self.latent_entities = [LatentEntitySchema()]
+        return self
+
 
 class EntityByValueSchema(BaseModel):
     value: str = Field(default="")
