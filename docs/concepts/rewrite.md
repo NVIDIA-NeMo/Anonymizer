@@ -39,7 +39,7 @@ preview.display_record()
 | `instructions` | `None` | Additional instructions for the rewrite LLM. |
 | `risk_tolerance` | `low` | Preset controlling repair and review thresholds: `minimal`, `low`, `moderate`, `high`. |
 | `max_repair_iterations` | `3` | Maximum repair rounds. Set to 0 to disable repair. |
-| `strict_entity_protection` | `False` | If `True`, forces every detected entity to be protected. Eliminates `leave_as_is` dispositions. |
+| `strict_entity_protection` | `False` | If `True`, forces every detected entity to be protected regardless of risk. No entity can be left unchanged. |
 
 ### Privacy goal
 
