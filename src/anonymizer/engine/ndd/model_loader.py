@@ -88,15 +88,32 @@ def load_models_config(config_dir: Path | None = None) -> dict[str, Any]:
     return _load_yaml_dict(resolved_dir / "models.yaml")
 
 
-def load_workflow_selections(workflow_name: WorkflowName, config_dir: Path | None = None) -> dict[str, str]:
-    """Load selected model aliases for a workflow."""
+def load_workflow_selections(
+    workflow_name: WorkflowName,
+    config_dir: Path | None = None,
+) -> dict[str, str | list[str]]:
+    """Load selected model aliases for a workflow.
+
+    Scalar roles (e.g. ``entity_detector``) come back as strings and
+    list-valued roles (e.g. ``entity_validator``, which accepts a pool) come
+    back as ``list[str]``. Native types are preserved rather than stringified
+    so downstream Pydantic selection models see the shape the YAML actually
+    declared — stringifying a list would silently collapse the pool to a
+    single garbled alias.
+    """
     resolved_dir = config_dir or DEFAULT_CONFIG_DIR
     workflow_file = resolved_dir / f"{workflow_name.value}.yaml"
     workflow_config = _load_yaml_dict(workflow_file)
     selected_models = workflow_config.get("selected_models", {})
     if not isinstance(selected_models, dict):
         raise ValueError(f"{workflow_file} must define a top-level 'selected_models' mapping.")
-    return {str(key): str(value) for key, value in selected_models.items()}
+    normalized: dict[str, str | list[str]] = {}
+    for key, value in selected_models.items():
+        if isinstance(value, list):
+            normalized[str(key)] = [str(item) for item in value]
+        else:
+            normalized[str(key)] = str(value)
+    return normalized
 
 
 def load_workflow_config(workflow_name: WorkflowName, config_dir: Path | None = None) -> dict[str, Any]:
@@ -114,12 +131,24 @@ def load_workflow_config(workflow_name: WorkflowName, config_dir: Path | None = 
 
 
 def get_model_alias(workflow_name: WorkflowName, role: str, config_dir: Path | None = None) -> str:
-    """Return the model alias assigned to a workflow role."""
+    """Return the scalar model alias assigned to a workflow role.
+
+    Raises ``TypeError`` if the role is list-valued in the YAML (e.g. a
+    validator pool). Callers that need the full pool should read the
+    populated selection model via ``load_default_model_selection()`` and
+    ``resolve_model_aliases`` instead.
+    """
     selected_models = load_workflow_selections(workflow_name=workflow_name, config_dir=config_dir)
     if role not in selected_models:
         available = ", ".join(sorted(selected_models.keys()))
         raise ValueError(f"Role '{role}' not found in workflow '{workflow_name.value}'. Available roles: {available}")
-    return selected_models[role]
+    value = selected_models[role]
+    if isinstance(value, list):
+        raise TypeError(
+            f"Role '{role}' in workflow '{workflow_name.value}' is list-valued (a pool); "
+            f"use resolve_model_aliases() on the populated selection model instead."
+        )
+    return value
 
 
 def resolve_model_alias(

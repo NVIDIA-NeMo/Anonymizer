@@ -37,6 +37,43 @@ def test_get_model_alias_reads_workflow_mapping() -> None:
     assert isinstance(alias, str) and alias
 
 
+def test_load_workflow_selections_preserves_list_values(tmp_path) -> None:
+    """A YAML pool under ``selected_models`` must round-trip as ``list[str]``.
+
+    Stringifying would silently collapse the pool to a single garbled alias
+    ("['v1', 'v2']"), and Pydantic's ``normalize_entity_validator`` would
+    then treat that repr as one alias. Pinning the native-type preservation
+    here keeps that trap closed.
+    """
+    config_dir = tmp_path
+    (config_dir / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: d\n"
+        "  entity_validator:\n"
+        "    - v1\n"
+        "    - v2\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: l\n"
+    )
+    selections = load_workflow_selections(WorkflowName.detection, config_dir)
+    assert selections["entity_validator"] == ["v1", "v2"]
+    assert selections["entity_detector"] == "d"
+
+
+def test_get_model_alias_rejects_list_valued_role(tmp_path) -> None:
+    """Calling the scalar accessor on a pool-valued role raises ``TypeError``."""
+    config_dir = tmp_path
+    (config_dir / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: d\n"
+        "  entity_validator: [v1, v2]\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: l\n"
+    )
+    with pytest.raises(TypeError, match="list-valued"):
+        get_model_alias(WorkflowName.detection, "entity_validator", config_dir)
+
+
 WORKFLOW_YAMLS = [p.stem for p in DEFAULT_CONFIG_DIR.glob("*.yaml") if p.stem != "models"]
 
 
@@ -46,7 +83,13 @@ def test_default_workflow_aliases_exist_in_models(workflow_name: str) -> None:
     models_config = load_models_config()
     known_aliases = {m["alias"] for m in models_config.get("model_configs", [])}
     selections = load_workflow_selections(WorkflowName(workflow_name))
-    unknown = set(selections.values()) - known_aliases
+    referenced: set[str] = set()
+    for value in selections.values():
+        if isinstance(value, list):
+            referenced.update(value)
+        else:
+            referenced.add(value)
+    unknown = referenced - known_aliases
     assert not unknown, f"Workflow '{workflow_name}' references unknown aliases: {unknown}. Known: {known_aliases}"
 
 
@@ -298,6 +341,47 @@ class TestEntityValidatorNormalization:
                 entity_augmenter="a",
                 latent_detector="l",
             )
+
+    def test_duplicate_aliases_are_deduped_with_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # A duplicate alias in the pool would burn a failover attempt on an
+        # already-exhausted endpoint. The normalizer collapses duplicates to
+        # the first occurrence (preserving order) and logs a warning so the
+        # user can see their config wasn't applied exactly as written.
+        with caplog.at_level("WARNING", logger="anonymizer.config.models"):
+            selection = DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=["v1", "v2", "v1", "v3", "v2"],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+        assert selection.entity_validator == ["v1", "v2", "v3"]
+        # caplog may double-capture when pytest-caplog and the root logger
+        # both propagate the record; dedupe on message content instead of
+        # asserting a raw count.
+        dedupe_messages = {
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "duplicate aliases" in r.getMessage()
+        }
+        assert len(dedupe_messages) == 1
+
+    def test_no_warning_when_all_aliases_unique(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level("WARNING", logger="anonymizer.config.models"):
+            selection = DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=["v1", "v2", "v3"],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+        assert selection.entity_validator == ["v1", "v2", "v3"]
+        dedupe_warnings = [
+            r for r in caplog.records if r.levelname == "WARNING" and "duplicate aliases" in r.getMessage()
+        ]
+        assert dedupe_warnings == []
 
 
 class TestValidateAliasReferencesHandlesValidatorPool:

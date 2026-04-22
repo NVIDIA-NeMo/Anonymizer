@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, field_validator
+
+logger = logging.getLogger(__name__)
 
 
 class DetectionModelSelection(BaseModel):
@@ -26,7 +29,7 @@ class DetectionModelSelection(BaseModel):
     @field_validator("entity_validator", mode="before")
     @classmethod
     def normalize_entity_validator(cls, value: Any) -> list[str]:
-        """Accept a scalar alias, a list of aliases, or a tuple of aliases; return a non-empty list.
+        """Accept a scalar alias, a list of aliases, or a tuple of aliases; return a non-empty deduplicated list.
 
         Normalizing at parse time keeps every downstream consumer on the
         same shape (``list[str]``) regardless of whether the user wrote
@@ -38,6 +41,11 @@ class DetectionModelSelection(BaseModel):
         ``DetectionModelSelection(entity_validator=("a", "b"))`` without
         caring about the concrete sequence type. Any other input type
         raises ``TypeError``.
+
+        Duplicate aliases are collapsed to the first occurrence (order
+        preserved) and a warning is logged. A duplicate in the pool would
+        burn a failover attempt on an already-exhausted endpoint, which
+        almost certainly isn't what the user wants.
         """
         if isinstance(value, str):
             aliases: list[str] = [value]
@@ -48,7 +56,22 @@ class DetectionModelSelection(BaseModel):
         cleaned = [alias.strip() for alias in aliases if alias.strip()]
         if not cleaned:
             raise ValueError("entity_validator must name at least one model alias.")
-        return cleaned
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for alias in cleaned:
+            if alias in seen:
+                continue
+            seen.add(alias)
+            deduped.append(alias)
+        if len(deduped) != len(cleaned):
+            removed = [alias for alias in cleaned if cleaned.count(alias) > 1]
+            logger.warning(
+                "entity_validator pool contained duplicate aliases %s; collapsing to %s. "
+                "Duplicates burn a failover attempt on an already-exhausted endpoint.",
+                sorted(set(removed)),
+                deduped,
+            )
+        return deduped
 
 
 class ReplaceModelSelection(BaseModel):
