@@ -100,7 +100,7 @@ config = AnonymizerConfig(
 
 !!! tip "When to use this"
 
-    Use `strict_entity_protection` when you need a blanket policy that protects all entities regardless of contextual risk — for example, in medical, legal, or financial data where even seemingly benign attributes (gender, marital status, occupation) must be modified. For finer control over which entity types are always protected, combine this with a specific `privacy_goal`.
+    Use `strict_entity_protection` when you need a blanket policy that protects all entities regardless of contextual risk — for example, in medical, legal, or financial data where even seemingly benign attributes (gender, marital status, occupation) must be modified. For finer control over which entity types are always protected, combine this with a specific [`privacy_goal`](#privacy-goal).
 
 ---
 
