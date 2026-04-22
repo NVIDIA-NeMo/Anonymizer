@@ -384,12 +384,16 @@ def test_qa_compare_results_use_integer_ids() -> None:
 # Context-validated answer coverage
 
 
-def test_quality_answers_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_pad_missing_ids_with_context() -> None:
+    """Missing ids are padded with a placeholder so the record survives."""
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]
+    # Padded entry has the placeholder answer
+    assert any(a.id == 2 and a.answer == "missing" for a in result.answers)
 
 
 def test_quality_answers_accept_complete_with_context() -> None:
@@ -405,33 +409,49 @@ def test_quality_answers_no_enforcement_without_context() -> None:
     assert len(result.answers) == 1
 
 
-def test_privacy_answers_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing answer IDs"):
-        PrivacyAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_privacy_answers_pad_missing_ids_with_context() -> None:
+    """Missing ids are padded with a pessimistic 'yes' so the record survives
+    and downstream triggers human review rather than silently passing."""
+    result = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]
+    padded = next(a for a in result.answers if a.id == 2)
+    assert padded.answer.value == "yes"  # pessimistic default
+    assert padded.confidence == 0.5
 
 
-def test_qa_compare_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing compare IDs"):
-        QACompareResultsSchema.model_validate(
-            {"per_item": [{"id": 1, "score": 0.9}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_qa_compare_pad_missing_ids_with_context() -> None:
+    """Missing ids are padded with a neutral 0.5 score so the record survives."""
+    result = QACompareResultsSchema.model_validate(
+        {"per_item": [{"id": 1, "score": 0.9}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.per_item]
+    assert ids == [1, 2]
+    padded = next(a for a in result.per_item if a.id == 2)
+    assert padded.score == 0.5
 
 
-def test_quality_answers_reject_duplicate_ids() -> None:
-    with pytest.raises(ValidationError, match="Duplicate answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_dedup_duplicate_ids() -> None:
+    """Duplicate ids are deduplicated (first occurrence wins) instead of rejected."""
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]
+    # First occurrence wins
+    assert next(a for a in result.answers if a.id == 1).answer == "yes"
 
 
-def test_quality_answers_reject_extra_ids() -> None:
-    with pytest.raises(ValidationError, match="Extra answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_drop_extra_ids() -> None:
+    """Extra ids outside the expected set are dropped instead of rejecting the record."""
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]  # 99 dropped

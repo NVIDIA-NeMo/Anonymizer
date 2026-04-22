@@ -576,6 +576,56 @@ def _validate_id_coverage(expected_ids: list[int], returned_ids: list[int], labe
         raise ValueError(f"Extra {label} IDs not in expected set: {extra}")
 
 
+def _normalize_id_covered_list(
+    raw: list,
+    *,
+    expected_ids: list[int] | None,
+    default_item_for_id,
+) -> list:
+    """Normalize a list of id-bearing items to exact-coverage shape.
+
+    Used as the wire-layer normalizer on all context-validated answer
+    schemas (QualityAnswersSchema / PrivacyAnswersSchema /
+    QACompareResultsSchema). Dedupes by id (first occurrence wins),
+    pads missing ids via ``default_item_for_id(id) -> dict``, drops
+    extras. When ``expected_ids`` is None, only dedupes.
+
+    Each item can be a dict or a BaseModel instance. Items without a
+    parseable ``id`` are skipped.
+    """
+    seen: set[int] = set()
+    deduped: list = []
+    for item in raw:
+        if hasattr(item, "model_dump"):
+            item = item.model_dump()
+        if not isinstance(item, dict):
+            continue
+        try:
+            iid = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if iid in seen:
+            continue
+        seen.add(iid)
+        deduped.append(item)
+
+    if expected_ids is None:
+        return deduped
+
+    expected_set = set(expected_ids)
+    # Drop extras (ids not in expected_set)
+    deduped = [it for it in deduped if int(it["id"]) in expected_set]
+    # Pad missing ids
+    present = {int(it["id"]) for it in deduped}
+    for eid in expected_ids:
+        if eid not in present:
+            deduped.append(default_item_for_id(eid))
+    # Preserve expected_ids ordering for stability
+    order = {eid: i for i, eid in enumerate(expected_ids)}
+    deduped.sort(key=lambda it: order.get(int(it["id"]), len(order)))
+    return deduped
+
+
 class QualityAnswerSchema(BaseModel):
     id: int
     answer: str
@@ -584,17 +634,44 @@ class QualityAnswerSchema(BaseModel):
 class QualityAnswersSchema(BaseModel):
     """LLM output schema for quality QA re-answer step (on rewritten text).
 
-    When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    When validated with ``context={"expected_ids": [1, 2, ...]}``, normalizes
+    the returned list to exactly that ID set: dedupes by id (first wins),
+    pads missing ids with a placeholder answer, and drops extras. Prevents
+    an LLM that emits a duplicate or misses an id from dropping the whole
+    record (observed on gpt-oss-20b × 05_legal_court rewrite).
     """
 
-    answers: list[QualityAnswerSchema]
+    answers: list[QualityAnswerSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_answers(cls, data: object, info: ValidationInfo) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("answers") or []
+        if not isinstance(raw, list):
+            raw = []
+        expected = (info.context or {}).get("expected_ids") if info.context else None
+        data["answers"] = _normalize_id_covered_list(
+            raw,
+            expected_ids=expected,
+            default_item_for_id=lambda i: {"id": i, "answer": "missing"},
+        )
+        return data
 
     @model_validator(mode="after")
     def _check_coverage(self, info: ValidationInfo) -> QualityAnswersSchema:
+        # Soft check: the before-validator already normalized. If coverage
+        # still fails here it indicates a schema-level bug, not LLM drift.
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            try:
+                _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            except ValueError as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "QualityAnswersSchema post-normalization coverage warning: %s", e
+                )
         return self
 
 
@@ -608,17 +685,47 @@ class PrivacyAnswerItemSchema(BaseModel):
 class PrivacyAnswersSchema(BaseModel):
     """LLM output schema for privacy QA re-answer step (on rewritten text).
 
-    When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    When validated with ``context={"expected_ids": [1, 2, ...]}``, normalizes
+    the returned list to exactly that ID set: dedupes by id (first wins),
+    pads missing ids with a pessimistic answer ("yes" = assume leak), and
+    drops extras. Pessimistic default because a missing answer should bias
+    toward triggering human review rather than silently passing.
     """
 
-    answers: list[PrivacyAnswerItemSchema]
+    answers: list[PrivacyAnswerItemSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_answers(cls, data: object, info: ValidationInfo) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("answers") or []
+        if not isinstance(raw, list):
+            raw = []
+        expected = (info.context or {}).get("expected_ids") if info.context else None
+        data["answers"] = _normalize_id_covered_list(
+            raw,
+            expected_ids=expected,
+            default_item_for_id=lambda i: {
+                "id": i,
+                "answer": "yes",  # pessimistic default — flag for human review
+                "confidence": 0.5,
+                "reason": "missing answer - defaulted to pessimistic",
+            },
+        )
+        return data
 
     @model_validator(mode="after")
     def _check_coverage(self, info: ValidationInfo) -> PrivacyAnswersSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            try:
+                _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            except ValueError as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "PrivacyAnswersSchema post-normalization coverage warning: %s", e
+                )
         return self
 
 
@@ -631,15 +738,38 @@ class QACompareItemSchema(BaseModel):
 class QACompareResultsSchema(BaseModel):
     """LLM output schema for quality QA comparison step.
 
-    When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    When validated with ``context={"expected_ids": [1, 2, ...]}``, normalizes
+    the returned list to exactly that ID set: dedupes, pads missing ids
+    with a neutral 0.5 score, and drops extras.
     """
 
-    per_item: list[QACompareItemSchema]
+    per_item: list[QACompareItemSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_per_item(cls, data: object, info: ValidationInfo) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("per_item") or []
+        if not isinstance(raw, list):
+            raw = []
+        expected = (info.context or {}).get("expected_ids") if info.context else None
+        data["per_item"] = _normalize_id_covered_list(
+            raw,
+            expected_ids=expected,
+            default_item_for_id=lambda i: {"id": i, "score": 0.5, "reason": None},
+        )
+        return data
 
     @model_validator(mode="after")
     def _check_coverage(self, info: ValidationInfo) -> QACompareResultsSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
+            try:
+                _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
+            except ValueError as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "QACompareResultsSchema post-normalization coverage warning: %s", e
+                )
         return self
