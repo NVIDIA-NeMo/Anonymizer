@@ -88,7 +88,7 @@ config = AnonymizerConfig(
 
 ### Strict entity protection
 
-By default, the sensitivity disposition step may decide that some entities — particularly quasi-identifiers judged to be low-risk in context — do not require protection and leaves them unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and `leave_as_is` is not available as an outcome.
+By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is.
 
 ```python
 config = AnonymizerConfig(
