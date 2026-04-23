@@ -368,6 +368,62 @@ class TestChunkedValidateRowPoolOfOne:
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
         assert {d["id"]: d["decision"] for d in decisions} == {"a": "keep", "b": "drop"}
 
+    def test_single_chunk_sends_single_chunk_tagged_text_not_windowed_excerpt(self) -> None:
+        """Single-chunk rows must receive the fully tagged document, not a windowed excerpt.
+
+        Regression: before this fix, every chunk — including a lone single
+        chunk — was routed through ``build_chunk_excerpt`` with the configured
+        window. That silently narrowed the validator's context relative to the
+        pre-chunking ``LLMStructuredColumnConfig`` path, which always served
+        the full ``_seed_tagged_text``. The excerpt window is a multi-chunk
+        cost-control lever; applying it to the single-call path is incorrect.
+        """
+        prefix = "HEADER_MARKER_ALPHA " * 80
+        suffix = " FOOTER_MARKER_OMEGA" * 80
+        middle = "Alice met Bob."
+        text = prefix + middle + suffix
+        alice_start = len(prefix)
+        bob_start = alice_start + 10
+
+        spans = [
+            _entity_span("a", "Alice", "first_name", alice_start, alice_start + 5),
+            _entity_span("b", "Bob", "first_name", bob_start, bob_start + 3),
+        ]
+        candidates = _candidates_schema(
+            ("a", "Alice", "first_name"),
+            ("b", "Bob", "first_name"),
+        )
+        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+
+        facade = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {"id": "a", "decision": "keep"},
+                    {"id": "b", "decision": "keep"},
+                ]
+            },
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=10,
+            excerpt_window_chars=50,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        chunked_validate_row(row, params, {"v0": facade})
+
+        assert len(facade.calls) == 1
+        prompt = facade.calls[0]["prompt"]
+        assert "HEADER_MARKER_ALPHA" in prompt, (
+            "single-chunk row should receive the full text prefix; a 50-char window "
+            "around Alice/Bob would clip the prefix entirely."
+        )
+        assert "FOOTER_MARKER_OMEGA" in prompt, (
+            "single-chunk row should receive the full text suffix; a 50-char window "
+            "around Alice/Bob would clip the suffix entirely."
+        )
+
     def test_empty_candidates_short_circuits_without_calls(self) -> None:
         row = _build_row(text="hello", seed_entities=[], candidates=_candidates_schema())
         facade = FakeFacade("v0", response={"decisions": []})

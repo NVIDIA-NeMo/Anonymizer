@@ -426,25 +426,45 @@ def chunked_validate_row(
     ordered = order_candidates_by_position(candidates, all_spans)
     chunks = chunk_candidates(ordered, params.max_entities_per_call)
 
-    logger.debug(
-        "chunked validation: %d candidate(s) in %d chunk(s) (max=%d per chunk, window=%d chars), pool=%s",
-        len(ordered),
-        len(chunks),
-        params.max_entities_per_call,
-        params.excerpt_window_chars,
-        params.pool,
-    )
+    if len(chunks) == 1:
+        logger.debug(
+            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool=%s",
+            len(ordered),
+            params.pool,
+        )
+    else:
+        logger.debug(
+            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool=%s",
+            len(ordered),
+            len(chunks),
+            params.max_entities_per_call,
+            params.excerpt_window_chars,
+            params.pool,
+        )
+
+    # Single-chunk rows preserve parity with the pre-chunking
+    # ``LLMStructuredColumnConfig`` path by sending the fully tagged
+    # document. The excerpt window is strictly a cost-control lever for
+    # multi-chunk dispatch (it bounds per-chunk input tokens); when we're
+    # only making one call there's no cost reason to clip, and clipping
+    # would silently narrow the context the validator sees. Computed once
+    # here because ``len(chunks) == 1`` is loop-invariant.
+    single_chunk_tagged_text = build_tagged_text(text, all_spans, notation=notation) if len(chunks) == 1 else None
 
     dispatch_kwargs_per_chunk: list[dict[str, Any]] = []
     for chunk_index, chunk in enumerate(chunks):
         chunk_candidates_ = [pair[0] for pair in chunk]
         chunk_spans = [pair[1] for pair in chunk]
-        excerpt = build_chunk_excerpt(
-            text=text,
-            chunk_spans=chunk_spans,
-            all_spans=all_spans,
-            window_chars=params.excerpt_window_chars,
-            notation=notation,
+        excerpt = (
+            single_chunk_tagged_text
+            if single_chunk_tagged_text is not None
+            else build_chunk_excerpt(
+                text=text,
+                chunk_spans=chunk_spans,
+                all_spans=all_spans,
+                window_chars=params.excerpt_window_chars,
+                notation=notation,
+            )
         )
         skeleton = build_chunk_skeleton(chunk_candidates_)
         prompt = render_chunk_prompt(
