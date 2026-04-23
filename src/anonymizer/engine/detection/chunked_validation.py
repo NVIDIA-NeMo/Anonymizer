@@ -106,13 +106,21 @@ class ChunkedValidationParams(BaseModel):
             ``_seed_tagged_text``, ``_validation_skeleton``, ``_tag_notation``
             placeholders). Typically produced by ``_get_validation_prompt``.
         system_prompt: Optional system prompt forwarded to each chunk call.
+
+    ``prompt_template`` and ``system_prompt`` are marked ``repr=False`` because
+    DataDesigner's pre-generation logger f-strings this model
+    (``generator_params: {params}``) and our validation prompt is multi-kB of
+    entity rules; a non-trivial system prompt would compound that. Hiding
+    them from ``__str__``/``__repr__`` keeps setup logs readable without
+    touching serialization — ``model_dump()`` still carries both, so the
+    generator receives them unchanged.
     """
 
     pool: list[str] = Field(min_length=1)
     max_entities_per_call: int = Field(gt=0)
     excerpt_window_chars: int = Field(gt=0)
-    prompt_template: str
-    system_prompt: str | None = None
+    prompt_template: str = Field(repr=False)
+    system_prompt: str | None = Field(default=None, repr=False)
 
 
 # ---------------------------------------------------------------------------
