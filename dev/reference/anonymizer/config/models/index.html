@@ -914,6 +914,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label=" DetectionModelSelection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.models.DetectionModelSelection.normalize_entity_validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;normalize_entity_validator
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -1472,6 +1489,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label=" DetectionModelSelection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.models.DetectionModelSelection.normalize_entity_validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;normalize_entity_validator
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -1729,6 +1763,11 @@
               Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
 
         <p>Model aliases for the entity detection pipeline.</p>
+<p><code>entity_validator</code> accepts either a single alias or a list of aliases.
+A list forms a validator <em>pool</em>: chunked validation rotates calls
+across the pool in round-robin order, which is useful for bypassing
+per-alias TPM/RPM limits. A single scalar is normalized to a
+one-element list.</p>
 
     
 
@@ -1740,7 +1779,7 @@
             </li>
             <li>
               <code><span title="anonymizer.config.models.DetectionModelSelection.entity_validator">entity_validator</span></code>
-                (<code><span title="str">str</span></code>)
+                (<code><span title="list">list</span>[<span title="str">str</span>]</code>)
             </li>
             <li>
               <code><span title="anonymizer.config.models.DetectionModelSelection.entity_augmenter">entity_augmenter</span></code>
@@ -1752,6 +1791,17 @@
             </li>
         </ul>
 
+        <p>Validators:</p>
+        <ul>
+            <li>
+              <code><a class="autorefs autorefs-internal" title="            normalize_entity_validator(value)
+
+  
+      pydantic-validator
+   (anonymizer.config.models.DetectionModelSelection.normalize_entity_validator)" href="#anonymizer.config.models.DetectionModelSelection.normalize_entity_validator">normalize_entity_validator</a></code>
+                &rarr;
+                  <code><span title="anonymizer.config.models.DetectionModelSelection.entity_validator">entity_validator</span></code>            </li>
+        </ul>
 
 
 
@@ -1765,6 +1815,91 @@
 
 
 
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="anonymizer.config.models.DetectionModelSelection.normalize_entity_validator" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python">normalize_entity_validator(value)</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-validator"><code>pydantic-validator</code></small>
+  </span>
+
+<a href="#anonymizer.config.models.DetectionModelSelection.normalize_entity_validator" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Accept a scalar alias, a list of aliases, or a tuple of aliases; return a non-empty deduplicated list.</p>
+<p>Normalizing at parse time keeps every downstream consumer on the
+same shape (<code>list[str]</code>) regardless of whether the user wrote
+<code>entity_validator: some-alias</code> or
+<code>entity_validator: [alias-a, alias-b]</code>. Tuples are accepted for
+parity with Pydantic v2's default coercion for <code>list[str]</code> fields,
+which lets programmatic callers pass either
+<code>DetectionModelSelection(entity_validator=["a", "b"])</code> or
+<code>DetectionModelSelection(entity_validator=("a", "b"))</code> without
+caring about the concrete sequence type. Any other input type
+raises <code>TypeError</code>.</p>
+<p>Duplicate aliases are collapsed to the first occurrence (order
+preserved) and a warning is logged. A duplicate in the pool would
+burn a failover attempt on an already-exhausted endpoint, which
+almost certainly isn't what the user wants.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/config/models.py</code></summary>
+              <pre class="highlight"><code class="language-python">@field_validator("entity_validator", mode="before")
+@classmethod
+def normalize_entity_validator(cls, value: Any) -&gt; list[str]:
+    """Accept a scalar alias, a list of aliases, or a tuple of aliases; return a non-empty deduplicated list.
+
+    Normalizing at parse time keeps every downstream consumer on the
+    same shape (``list[str]``) regardless of whether the user wrote
+    ``entity_validator: some-alias`` or
+    ``entity_validator: [alias-a, alias-b]``. Tuples are accepted for
+    parity with Pydantic v2's default coercion for ``list[str]`` fields,
+    which lets programmatic callers pass either
+    ``DetectionModelSelection(entity_validator=["a", "b"])`` or
+    ``DetectionModelSelection(entity_validator=("a", "b"))`` without
+    caring about the concrete sequence type. Any other input type
+    raises ``TypeError``.
+
+    Duplicate aliases are collapsed to the first occurrence (order
+    preserved) and a warning is logged. A duplicate in the pool would
+    burn a failover attempt on an already-exhausted endpoint, which
+    almost certainly isn't what the user wants.
+    """
+    if isinstance(value, str):
+        aliases: list[str] = [value]
+    elif isinstance(value, (list, tuple)):
+        aliases = [str(item) for item in value]
+    else:
+        raise TypeError(f"entity_validator must be a string or list of strings, got {type(value).__name__}")
+    cleaned = [alias.strip() for alias in aliases if alias.strip()]
+    if not cleaned:
+        raise ValueError("entity_validator must name at least one model alias.")
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for alias in cleaned:
+        if alias in seen:
+            continue
+        seen.add(alias)
+        deduped.append(alias)
+    if len(deduped) != len(cleaned):
+        removed = [alias for alias in cleaned if cleaned.count(alias) &gt; 1]
+        logger.warning(
+            "entity_validator pool contained duplicate aliases %s; collapsing to %s. "
+            "Duplicates burn a failover attempt on an already-exhausted endpoint.",
+            sorted(set(removed)),
+            deduped,
+        )
+    return deduped</code></pre>
+            </details>
+    </div>
+
+</div>
 
 
 

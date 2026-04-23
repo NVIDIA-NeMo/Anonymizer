@@ -452,6 +452,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#validator-pools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validator pools
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#choosing-custom-models" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1507,6 +1518,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#validator-pools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validator pools
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#choosing-custom-models" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1714,6 +1736,26 @@ model_configs:
 <div class="admonition tip">
 <p class="admonition-title">Validate your config</p>
 <p>Use <a href="../../reference/anonymizer/interface/anonymizer/"><code>anonymizer.validate_config(config)</code></a> (or <a href="../../reference/anonymizer/interface/cli/main/"><code>anonymizer validate</code></a> from the CLI) after changing model configs to catch alias mismatches before processing data.</p>
+</div>
+<h3 id="validator-pools">Validator pools<a class="headerlink" href="#validator-pools" title="Permanent link">&para;</a></h3>
+<p><code>entity_validator</code> accepts either a single alias (shown above) or a list of aliases. A list forms a <strong>validator pool</strong> with two jobs:</p>
+<ol>
+<li><strong>Load spreading.</strong> <a href="../detection/#chunked-validation">Chunked validation</a> dispatches each chunk to the next alias in round-robin order, aggregating quota across equivalent endpoints when a single alias would hit the provider's rate limits (tokens-per-minute or requests-per-minute quotas).</li>
+<li><strong>Failover.</strong> If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A row is only dropped when <em>every</em> alias in the pool has failed for the same chunk. Single-alias pools have nothing to fall back to, so they behave the same as not using a pool.</li>
+</ol>
+<pre class="highlight"><code class="language-yaml">selected_models:
+  detection:
+    entity_detector: gliner-pii-detector
+    entity_validator:
+      - gpt5-primary
+      - gpt5-secondary
+    entity_augmenter: gpt5-primary
+    latent_detector: claude-sonnet</code></pre>
+<p>Every alias in the pool must also appear in <code>model_configs</code>; <code>anonymizer validate</code> flags unknown aliases by index. A scalar value remains valid and is equivalent to a one-element list.</p>
+<div class="admonition warning">
+<p class="admonition-title"><code>max_parallel_requests</code> is enforced per alias</p>
+<p>A pool with N aliases effectively allows up to <code>sum(max_parallel_requests for alias in pool)</code> concurrent validator calls per row when chunks exist. Budget your provider rate limits accordingly — the whole point of pooling is to multiply in-flight requests, but the multiplication is real.</p>
+<p>Pool aliases should target <strong>equivalent models</strong> (same model family, similar quality). Mixing heterogeneous models produces inconsistent validation across chunks in the same row and is almost always a misconfiguration.</p>
 </div>
 <h3 id="choosing-custom-models">Choosing custom models<a class="headerlink" href="#choosing-custom-models" title="Permanent link">&para;</a></h3>
 <p>For Anonymizer, the best overall leaderboard model is not always the best default for every role.
