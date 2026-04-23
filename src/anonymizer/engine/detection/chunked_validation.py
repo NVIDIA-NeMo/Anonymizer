@@ -426,6 +426,15 @@ def chunked_validate_row(
     ordered = order_candidates_by_position(candidates, all_spans)
     chunks = chunk_candidates(ordered, params.max_entities_per_call)
 
+    logger.debug(
+        "chunked validation: %d candidate(s) in %d chunk(s) (max=%d per chunk, window=%d chars), pool=%s",
+        len(ordered),
+        len(chunks),
+        params.max_entities_per_call,
+        params.excerpt_window_chars,
+        params.pool,
+    )
+
     dispatch_kwargs_per_chunk: list[dict[str, Any]] = []
     for chunk_index, chunk in enumerate(chunks):
         chunk_candidates_ = [pair[0] for pair in chunk]
