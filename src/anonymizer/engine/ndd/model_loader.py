@@ -258,12 +258,23 @@ def _collect_role(bucket: dict[str, str], path: str, value: object) -> None:
 
 def _validate_alias_references(
     models_config: dict[str, Any],
-    selections: dict[str, str],
+    selections: dict[str, str | list[str]],
     workflow_name: str,
 ) -> None:
-    """Validate that bundled workflow YAMLs reference aliases defined in models.yaml."""
+    """Validate that bundled workflow YAMLs reference aliases defined in models.yaml.
+
+    Handles both scalar-valued roles and list-valued roles (e.g. a validator
+    pool). A plain ``set(selections.values())`` would raise
+    ``TypeError: unhashable type: 'list'`` once any role is list-valued.
+    """
     known_aliases = {m["alias"] for m in models_config.get("model_configs", [])}
-    unknown = set(selections.values()) - known_aliases
+    referenced: set[str] = set()
+    for value in selections.values():
+        if isinstance(value, list):
+            referenced.update(value)
+        else:
+            referenced.add(value)
+    unknown = referenced - known_aliases
     if unknown:
         raise ValueError(
             f"Workflow '{workflow_name}' references unknown model aliases: {unknown}. Known aliases: {known_aliases}"

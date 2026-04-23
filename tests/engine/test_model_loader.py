@@ -32,6 +32,56 @@ def test_load_workflow_config_contains_selected_models() -> None:
     assert isinstance(entity_detector, str) and entity_detector
 
 
+def test_load_workflow_config_accepts_list_valued_entity_validator(tmp_path) -> None:
+    """A list-valued role in detection.yaml must not blow up the alias check.
+
+    Regression test for ``set(selections.values())`` raising
+    ``TypeError: unhashable type: 'list'`` once any role is list-valued.
+    """
+    (tmp_path / "models.yaml").write_text(
+        "model_configs:\n"
+        "  - alias: gliner\n"
+        "    model: test/gliner\n"
+        "  - alias: v1\n"
+        "    model: test/v1\n"
+        "  - alias: v2\n"
+        "    model: test/v2\n"
+        "  - alias: a\n"
+        "    model: test/a\n"
+    )
+    (tmp_path / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: gliner\n"
+        "  entity_validator: [v1, v2]\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: gliner\n"
+    )
+    config = load_workflow_config(WorkflowName.detection, tmp_path)
+    assert config["selected_models"]["entity_validator"] == ["v1", "v2"]
+
+
+def test_load_workflow_config_raises_on_unknown_alias_in_validator_pool(tmp_path) -> None:
+    """An unknown alias inside a list-valued pool should surface by name."""
+    (tmp_path / "models.yaml").write_text(
+        "model_configs:\n"
+        "  - alias: gliner\n"
+        "    model: test/gliner\n"
+        "  - alias: v1\n"
+        "    model: test/v1\n"
+        "  - alias: a\n"
+        "    model: test/a\n"
+    )
+    (tmp_path / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: gliner\n"
+        "  entity_validator: [v1, does-not-exist]\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: gliner\n"
+    )
+    with pytest.raises(ValueError, match="does-not-exist"):
+        load_workflow_config(WorkflowName.detection, tmp_path)
+
+
 def test_get_model_alias_reads_workflow_mapping() -> None:
     alias = get_model_alias(workflow_name=WorkflowName.detection, role="entity_validator")
     assert isinstance(alias, str) and alias
