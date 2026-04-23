@@ -54,6 +54,7 @@ from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     EntitiesSchema,
     LatentEntitiesSchema,
+    LatentEntitySchema,
     ValidationDecisionsSchema,
 )
 
@@ -208,7 +209,10 @@ class EntityDetectionWorkflow:
             workflow_name="latent-entity-detection",
             preview_num_records=preview_num_records,
         )
-        return EntityDetectionResult(dataframe=latent_result.dataframe, failed_records=latent_result.failed_records)
+        return EntityDetectionResult(
+            dataframe=_pad_empty_latent_column(latent_result.dataframe),
+            failed_records=latent_result.failed_records,
+        )
 
     def run(
         self,
@@ -643,3 +647,36 @@ def _format_privacy_goal(privacy_goal: PrivacyGoal | None) -> str:
     if privacy_goal is None:
         return "Not provided"
     return privacy_goal.to_prompt_string()
+
+
+def _pad_empty_latent_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Inject a sentinel into any empty ``_latent_entities`` cell.
+
+    Downstream workflows write the DataFrame to parquet via DataDesigner,
+    which uses pyarrow. pyarrow raises ``Cannot write struct type with no
+    child field`` when every cell has ``latent_entities: []`` — it can't
+    infer the nested struct schema from only empty lists.
+    ``LatentEntitiesSchema._ensure_parquet_writable`` covers this when
+    pydantic validation runs, but DD does not always route through
+    ``model_validate`` (e.g. partial-failure fallback), so we pad again
+    at the DataFrame level.
+    """
+    if COL_LATENT_ENTITIES not in df.columns:
+        return df
+    sentinel = [LatentEntitySchema().model_dump()]
+
+    def _fix(cell):
+        if isinstance(cell, dict):
+            if not cell.get("latent_entities"):
+                return {**cell, "latent_entities": sentinel}
+            return cell
+        if isinstance(cell, list) and not cell:
+            return sentinel
+        return cell
+
+    df = df.copy()
+    df[COL_LATENT_ENTITIES] = df[COL_LATENT_ENTITIES].map(_fix)
+    return df
+
+
+
