@@ -251,12 +251,14 @@ def merge_chunk_decisions(
     - Only decisions whose ids match a known candidate are retained. This is
       consistent with ``enrich_validation_decisions``, which also filters to
       valid ids; doing it here too keeps COL_VALIDATION_DECISIONS minimal.
-    - Duplicate ids across chunks keep the first occurrence. Duplicates
-      shouldn't happen because candidates partition cleanly, but deduping is
-      cheap defence-in-depth.
-    - Candidates with no decision at all flow through as absent; downstream
-      ``apply_validation_decisions`` treats them as ``keep`` with the original
-      label, which matches prior behaviour for a partially-answered response.
+    - Null-decision entries are treated as "no answer" and do NOT reserve
+      the id, so if a later chunk yields a real verdict for the same id,
+      that verdict wins. The null entry itself never leaks through: downstream
+      ``apply_validation_decisions`` relies on candidate-not-in-output to
+      mean "keep unchanged", which would break if we emitted ``decision=null``.
+    - Among multiple real verdicts for the same id (shouldn't happen because
+      candidates partition cleanly, but kept as defence-in-depth), the first
+      wins.
     """
     candidate_lookup = {c.id: c for c in candidates.candidates}
     valid_ids = set(candidate_lookup)
@@ -266,25 +268,23 @@ def merge_chunk_decisions(
         for decision in result.decisions:
             if decision.id not in valid_ids or decision.id in seen:
                 continue
+            # Skip null-decision entries without marking the id as seen, so a
+            # later chunk with a real verdict for the same id can still win.
+            if decision.decision is None:
+                continue
             cand = candidate_lookup[decision.id]
             merged_decisions.append(
                 {
                     "id": decision.id,
                     "value": cand.value,
                     "label": cand.label,
-                    "decision": decision.decision.value if decision.decision is not None else None,
+                    "decision": decision.decision.value,
                     "proposed_label": decision.proposed_label or "",
                     "reason": decision.reason,
                 }
             )
             seen.add(decision.id)
-    # Validate the final shape so malformed output fails loud here rather than in a
-    # downstream parser. ``ValidationDecisionsSchema.decision`` is non-optional, so
-    # we drop rows where the LLM didn't supply a decision; the downstream
-    # "no decision -> keep" semantics rely on candidate-not-in-output, not on a
-    # null-decision entry.
-    filtered = [d for d in merged_decisions if d["decision"] is not None]
-    return ValidationDecisionsSchema.model_validate({"decisions": filtered}).model_dump(mode="json")
+    return ValidationDecisionsSchema.model_validate({"decisions": merged_decisions}).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------

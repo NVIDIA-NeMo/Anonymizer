@@ -299,6 +299,29 @@ class TestMergeChunkDecisions:
         merged = merge_chunk_decisions([chunk], candidates)
         assert merged == {"decisions": []}
 
+    def test_later_real_verdict_wins_over_earlier_null_duplicate(self) -> None:
+        """A null-decision entry must not reserve the id against a later real verdict.
+
+        If an earlier chunk returns ``decision=None`` for id 'a' and a later
+        chunk returns ``decision='keep'`` for 'a', the merged payload should
+        retain the real verdict. Otherwise a transient "no answer" in one
+        chunk would suppress a valid answer from another.
+        """
+        candidates = _candidates_schema(("a", "Alice", "first_name"))
+        chunk_one = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": None}]})
+        chunk_two = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": "keep"}]})
+        merged = merge_chunk_decisions([chunk_one, chunk_two], candidates)
+        assert merged["decisions"] == [
+            {
+                "id": "a",
+                "value": "Alice",
+                "label": "first_name",
+                "decision": "keep",
+                "proposed_label": "",
+                "reason": None,
+            }
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Async dispatch: chunked_validate_row end-to-end with fake facades
