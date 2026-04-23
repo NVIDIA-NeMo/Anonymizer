@@ -11,6 +11,7 @@ import pandas as pd
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -36,10 +37,13 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
+from anonymizer.engine.detection.chunked_validation import (
+    ChunkedValidationParams,
+    make_chunked_validation_generator,
+)
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
-    build_validation_skeleton,
     enrich_validation_decisions,
     merge_and_build_candidates,
     parse_detected_entities,
@@ -47,17 +51,26 @@ from anonymizer.engine.detection.custom_columns import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import (
     AugmentedEntitiesSchema,
     EntitiesByValueSchema,
     EntitiesSchema,
     LatentEntitiesSchema,
-    ValidationDecisionsSchema,
 )
 
 logger = logging.getLogger("anonymizer.detection")
+
+# Defaults for the two chunked-validation knobs. Sourced from the Detect config
+# so there is a single source of truth; the workflow method defaults exist so
+# internal tests and ad-hoc callers do not have to wire plumbing by hand.
+_DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL: int = AnonymizerDetectConfig.model_fields[
+    "validation_max_entities_per_call"
+].default
+_DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fields[
+    "validation_excerpt_window_chars"
+].default
 
 
 @dataclass(frozen=True)
@@ -79,6 +92,8 @@ class EntityDetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
@@ -86,9 +101,10 @@ class EntityDetectionWorkflow:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
 
         This is the primary detection workflow. It detects entities via GLiNER,
-        validates/reclassifies them with an LLM, augments with additional
-        entities the detector may have missed, and produces final standoff
-        entity spans with overlap resolution.
+        validates/reclassifies them with an LLM (chunked across a pool of
+        validator aliases), augments with additional entities the detector may
+        have missed, and produces final standoff entity spans with overlap
+        resolution.
         """
         labels = _resolve_detection_labels(entity_labels)
         workflow_model_configs = self._inject_detector_params(
@@ -99,13 +115,35 @@ class EntityDetectionWorkflow:
         )
 
         detection_alias = resolve_model_alias("entity_detector", selected_models)
-        validator_alias = resolve_model_alias("entity_validator", selected_models)
+        validator_aliases = resolve_model_aliases("entity_validator", selected_models)
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
         logger.debug(
-            "detection aliases: detector=%s, validator=%s, augmenter=%s",
+            "detection aliases: detector=%s, validator_pool=%s, augmenter=%s",
             detection_alias,
-            validator_alias,
+            validator_aliases,
             augmenter_alias,
+        )
+        # ModelConfig.max_parallel_requests caps concurrency *per alias*. When
+        # the pool has multiple validators each gets its own cap, so total
+        # in-flight validator calls can reach sum(per-alias caps). Operators
+        # provisioning rate budgets for downstream providers should size each
+        # alias's cap accordingly.
+        if len(validator_aliases) > 1:
+            logger.warning(
+                "entity validation runs across a pool of %d aliases (%s). "
+                "max_parallel_requests is enforced per alias, so the pool "
+                "multiplies total in-flight validator calls; budget provider "
+                "TPM/RPM accordingly.",
+                len(validator_aliases),
+                validator_aliases,
+            )
+
+        validator_generator = make_chunked_validation_generator(validator_aliases)
+        validator_params = ChunkedValidationParams(
+            pool=list(validator_aliases),
+            max_entities_per_call=validation_max_entities_per_call,
+            excerpt_window_chars=validation_excerpt_window_chars,
+            prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
         )
 
         detection_result = self._adapter.run_workflow(
@@ -126,13 +164,9 @@ class EntityDetectionWorkflow:
                     generator_function=prepare_validation_inputs,
                 ),
                 CustomColumnConfig(
-                    name=COL_VALIDATION_SKELETON, generator_function=build_validation_skeleton, drop=True
-                ),
-                LLMStructuredColumnConfig(
                     name=COL_VALIDATION_DECISIONS,
-                    prompt=_get_validation_prompt(data_summary=data_summary, labels=labels),
-                    model_alias=validator_alias,
-                    output_format=ValidationDecisionsSchema,
+                    generator_function=validator_generator,
+                    generator_params=validator_params,
                     drop=True,
                 ),
                 CustomColumnConfig(
@@ -217,6 +251,8 @@ class EntityDetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
@@ -239,6 +275,8 @@ class EntityDetectionWorkflow:
             model_configs=model_configs,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
+            validation_max_entities_per_call=validation_max_entities_per_call,
+            validation_excerpt_window_chars=validation_excerpt_window_chars,
             entity_labels=entity_labels,
             data_summary=data_summary,
             preview_num_records=preview_num_records,

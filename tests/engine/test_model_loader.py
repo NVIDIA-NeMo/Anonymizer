@@ -32,9 +32,96 @@ def test_load_workflow_config_contains_selected_models() -> None:
     assert isinstance(entity_detector, str) and entity_detector
 
 
+def test_load_workflow_config_accepts_list_valued_entity_validator(tmp_path) -> None:
+    """A list-valued role in detection.yaml must not blow up the alias check.
+
+    Regression test for ``set(selections.values())`` raising
+    ``TypeError: unhashable type: 'list'`` once any role is list-valued.
+    """
+    (tmp_path / "models.yaml").write_text(
+        "model_configs:\n"
+        "  - alias: gliner\n"
+        "    model: test/gliner\n"
+        "  - alias: v1\n"
+        "    model: test/v1\n"
+        "  - alias: v2\n"
+        "    model: test/v2\n"
+        "  - alias: a\n"
+        "    model: test/a\n"
+    )
+    (tmp_path / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: gliner\n"
+        "  entity_validator: [v1, v2]\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: gliner\n"
+    )
+    config = load_workflow_config(WorkflowName.detection, tmp_path)
+    assert config["selected_models"]["entity_validator"] == ["v1", "v2"]
+
+
+def test_load_workflow_config_raises_on_unknown_alias_in_validator_pool(tmp_path) -> None:
+    """An unknown alias inside a list-valued pool should surface by name."""
+    (tmp_path / "models.yaml").write_text(
+        "model_configs:\n"
+        "  - alias: gliner\n"
+        "    model: test/gliner\n"
+        "  - alias: v1\n"
+        "    model: test/v1\n"
+        "  - alias: a\n"
+        "    model: test/a\n"
+    )
+    (tmp_path / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: gliner\n"
+        "  entity_validator: [v1, does-not-exist]\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: gliner\n"
+    )
+    with pytest.raises(ValueError, match="does-not-exist"):
+        load_workflow_config(WorkflowName.detection, tmp_path)
+
+
 def test_get_model_alias_reads_workflow_mapping() -> None:
     alias = get_model_alias(workflow_name=WorkflowName.detection, role="entity_validator")
     assert isinstance(alias, str) and alias
+
+
+def test_load_workflow_selections_preserves_list_values(tmp_path) -> None:
+    """A YAML pool under ``selected_models`` must round-trip as ``list[str]``.
+
+    Stringifying would silently collapse the pool to a single garbled alias
+    ("['v1', 'v2']"), and Pydantic's ``normalize_entity_validator`` would
+    then treat that repr as one alias. Pinning the native-type preservation
+    here keeps that trap closed.
+    """
+    config_dir = tmp_path
+    (config_dir / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: d\n"
+        "  entity_validator:\n"
+        "    - v1\n"
+        "    - v2\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: l\n"
+    )
+    selections = load_workflow_selections(WorkflowName.detection, config_dir)
+    assert selections["entity_validator"] == ["v1", "v2"]
+    assert selections["entity_detector"] == "d"
+
+
+def test_get_model_alias_rejects_list_valued_role(tmp_path) -> None:
+    """Calling the scalar accessor on a pool-valued role raises ``TypeError``."""
+    config_dir = tmp_path
+    (config_dir / "detection.yaml").write_text(
+        "selected_models:\n"
+        "  entity_detector: d\n"
+        "  entity_validator: [v1, v2]\n"
+        "  entity_augmenter: a\n"
+        "  latent_detector: l\n"
+    )
+    with pytest.raises(TypeError, match="list-valued"):
+        get_model_alias(WorkflowName.detection, "entity_validator", config_dir)
 
 
 WORKFLOW_YAMLS = [p.stem for p in DEFAULT_CONFIG_DIR.glob("*.yaml") if p.stem != "models"]
@@ -46,7 +133,13 @@ def test_default_workflow_aliases_exist_in_models(workflow_name: str) -> None:
     models_config = load_models_config()
     known_aliases = {m["alias"] for m in models_config.get("model_configs", [])}
     selections = load_workflow_selections(WorkflowName(workflow_name))
-    unknown = set(selections.values()) - known_aliases
+    referenced: set[str] = set()
+    for value in selections.values():
+        if isinstance(value, list):
+            referenced.update(value)
+        else:
+            referenced.add(value)
+    unknown = referenced - known_aliases
     assert not unknown, f"Workflow '{workflow_name}' references unknown aliases: {unknown}. Known: {known_aliases}"
 
 
@@ -54,7 +147,9 @@ def test_load_default_model_selection_populates_all_workflows() -> None:
     selection = load_default_model_selection()
     # Detection
     assert selection.detection.entity_detector
-    assert selection.detection.entity_validator
+    assert selection.detection.entity_validator  # list[str]
+    assert isinstance(selection.detection.entity_validator, list)
+    assert all(isinstance(alias, str) and alias for alias in selection.detection.entity_validator)
     assert selection.detection.entity_augmenter
     assert selection.detection.latent_detector
     # Replace
@@ -102,6 +197,66 @@ model_configs:
     result = parse_model_configs(yaml_str)
     assert len(result.model_configs) == 1
     assert result.selected_models.detection.entity_detector == "gliner-pii-detector"
+
+
+# parse_model_configs regression tests: user overrides in selected_models must
+# rerun field validators. model_copy(update=...) in Pydantic v2 silently skips
+# them, so the three DetectionModelSelection.normalize_entity_validator checks
+# (non-empty, deduped, whitespace-stripped) would be bypassed on override
+# unless _merge_selections re-validates.
+
+
+def test_parse_model_configs_rejects_empty_entity_validator_override() -> None:
+    yaml_str = """
+selected_models:
+  detection:
+    entity_validator: []
+model_configs:
+  - alias: gliner-pii-detector
+    model: test/gliner
+"""
+    with pytest.raises(ValueError, match="at least one model alias"):
+        parse_model_configs(yaml_str)
+
+
+def test_parse_model_configs_dedupes_duplicate_override_aliases_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    yaml_str = """
+selected_models:
+  detection:
+    entity_validator: [v1, v2, v1, v3, v2]
+model_configs:
+  - alias: gliner-pii-detector
+    model: test/gliner
+  - alias: v1
+    model: test/v1
+  - alias: v2
+    model: test/v2
+  - alias: v3
+    model: test/v3
+"""
+    with caplog.at_level("WARNING", logger="anonymizer.config.models"):
+        result = parse_model_configs(yaml_str)
+    assert result.selected_models.detection.entity_validator == ["v1", "v2", "v3"]
+    assert any("duplicate aliases" in r.getMessage() for r in caplog.records)
+
+
+def test_parse_model_configs_strips_whitespace_only_override_entries() -> None:
+    yaml_str = """
+selected_models:
+  detection:
+    entity_validator: ["  v1  ", "  ", "v2"]
+model_configs:
+  - alias: gliner-pii-detector
+    model: test/gliner
+  - alias: v1
+    model: test/v1
+  - alias: v2
+    model: test/v2
+"""
+    result = parse_model_configs(yaml_str)
+    assert result.selected_models.detection.entity_validator == ["v1", "v2"]
 
 
 def test_validate_model_alias_references_accepts_valid_detection_aliases(
@@ -228,3 +383,149 @@ def test_validate_model_alias_references_skips_rewrite_alias_when_not_enabled(
         stub_known_model_configs,
         selected_models,
     )
+
+
+class TestEntityValidatorNormalization:
+    """``DetectionModelSelection.entity_validator`` accepts scalar or list input.
+
+    Scalars normalize to single-item lists so every downstream consumer
+    sees ``list[str]``.
+    """
+
+    def test_scalar_normalizes_to_single_item_list(self) -> None:
+        selection = DetectionModelSelection(
+            entity_detector="d",
+            entity_validator="v",
+            entity_augmenter="a",
+            latent_detector="l",
+        )
+        assert selection.entity_validator == ["v"]
+
+    def test_list_preserved(self) -> None:
+        selection = DetectionModelSelection(
+            entity_detector="d",
+            entity_validator=["v1", "v2", "v3"],
+            entity_augmenter="a",
+            latent_detector="l",
+        )
+        assert selection.entity_validator == ["v1", "v2", "v3"]
+
+    def test_tuple_coerced_to_list(self) -> None:
+        # Tuples are accepted for parity with Pydantic v2's default coercion
+        # for ``list[str]`` fields; programmatic callers should not need to
+        # care about the concrete sequence type. The normalizer must return
+        # a real ``list`` so downstream ``isinstance(value, list)`` branches
+        # (e.g. in ``resolve_model_alias``) behave consistently.
+        selection = DetectionModelSelection(
+            entity_detector="d",
+            entity_validator=("v1", "v2"),  # type: ignore[arg-type]
+            entity_augmenter="a",
+            latent_detector="l",
+        )
+        assert selection.entity_validator == ["v1", "v2"]
+        assert isinstance(selection.entity_validator, list)
+
+    def test_empty_list_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at least one model alias"):
+            DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=[],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+
+    def test_whitespace_only_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at least one model alias"):
+            DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=["  ", ""],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+
+    def test_non_string_non_list_rejected(self) -> None:
+        with pytest.raises((ValueError, TypeError)):
+            DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=42,  # type: ignore[arg-type]
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+
+    def test_duplicate_aliases_are_deduped_with_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # A duplicate alias in the pool would burn a failover attempt on an
+        # already-exhausted endpoint. The normalizer collapses duplicates to
+        # the first occurrence (preserving order) and logs a warning so the
+        # user can see their config wasn't applied exactly as written.
+        with caplog.at_level("WARNING", logger="anonymizer.config.models"):
+            selection = DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=["v1", "v2", "v1", "v3", "v2"],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+        assert selection.entity_validator == ["v1", "v2", "v3"]
+        # caplog may double-capture when pytest-caplog and the root logger
+        # both propagate the record; dedupe on message content instead of
+        # asserting a raw count.
+        dedupe_messages = {
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "duplicate aliases" in r.getMessage()
+        }
+        assert len(dedupe_messages) == 1
+
+    def test_no_warning_when_all_aliases_unique(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level("WARNING", logger="anonymizer.config.models"):
+            selection = DetectionModelSelection(
+                entity_detector="d",
+                entity_validator=["v1", "v2", "v3"],
+                entity_augmenter="a",
+                latent_detector="l",
+            )
+        assert selection.entity_validator == ["v1", "v2", "v3"]
+        dedupe_warnings = [
+            r for r in caplog.records if r.levelname == "WARNING" and "duplicate aliases" in r.getMessage()
+        ]
+        assert dedupe_warnings == []
+
+
+class TestValidateAliasReferencesHandlesValidatorPool:
+    """``validate_model_alias_references`` must expand list-valued roles to one check per alias."""
+
+    def test_accepts_all_pool_aliases_present(
+        self,
+        stub_slim_model_selection: ModelSelection,
+    ) -> None:
+        """Pool of aliases all present in the model pool — passes."""
+        configs = [
+            ModelConfig(alias="v1", model="test/v1"),
+            ModelConfig(alias="v2", model="test/v2"),
+            ModelConfig(alias="known", model="some/model"),
+        ]
+        selected_models = stub_slim_model_selection.model_copy(
+            update={
+                "detection": stub_slim_model_selection.detection.model_copy(update={"entity_validator": ["v1", "v2"]})
+            }
+        )
+        validate_model_alias_references(configs, selected_models)
+
+    def test_raises_on_any_pool_alias_missing(
+        self,
+        stub_known_model_configs: list[ModelConfig],
+        stub_slim_model_selection: ModelSelection,
+    ) -> None:
+        """If any alias in the validator pool is unknown, error names that alias by index."""
+        selected_models = stub_slim_model_selection.model_copy(
+            update={
+                "detection": stub_slim_model_selection.detection.model_copy(
+                    update={"entity_validator": ["known", "missing-one"]}
+                )
+            }
+        )
+        with pytest.raises(ValueError, match=r"entity_validator\[1\].*missing-one"):
+            validate_model_alias_references(stub_known_model_configs, selected_models)

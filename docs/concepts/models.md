@@ -109,6 +109,33 @@ Roles you don't override keep their default alias selections, but those aliases 
     Use [`anonymizer.validate_config(config)`](../reference/anonymizer/interface/anonymizer.md) (or [`anonymizer validate`](../reference/anonymizer/interface/cli/main.md) from the CLI) after changing model configs to catch alias mismatches before processing data.
 
 
+### Validator pools
+
+`entity_validator` accepts either a single alias (shown above) or a list of aliases. A list forms a **validator pool** with two jobs:
+
+1. **Load spreading.** [Chunked validation](detection.md#chunked-validation) dispatches each chunk to the next alias in round-robin order, aggregating quota across equivalent endpoints when a single alias would hit the provider's rate limits (tokens-per-minute or requests-per-minute quotas).
+2. **Failover.** If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A row is only dropped when *every* alias in the pool has failed for the same chunk. Single-alias pools have nothing to fall back to, so they behave the same as not using a pool.
+
+```yaml
+selected_models:
+  detection:
+    entity_detector: gliner-pii-detector
+    entity_validator:
+      - gpt5-primary
+      - gpt5-secondary
+    entity_augmenter: gpt5-primary
+    latent_detector: claude-sonnet
+```
+
+Every alias in the pool must also appear in `model_configs`; `anonymizer validate` flags unknown aliases by index. A scalar value remains valid and is equivalent to a one-element list.
+
+!!! warning "`max_parallel_requests` is enforced per alias"
+
+    A pool with N aliases effectively allows up to `sum(max_parallel_requests for alias in pool)` concurrent validator calls per row when chunks exist. Budget your provider rate limits accordingly — the whole point of pooling is to multiply in-flight requests, but the multiplication is real.
+
+    Pool aliases should target **equivalent models** (same model family, similar quality). Mixing heterogeneous models produces inconsistent validation across chunks in the same row and is almost always a misconfiguration.
+
+
 ### Choosing custom models
 
 For Anonymizer, the best overall leaderboard model is not always the best default for every role.

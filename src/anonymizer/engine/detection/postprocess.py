@@ -255,11 +255,30 @@ def resolve_overlaps(entities: list[EntitySpan]) -> list[EntitySpan]:
     return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
 
 
-def build_tagged_text(text: str, entities: list[EntitySpan]) -> str:
-    """Render human-readable tagged text for downstream LLM prompts."""
+def build_tagged_text(
+    text: str,
+    entities: list[EntitySpan],
+    *,
+    notation: TagNotation | str | None = None,
+) -> str:
+    """Render human-readable tagged text for downstream LLM prompts.
+
+    Args:
+        text: Source text to annotate.
+        entities: Entities to tag within ``text``; positions are relative to ``text``.
+        notation: Optional override of the tag notation. When ``None`` the
+            notation is chosen heuristically from ``text`` (default behaviour).
+            Callers that tag a substring of a larger document should pass the
+            parent document's notation so tags remain stable across excerpts.
+    """
     if not entities:
         return text
-    notation = _choose_tag_notation(text)
+    if notation is None:
+        resolved_notation = _choose_tag_notation(text)
+    elif isinstance(notation, TagNotation):
+        resolved_notation = notation
+    else:
+        resolved_notation = TagNotation(notation)
     cursor = 0
     parts: list[str] = []
     for entity in sorted(entities, key=lambda item: (item.start_position, item.end_position)):
@@ -270,7 +289,7 @@ def build_tagged_text(text: str, entities: list[EntitySpan]) -> str:
             _format_entity_tag(
                 value=text[entity.start_position : entity.end_position],
                 label=entity.label,
-                notation=notation,
+                notation=resolved_notation,
             )
         )
         cursor = entity.end_position

@@ -10,6 +10,7 @@ from typing import Any
 
 from data_designer.config.models import ModelConfig, load_model_configs
 from data_designer.config.utils.io_helpers import load_config_file
+from pydantic import BaseModel
 
 from anonymizer.config.models import (
     DetectionModelSelection,
@@ -88,15 +89,32 @@ def load_models_config(config_dir: Path | None = None) -> dict[str, Any]:
     return _load_yaml_dict(resolved_dir / "models.yaml")
 
 
-def load_workflow_selections(workflow_name: WorkflowName, config_dir: Path | None = None) -> dict[str, str]:
-    """Load selected model aliases for a workflow."""
+def load_workflow_selections(
+    workflow_name: WorkflowName,
+    config_dir: Path | None = None,
+) -> dict[str, str | list[str]]:
+    """Load selected model aliases for a workflow.
+
+    Scalar roles (e.g. ``entity_detector``) come back as strings and
+    list-valued roles (e.g. ``entity_validator``, which accepts a pool) come
+    back as ``list[str]``. Native types are preserved rather than stringified
+    so downstream Pydantic selection models see the shape the YAML actually
+    declared — stringifying a list would silently collapse the pool to a
+    single garbled alias.
+    """
     resolved_dir = config_dir or DEFAULT_CONFIG_DIR
     workflow_file = resolved_dir / f"{workflow_name.value}.yaml"
     workflow_config = _load_yaml_dict(workflow_file)
     selected_models = workflow_config.get("selected_models", {})
     if not isinstance(selected_models, dict):
         raise ValueError(f"{workflow_file} must define a top-level 'selected_models' mapping.")
-    return {str(key): str(value) for key, value in selected_models.items()}
+    normalized: dict[str, str | list[str]] = {}
+    for key, value in selected_models.items():
+        if isinstance(value, list):
+            normalized[str(key)] = [str(item) for item in value]
+        else:
+            normalized[str(key)] = str(value)
+    return normalized
 
 
 def load_workflow_config(workflow_name: WorkflowName, config_dir: Path | None = None) -> dict[str, Any]:
@@ -114,42 +132,88 @@ def load_workflow_config(workflow_name: WorkflowName, config_dir: Path | None = 
 
 
 def get_model_alias(workflow_name: WorkflowName, role: str, config_dir: Path | None = None) -> str:
-    """Return the model alias assigned to a workflow role."""
+    """Return the scalar model alias assigned to a workflow role.
+
+    Raises ``TypeError`` if the role is list-valued in the YAML (e.g. a
+    validator pool). Callers that need the full pool should read the
+    populated selection model via ``load_default_model_selection()`` and
+    ``resolve_model_aliases`` instead.
+    """
     selected_models = load_workflow_selections(workflow_name=workflow_name, config_dir=config_dir)
     if role not in selected_models:
         available = ", ".join(sorted(selected_models.keys()))
         raise ValueError(f"Role '{role}' not found in workflow '{workflow_name.value}'. Available roles: {available}")
-    return selected_models[role]
+    value = selected_models[role]
+    if isinstance(value, list):
+        raise TypeError(
+            f"Role '{role}' in workflow '{workflow_name.value}' is list-valued (a pool); "
+            f"use resolve_model_aliases() on the populated selection model instead."
+        )
+    return value
 
 
 def resolve_model_alias(
     role: str,
     selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection,
 ) -> str:
-    """Read model alias directly from the selection model.
+    """Read a scalar model alias directly from the selection model.
 
     The selection model is already populated with defaults from YAML
     (via ``load_default_model_selection``) or user overrides.
+
+    For list-valued roles (e.g. ``entity_validator``), use
+    ``resolve_model_aliases`` instead.
     """
-    return getattr(selection_model, role)
+    value = getattr(selection_model, role)
+    if isinstance(value, list):
+        raise TypeError(f"Role {role!r} is list-valued; use resolve_model_aliases() to read it.")
+    return value
+
+
+def resolve_model_aliases(
+    role: str,
+    selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection,
+) -> list[str]:
+    """Read model aliases from the selection model as a list.
+
+    Returns the stored list for list-valued roles (e.g. ``entity_validator``)
+    or a one-element list wrapping the scalar for scalar roles. Callers
+    that need to iterate a possible model pool should prefer this helper.
+    """
+    value = getattr(selection_model, role)
+    if isinstance(value, list):
+        return list(value)
+    return [value]
 
 
 def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> ModelSelection:
-    """Merge user-provided role selections onto YAML defaults."""
+    """Merge user-provided role selections onto YAML defaults.
+
+    Re-validates via ``type(section).model_validate(merged)`` rather than
+    ``model_copy(update=...)``. Pydantic v2's ``model_copy`` silently skips
+    field validators, which would let invalid pool configs (empty list,
+    duplicate aliases, whitespace-only entries) bypass
+    ``DetectionModelSelection.normalize_entity_validator`` at parse time
+    and surface as opaque runtime failures later.
+    """
     defaults = load_default_model_selection()
     if not user_selections or not isinstance(user_selections, dict):
         return defaults
+
+    def _merge(section: BaseModel, overrides: dict[str, Any]) -> BaseModel:
+        if not overrides:
+            return section
+        merged = {**section.model_dump(), **overrides}
+        return type(section).model_validate(merged)
 
     detection_overrides = user_selections.get(WorkflowName.detection.value, {})
     replace_overrides = user_selections.get(WorkflowName.replace.value, {})
     rewrite_overrides = user_selections.get(WorkflowName.rewrite.value, {})
 
     return ModelSelection(
-        detection=defaults.detection.model_copy(update=detection_overrides)
-        if detection_overrides
-        else defaults.detection,
-        replace=defaults.replace.model_copy(update=replace_overrides) if replace_overrides else defaults.replace,
-        rewrite=defaults.rewrite.model_copy(update=rewrite_overrides) if rewrite_overrides else defaults.rewrite,
+        detection=_merge(defaults.detection, detection_overrides),
+        replace=_merge(defaults.replace, replace_overrides),
+        rewrite=_merge(defaults.rewrite, rewrite_overrides),
     )
 
 
@@ -164,21 +228,16 @@ def validate_model_alias_references(
     known_aliases = {model_config.alias for model_config in model_configs}
     detection_roles = selected_models.detection.model_dump()
 
-    roles_to_check: dict[str, str] = {
-        f"detection.{role}": detection_roles[role]
-        for role in ("entity_detector", "entity_validator", "entity_augmenter")
-    }
+    roles_to_check: dict[str, str] = {}
+    for role in ("entity_detector", "entity_validator", "entity_augmenter"):
+        _collect_role(roles_to_check, f"detection.{role}", detection_roles[role])
     if check_rewrite:
-        roles_to_check.update(
-            {
-                "detection.latent_detector": detection_roles["latent_detector"],
-                **{f"rewrite.{role}": alias for role, alias in selected_models.rewrite.model_dump().items()},
-            }
-        )
+        _collect_role(roles_to_check, "detection.latent_detector", detection_roles["latent_detector"])
+        for role, alias in selected_models.rewrite.model_dump().items():
+            _collect_role(roles_to_check, f"rewrite.{role}", alias)
     if check_substitute:
-        roles_to_check.update(
-            {f"replace.{role}": alias for role, alias in selected_models.replace.model_dump().items()}
-        )
+        for role, alias in selected_models.replace.model_dump().items():
+            _collect_role(roles_to_check, f"replace.{role}", alias)
 
     unknown = {path: alias for path, alias in roles_to_check.items() if alias not in known_aliases}
     if unknown:
@@ -188,14 +247,34 @@ def validate_model_alias_references(
         )
 
 
+def _collect_role(bucket: dict[str, str], path: str, value: object) -> None:
+    """Flatten a role entry into ``bucket`` so list-valued roles produce one entry per alias."""
+    if isinstance(value, list):
+        for idx, alias in enumerate(value):
+            bucket[f"{path}[{idx}]"] = str(alias)
+    else:
+        bucket[path] = str(value)
+
+
 def _validate_alias_references(
     models_config: dict[str, Any],
-    selections: dict[str, str],
+    selections: dict[str, str | list[str]],
     workflow_name: str,
 ) -> None:
-    """Validate that bundled workflow YAMLs reference aliases defined in models.yaml."""
+    """Validate that bundled workflow YAMLs reference aliases defined in models.yaml.
+
+    Handles both scalar-valued roles and list-valued roles (e.g. a validator
+    pool). A plain ``set(selections.values())`` would raise
+    ``TypeError: unhashable type: 'list'`` once any role is list-valued.
+    """
     known_aliases = {m["alias"] for m in models_config.get("model_configs", [])}
-    unknown = set(selections.values()) - known_aliases
+    referenced: set[str] = set()
+    for value in selections.values():
+        if isinstance(value, list):
+            referenced.update(value)
+        else:
+            referenced.add(value)
+    unknown = referenced - known_aliases
     if unknown:
         raise ValueError(
             f"Workflow '{workflow_name}' references unknown model aliases: {unknown}. Known aliases: {known_aliases}"
