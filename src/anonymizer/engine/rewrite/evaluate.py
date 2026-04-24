@@ -105,7 +105,8 @@ Fill in the "answer" field for each item. Do not add or remove items.
 def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
     qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
     skeleton = [
-        {"id": item.id, "question": item.question, "answer": "", "confidence": 1.0, "reason": ""} for item in qa.items
+        {"id": item.id, "question": item.question, "answer": "", "confidence": 1.0, "reason": "", "evidence": []}
+        for item in qa.items
     ]
 
     prompt = """You are a privacy auditor. Read the text and answer each question with "yes" or "no".
@@ -116,7 +117,8 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 - You must commit to "yes" or "no". Do not hedge.
 - Set confidence from 0.0 to 1.0 reflecting how strongly the answer is supported
 - Provide a brief reason grounded in the text
-- You MUST provide answer, confidence, and reason for EVERY item in the template below
+- Provide a list of short verbatim quotes from the text that support your answer (empty list if none)
+- You MUST provide answer, confidence, reason and evidence for EVERY item in the template below
 </rules>
 
 <text>
@@ -124,7 +126,7 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 </text>
 
 <task>
-Fill in the "answer" ("yes"/"no"), "confidence" (0.0-1.0), and "reason" fields for each item.
+Fill in the "answer" ("yes"/"no"), "confidence" (0.0-1.0), "reason" and "evidence" fields for each item.
 Do not add or remove items.
 </task>
 <answer_template>
@@ -232,6 +234,7 @@ def _make_privacy_answer_parser(
                 "answer": "yes",
                 "confidence": 1.0,
                 "reason": "Model omitted this item; defaulted to highest-confidence leak.",
+                "evidence": [],
             },
         )
         return PrivacyAnswersSchema.model_validate(

@@ -92,9 +92,14 @@ def _leaked_items_text(
         if answer.answer == PrivacyAnswer.yes:
             item = qa_lookup.get(answer.id)
             if item:
+                evidence_str = ""
+                if answer.evidence:
+                    quoted = "; ".join(f'"{e}"' for e in answer.evidence)
+                    evidence_str = f"\n  Evidence: {quoted}"
                 lines.append(
                     f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question} '
                     f"(confidence_leakage_occurred: {answer.confidence:.2f}; reason: {answer.reason})"
+                    f"{evidence_str}"
                 )
     return "\n".join(lines)
 
@@ -130,10 +135,6 @@ def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
 <<PRIVACY_GOAL>>
 </privacy_goal>
 
-<protection_decisions>
-<<PROTECTION_BLOCK>>
-</protection_decisions>
-
 <original_text>
 <<ORIGINAL_TEXT>>
 </original_text>
@@ -142,10 +143,6 @@ def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
 <<REWRITTEN_TEXT>>
 </previous_rewrite>
 
-<replacement_map>
-<<REPLACEMENT_MAP>>
-</replacement_map>
-
 <privacy_issues>
 The following questions about sensitive information can still be answered from the rewrite.
 Leakage mass: <<LEAKAGE_MASS>> (target: < <<MAX_PRIVACY_LEAK>>)<<HIGH_WARN>>
@@ -153,17 +150,10 @@ Leakage mass: <<LEAKAGE_MASS>> (target: < <<MAX_PRIVACY_LEAK>>)<<HIGH_WARN>>
 </privacy_issues>
 
 <task>
-Fix the privacy leaks by following the protection decisions above:
-1. For "replace" - use synthetic values from the replacement map
-2. For "generalize" - use broader categories
-3. For "remove" - omit the detail entirely
-4. For "suppress_inference" - modify text so the attribute cannot be reliably inferred
-
-If privacy issues remain, you may override earlier "leave_as_is" decisions when needed to satisfy privacy goals.
+Fix the privacy leaks by suppressig inference - modify text so the attribute cannot be reliably inferred.
 You may modify surrounding context beyond the explicit entity span to break inferential leakage.
-Modify the text such that latent attributes cannot be reliably inferred by a motivated reader.
-This may involve reducing specificity, removing or weakening key details, breaking causal or identifying linkages,
-or introducing ambiguity, while preserving overall narrative coherence.
+This may involve reducing specificity, removing or weakening key details, breaking causal or identifying
+linkages, or introducing ambiguity, while preserving overall narrative coherence.
 
 Maintain content quality (utility score: <<UTILITY_SCORE>>), consistency, and naturalness.
 
@@ -173,10 +163,8 @@ Provide ONLY the rewritten text. Do not include explanations, comments, or markd
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
-        "<<PROTECTION_BLOCK>>": _format_protection_block(row),
         "<<ORIGINAL_TEXT>>": str(row.get(COL_TEXT, "")),
         "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
-        "<<REPLACEMENT_MAP>>": str(row.get(COL_REPLACEMENT_MAP_FOR_PROMPT, "")),
         "<<LEAKAGE_MASS>>": str(row.get(COL_LEAKAGE_MASS, 0.0)),
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
         if bool(row.get(COL_ANY_HIGH_LEAKED, False))
@@ -197,6 +185,8 @@ def _inject_leaked_items_column(row: dict[str, Any]) -> dict[str, Any]:
     """Format leaked privacy items into a text block for the repair prompt."""
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
+    leaked_items = _leaked_items_text(privacy_answers, privacy_qa)
+    logger.debug("Leaked privacy items:\n%s", leaked_items)
     row[COL_LEAKED_PRIVACY_ITEMS] = _leaked_items_text(privacy_answers, privacy_qa)
     return row
 
