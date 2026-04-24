@@ -180,6 +180,59 @@ def test_create_exception_warns_with_count_model_and_type_and_debug_carries_work
     _assert_no_backend_reference(debug_msg)
 
 
+def test_load_dataset_exception_warns_with_distinct_local_failure_hint(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
+
+    class LoadExplosion(Exception):
+        pass
+
+    mock_dd = Mock(spec=DataDesigner)
+    mock_create_results = Mock()
+    mock_create_results.load_dataset.side_effect = LoadExplosion("corrupt parquet")
+    mock_dd.create.return_value = mock_create_results
+
+    adapter = NddAdapter(data_designer=mock_dd)
+    input_df = pd.DataFrame({"text": ["row-1", "row-2"]})
+
+    with pytest.raises(LoadExplosion):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+            preview_num_records=None,
+        )
+
+    warning_records = _unique_records(
+        caplog,
+        level=logging.WARNING,
+        message_contains="loading the generated dataset failed",
+    )
+    assert len(warning_records) == 1
+    warning_msg = warning_records[0].getMessage()
+    assert "2" in warning_msg
+    assert "test-model-alias" in warning_msg
+    assert "LoadExplosion" in warning_msg
+    assert "Check local storage and dataset integrity" in warning_msg
+    assert "endpoint reachability" not in warning_msg
+    assert "replace-workflow" not in warning_msg
+    _assert_no_backend_reference(warning_msg)
+
+    execution_failed_records = _unique_records(
+        caplog, level=logging.WARNING, message_contains="Workflow execution failed"
+    )
+    assert execution_failed_records == []
+
+    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="dataset load failure context")
+    assert len(debug_records) == 1
+    debug_msg = debug_records[0].getMessage()
+    assert "replace-workflow" in debug_msg
+    assert "output" in debug_msg
+    _assert_no_backend_reference(debug_msg)
+
+
 def test_detect_missing_records_short_circuit_warns_when_input_missing_id(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

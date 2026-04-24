@@ -82,7 +82,6 @@ class NddAdapter:
                         num_records=len(workflow_input_df),
                         dataset_name=workflow_name,
                     )
-                    output_df = run_results.load_dataset()
                 except Exception as exc:
                     logger.warning(
                         "Workflow execution failed for %d input record(s) on model(s) %s: %s: %s. "
@@ -94,6 +93,24 @@ class NddAdapter:
                     )
                     logger.debug(
                         "Workflow '%s' execution failure context: columns=%s",
+                        workflow_name,
+                        col_names,
+                    )
+                    raise
+                try:
+                    output_df = run_results.load_dataset()
+                except Exception as exc:
+                    logger.warning(
+                        "Workflow execution completed but loading the generated dataset failed for "
+                        "%d input record(s) on model(s) %s: %s: %s. "
+                        "Check local storage and dataset integrity.",
+                        len(workflow_input_df),
+                        model_aliases,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    logger.debug(
+                        "Workflow '%s' dataset load failure context: columns=%s",
                         workflow_name,
                         col_names,
                     )
