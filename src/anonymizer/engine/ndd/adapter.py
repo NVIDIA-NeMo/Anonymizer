@@ -64,6 +64,7 @@ class NddAdapter:
         logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
         col_names = [c.name for c in columns]
         logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
+        model_aliases = [m.alias for m in model_configs]
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
@@ -75,18 +76,50 @@ class NddAdapter:
                 config_builder.add_column(column)
 
             if preview_num_records is None:
-                run_results = self._data_designer.create(
-                    config_builder,
-                    num_records=len(workflow_input_df),
-                    dataset_name=workflow_name,
-                )
-                output_df = run_results.load_dataset()
+                try:
+                    run_results = self._data_designer.create(
+                        config_builder,
+                        num_records=len(workflow_input_df),
+                        dataset_name=workflow_name,
+                    )
+                    output_df = run_results.load_dataset()
+                except Exception as exc:
+                    logger.warning(
+                        "Workflow execution failed for %d input record(s) on model(s) %s: %s: %s. "
+                        "Check endpoint reachability, credentials, and quota.",
+                        len(workflow_input_df),
+                        model_aliases,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    logger.debug(
+                        "Workflow '%s' execution failure context: columns=%s",
+                        workflow_name,
+                        col_names,
+                    )
+                    raise
             else:
                 effective_preview = min(preview_num_records, len(workflow_input_df))
-                preview_results = self._data_designer.preview(
-                    config_builder,
-                    num_records=effective_preview,
-                )
+                try:
+                    preview_results = self._data_designer.preview(
+                        config_builder,
+                        num_records=effective_preview,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Workflow preview failed for %d input record(s) on model(s) %s: %s: %s. "
+                        "Check endpoint reachability, credentials, and quota.",
+                        effective_preview,
+                        model_aliases,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    logger.debug(
+                        "Workflow '%s' preview failure context: columns=%s",
+                        workflow_name,
+                        col_names,
+                    )
+                    raise
                 if preview_results.dataset is None:
                     output_df = workflow_input_df.iloc[0:0].copy()
                 else:
@@ -129,8 +162,42 @@ class NddAdapter:
         output_df: pd.DataFrame,
     ) -> list[FailedRecord]:
         if RECORD_ID_COLUMN not in input_df.columns:
+            logger.warning(
+                "Missing-record detection skipped: input DataFrame lacks the record-tracking "
+                "column, so the adapter cannot verify whether any of %d input record(s) were "
+                "dropped. This indicates an internal invariant violation - `_attach_record_ids` "
+                "was not called on this DataFrame before detection.",
+                len(input_df),
+            )
+            logger.debug(
+                "Workflow '%s' detection skipped: input missing '%s'; input_columns=%s",
+                workflow_name,
+                RECORD_ID_COLUMN,
+                list(input_df.columns),
+            )
             return []
         if RECORD_ID_COLUMN not in output_df.columns:
+            input_cols = set(input_df.columns)
+            output_cols = set(output_df.columns)
+            other_dropped = sorted((input_cols - output_cols) - {RECORD_ID_COLUMN})
+            added = sorted(output_cols - input_cols)
+            logger.warning(
+                "Missing-record detection disabled: workflow output does not contain "
+                "the record-tracking column, so all %d input record(s) are being marked as "
+                "failed. This typically means seed-column pass-through is disabled or a "
+                "user-supplied column config overwrote it. Other input columns that were "
+                "also dropped: %s. Columns added by the workflow: %s.",
+                len(input_df),
+                other_dropped,
+                added,
+            )
+            logger.debug(
+                "Workflow '%s' detection disabled: output missing '%s'; input_columns=%s output_columns=%s",
+                workflow_name,
+                RECORD_ID_COLUMN,
+                list(input_df.columns),
+                list(output_df.columns),
+            )
             return [
                 FailedRecord(
                     record_id=record_id,
