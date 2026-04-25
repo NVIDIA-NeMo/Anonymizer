@@ -577,8 +577,9 @@ class MeaningUnitsSchema(BaseModel):
 
     Outer list has default_factory=list (was min_length=1); if the model
     emits an empty list the record still survives so the pipeline can
-    decide what to do downstream. A @model_validator(mode="before") drops
-    units with empty unit text to reduce noise.
+    decide what to do downstream. ``_ensure_list`` only coerces non-list
+    wire shapes (dict, scalar) into a list; it does not filter empty
+    units — downstream consumers handle that.
     """
 
     units: list[MeaningUnitSchema] = Field(default_factory=list)
