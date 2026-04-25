@@ -355,9 +355,44 @@ class SimpleDispositionResult(BaseModel):
     This is the output_format handed to DataDesigner for the disposition
     LLM column. The corresponding reconstruction column downstream produces
     the strict SensitivityDispositionSchema from it.
+
+    Tolerates two LLM output shapes at the wire layer:
+
+    1. The canonical wrapper: ``{"sensitivity_disposition": [item, ...]}``
+    2. A bare list at the top level: ``[item, ...]`` — observed
+       consistently on ``nemotron-3-nano:4b`` (rewrite mode, 5/5 records)
+       and intermittently on Gemma4-edge models for dense entity sets.
+
+    The fix is two-layered to match the rest of PR #130's wire schemas:
+
+    - ``__get_pydantic_json_schema__`` widens the emitted JSON Schema to a
+      ``oneOf`` of the wrapper-object form and a bare-array form. DataDesigner
+      runs ``jsonschema.validate()`` on the raw LLM response BEFORE pydantic's
+      coercion, so without this widening a bare-list response is rejected as
+      ``is not of type 'object'`` and the record is dropped.
+    - ``_accept_bare_list`` (mode="before") normalizes the bare-list shape to
+      the wrapper dict so downstream consumers continue to read the canonical
+      ``sensitivity_disposition`` field.
     """
 
     sensitivity_disposition: list[SimpleDispositionItem] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_bare_list(cls, data: object) -> object:
+        if isinstance(data, list):
+            return {"sensitivity_disposition": data}
+        return data
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, schema, handler):
+        # Widen the wire schema so DD's jsonschema gate accepts both the
+        # wrapper-object and the bare-array shape. The bare-array shape is
+        # specified as `array of SimpleDispositionItem` — same item schema
+        # the wrapper carries on its inner field.
+        wrapped = handler(schema)
+        bare_list = wrapped["properties"]["sensitivity_disposition"]
+        return {"oneOf": [wrapped, bare_list]}
 
 
 class SensitivityDispositionSchema(BaseModel):

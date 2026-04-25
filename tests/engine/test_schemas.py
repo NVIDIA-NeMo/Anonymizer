@@ -26,6 +26,7 @@ from anonymizer.engine.schemas.rewrite import (
     EntityDispositionSchema,
     MeaningUnitsSchema,
     PrivacyAnswerItemSchema,
+    SimpleDispositionResult,
 )
 
 
@@ -504,6 +505,62 @@ def test_meaning_units_preserve_explicit_unique_ids() -> None:
     }
     result = MeaningUnitsSchema.model_validate(raw)
     assert [u.id for u in result.units] == [5, 7]
+
+
+def test_simple_disposition_result_accepts_bare_list() -> None:
+    """nemotron-3-nano:4b on rewrite mode emits the items as a top-level
+    array without the ``sensitivity_disposition`` wrapper. The wire schema
+    must accept both shapes — bare list normalizes to the wrapper dict so
+    the reconstructor sees the canonical type."""
+    bare = [
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Direct id; replaced.",
+        },
+        {
+            "id": 2,
+            "category": "quasi_identifier",
+            "sensitivity": "medium",
+            "protection_method_suggestion": "generalize",
+            "protection_reason": "Quasi-id; generalized.",
+        },
+    ]
+    result = SimpleDispositionResult.model_validate(bare)
+    assert len(result.sensitivity_disposition) == 2
+    assert result.sensitivity_disposition[0].id == 1
+    assert result.sensitivity_disposition[1].category == "quasi_identifier"
+
+
+def test_simple_disposition_result_accepts_wrapper_dict() -> None:
+    """The canonical wrapper shape still works after the bare-list fix."""
+    wrapped = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "protection_method_suggestion": "replace",
+                "protection_reason": "Direct id.",
+            },
+        ]
+    }
+    result = SimpleDispositionResult.model_validate(wrapped)
+    assert len(result.sensitivity_disposition) == 1
+
+
+def test_simple_disposition_result_json_schema_widened_to_oneof() -> None:
+    """Emitted JSON Schema must use ``oneOf`` so DD's jsonschema.validate()
+    pre-check accepts both the wrapper-object and the bare-array shape."""
+    schema = SimpleDispositionResult.model_json_schema()
+    assert "oneOf" in schema, f"expected oneOf, got: {schema!r}"
+    branches = schema["oneOf"]
+    assert len(branches) == 2
+    # One branch must be type=object (wrapper); the other type=array (bare list).
+    types = sorted(b.get("type") for b in branches if isinstance(b, dict))
+    assert types == ["array", "object"], f"branch types: {types}"
 
 
 def test_entity_label_to_category_covers_default_labels() -> None:
