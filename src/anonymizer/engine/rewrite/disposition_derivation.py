@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from anonymizer.engine.schemas.rewrite import (
+    _ENTITY_LABEL_TO_CATEGORY,
     EntityDispositionSchema,
     SensitivityDispositionSchema,
     SimpleDispositionItem,
@@ -29,6 +30,62 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Derivation helpers
 # ---------------------------------------------------------------------------
+
+
+_VALID_CATEGORIES: frozenset[str] = frozenset(
+    {"direct_identifier", "quasi_identifier", "sensitive_attribute", "latent_identifier"}
+)
+
+
+def _normalize_category(raw: object, *, entity_label: str = "") -> str:
+    """Resolve a free-form category string emitted by the disposition LLM
+    into a valid EntityCategory value.
+
+    Handles four small-model drift modes observed on gemma4-e2b / Nemotron:
+
+    - **Display variants** — ``"Direct-Identifier"``, ``"DIRECT IDENTIFIERS"``
+      → lowercased, separator-normalized, plural-stripped to the enum value.
+    - **Merged enums** — ``"latent_sensitive_attribute"`` (Nemotron splices
+      two enums) → matched by substring with strongest-protection priority,
+      so harm dimension wins over inference dimension.
+    - **Entity-label confusion** — ``"last_name"``, ``"date_of_birth"``
+      written in the category slot → looked up in
+      ``_ENTITY_LABEL_TO_CATEGORY`` and mapped back to the most-likely
+      category. Source label provenance is preserved by the ``source``
+      field on the strict schema.
+    - **Empty / unknown** — falls back to ``"quasi_identifier"`` (the
+      conservative default; pessimistic protection rather than dropping
+      the row).
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return "quasi_identifier"
+    normalized = raw.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in _VALID_CATEGORIES:
+        return normalized
+    if normalized.endswith("s") and normalized[:-1] in _VALID_CATEGORIES:
+        return normalized[:-1]
+    if normalized.endswith("_identifiers"):
+        return normalized[:-1]
+    # Merged-enum hallucination: order = strongest protection wins so that
+    # "latent_sensitive_attribute" maps to sensitive_attribute (harm) rather
+    # than latent_identifier (inference).
+    for sub, target in (
+        ("direct", "direct_identifier"),
+        ("sensitive", "sensitive_attribute"),
+        ("latent", "latent_identifier"),
+        ("quasi", "quasi_identifier"),
+    ):
+        if sub in normalized:
+            return target
+    # Entity-label confusion: model wrote an entity_label value in the slot.
+    mapped = _ENTITY_LABEL_TO_CATEGORY.get(normalized)
+    if mapped is not None:
+        return mapped
+    # Last resort: if the LLM echoed the entity_label verbatim into category,
+    # fall back to quasi_identifier (matches the entity-label confusion path).
+    if entity_label and normalized == entity_label.strip().lower():
+        return "quasi_identifier"
+    return "quasi_identifier"
 
 
 def derive_needs_protection(method: str) -> bool:
@@ -239,7 +296,7 @@ def reconstruct_full_disposition(
         # Default empty LLM-drift slots to sane values so the strict schema
         # doesn't reject the row. category/sensitivity are enums at the
         # internal layer; empty strings would fail.
-        category = (item.category or "").strip() or "quasi_identifier"
+        category = _normalize_category(item.category, entity_label=lbl)
         sensitivity = (item.sensitivity or "").strip().lower() or "medium"
 
         # Derive method. When the model omits it, default pessimistically
