@@ -19,7 +19,14 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, MeaningUnitsSchema
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
+from anonymizer.engine.schemas.rewrite import (
+    _ENTITY_LABEL_TO_CATEGORY,
+    DomainClassificationSchema,
+    EntityDispositionSchema,
+    MeaningUnitsSchema,
+    PrivacyAnswerItemSchema,
+)
 
 
 def test_entities_payload_from_raw_dict() -> None:
@@ -491,3 +498,82 @@ def test_meaning_units_preserve_explicit_unique_ids() -> None:
     ]}
     result = MeaningUnitsSchema.model_validate(raw)
     assert [u.id for u in result.units] == [5, 7]
+
+
+def test_entity_label_to_category_covers_default_labels() -> None:
+    """Every label in DEFAULT_ENTITY_LABELS must have a category assignment.
+    Without this guard, adding a new label to engine/constants.py without
+    updating the category sets in schemas/rewrite.py would silently lose
+    the entity-label-stuffed-in-category fallback for that label."""
+    missing = set(DEFAULT_ENTITY_LABELS) - set(_ENTITY_LABEL_TO_CATEGORY)
+    assert not missing, (
+        f"DEFAULT_ENTITY_LABELS contains labels with no category assignment "
+        f"in _ENTITY_LABEL_TO_CATEGORY: {sorted(missing)}. Add each to one "
+        f"of _DIRECT_ID_LABELS / _QUASI_ID_LABELS / _SENSITIVE_ATTR_LABELS "
+        f"in src/anonymizer/engine/schemas/rewrite.py."
+    )
+
+
+def test_privacy_answer_truncates_overlong_reason() -> None:
+    """nemotron-3-nano on vLLM observed emitting 250+ char reasons; the
+    schema must truncate rather than reject the record (max_length=200)."""
+    long_reason = "x" * 250
+    obj = PrivacyAnswerItemSchema.model_validate(
+        {"id": 1, "answer": "yes", "confidence": 0.9, "reason": long_reason}
+    )
+    assert len(obj.reason) <= 200
+    assert obj.reason.endswith("...")
+
+
+def test_privacy_answer_reason_at_boundary_unchanged() -> None:
+    """A reason of exactly 200 chars passes through untouched."""
+    boundary = "y" * 200
+    obj = PrivacyAnswerItemSchema.model_validate(
+        {"id": 1, "answer": "yes", "confidence": 0.9, "reason": boundary}
+    )
+    assert obj.reason == boundary
+
+
+def test_privacy_answer_none_reason_defaults_to_placeholder() -> None:
+    """None reason coerces to a placeholder string rather than raising."""
+    obj = PrivacyAnswerItemSchema.model_validate(
+        {"id": 1, "answer": "yes", "confidence": 0.9, "reason": None}
+    )
+    assert obj.reason == "no reason provided"
+
+
+def test_domain_confidence_coerces_float_string() -> None:
+    """Small models occasionally return numeric confidences as strings —
+    accept ``"0.95"`` and similar."""
+    obj = DomainClassificationSchema.model_validate(
+        {"domain": "MEDICAL", "domain_confidence": "0.95"}
+    )
+    assert obj.domain_confidence == 0.95
+
+
+def test_domain_confidence_coerces_percent_string() -> None:
+    """Accept percentage-style strings (``"85%"`` -> 0.85)."""
+    obj = DomainClassificationSchema.model_validate(
+        {"domain": "MEDICAL", "domain_confidence": "85%"}
+    )
+    assert obj.domain_confidence == pytest.approx(0.85)
+
+
+def test_domain_confidence_coerces_unparseable_to_default() -> None:
+    """Non-numeric strings (``"high"``) fall back to the 0.5 default."""
+    obj = DomainClassificationSchema.model_validate(
+        {"domain": "MEDICAL", "domain_confidence": "high"}
+    )
+    assert obj.domain_confidence == 0.5
+
+
+def test_domain_confidence_clamps_out_of_range() -> None:
+    """String confidence > 1.0 clamps to 1.0; negatives clamp to 0.0."""
+    obj_hi = DomainClassificationSchema.model_validate(
+        {"domain": "MEDICAL", "domain_confidence": "1.5"}
+    )
+    assert obj_hi.domain_confidence == 1.0
+    obj_lo = DomainClassificationSchema.model_validate(
+        {"domain": "MEDICAL", "domain_confidence": "-0.2"}
+    )
+    assert obj_lo.domain_confidence == 0.0
