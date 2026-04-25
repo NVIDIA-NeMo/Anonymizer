@@ -160,7 +160,7 @@ class ProtectionMethod(str, Enum):
 # Best-effort mapping from Anonymizer entity-labels to EntityCategory, used when
 # the model outputs an entity_label in the `category` field (observed with small
 # Gemma models on the disposition step). Values are from DEFAULT_ENTITY_LABELS in
-# config/entity_labels.py; any label not in this table falls back to
+# engine/constants.py; any label not in this table falls back to
 # "quasi_identifier" which is the most conservative (protect-cautiously) choice.
 _ENTITY_LABEL_TO_CATEGORY: dict[str, str] = {
     # Direct identifiers: strong re-id on their own.
