@@ -236,21 +236,29 @@ def reconstruct_full_disposition(
             )
             continue
 
-        # Derive derived fields.
-        method = (item.protection_method_suggestion or "").strip() or "leave_as_is"
-        needs = derive_needs_protection(method)
-
-        # Keep LLM reason if usable, else template.
-        raw_reason = (item.protection_reason or "").strip()
-        reason = raw_reason if len(raw_reason) >= 10 else template_protection_reason(
-            item.category or "", method, item.sensitivity or ""
-        )
-
         # Default empty LLM-drift slots to sane values so the strict schema
         # doesn't reject the row. category/sensitivity are enums at the
         # internal layer; empty strings would fail.
         category = (item.category or "").strip() or "quasi_identifier"
         sensitivity = (item.sensitivity or "").strip().lower() or "medium"
+
+        # Derive method. When the model omits it, default pessimistically
+        # for high-risk entities so a direct_identifier with sensitivity=high
+        # never silently slips through as leave_as_is.
+        raw_method = (item.protection_method_suggestion or "").strip()
+        if raw_method:
+            method = raw_method
+        elif category in ("direct_identifier", "sensitive_attribute") or sensitivity in ("medium", "high"):
+            method = "replace"
+        else:
+            method = "leave_as_is"
+        needs = derive_needs_protection(method)
+
+        # Keep LLM reason if usable, else template.
+        raw_reason = (item.protection_reason or "").strip()
+        reason = raw_reason if len(raw_reason) >= 10 else template_protection_reason(
+            category, method, sensitivity
+        )
 
         full_items.append(
             EntityDispositionSchema(

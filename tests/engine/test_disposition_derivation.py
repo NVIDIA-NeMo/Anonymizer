@@ -254,6 +254,52 @@ def test_empty_simple_result_produces_empty_schema() -> None:
         reconstruct_full_disposition(simple, [], [])
 
 
+def test_empty_method_with_high_risk_defaults_to_replace() -> None:
+    """Class K-adjacent: small models routinely omit
+    protection_method_suggestion entirely. For high-sensitivity direct
+    identifiers and sensitive attributes, the reconstructor must default
+    to ``replace`` so the entity does not silently slip through as
+    leave_as_is. Mirrors the pessimistic-default pattern used in
+    PrivacyAnswersSchema (pad missing with ``yes``)."""
+    simple = _make_simple(
+        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
+         "protection_method_suggestion": "", "protection_reason": ""},
+        {"id": 2, "category": "sensitive_attribute", "sensitivity": "low",
+         "protection_method_suggestion": "", "protection_reason": ""},
+        {"id": 3, "category": "quasi_identifier", "sensitivity": "low",
+         "protection_method_suggestion": "", "protection_reason": ""},
+    )
+    context_tagged = [
+        {"value": "Alice", "labels": ["first_name"]},
+        {"value": "diabetic", "labels": ["medical_condition"]},
+        {"value": "blue", "labels": ["favorite_color"]},
+    ]
+    full = reconstruct_full_disposition(simple, context_tagged, [])
+
+    # direct_identifier + high -> replace, needs_protection True
+    assert full.sensitivity_disposition[0].protection_method_suggestion == "replace"
+    assert full.sensitivity_disposition[0].needs_protection is True
+    # sensitive_attribute + low -> still replace by category rule
+    assert full.sensitivity_disposition[1].protection_method_suggestion == "replace"
+    assert full.sensitivity_disposition[1].needs_protection is True
+    # quasi_identifier + low -> safe to leave_as_is
+    assert full.sensitivity_disposition[2].protection_method_suggestion == "leave_as_is"
+    assert full.sensitivity_disposition[2].needs_protection is False
+
+
+def test_empty_method_with_medium_quasi_id_defaults_to_replace() -> None:
+    """Sensitivity-driven branch of the pessimistic default — even a
+    quasi_identifier becomes ``replace`` when sensitivity is medium/high."""
+    simple = _make_simple(
+        {"id": 1, "category": "quasi_identifier", "sensitivity": "medium",
+         "protection_method_suggestion": "", "protection_reason": ""},
+    )
+    context_tagged = [{"value": "37", "labels": ["age"]}]
+    full = reconstruct_full_disposition(simple, context_tagged, [])
+    assert full.sensitivity_disposition[0].protection_method_suggestion == "replace"
+    assert full.sensitivity_disposition[0].needs_protection is True
+
+
 def test_multi_label_entity_flattens_to_multiple_slots() -> None:
     simple = _make_simple(
         {"id": 1, "category": "direct_identifier", "sensitivity": "high",
