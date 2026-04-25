@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     EntitiesSchema,
@@ -19,7 +20,6 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
-from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 from anonymizer.engine.schemas.rewrite import (
     _ENTITY_LABEL_TO_CATEGORY,
     DomainClassificationSchema,

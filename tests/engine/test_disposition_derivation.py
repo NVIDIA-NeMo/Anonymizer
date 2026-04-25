@@ -21,7 +21,6 @@ from anonymizer.engine.schemas.rewrite import (
     SimpleDispositionResult,
 )
 
-
 # ---------------------------------------------------------------------------
 # derive_needs_protection
 # ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ from anonymizer.engine.detection.custom_columns import (
     merge_and_build_candidates,
     parse_detected_entities,
 )
+from anonymizer.engine.schemas.detection import ValidationDecisionSchema
 
 
 def test_parse_entity_spans_handles_malformed_payload() -> None:
@@ -130,6 +131,43 @@ def test_enrich_validation_decisions_filters_unknown_ids() -> None:
     }
     result = enrich_validation_decisions(row)
     assert result[COL_VALIDATED_ENTITIES]["decisions"] == []
+
+
+def test_enrich_validation_decisions_e2e_with_wire_schema_no_value_or_label() -> None:
+    """End-to-end: ValidationDecisionSchema is the loose wire shape
+    emitted by the LLM. It deliberately does NOT carry value/label —
+    those are filled server-side from candidate_lookup. This test pins
+    the contract: a serialized ValidationDecisionSchema with no
+    value/label fields still produces a fully-populated
+    ValidatedDecisionSchema after enrichment."""
+    wire_decisions = [
+        ValidationDecisionSchema(id="id1", decision="keep", proposed_label="", reason="ok"),
+        ValidationDecisionSchema(id="id2", decision="reclass", proposed_label="last_name", reason="surname"),
+    ]
+    # Verify the wire schema literally has no value/label keys when serialized.
+    dumped = wire_decisions[0].model_dump()
+    assert "value" not in dumped
+    assert "label" not in dumped
+
+    row = {
+        COL_VALIDATION_DECISIONS: {"decisions": [d.model_dump() for d in wire_decisions]},
+        COL_VALIDATION_CANDIDATES: {
+            "candidates": [
+                {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""},
+                {"id": "id2", "value": "Smith", "label": "first_name", "context_before": "", "context_after": ""},
+            ]
+        },
+    }
+    result = enrich_validation_decisions(row)
+    decisions = result[COL_VALIDATED_ENTITIES]["decisions"]
+    assert len(decisions) == 2
+    # value/label populated from candidate lookup, not from the wire payload.
+    assert decisions[0]["value"] == "Alice"
+    assert decisions[0]["label"] == "first_name"
+    assert decisions[1]["value"] == "Smith"
+    # Reclass preserved through the enrichment.
+    assert decisions[1]["decision"] == "reclass"
+    assert decisions[1]["proposed_label"] == "last_name"
 
 
 def test_enrich_validation_decisions_ignores_non_dict_validation_payload() -> None:
