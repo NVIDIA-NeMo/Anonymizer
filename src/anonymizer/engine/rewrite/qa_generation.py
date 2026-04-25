@@ -27,7 +27,6 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
-    Domain,
     DomainClassificationSchema,
     EntityCategory,
     MeaningUnitsSchema,
