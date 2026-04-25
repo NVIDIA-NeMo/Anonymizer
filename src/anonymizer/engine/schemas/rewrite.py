@@ -157,6 +157,19 @@ class ProtectionMethod(str, Enum):
     leave_as_is = "leave_as_is"
 
 
+class CombinedRiskLevel(str, Enum):
+    """Per-entity combined risk band, used by StrictEntityDispositionSchema
+    only. The non-strict EntityDispositionSchema does not carry this field —
+    it was deleted from the strict-by-default path as schema debt that
+    flowed into nothing downstream. Restored here as a strict-mode-only
+    field so the strict_entity_protection feature has a place to record it.
+    """
+
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
 # Mapping from Anonymizer entity-labels to EntityCategory, used when the
 # disposition LLM outputs an entity_label in the `category` field (observed
 # with small Gemma models). Derived from three category sets so the source
@@ -342,6 +355,62 @@ class SensitivityDispositionSchema(BaseModel):
                 f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion} (Reason: {e.protection_reason})'
             )
         return "\n".join(lines)
+
+
+class StrictProtectionMethod(str, Enum):
+    replace = "replace"
+    generalize = "generalize"
+    remove = "remove"
+    suppress_inference = "suppress_inference"
+
+
+class StrictEntityDispositionSchema(BaseModel):
+    """Strict variant: needs_protection is always True and leave_as_is is excluded."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    id: int = Field(ge=1)
+    source: EntitySource
+    category: EntityCategory
+    sensitivity: SensitivityLevel
+    entity_label: str = Field(min_length=1)
+    entity_value: str = Field(min_length=1)
+    protection_reason: str = Field(min_length=10, max_length=500)
+    protection_method_suggestion: StrictProtectionMethod
+    combined_risk_level: CombinedRiskLevel
+
+    def to_entity_disposition(self) -> EntityDispositionSchema:
+        # combined_risk_level is StrictEntityDispositionSchema-only; the
+        # non-strict EntityDispositionSchema dropped the field as unused
+        # downstream, so it does not flow through the conversion.
+        return EntityDispositionSchema(
+            id=self.id,
+            source=self.source,
+            category=self.category,
+            sensitivity=self.sensitivity,
+            entity_label=self.entity_label,
+            entity_value=self.entity_value,
+            needs_protection=True,
+            protection_reason=self.protection_reason,
+            protection_method_suggestion=self.protection_method_suggestion,
+        )
+
+
+class StrictSensitivityDispositionSchema(BaseModel):
+    """Strict variant container: every entity must have needs_protection=True."""
+
+    sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_ids(self) -> StrictSensitivityDispositionSchema:
+        for i, entry in enumerate(self.sensitivity_disposition, start=1):
+            entry.id = i
+        return self
+
+    def to_sensitivity_disposition(self) -> SensitivityDispositionSchema:
+        return SensitivityDispositionSchema(
+            sensitivity_disposition=[e.to_entity_disposition() for e in self.sensitivity_disposition]
+        )
 
 
 # ---------------------------------------------------------------------------

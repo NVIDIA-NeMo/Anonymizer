@@ -117,3 +117,31 @@ def test_both_modes_set_exits() -> None:
     """Setting both replace and rewrite on AnonymizerConfig violates the model_validator."""
     with pytest.raises(ValidationError):
         AnonymizerConfig(replace=Redact(), rewrite=Rewrite())
+
+
+def test_detect_chunked_validation_defaults() -> None:
+    config = AnonymizerConfig(replace=Redact())
+    assert config.detect.validation_max_entities_per_call == 100
+    assert config.detect.validation_excerpt_window_chars == 500
+
+
+def test_detect_chunked_validation_accepts_overrides() -> None:
+    config = AnonymizerConfig(
+        detect={
+            "validation_max_entities_per_call": 25,
+            "validation_excerpt_window_chars": 1000,
+        },
+        replace=Redact(),
+    )
+    assert config.detect.validation_max_entities_per_call == 25
+    assert config.detect.validation_excerpt_window_chars == 1000
+
+
+def test_detect_validation_max_entities_per_call_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        AnonymizerConfig(detect={"validation_max_entities_per_call": 0}, replace=Redact())
+
+
+def test_detect_validation_excerpt_window_chars_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        AnonymizerConfig(detect={"validation_excerpt_window_chars": 0}, replace=Redact())

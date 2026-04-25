@@ -82,6 +82,24 @@ class Detect(BaseModel):
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )
+    validation_max_entities_per_call: int = Field(
+        default=100,
+        gt=0,
+        description=(
+            "Maximum number of candidate entities included in a single validator LLM call. "
+            "When a row has more candidates than this, validation is split into chunks that "
+            "are dispatched (round-robin) across the validator pool."
+        ),
+    )
+    validation_excerpt_window_chars: int = Field(
+        default=500,
+        gt=0,
+        description=(
+            "Number of characters to include before and after a chunk's entity span when "
+            "building the text excerpt sent to the validator. Bounds the prompt context the "
+            "validator sees per chunk; it is NOT the LLM's context window limit."
+        ),
+    )
 
     @field_validator("entity_labels")
     @classmethod
@@ -112,6 +130,10 @@ class Rewrite(BaseModel):
         default=3,
         ge=0,
         description="Maximum repair rounds. Set to 0 to disable repair.",
+    )
+    strict_entity_protection: bool = Field(
+        default=False,
+        description="If True, requires every entity to receive a protective disposition during sensitivity analysis.",
     )
 
     @model_validator(mode="after")

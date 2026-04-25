@@ -39,6 +39,7 @@ preview.display_record()
 | `instructions` | `None` | Additional instructions for the rewrite LLM. |
 | `risk_tolerance` | `low` | Preset controlling repair and review thresholds: `minimal`, `low`, `moderate`, `high`. |
 | `max_repair_iterations` | `3` | Maximum repair rounds. Set to 0 to disable repair. |
+| `strict_entity_protection` | `False` | If `True`, forces every detected entity to be protected regardless of risk. No entity can be left unchanged. |
 
 ### Privacy goal
 
@@ -85,6 +86,22 @@ config = AnonymizerConfig(
 )
 ```
 
+### Strict entity protection
+
+By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is.
+
+```python
+config = AnonymizerConfig(
+    rewrite=Rewrite(
+        strict_entity_protection=True,
+    )
+)
+```
+
+!!! tip "When to use this"
+
+    Use `strict_entity_protection` when you need a blanket policy that protects all entities regardless of contextual risk — for example, in medical, legal, or financial data where even seemingly benign attributes (gender, marital status, occupation) must be modified. For finer control over which entity types are always protected, combine this with a specific [`privacy_goal`](#privacy-goal).
+
 ---
 
 ## Output columns
@@ -122,6 +139,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
 - Increase `max_repair_iterations` to give the rewriter more attempts.
 - Refine `privacy_goal` with more specific `protect` / `preserve` instructions for the domain.
 - Lower `risk_tolerance` (e.g. `minimal`) to trigger more aggressive repair.
+- Enable `strict_entity_protection=True` to ensure no detected entity is left unchanged in the output regardless of risk.
 
 **Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. 
 

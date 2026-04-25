@@ -53,6 +53,9 @@ from anonymizer.engine.schemas.rewrite import (
     RewriteOutputSchema,
     SensitivityDispositionSchema,
     SensitivityLevel,
+    StrictEntityDispositionSchema,
+    StrictProtectionMethod,
+    StrictSensitivityDispositionSchema,
 )
 
 __all__ = [
@@ -105,4 +108,7 @@ __all__ = [
     "RewriteOutputSchema",
     "SensitivityDispositionSchema",
     "SensitivityLevel",
+    "StrictEntityDispositionSchema",
+    "StrictProtectionMethod",
+    "StrictSensitivityDispositionSchema",
 ]

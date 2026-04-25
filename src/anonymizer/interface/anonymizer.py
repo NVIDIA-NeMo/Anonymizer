@@ -95,7 +95,7 @@ class Anonymizer:
         logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
         det = self._selected_models.detection
         logger.info(LOG_INDENT + "🔎 detector:  %s", det.entity_detector)
-        logger.info(LOG_INDENT + "✅ validator: %s", det.entity_validator)
+        logger.info(LOG_INDENT + "✅ validator: %s", ", ".join(det.entity_validator))
         logger.info(LOG_INDENT + "🧩 augmenter: %s", det.entity_augmenter)
 
         if data_designer is not None:
@@ -210,6 +210,8 @@ class Anonymizer:
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
             gliner_detection_threshold=config.detect.gliner_threshold,
+            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
@@ -263,6 +265,7 @@ class Anonymizer:
                 evaluation=config.rewrite.evaluation,
                 data_summary=data.data_summary,
                 preview_num_records=preview_num_records,
+                strict_entity_protection=config.rewrite.strict_entity_protection,
             )
             rewrite_elapsed = time.perf_counter() - t0
             final_df = rewrite_result.dataframe
@@ -345,6 +348,12 @@ def _resolve_model_providers(
         return None
     if isinstance(model_providers, list):
         return model_providers
+    if isinstance(model_providers, str) and "\n" not in model_providers:
+        candidate = Path(model_providers.strip()).expanduser()
+        if candidate.suffix in (".yaml", ".yml"):
+            if not candidate.is_file():
+                raise FileNotFoundError(f"Providers config file not found: {candidate}")
+            model_providers = candidate
     config_dict = load_config_file(model_providers)
     raw_providers = config_dict.get("providers")
     if not isinstance(raw_providers, list):

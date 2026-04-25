@@ -65,9 +65,9 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
     from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
 
     input_data = AnonymizerInput(
-        source="patient_data.csv",
-        text_column="notes",
-        data_summary="Records containing detailed notes on patient encounters",
+        source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
+        text_column="biography",
+        data_summary="Biographical profiles of individuals",
     )
     anonymizer = Anonymizer()
     config = AnonymizerConfig(replace=Substitute())
@@ -93,19 +93,19 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
     ```bash
     # Preview a few rows first
     anonymizer preview \
-      --source patient_data.csv \
-      --text-column notes \
-      --data-summary "Records containing detailed notes on patient encounters" \
+      --source "https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv" \
+      --text-column biography \
+      --data-summary "Biographical profiles of individuals" \
       --replace substitute \
       --num-records 5
 
     # Then run the full dataset
     anonymizer run \
-      --source patient_data.csv \
-      --text-column notes \
-      --data-summary "Records containing detailed notes on patient encounters" \
+      --source "https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv" \
+      --text-column biography \
+      --data-summary "Biographical profiles of individuals" \
       --replace substitute \
-      --output patient_data_anonymized.csv
+      --output biographies_anonymized.csv
     ```
 
 !!! note "`data_summary` improves detection"

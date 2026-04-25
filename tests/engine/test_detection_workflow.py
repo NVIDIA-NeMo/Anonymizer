@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection
@@ -17,10 +17,15 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
+    COL_SEED_ENTITIES,
+    COL_SEED_VALIDATION_CANDIDATES,
+    COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
 )
+from anonymizer.engine.detection.chunked_validation import ChunkedValidationParams
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _format_label_examples,
@@ -31,7 +36,11 @@ from anonymizer.engine.detection.detection_workflow import (
     _resolve_detection_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
-from anonymizer.engine.ndd.model_loader import load_default_model_selection, resolve_model_alias
+from anonymizer.engine.ndd.model_loader import (
+    load_default_model_selection,
+    resolve_model_alias,
+    resolve_model_aliases,
+)
 from anonymizer.engine.schemas import EntitiesSchema
 
 
@@ -327,7 +336,18 @@ def test_resolve_model_alias_reads_from_selection_model() -> None:
     defaults = load_default_model_selection().detection
     selection = defaults.model_copy(update={"entity_detector": "custom-model"})
     assert resolve_model_alias("entity_detector", selection) == "custom-model"
-    assert resolve_model_alias("entity_validator", selection) == defaults.entity_validator
+    assert resolve_model_aliases("entity_validator", selection) == defaults.entity_validator
+
+
+def test_resolve_model_alias_raises_for_list_valued_role() -> None:
+    selection = load_default_model_selection().detection
+    with pytest.raises(TypeError, match="list-valued"):
+        resolve_model_alias("entity_validator", selection)
+
+
+def test_resolve_model_aliases_wraps_scalar_roles() -> None:
+    selection = load_default_model_selection().detection
+    assert resolve_model_aliases("entity_detector", selection) == [selection.entity_detector]
 
 
 def test_resolve_detection_labels_none_uses_defaults() -> None:
@@ -504,3 +524,171 @@ def test_pad_empty_latent_column_no_op_when_column_missing() -> None:
     out = _pad_empty_latent_column(df)
     assert COL_LATENT_ENTITIES not in out.columns
     assert out is df  # unchanged identity
+
+
+# ---------------------------------------------------------------------------
+# Chunked validation wiring (Commit 2)
+# ---------------------------------------------------------------------------
+
+
+def _find_column(columns: list, name: str):
+    for col in columns:
+        if getattr(col, "name", None) == name:
+            return col
+    raise AssertionError(f"Column {name!r} not found in workflow columns: {[getattr(c, 'name', c) for c in columns]}")
+
+
+def test_validation_column_is_custom_chunked_generator(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """COL_VALIDATION_DECISIONS is now a CustomColumnConfig bound to the chunked generator,
+    not an LLMStructuredColumnConfig."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        tag_latent_entities=False,
+    )
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    validation_col = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert isinstance(validation_col, CustomColumnConfig)
+    # Must NOT be the old structured-output LLM column.
+    assert not isinstance(validation_col, LLMStructuredColumnConfig)
+    assert validation_col.drop is True
+    # generator_params must match the Detect config defaults that flow through.
+    assert isinstance(validation_col.generator_params, ChunkedValidationParams)
+    assert validation_col.generator_params.pool == stub_detection_model_selection.entity_validator
+    assert validation_col.generator_params.max_entities_per_call > 0
+    assert validation_col.generator_params.excerpt_window_chars > 0
+    # The decorated generator's metadata must expose the pool and the exact
+    # set of columns it reads, so DataDesigner resolves facades and DAG ordering.
+    metadata = validation_col.generator_function.custom_column_metadata
+    assert metadata["model_aliases"] == list(stub_detection_model_selection.entity_validator)
+    assert set(metadata["required_columns"]) == {
+        COL_TEXT,
+        COL_SEED_ENTITIES,
+        COL_SEED_VALIDATION_CANDIDATES,
+        COL_TAG_NOTATION,
+    }
+
+
+def test_validator_pool_kwargs_thread_through_to_generator_params(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """Explicit ``validation_max_entities_per_call`` and ``validation_excerpt_window_chars``
+    propagate from ``run()`` all the way to ``ChunkedValidationParams``."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        validation_max_entities_per_call=17,
+        validation_excerpt_window_chars=42,
+        tag_latent_entities=False,
+    )
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
+    assert params.max_entities_per_call == 17
+    assert params.excerpt_window_chars == 42
+
+
+def test_pool_size_greater_than_one_emits_warning(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Operators with multiple validator aliases must be alerted that
+    ``max_parallel_requests`` is enforced per alias (pool multiplies in-flight)."""
+    selection = stub_detection_model_selection.model_copy(
+        update={"entity_validator": [*stub_detection_model_selection.entity_validator, "extra-validator"]}
+    )
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    with caplog.at_level("WARNING"):
+        workflow.run(
+            pd.DataFrame({COL_TEXT: ["Alice"]}),
+            model_configs=stub_detector_model_configs,
+            selected_models=selection,
+            gliner_detection_threshold=0.5,
+            tag_latent_entities=False,
+        )
+    # caplog can attach handlers at both the target logger and root, so the
+    # same record may appear twice in ``records``; dedupe by identity.
+    pool_warnings = {
+        id(r): r
+        for r in caplog.records
+        if r.name == "anonymizer.detection" and "pool of" in r.getMessage() and "aliases" in r.getMessage()
+    }
+    assert len(pool_warnings) == 1
+    (only,) = pool_warnings.values()
+    assert "multiplies total in-flight" in only.getMessage()
+
+
+def test_pool_size_one_does_not_emit_warning(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Default single-alias configurations must not spam the warning: it's a pool caveat, not advice for everyone."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    assert len(stub_detection_model_selection.entity_validator) == 1, (
+        "baseline default must be a single validator for this test to be meaningful"
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    with caplog.at_level("WARNING"):
+        workflow.run(
+            pd.DataFrame({COL_TEXT: ["Alice"]}),
+            model_configs=stub_detector_model_configs,
+            selected_models=stub_detection_model_selection,
+            gliner_detection_threshold=0.5,
+            tag_latent_entities=False,
+        )
+    pool_warnings = [
+        r
+        for r in caplog.records
+        if r.name == "anonymizer.detection" and "pool of" in r.getMessage() and "aliases" in r.getMessage()
+    ]
+    assert pool_warnings == []

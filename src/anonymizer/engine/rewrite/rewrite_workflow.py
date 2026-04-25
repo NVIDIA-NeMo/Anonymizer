@@ -194,6 +194,7 @@ class RewriteWorkflow:
         evaluation: EvaluationCriteria,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
+        strict_entity_protection: bool = False,
     ) -> RewriteResult:
         all_failed: list[FailedRecord] = []
 
@@ -222,6 +223,7 @@ class RewriteWorkflow:
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
                 data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
             ),
             *self._qa_wf.columns(selected_models=selected_models),
             *self._rewrite_gen_wf.columns(

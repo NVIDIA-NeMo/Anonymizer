@@ -27,7 +27,9 @@ from anonymizer.engine.rewrite.disposition_derivation import reconstruct_full_di
 from anonymizer.engine.schemas import SimpleDispositionResult
 
 
-def _get_sensitivity_disposition_prompt(privacy_goal: PrivacyGoal, data_summary: str | None = None) -> str:
+def _get_sensitivity_disposition_prompt(
+    privacy_goal: PrivacyGoal, data_summary: str | None = None, strict_entity_protection: bool = False
+) -> str:
     privacy_goal_str = privacy_goal.to_prompt_string()
     # TODO: align entity detection prompts (validation, augment, latent) to use "Dataset description:" label
     data_summary_line = (
@@ -36,6 +38,22 @@ def _get_sensitivity_disposition_prompt(privacy_goal: PrivacyGoal, data_summary:
 
     # Prompt opening kept stable so tools/bench_harness.py::ROLE_PROMPT_PREFIXES
     # continues to classify this LLM call as disposition_analyzer in tap logs.
+    strict_protection_block = ""
+    if strict_entity_protection:
+        strict_protection_block = """
+<strict_entity_protection>
+STRICT PROTECTION MODE IS ENABLED.
+
+All entities MUST be protected — you only decide HOW. Choose the most appropriate
+protection_method_suggestion for each entity. leave_as_is is not available.
+
+Ignore the MINIMUM NECESSARY CHANGE principle — it does not apply in strict mode.
+Ignore the QUASI-IDENTIFIERS guidance that says "NOT automatically sensitive" —
+all quasi-identifiers must be protected in strict mode.
+
+</strict_entity_protection>
+"""
+
     prompt = """You are responsible for creating a unified sensitivity disposition for privacy-preserving text rewriting.
 
 Your task is to analyze ALL entities in the text and classify each one on two axes:
@@ -108,6 +126,7 @@ Do NOT assume the adversary knows the original text or internal annotations.
 Re-identification is successful if the adversary can reasonably narrow identity to a small, plausible set.
 </threat_model>
 
+<<STRICT_PROTECTION_BLOCK>>
 <entity_categories>
 category = "direct_identifier" (high-risk, standalone)
 - Uniquely identify on their own: full names, exact addresses, SSNs, email, phone.
@@ -175,6 +194,7 @@ Guidance:
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
             "<<FINAL_ENTITIES>>": _jinja(COL_ENTITIES_BY_VALUE),
             "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),
+            "<<STRICT_PROTECTION_BLOCK>>": strict_protection_block,
         },
     )
 
@@ -230,6 +250,7 @@ class SensitivityDispositionWorkflow:
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         data_summary: str | None = None,
+        strict_entity_protection: bool = False,
     ) -> list[ColumnConfigT]:
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
         return [
@@ -237,9 +258,17 @@ class SensitivityDispositionWorkflow:
             # Schema emitted to the model has no enum / minLength / strict
             # required, so DataDesigner's jsonschema.validate() cannot
             # reject small-model drift before our before-validator runs.
+            # strict_entity_protection is enforced at the prompt level (the
+            # <strict_entity_protection> block instructs the model to not
+            # emit leave_as_is); the reconstructor produces the strict
+            # schema downstream consumers read.
             LLMStructuredColumnConfig(
                 name=COL_SIMPLE_DISPOSITION,
-                prompt=_get_sensitivity_disposition_prompt(privacy_goal, data_summary),
+                prompt=_get_sensitivity_disposition_prompt(
+                    privacy_goal,
+                    data_summary,
+                    strict_entity_protection=strict_entity_protection,
+                ),
                 model_alias=disposition_alias,
                 output_format=SimpleDispositionResult,
                 drop=True,
