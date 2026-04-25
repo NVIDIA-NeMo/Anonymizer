@@ -17,6 +17,8 @@ from data_designer.config.models import ModelConfig
 from data_designer.config.seed import SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
 
+from anonymizer.interface.errors import AnonymizerWorkflowError
+
 if TYPE_CHECKING:
     import pandas as pd
     from data_designer.interface.data_designer import DataDesigner
@@ -75,72 +77,41 @@ class NddAdapter:
             for column in columns:
                 config_builder.add_column(column)
 
-            if preview_num_records is None:
-                try:
+            record_count = (
+                min(preview_num_records, len(workflow_input_df))
+                if preview_num_records is not None
+                else len(workflow_input_df)
+            )
+            try:
+                if preview_num_records is None:
                     run_results = self._data_designer.create(
                         config_builder,
                         num_records=len(workflow_input_df),
                         dataset_name=workflow_name,
                     )
-                except Exception as exc:
-                    logger.warning(
-                        "Workflow execution failed for %d input record(s) on model(s) %s: %s: %s. "
-                        "Check endpoint reachability, credentials, and quota.",
-                        len(workflow_input_df),
-                        model_aliases,
-                        type(exc).__name__,
-                        exc,
-                    )
-                    logger.debug(
-                        "Workflow '%s' execution failure context: columns=%s",
-                        workflow_name,
-                        col_names,
-                    )
-                    raise
-                try:
                     output_df = run_results.load_dataset()
-                except Exception as exc:
-                    logger.warning(
-                        "Workflow execution completed but loading the generated dataset failed for "
-                        "%d input record(s) on model(s) %s: %s: %s. "
-                        "Check local storage and dataset integrity.",
-                        len(workflow_input_df),
-                        model_aliases,
-                        type(exc).__name__,
-                        exc,
-                    )
-                    logger.debug(
-                        "Workflow '%s' dataset load failure context: columns=%s",
-                        workflow_name,
-                        col_names,
-                    )
-                    raise
-            else:
-                effective_preview = min(preview_num_records, len(workflow_input_df))
-                try:
+                else:
                     preview_results = self._data_designer.preview(
                         config_builder,
-                        num_records=effective_preview,
+                        num_records=record_count,
                     )
-                except Exception as exc:
-                    logger.warning(
-                        "Workflow preview failed for %d input record(s) on model(s) %s: %s: %s. "
-                        "Check endpoint reachability, credentials, and quota.",
-                        effective_preview,
-                        model_aliases,
-                        type(exc).__name__,
-                        exc,
-                    )
-                    logger.debug(
-                        "Workflow '%s' preview failure context: columns=%s",
-                        workflow_name,
-                        col_names,
-                    )
-                    raise
-                if preview_results.dataset is None:
-                    output_df = workflow_input_df.iloc[0:0].copy()
-                else:
-                    output_df = preview_results.dataset
+                    if preview_results.dataset is None:
+                        output_df = workflow_input_df.iloc[0:0].copy()
+                    else:
+                        output_df = preview_results.dataset
+            except Exception as exc:
+                logger.warning(
+                    "Workflow failed for %d input record(s) on model(s) %s: %s",
+                    record_count,
+                    model_aliases,
+                    exc,
+                )
+                logger.debug(
+                    "Workflow '%s' failure context: columns=%s",
+                    workflow_name,
+                    col_names,
+                )
+                raise AnonymizerWorkflowError(f"Workflow failed: {exc}") from exc
 
         logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
         failed_records = self._detect_missing_records(

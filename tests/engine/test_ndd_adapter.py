@@ -14,8 +14,9 @@ from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
-_FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "data_designer", "DD")
+_FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
 
 
 def _assert_no_backend_reference(message: str) -> None:
@@ -100,21 +101,21 @@ def test_detect_missing_records_for_preview_subset_has_no_false_failures() -> No
     assert len(failed_records) == 0
 
 
-def test_preview_exception_warns_with_count_model_and_type_and_debug_carries_workflow(
+def test_preview_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
 
-    class PreviewExplosion(Exception):
+    class DataDesignerRuntimeError(Exception):
         pass
 
     mock_dd = Mock(spec=DataDesigner)
-    mock_dd.preview.side_effect = PreviewExplosion("endpoint unreachable")
+    mock_dd.preview.side_effect = DataDesignerRuntimeError("endpoint unreachable")
 
     adapter = NddAdapter(data_designer=mock_dd)
     input_df = pd.DataFrame({"text": ["row-1", "row-2", "row-3"]})
 
-    with pytest.raises(PreviewExplosion):
+    with pytest.raises(AnonymizerWorkflowError) as exc_info:
         adapter.run_workflow(
             input_df,
             model_configs=[_make_model_config()],
@@ -123,16 +124,20 @@ def test_preview_exception_warns_with_count_model_and_type_and_debug_carries_wor
             preview_num_records=3,
         )
 
-    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="preview failed")
+    assert isinstance(exc_info.value.__cause__, DataDesignerRuntimeError)
+    assert "endpoint unreachable" in str(exc_info.value)
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "3" in warning_msg
     assert "test-model-alias" in warning_msg
-    assert "PreviewExplosion" in warning_msg
+    assert "endpoint unreachable" in warning_msg
+    assert "Check endpoint reachability" not in warning_msg
     assert "detect-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
 
-    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="preview failure context")
+    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
     assert "detect-workflow" in debug_msg
@@ -140,21 +145,21 @@ def test_preview_exception_warns_with_count_model_and_type_and_debug_carries_wor
     _assert_no_backend_reference(debug_msg)
 
 
-def test_create_exception_warns_with_count_model_and_type_and_debug_carries_workflow(
+def test_create_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
 
-    class CreateExplosion(Exception):
+    class DataDesignerRuntimeError(Exception):
         pass
 
     mock_dd = Mock(spec=DataDesigner)
-    mock_dd.create.side_effect = CreateExplosion("quota exceeded")
+    mock_dd.create.side_effect = DataDesignerRuntimeError("quota exceeded")
 
     adapter = NddAdapter(data_designer=mock_dd)
     input_df = pd.DataFrame({"text": ["row-1", "row-2"]})
 
-    with pytest.raises(CreateExplosion):
+    with pytest.raises(AnonymizerWorkflowError) as exc_info:
         adapter.run_workflow(
             input_df,
             model_configs=[_make_model_config()],
@@ -163,16 +168,20 @@ def test_create_exception_warns_with_count_model_and_type_and_debug_carries_work
             preview_num_records=None,
         )
 
-    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="execution failed")
+    assert isinstance(exc_info.value.__cause__, DataDesignerRuntimeError)
+    assert "quota exceeded" in str(exc_info.value)
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
     assert "test-model-alias" in warning_msg
-    assert "CreateExplosion" in warning_msg
+    assert "quota exceeded" in warning_msg
+    assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
 
-    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="execution failure context")
+    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
     assert "replace-workflow" in debug_msg
@@ -180,23 +189,23 @@ def test_create_exception_warns_with_count_model_and_type_and_debug_carries_work
     _assert_no_backend_reference(debug_msg)
 
 
-def test_load_dataset_exception_warns_with_distinct_local_failure_hint(
+def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
 
-    class LoadExplosion(Exception):
+    class DataDesignerRuntimeError(Exception):
         pass
 
     mock_dd = Mock(spec=DataDesigner)
     mock_create_results = Mock()
-    mock_create_results.load_dataset.side_effect = LoadExplosion("corrupt parquet")
+    mock_create_results.load_dataset.side_effect = DataDesignerRuntimeError("corrupt parquet")
     mock_dd.create.return_value = mock_create_results
 
     adapter = NddAdapter(data_designer=mock_dd)
     input_df = pd.DataFrame({"text": ["row-1", "row-2"]})
 
-    with pytest.raises(LoadExplosion):
+    with pytest.raises(AnonymizerWorkflowError) as exc_info:
         adapter.run_workflow(
             input_df,
             model_configs=[_make_model_config()],
@@ -205,27 +214,21 @@ def test_load_dataset_exception_warns_with_distinct_local_failure_hint(
             preview_num_records=None,
         )
 
-    warning_records = _unique_records(
-        caplog,
-        level=logging.WARNING,
-        message_contains="loading the generated dataset failed",
-    )
+    assert isinstance(exc_info.value.__cause__, DataDesignerRuntimeError)
+    assert "corrupt parquet" in str(exc_info.value)
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
     assert "test-model-alias" in warning_msg
-    assert "LoadExplosion" in warning_msg
-    assert "Check local storage and dataset integrity" in warning_msg
-    assert "endpoint reachability" not in warning_msg
+    assert "corrupt parquet" in warning_msg
+    assert "Check local storage" not in warning_msg
+    assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
 
-    execution_failed_records = _unique_records(
-        caplog, level=logging.WARNING, message_contains="Workflow execution failed"
-    )
-    assert execution_failed_records == []
-
-    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="dataset load failure context")
+    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
     assert "replace-workflow" in debug_msg
