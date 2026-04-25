@@ -157,87 +157,44 @@ class ProtectionMethod(str, Enum):
     leave_as_is = "leave_as_is"
 
 
-# Best-effort mapping from Anonymizer entity-labels to EntityCategory, used when
-# the model outputs an entity_label in the `category` field (observed with small
-# Gemma models on the disposition step). Values are from DEFAULT_ENTITY_LABELS in
-# engine/constants.py; any label not in this table falls back to
-# "quasi_identifier" which is the most conservative (protect-cautiously) choice.
-_ENTITY_LABEL_TO_CATEGORY: dict[str, str] = {
-    # Direct identifiers: strong re-id on their own.
-    "first_name": "direct_identifier",
-    "last_name": "direct_identifier",
-    "full_name": "direct_identifier",
-    "email": "direct_identifier",
-    "phone_number": "direct_identifier",
-    "fax_number": "direct_identifier",
-    "ssn": "direct_identifier",
-    "national_id": "direct_identifier",
-    "passport_number": "direct_identifier",
-    "drivers_license": "direct_identifier",
-    "street_address": "direct_identifier",
-    "address": "direct_identifier",
-    "postcode": "direct_identifier",
-    "zip_code": "direct_identifier",
-    "credit_debit_card": "direct_identifier",
-    "credit_card_number": "direct_identifier",
-    "account_number": "direct_identifier",
-    "bank_routing_number": "direct_identifier",
-    "tax_id": "direct_identifier",
-    "medical_record_number": "direct_identifier",
-    "health_plan_beneficiary_number": "direct_identifier",
-    "api_key": "direct_identifier",
-    "password": "direct_identifier",
-    "ipv4": "direct_identifier",
-    "ipv6": "direct_identifier",
-    "mac_address": "direct_identifier",
-    "url": "direct_identifier",
-    "user_name": "direct_identifier",
-    "employee_id": "direct_identifier",
-    "customer_id": "direct_identifier",
-    "unique_id": "direct_identifier",
-    "biometric_identifier": "direct_identifier",
-    "device_identifier": "direct_identifier",
-    "license_plate": "direct_identifier",
-    "vehicle_identifier": "direct_identifier",
-    "swift_bic": "direct_identifier",
-    "pin": "direct_identifier",
-    "cvv": "direct_identifier",
-    "http_cookie": "direct_identifier",
-    # Quasi-identifiers: weaker re-id, combinable with others.
-    "age": "quasi_identifier",
-    "date": "quasi_identifier",
-    "date_of_birth": "quasi_identifier",
-    "date_time": "quasi_identifier",
-    "time": "quasi_identifier",
-    "city": "quasi_identifier",
-    "state": "quasi_identifier",
-    "country": "quasi_identifier",
-    "county": "quasi_identifier",
-    "place_name": "quasi_identifier",
-    "landmark": "quasi_identifier",
-    "coordinate": "quasi_identifier",
-    "occupation": "quasi_identifier",
-    "organization_name": "quasi_identifier",
-    "company_name": "quasi_identifier",
-    "university": "quasi_identifier",
-    "court_name": "quasi_identifier",
-    "prison_detention_facility": "quasi_identifier",
-    "degree": "quasi_identifier",
-    "field_of_study": "quasi_identifier",
-    "education_level": "quasi_identifier",
-    "language": "quasi_identifier",
-    "nationality": "quasi_identifier",
-    "employment_status": "quasi_identifier",
-    "monetary_amount": "quasi_identifier",
-    "certificate_license_number": "quasi_identifier",
-    # Sensitive attributes: harmful to disclose regardless of re-id.
-    "gender": "sensitive_attribute",
-    "sexuality": "sensitive_attribute",
-    "race_ethnicity": "sensitive_attribute",
-    "religious_belief": "sensitive_attribute",
-    "political_view": "sensitive_attribute",
-    "blood_type": "sensitive_attribute",
-}
+# Mapping from Anonymizer entity-labels to EntityCategory, used when the
+# disposition LLM outputs an entity_label in the `category` field (observed
+# with small Gemma models). Derived from three category sets so the source
+# of truth lives in one place per category — see
+# test_entity_label_to_category_covers_default_labels for the CI guard
+# that fires when a label is added to DEFAULT_ENTITY_LABELS without a
+# category assignment here. Any label not in this table falls back to
+# "quasi_identifier" which is the most conservative (protect-cautiously)
+# choice.
+_DIRECT_ID_LABELS: frozenset[str] = frozenset({
+    "first_name", "last_name", "email", "phone_number", "fax_number",
+    "ssn", "national_id", "street_address", "postcode",
+    "credit_debit_card", "account_number", "bank_routing_number", "tax_id",
+    "medical_record_number", "health_plan_beneficiary_number",
+    "api_key", "password", "ipv4", "ipv6", "mac_address", "url",
+    "user_name", "employee_id", "customer_id", "unique_id",
+    "biometric_identifier", "device_identifier", "license_plate",
+    "vehicle_identifier", "swift_bic", "pin", "cvv", "http_cookie",
+})
+_QUASI_ID_LABELS: frozenset[str] = frozenset({
+    "age", "date", "date_of_birth", "date_time", "time",
+    "city", "state", "country", "county", "place_name", "landmark",
+    "coordinate", "occupation", "organization_name", "company_name",
+    "university", "court_name", "prison_detention_facility",
+    "degree", "field_of_study", "education_level", "language",
+    "nationality", "employment_status", "monetary_amount",
+    "certificate_license_number",
+})
+_SENSITIVE_ATTR_LABELS: frozenset[str] = frozenset({
+    "gender", "sexuality", "race_ethnicity", "religious_belief",
+    "political_view", "blood_type",
+})
+
+_ENTITY_LABEL_TO_CATEGORY: dict[str, str] = (
+    {lbl: "direct_identifier" for lbl in _DIRECT_ID_LABELS}
+    | {lbl: "quasi_identifier" for lbl in _QUASI_ID_LABELS}
+    | {lbl: "sensitive_attribute" for lbl in _SENSITIVE_ATTR_LABELS}
+)
 
 
 class EntityDispositionSchema(BaseModel):
