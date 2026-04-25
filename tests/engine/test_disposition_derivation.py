@@ -7,6 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from anonymizer.engine.rewrite.disposition_derivation import (
+    _flatten_context,
+    _normalize_category,
     derive_needs_protection,
     reconstruct_full_disposition,
     template_protection_reason,
@@ -314,3 +316,167 @@ def test_multi_label_entity_flattens_to_multiple_slots() -> None:
     assert full.sensitivity_disposition[1].entity_label == "organization_name"
     assert full.sensitivity_disposition[0].entity_value == "John"
     assert full.sensitivity_disposition[1].entity_value == "John"
+
+
+# ---------------------------------------------------------------------------
+# _normalize_category — entity-label-stuffed-in-category drift
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_category_entity_label_to_direct_identifier() -> None:
+    """Class L-style drift: small models (gemma4-e2b) write entity labels
+    like ``last_name``, ``ssn`` into the category slot. The reconstructor
+    must map them back to the most-likely category — direct_identifier
+    here — using _ENTITY_LABEL_TO_CATEGORY."""
+    assert _normalize_category("last_name") == "direct_identifier"
+    assert _normalize_category("first_name") == "direct_identifier"
+    assert _normalize_category("ssn") == "direct_identifier"
+
+
+def test_normalize_category_entity_label_to_quasi_identifier() -> None:
+    assert _normalize_category("city") == "quasi_identifier"
+    assert _normalize_category("date_of_birth") == "quasi_identifier"
+    assert _normalize_category("occupation") == "quasi_identifier"
+
+
+def test_normalize_category_entity_label_to_sensitive_attribute() -> None:
+    assert _normalize_category("religious_belief") == "sensitive_attribute"
+    assert _normalize_category("blood_type") == "sensitive_attribute"
+
+
+def test_normalize_category_display_variants() -> None:
+    """Display-label drift: case, spacing, hyphenation, plurals."""
+    assert _normalize_category("Direct-Identifier") == "direct_identifier"
+    assert _normalize_category("DIRECT IDENTIFIER") == "direct_identifier"
+    assert _normalize_category("direct_identifiers") == "direct_identifier"
+    assert _normalize_category("quasi_identifiers") == "quasi_identifier"
+
+
+def test_normalize_category_merged_enum_hallucination() -> None:
+    """Nemotron-observed drift: model splices two enum values. Strongest
+    protection wins so harm dimension ranks above inference dimension."""
+    assert _normalize_category("latent_sensitive_attribute") == "sensitive_attribute"
+    assert _normalize_category("direct_quasi_identifier") == "direct_identifier"
+
+
+def test_normalize_category_unknown_falls_back_to_quasi() -> None:
+    """Unknown / empty drops back to quasi_identifier (conservative default
+    over rejecting the row)."""
+    assert _normalize_category("") == "quasi_identifier"
+    assert _normalize_category(None) == "quasi_identifier"
+    assert _normalize_category("totally_made_up_thing") == "quasi_identifier"
+
+
+def test_normalize_category_via_reconstructor_with_entity_label_drift() -> None:
+    """End-to-end: SimpleDispositionItem with category=``last_name`` (the
+    canonical gemma failure mode) flows through reconstruct_full_disposition
+    and lands as direct_identifier on EntityDispositionSchema."""
+    simple = _make_simple(
+        {"id": 1, "category": "last_name", "sensitivity": "high",
+         "protection_method_suggestion": "replace",
+         "protection_reason": "Identifies the individual directly."},
+    )
+    context_tagged = [{"value": "Smith", "labels": ["last_name"]}]
+    full = reconstruct_full_disposition(simple, context_tagged, [])
+    assert full.sensitivity_disposition[0].category == "direct_identifier"
+    assert full.sensitivity_disposition[0].entity_label == "last_name"
+
+
+# ---------------------------------------------------------------------------
+# Class-K-style reconciliation through the reconstructor
+# (Schema-level reconciliation was deleted — derive_needs_protection makes
+# the (needs_protection, method) pair tautologically consistent.)
+# ---------------------------------------------------------------------------
+
+
+def test_class_k_method_replace_implies_needs_protection_true() -> None:
+    """SimpleDispositionItem has no needs_protection field — the
+    reconstructor derives it from method via derive_needs_protection.
+    Any non-trivial method => needs_protection=True."""
+    simple = _make_simple(
+        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
+         "protection_method_suggestion": "replace",
+         "protection_reason": "Direct id; replaced."},
+    )
+    full = reconstruct_full_disposition(
+        simple, [{"value": "Alice", "labels": ["first_name"]}], []
+    )
+    assert full.sensitivity_disposition[0].needs_protection is True
+
+
+def test_class_k_method_generalize_implies_needs_protection_true() -> None:
+    """Coverage for the generalize method — also implies needs_protection."""
+    simple = _make_simple(
+        {"id": 1, "category": "quasi_identifier", "sensitivity": "medium",
+         "protection_method_suggestion": "generalize",
+         "protection_reason": "Generalize to age band."},
+    )
+    full = reconstruct_full_disposition(
+        simple, [{"value": "37", "labels": ["age"]}], []
+    )
+    assert full.sensitivity_disposition[0].needs_protection is True
+    assert full.sensitivity_disposition[0].protection_method_suggestion == "generalize"
+
+
+def test_class_k_method_leave_as_is_implies_needs_protection_false() -> None:
+    """Symmetric: leave_as_is is the only method that derives False."""
+    simple = _make_simple(
+        {"id": 1, "category": "quasi_identifier", "sensitivity": "low",
+         "protection_method_suggestion": "leave_as_is",
+         "protection_reason": "Low risk in context."},
+    )
+    full = reconstruct_full_disposition(
+        simple, [{"value": "blue", "labels": ["favorite_color"]}], []
+    )
+    assert full.sensitivity_disposition[0].needs_protection is False
+
+
+# ---------------------------------------------------------------------------
+# Prompt enumeration alignment with _flatten_context
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_context_enumeration_matches_reconstruction_for_multi_label() -> None:
+    """Pin the (value, label) pair contract: _flatten_context produces one
+    slot per pair, and reconstruct_full_disposition expects the LLM to
+    emit one SimpleDispositionItem per slot. With ids 1..N and zero
+    orphans, every multi-label entity round-trips cleanly."""
+    entities_by_value = [
+        {"value": "John", "labels": ["first_name", "organization_name"]},
+        {"value": "Portland", "labels": ["city"]},
+    ]
+    flat = _flatten_context(entities_by_value, [])
+    # 3 slots: (John, first_name), (John, organization_name), (Portland, city)
+    assert len(flat) == 3
+    assert [s["entity_label"] for s in flat] == [
+        "first_name", "organization_name", "city",
+    ]
+    # Construct one SimpleDispositionItem per slot, ids 1..N.
+    simple = _make_simple(
+        *[
+            {"id": i + 1, "category": "direct_identifier", "sensitivity": "high",
+             "protection_method_suggestion": "replace",
+             "protection_reason": f"Aligned reason {i + 1}."}
+            for i in range(len(flat))
+        ]
+    )
+    full = reconstruct_full_disposition(simple, entities_by_value, [])
+    # All three reconstructed; zero orphans.
+    assert len(full.sensitivity_disposition) == 3
+    assert [e.entity_label for e in full.sensitivity_disposition] == [
+        "first_name", "organization_name", "city",
+    ]
+    assert [e.entity_value for e in full.sensitivity_disposition] == [
+        "John", "John", "Portland",
+    ]
+
+
+def test_flatten_context_includes_latent_after_tagged() -> None:
+    """Latent entries follow tagged entries; ids continue sequentially.
+    Pins the prompt-rendering contract: the LLM sees tagged before latent
+    in the prompt and must emit ids 1..N in that order."""
+    entities_by_value = [{"value": "Alice", "labels": ["first_name"]}]
+    latent = [{"label": "employer", "value": "UW"}]
+    flat = _flatten_context(entities_by_value, latent)
+    assert [s["source"] for s in flat] == ["tagged", "latent"]
+    assert [s["entity_label"] for s in flat] == ["first_name", "employer"]
