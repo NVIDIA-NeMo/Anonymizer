@@ -241,26 +241,25 @@ def mixed_disposition() -> SensitivityDispositionSchema:
 # EntityDispositionSchema — protection consistency
 
 
-def test_entity_disposition_reconciles_no_protection_but_method_set() -> None:
-    """Class K: small models routinely emit inconsistent (needs_protection, method)
-    pairs. The before-validator reconciles instead of raising — when the chosen
-    method is non-trivial, needs_protection is flipped to True (privacy-safe)."""
-    obj = EntityDispositionSchema.model_validate(
-        _make_entity(needs_protection=False, protection_method_suggestion="replace")
-    )
-    assert obj.needs_protection is True
-    assert obj.protection_method_suggestion == "replace"
+def test_entity_disposition_rejects_no_protection_but_method_set() -> None:
+    """EntityDispositionSchema is strict — inconsistent (needs_protection,
+    method) pairs are rejected. Class K reconciliation is the
+    reconstructor's job (derive_needs_protection makes the pair
+    tautologically consistent), so the schema must reject anything that
+    bypasses the reconstructor."""
+    with pytest.raises(ValidationError):
+        EntityDispositionSchema.model_validate(
+            _make_entity(needs_protection=False, protection_method_suggestion="replace")
+        )
 
 
-def test_entity_disposition_reconciles_needs_protection_but_leave_as_is() -> None:
-    """Inverse class K: needs_protection=True with method=leave_as_is is
-    inconsistent. Reconciler keeps needs_protection=True and switches method
-    to 'replace' (a safe default protective action)."""
-    obj = EntityDispositionSchema.model_validate(
-        _make_entity(needs_protection=True, protection_method_suggestion="leave_as_is")
-    )
-    assert obj.needs_protection is True
-    assert obj.protection_method_suggestion == "replace"
+def test_entity_disposition_rejects_needs_protection_but_leave_as_is() -> None:
+    """Inverse class K: also rejected by the strict schema. Class K
+    reconciliation lives in reconstruct_full_disposition, not here."""
+    with pytest.raises(ValidationError):
+        EntityDispositionSchema.model_validate(
+            _make_entity(needs_protection=True, protection_method_suggestion="leave_as_is")
+        )
 
 
 # SensitivityDispositionSchema — ID normalization

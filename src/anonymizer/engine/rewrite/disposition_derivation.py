@@ -20,7 +20,6 @@ from anonymizer.engine.schemas.rewrite import (
     _ENTITY_LABEL_TO_CATEGORY,
     EntityDispositionSchema,
     SensitivityDispositionSchema,
-    SimpleDispositionItem,
     SimpleDispositionResult,
 )
 

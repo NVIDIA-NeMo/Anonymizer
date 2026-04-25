@@ -206,134 +206,15 @@ class EntityDispositionSchema(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True)
 
-    # Coerce small-model output before pydantic's strict checks run:
-    #   - normalize `category` display-label drift (e.g. "DIRECT IDENTIFIERS"
-    #     or "last_name") into the expected enum string where possible
-    #     (common Gemma-family failure mode).
-    #   - coerce unquoted ints on string fields (Gemma 4 26B emits postcodes
-    #     like 98101 as bare integers).
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_small_model_output(cls, data):
-        if not isinstance(data, dict):
-            return data
-        # Coerce int → str on string fields; drop None so pydantic defaults apply
-        # (e.g. protection_reason default kicks in when the model emits null).
-        for k in ("entity_label", "entity_value", "protection_reason"):
-            if k not in data:
-                continue
-            v = data[k]
-            if isinstance(v, (int, float)):
-                data[k] = str(v)
-            elif v is None:
-                data.pop(k)
-        # Normalize `category` drift.
-        # (1) display-label → enum, plural → singular;
-        # (2) when the model confuses fields and puts the entity_label (e.g.
-        #     "last_name", "date_of_birth") into the category slot, map it back
-        #     to the most-likely EntityCategory using a known-labels table.
-        cat = data.get("category")
-        if isinstance(cat, str):
-            normalized = cat.strip().lower().replace("-", "_").replace(" ", "_")
-            allowed = {"direct_identifier", "quasi_identifier",
-                       "sensitive_attribute", "latent_identifier"}
-            if normalized in allowed:
-                data["category"] = normalized
-            elif normalized.endswith("s") and normalized[:-1] in allowed:
-                data["category"] = normalized[:-1]
-            elif normalized.endswith("_identifiers"):
-                data["category"] = normalized[:-1]
-            else:
-                # Merged-enum hallucination: e.g. "latent_sensitive_attribute"
-                # (observed from Nemotron on the oncology bench note). The model
-                # splices two legitimate EntityCategory values. Resolve via
-                # substring match; order = strongest protection wins so that
-                # "latent_sensitive_attribute" maps to sensitive_attribute
-                # (harm dimension) rather than latent_identifier (inference).
-                # The `source` field (tagged|latent) preserves the latent
-                # provenance separately.
-                merged = None
-                for sub, target in (
-                    ("direct", "direct_identifier"),
-                    ("sensitive", "sensitive_attribute"),
-                    ("latent", "latent_identifier"),
-                    ("quasi", "quasi_identifier"),
-                ):
-                    if sub in normalized:
-                        merged = target
-                        break
-                if merged is not None:
-                    data["category"] = merged
-                else:
-                    # Entity-label confusion: model wrote an entity_label
-                    # value in the category slot. Map via a best-effort
-                    # label → category table.
-                    mapped = _ENTITY_LABEL_TO_CATEGORY.get(normalized)
-                    if mapped is not None:
-                        data["category"] = mapped
-                    elif data.get("entity_label") == cat:
-                        # Model definitely confused fields; conservative fallback.
-                        data["category"] = "quasi_identifier"
-                    # Otherwise leave as-is; pydantic raises a clear enum error.
-
-        # Reconcile the needs_protection <=> protection_method_suggestion
-        # consistency rule (enforced by @model_validator(mode="after")
-        # below). Small models frequently emit inconsistent pairs in BOTH
-        # directions: (needs_protection=False, method="suppress_inference")
-        # or (needs_protection=True, method="leave_as_is"). Resolve by
-        # biasing toward protection (privacy-safe):
-        #   * if any non-trivial method is chosen, set needs_protection=True;
-        #   * if needs_protection=True but method="leave_as_is", fall back
-        #     to method="replace" (the most generic protective action).
-        method = data.get("protection_method_suggestion")
-        needs = data.get("needs_protection")
-        if isinstance(method, str) and method and method != "leave_as_is":
-            if needs is False:
-                data["needs_protection"] = True
-        elif method == "leave_as_is" and needs is True:
-            data["protection_method_suggestion"] = "replace"
-        return data
-
     id: int = Field(ge=1)
     source: EntitySource
-    # NOTE: typed as `str` (not EntityCategory) so DD’s jsonschema pre-check
-    # does not reject small-model enum drift (e.g. "last_name" in category,
-    # "latent_sensitive_attribute" merges) before our @model_validator(mode=
-    # "before") gets to coerce it. Enum membership is re-enforced after
-    # coercion by _validate_category below.
-    category: str = Field(
-        min_length=1,
-        description=(
-            "One of: direct_identifier | quasi_identifier | sensitive_attribute "
-            "| latent_identifier"
-        ),
-    )
+    category: EntityCategory
     sensitivity: SensitivityLevel
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
     needs_protection: bool
-    # Default makes this optional in the emitted JSON Schema so DD’s
-    # jsonschema.validate() does not drop records when small models omit the
-    # field (observed on gemma4-e2b, oncology bench note, 2026-04). A generic
-    # placeholder is strictly better than dropping the row — the record still
-    # flows downstream and the rewrite + judge passes can still evaluate it.
-    protection_reason: str = Field(
-        default="auto: model omitted protection_reason",
-        min_length=10,
-        max_length=500,
-    )
+    protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
-
-    @field_validator("category", mode="after")
-    @classmethod
-    def _validate_category(cls, v: str) -> str:
-        allowed = {c.value for c in EntityCategory}
-        if v not in allowed:
-            raise ValueError(
-                f"category must be one of {sorted(allowed)}; got {v!r} "
-                "(after @model_validator(mode='before') normalization)"
-            )
-        return v
 
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
