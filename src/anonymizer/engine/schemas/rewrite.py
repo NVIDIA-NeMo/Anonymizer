@@ -588,7 +588,24 @@ class MeaningUnitsSchema(BaseModel):
     @classmethod
     def _ensure_list(cls, v: object) -> list:
         if not isinstance(v, list):
-            return [v] if isinstance(v, dict) else []
+            v = [v] if isinstance(v, dict) else []
+        # MeaningUnitSchema.id defaults to 1; if the LLM omits ids the wire
+        # collapses every unit to id=1. Reassign sequentially so downstream
+        # prompts that reference units by id stay unambiguous. Preserve any
+        # explicit positive int id the LLM did emit, but renumber only when
+        # at least one collision or missing id is detected.
+        if isinstance(v, list) and v:
+            raw_ids = [
+                item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+                for item in v
+            ]
+            valid = [i for i in raw_ids if isinstance(i, int) and i >= 1]
+            if len(valid) != len(raw_ids) or len(set(valid)) != len(valid):
+                for idx, item in enumerate(v, start=1):
+                    if isinstance(item, dict):
+                        item["id"] = idx
+                    elif hasattr(item, "id"):
+                        item.id = idx  # type: ignore[misc]
         return v
 
 

@@ -19,7 +19,7 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema
+from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, MeaningUnitsSchema
 
 
 def test_entities_payload_from_raw_dict() -> None:
@@ -455,3 +455,40 @@ def test_quality_answers_drop_extra_ids() -> None:
     )
     ids = [a.id for a in result.answers]
     assert ids == [1, 2]  # 99 dropped
+
+
+def test_meaning_units_renumber_when_ids_omitted() -> None:
+    """MeaningUnitSchema.id defaults to 1 to keep the wire schema permissive
+    for small-model output. When the LLM emits multiple units and omits ids
+    on all of them, _ensure_list reassigns sequential 1..N so downstream
+    prompts that reference units by id stay unambiguous."""
+    raw = {"units": [
+        {"aspect": "role", "unit": "individual is a software engineer"},
+        {"aspect": "environment", "unit": "they work remotely"},
+        {"aspect": "temporal_sequence", "unit": "for the past two years"},
+    ]}
+    result = MeaningUnitsSchema.model_validate(raw)
+    assert [u.id for u in result.units] == [1, 2, 3]
+
+
+def test_meaning_units_renumber_on_id_collision() -> None:
+    """If the LLM emits duplicate ids, renumber to avoid downstream
+    ambiguity. Otherwise downstream prompts referencing 'unit 1' would be
+    ambiguous."""
+    raw = {"units": [
+        {"id": 1, "aspect": "role", "unit": "engineer"},
+        {"id": 1, "aspect": "environment", "unit": "remote"},
+    ]}
+    result = MeaningUnitsSchema.model_validate(raw)
+    assert [u.id for u in result.units] == [1, 2]
+
+
+def test_meaning_units_preserve_explicit_unique_ids() -> None:
+    """When the LLM emits valid, unique ids, keep them verbatim — even if
+    not strictly sequential."""
+    raw = {"units": [
+        {"id": 5, "aspect": "role", "unit": "engineer"},
+        {"id": 7, "aspect": "environment", "unit": "remote"},
+    ]}
+    result = MeaningUnitsSchema.model_validate(raw)
+    assert [u.id for u in result.units] == [5, 7]
