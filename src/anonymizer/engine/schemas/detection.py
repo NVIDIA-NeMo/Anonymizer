@@ -295,10 +295,8 @@ class LatentEntitySchema(BaseModel):
     @field_validator("rationale", mode="before")
     @classmethod
     def _cap_rationale(cls, v: object) -> str:
-        """Truncate verbose (Nemotron-observed 260 chars > 150 max); pad
-        terse (Qwen-observed sub-10 chars) with an ellipsis to reach the
-        10-char soft floor. Exact floor kept as internal expectation but
-        not enforced at wire — server reads rationale for context only.
+        """Truncate verbose rationales (Nemotron-observed 260 chars > 150 max).
+        Server reads rationale for context only; no lower bound enforced.
         """
         if v is None:
             return ""
