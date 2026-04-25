@@ -44,9 +44,7 @@ from anonymizer.engine.schemas import (
 # name + description hint instead of annotation class.
 _DOMAIN_KEY = "domain"
 if _DOMAIN_KEY not in DomainClassificationSchema.model_fields:
-    raise RuntimeError(
-        f"DomainClassificationSchema must define field {_DOMAIN_KEY!r}"
-    )
+    raise RuntimeError(f"DomainClassificationSchema must define field {_DOMAIN_KEY!r}")
 
 # ---------------------------------------------------------------------------
 # Stage 1 pre-step: format disposition → disposition block

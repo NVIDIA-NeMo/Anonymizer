@@ -34,7 +34,7 @@ from anonymizer.engine.schemas.rewrite import (
         ("generalize", True),
         ("remove", True),
         ("suppress_inference", True),
-        ("", True),   # empty method -> treat as non-trivial (conservative)
+        ("", True),  # empty method -> treat as non-trivial (conservative)
     ],
 )
 def test_derive_needs_protection(method: str, expected: bool) -> None:
@@ -82,12 +82,20 @@ def _make_simple(*items: dict) -> SimpleDispositionResult:
 
 def test_reconstruct_tagged_only_happy_path() -> None:
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace",
-         "protection_reason": "Name identifies the individual directly and clearly."},
-        {"id": 2, "category": "quasi_identifier", "sensitivity": "low",
-         "protection_method_suggestion": "leave_as_is",
-         "protection_reason": "City alone does not meaningfully narrow the population."},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Name identifies the individual directly and clearly.",
+        },
+        {
+            "id": 2,
+            "category": "quasi_identifier",
+            "sensitivity": "low",
+            "protection_method_suggestion": "leave_as_is",
+            "protection_reason": "City alone does not meaningfully narrow the population.",
+        },
     )
     context_tagged = [
         {"value": "Alice", "labels": ["first_name"]},
@@ -113,8 +121,12 @@ def test_reconstruct_tagged_only_happy_path() -> None:
 
 def test_reconstruct_latent_only_happy_path() -> None:
     simple = _make_simple(
-        {"id": 1, "category": "latent_identifier", "sensitivity": "medium",
-         "protection_method_suggestion": "suppress_inference"},
+        {
+            "id": 1,
+            "category": "latent_identifier",
+            "sensitivity": "medium",
+            "protection_method_suggestion": "suppress_inference",
+        },
     )
     latent = [{"label": "employer", "value": "UW"}]
     full = reconstruct_full_disposition(simple, [], latent)
@@ -131,12 +143,25 @@ def test_reconstruct_latent_only_happy_path() -> None:
 
 def test_reconstruct_mixed_tagged_and_latent() -> None:
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace", "protection_reason": "x"},  # too short -> templated
-        {"id": 2, "category": "quasi_identifier", "sensitivity": "medium",
-         "protection_method_suggestion": "generalize"},
-        {"id": 3, "category": "latent_identifier", "sensitivity": "medium",
-         "protection_method_suggestion": "suppress_inference"},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "x",
+        },  # too short -> templated
+        {
+            "id": 2,
+            "category": "quasi_identifier",
+            "sensitivity": "medium",
+            "protection_method_suggestion": "generalize",
+        },
+        {
+            "id": 3,
+            "category": "latent_identifier",
+            "sensitivity": "medium",
+            "protection_method_suggestion": "suppress_inference",
+        },
     )
     context_tagged = [
         {"value": "Alice", "labels": ["first_name"]},
@@ -161,8 +186,7 @@ def test_reconstruct_mixed_tagged_and_latent() -> None:
 
 def test_leave_as_is_implies_needs_protection_false_but_valid_reason() -> None:
     simple = _make_simple(
-        {"id": 1, "category": "quasi_identifier", "sensitivity": "low",
-         "protection_method_suggestion": "leave_as_is"},
+        {"id": 1, "category": "quasi_identifier", "sensitivity": "low", "protection_method_suggestion": "leave_as_is"},
     )
     full = reconstruct_full_disposition(simple, [{"value": "x", "labels": ["age"]}], [])
     e = full.sensitivity_disposition[0]
@@ -173,8 +197,13 @@ def test_leave_as_is_implies_needs_protection_false_but_valid_reason() -> None:
 
 def test_llm_reason_below_minlength_is_templated() -> None:
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace", "protection_reason": "short"},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "short",
+        },
     )
     full = reconstruct_full_disposition(simple, [{"value": "Alice", "labels": ["first_name"]}], [])
     assert full.sensitivity_disposition[0].protection_reason != "short"
@@ -183,8 +212,13 @@ def test_llm_reason_below_minlength_is_templated() -> None:
 def test_llm_reason_at_or_above_minlength_is_kept_verbatim() -> None:
     long_reason = "Very specific to this document and 10+ chars."
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace", "protection_reason": long_reason},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": long_reason,
+        },
     )
     full = reconstruct_full_disposition(simple, [{"value": "Alice", "labels": ["first_name"]}], [])
     assert full.sensitivity_disposition[0].protection_reason == long_reason
@@ -193,8 +227,11 @@ def test_llm_reason_at_or_above_minlength_is_kept_verbatim() -> None:
 def test_llm_reason_none_or_int_coerced_to_empty_then_templated() -> None:
     # The @field_validator on SimpleDispositionItem coerces None/int to "".
     item = SimpleDispositionItem(
-        id=1, category="direct_identifier", sensitivity="high",
-        protection_method_suggestion="replace", protection_reason=None,  # type: ignore[arg-type]
+        id=1,
+        category="direct_identifier",
+        sensitivity="high",
+        protection_method_suggestion="replace",
+        protection_reason=None,  # type: ignore[arg-type]
     )
     assert item.protection_reason == ""
     simple = SimpleDispositionResult(sensitivity_disposition=[item])
@@ -204,12 +241,20 @@ def test_llm_reason_none_or_int_coerced_to_empty_then_templated() -> None:
 
 def test_orphan_item_skipped_with_warning(caplog: pytest.LogCaptureFixture) -> None:
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace",
-         "protection_reason": "Ten+ chars here."},
-        {"id": 99, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace",
-         "protection_reason": "Ten+ chars also."},  # id out of context range, no echo
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Ten+ chars here.",
+        },
+        {
+            "id": 99,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Ten+ chars also.",
+        },  # id out of context range, no echo
     )
     context_tagged = [{"value": "Alice", "labels": ["first_name"]}]
     full = reconstruct_full_disposition(simple, context_tagged, [])
@@ -222,9 +267,16 @@ def test_orphan_item_skipped_with_warning(caplog: pytest.LogCaptureFixture) -> N
 def test_orphan_item_with_echoes_still_reconstructable() -> None:
     # Model echoed enough to rebuild even if id is out of context range.
     simple = _make_simple(
-        {"id": 99, "source": "tagged", "entity_label": "last_name", "entity_value": "Smith",
-         "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace", "protection_reason": "Reason here."},
+        {
+            "id": 99,
+            "source": "tagged",
+            "entity_label": "last_name",
+            "entity_value": "Smith",
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Reason here.",
+        },
     )
     full = reconstruct_full_disposition(simple, [], [])
     assert len(full.sensitivity_disposition) == 1
@@ -235,10 +287,20 @@ def test_orphan_item_with_echoes_still_reconstructable() -> None:
 
 def test_duplicate_ids_deduplicated_keeping_first() -> None:
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace", "protection_reason": "First copy ok."},
-        {"id": 1, "category": "quasi_identifier", "sensitivity": "low",
-         "protection_method_suggestion": "leave_as_is", "protection_reason": "Second dup."},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "First copy ok.",
+        },
+        {
+            "id": 1,
+            "category": "quasi_identifier",
+            "sensitivity": "low",
+            "protection_method_suggestion": "leave_as_is",
+            "protection_reason": "Second dup.",
+        },
     )
     full = reconstruct_full_disposition(simple, [{"value": "x", "labels": ["first_name"]}], [])
     assert len(full.sensitivity_disposition) == 1
@@ -263,12 +325,27 @@ def test_empty_method_with_high_risk_defaults_to_replace() -> None:
     leave_as_is. Mirrors the pessimistic-default pattern used in
     PrivacyAnswersSchema (pad missing with ``yes``)."""
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "", "protection_reason": ""},
-        {"id": 2, "category": "sensitive_attribute", "sensitivity": "low",
-         "protection_method_suggestion": "", "protection_reason": ""},
-        {"id": 3, "category": "quasi_identifier", "sensitivity": "low",
-         "protection_method_suggestion": "", "protection_reason": ""},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "",
+            "protection_reason": "",
+        },
+        {
+            "id": 2,
+            "category": "sensitive_attribute",
+            "sensitivity": "low",
+            "protection_method_suggestion": "",
+            "protection_reason": "",
+        },
+        {
+            "id": 3,
+            "category": "quasi_identifier",
+            "sensitivity": "low",
+            "protection_method_suggestion": "",
+            "protection_reason": "",
+        },
     )
     context_tagged = [
         {"value": "Alice", "labels": ["first_name"]},
@@ -292,8 +369,13 @@ def test_empty_method_with_medium_quasi_id_defaults_to_replace() -> None:
     """Sensitivity-driven branch of the pessimistic default — even a
     quasi_identifier becomes ``replace`` when sensitivity is medium/high."""
     simple = _make_simple(
-        {"id": 1, "category": "quasi_identifier", "sensitivity": "medium",
-         "protection_method_suggestion": "", "protection_reason": ""},
+        {
+            "id": 1,
+            "category": "quasi_identifier",
+            "sensitivity": "medium",
+            "protection_method_suggestion": "",
+            "protection_reason": "",
+        },
     )
     context_tagged = [{"value": "37", "labels": ["age"]}]
     full = reconstruct_full_disposition(simple, context_tagged, [])
@@ -303,10 +385,20 @@ def test_empty_method_with_medium_quasi_id_defaults_to_replace() -> None:
 
 def test_multi_label_entity_flattens_to_multiple_slots() -> None:
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace", "protection_reason": "Flatten me OK."},
-        {"id": 2, "category": "quasi_identifier", "sensitivity": "low",
-         "protection_method_suggestion": "leave_as_is", "protection_reason": "Other label."},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Flatten me OK.",
+        },
+        {
+            "id": 2,
+            "category": "quasi_identifier",
+            "sensitivity": "low",
+            "protection_method_suggestion": "leave_as_is",
+            "protection_reason": "Other label.",
+        },
     )
     # One value, two labels -> reconstructor allocates two id slots.
     context_tagged = [{"value": "John", "labels": ["first_name", "organization_name"]}]
@@ -371,9 +463,13 @@ def test_normalize_category_via_reconstructor_with_entity_label_drift() -> None:
     canonical gemma failure mode) flows through reconstruct_full_disposition
     and lands as direct_identifier on EntityDispositionSchema."""
     simple = _make_simple(
-        {"id": 1, "category": "last_name", "sensitivity": "high",
-         "protection_method_suggestion": "replace",
-         "protection_reason": "Identifies the individual directly."},
+        {
+            "id": 1,
+            "category": "last_name",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Identifies the individual directly.",
+        },
     )
     context_tagged = [{"value": "Smith", "labels": ["last_name"]}]
     full = reconstruct_full_disposition(simple, context_tagged, [])
@@ -393,26 +489,30 @@ def test_class_k_method_replace_implies_needs_protection_true() -> None:
     reconstructor derives it from method via derive_needs_protection.
     Any non-trivial method => needs_protection=True."""
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "replace",
-         "protection_reason": "Direct id; replaced."},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Direct id; replaced.",
+        },
     )
-    full = reconstruct_full_disposition(
-        simple, [{"value": "Alice", "labels": ["first_name"]}], []
-    )
+    full = reconstruct_full_disposition(simple, [{"value": "Alice", "labels": ["first_name"]}], [])
     assert full.sensitivity_disposition[0].needs_protection is True
 
 
 def test_class_k_method_generalize_implies_needs_protection_true() -> None:
     """Coverage for the generalize method — also implies needs_protection."""
     simple = _make_simple(
-        {"id": 1, "category": "quasi_identifier", "sensitivity": "medium",
-         "protection_method_suggestion": "generalize",
-         "protection_reason": "Generalize to age band."},
+        {
+            "id": 1,
+            "category": "quasi_identifier",
+            "sensitivity": "medium",
+            "protection_method_suggestion": "generalize",
+            "protection_reason": "Generalize to age band.",
+        },
     )
-    full = reconstruct_full_disposition(
-        simple, [{"value": "37", "labels": ["age"]}], []
-    )
+    full = reconstruct_full_disposition(simple, [{"value": "37", "labels": ["age"]}], [])
     assert full.sensitivity_disposition[0].needs_protection is True
     assert full.sensitivity_disposition[0].protection_method_suggestion == "generalize"
 
@@ -420,13 +520,15 @@ def test_class_k_method_generalize_implies_needs_protection_true() -> None:
 def test_class_k_method_leave_as_is_implies_needs_protection_false() -> None:
     """Symmetric: leave_as_is is the only method that derives False."""
     simple = _make_simple(
-        {"id": 1, "category": "quasi_identifier", "sensitivity": "low",
-         "protection_method_suggestion": "leave_as_is",
-         "protection_reason": "Low risk in context."},
+        {
+            "id": 1,
+            "category": "quasi_identifier",
+            "sensitivity": "low",
+            "protection_method_suggestion": "leave_as_is",
+            "protection_reason": "Low risk in context.",
+        },
     )
-    full = reconstruct_full_disposition(
-        simple, [{"value": "blue", "labels": ["favorite_color"]}], []
-    )
+    full = reconstruct_full_disposition(simple, [{"value": "blue", "labels": ["favorite_color"]}], [])
     assert full.sensitivity_disposition[0].needs_protection is False
 
 
@@ -448,14 +550,20 @@ def test_flatten_context_enumeration_matches_reconstruction_for_multi_label() ->
     # 3 slots: (John, first_name), (John, organization_name), (Portland, city)
     assert len(flat) == 3
     assert [s["entity_label"] for s in flat] == [
-        "first_name", "organization_name", "city",
+        "first_name",
+        "organization_name",
+        "city",
     ]
     # Construct one SimpleDispositionItem per slot, ids 1..N.
     simple = _make_simple(
         *[
-            {"id": i + 1, "category": "direct_identifier", "sensitivity": "high",
-             "protection_method_suggestion": "replace",
-             "protection_reason": f"Aligned reason {i + 1}."}
+            {
+                "id": i + 1,
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "protection_method_suggestion": "replace",
+                "protection_reason": f"Aligned reason {i + 1}.",
+            }
             for i in range(len(flat))
         ]
     )
@@ -463,10 +571,14 @@ def test_flatten_context_enumeration_matches_reconstruction_for_multi_label() ->
     # All three reconstructed; zero orphans.
     assert len(full.sensitivity_disposition) == 3
     assert [e.entity_label for e in full.sensitivity_disposition] == [
-        "first_name", "organization_name", "city",
+        "first_name",
+        "organization_name",
+        "city",
     ]
     assert [e.entity_value for e in full.sensitivity_disposition] == [
-        "John", "John", "Portland",
+        "John",
+        "John",
+        "Portland",
     ]
 
 

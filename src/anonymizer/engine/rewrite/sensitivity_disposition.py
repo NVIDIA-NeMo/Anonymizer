@@ -204,9 +204,7 @@ Guidance:
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(
-    required_columns=[COL_SIMPLE_DISPOSITION, COL_ENTITIES_BY_VALUE, COL_LATENT_ENTITIES]
-)
+@custom_column_generator(required_columns=[COL_SIMPLE_DISPOSITION, COL_ENTITIES_BY_VALUE, COL_LATENT_ENTITIES])
 def _reconstruct_full_disposition_column(row: dict[str, Any]) -> dict[str, Any]:
     """Rebuild the strict EntityDispositionSchema list from the loose LLM
     output in COL_SIMPLE_DISPOSITION plus the entity context columns.
@@ -221,6 +219,7 @@ def _reconstruct_full_disposition_column(row: dict[str, Any]) -> dict[str, Any]:
     else:
         if isinstance(simple_raw, str):
             import json as _json
+
             try:
                 simple_raw = _json.loads(simple_raw)
             except Exception:

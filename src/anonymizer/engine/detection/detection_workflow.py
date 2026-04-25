@@ -715,6 +715,3 @@ def _pad_empty_latent_column(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df[COL_LATENT_ENTITIES] = df[COL_LATENT_ENTITIES].map(_fix)
     return df
-
-
-

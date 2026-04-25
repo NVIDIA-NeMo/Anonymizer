@@ -468,11 +468,13 @@ def test_meaning_units_renumber_when_ids_omitted() -> None:
     for small-model output. When the LLM emits multiple units and omits ids
     on all of them, _ensure_list reassigns sequential 1..N so downstream
     prompts that reference units by id stay unambiguous."""
-    raw = {"units": [
-        {"aspect": "role", "unit": "individual is a software engineer"},
-        {"aspect": "environment", "unit": "they work remotely"},
-        {"aspect": "temporal_sequence", "unit": "for the past two years"},
-    ]}
+    raw = {
+        "units": [
+            {"aspect": "role", "unit": "individual is a software engineer"},
+            {"aspect": "environment", "unit": "they work remotely"},
+            {"aspect": "temporal_sequence", "unit": "for the past two years"},
+        ]
+    }
     result = MeaningUnitsSchema.model_validate(raw)
     assert [u.id for u in result.units] == [1, 2, 3]
 
@@ -481,10 +483,12 @@ def test_meaning_units_renumber_on_id_collision() -> None:
     """If the LLM emits duplicate ids, renumber to avoid downstream
     ambiguity. Otherwise downstream prompts referencing 'unit 1' would be
     ambiguous."""
-    raw = {"units": [
-        {"id": 1, "aspect": "role", "unit": "engineer"},
-        {"id": 1, "aspect": "environment", "unit": "remote"},
-    ]}
+    raw = {
+        "units": [
+            {"id": 1, "aspect": "role", "unit": "engineer"},
+            {"id": 1, "aspect": "environment", "unit": "remote"},
+        ]
+    }
     result = MeaningUnitsSchema.model_validate(raw)
     assert [u.id for u in result.units] == [1, 2]
 
@@ -492,10 +496,12 @@ def test_meaning_units_renumber_on_id_collision() -> None:
 def test_meaning_units_preserve_explicit_unique_ids() -> None:
     """When the LLM emits valid, unique ids, keep them verbatim — even if
     not strictly sequential."""
-    raw = {"units": [
-        {"id": 5, "aspect": "role", "unit": "engineer"},
-        {"id": 7, "aspect": "environment", "unit": "remote"},
-    ]}
+    raw = {
+        "units": [
+            {"id": 5, "aspect": "role", "unit": "engineer"},
+            {"id": 7, "aspect": "environment", "unit": "remote"},
+        ]
+    }
     result = MeaningUnitsSchema.model_validate(raw)
     assert [u.id for u in result.units] == [5, 7]
 
@@ -518,9 +524,7 @@ def test_privacy_answer_truncates_overlong_reason() -> None:
     """nemotron-3-nano on vLLM observed emitting 250+ char reasons; the
     schema must truncate rather than reject the record (max_length=200)."""
     long_reason = "x" * 250
-    obj = PrivacyAnswerItemSchema.model_validate(
-        {"id": 1, "answer": "yes", "confidence": 0.9, "reason": long_reason}
-    )
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": long_reason})
     assert len(obj.reason) <= 200
     assert obj.reason.endswith("...")
 
@@ -528,52 +532,38 @@ def test_privacy_answer_truncates_overlong_reason() -> None:
 def test_privacy_answer_reason_at_boundary_unchanged() -> None:
     """A reason of exactly 200 chars passes through untouched."""
     boundary = "y" * 200
-    obj = PrivacyAnswerItemSchema.model_validate(
-        {"id": 1, "answer": "yes", "confidence": 0.9, "reason": boundary}
-    )
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": boundary})
     assert obj.reason == boundary
 
 
 def test_privacy_answer_none_reason_defaults_to_placeholder() -> None:
     """None reason coerces to a placeholder string rather than raising."""
-    obj = PrivacyAnswerItemSchema.model_validate(
-        {"id": 1, "answer": "yes", "confidence": 0.9, "reason": None}
-    )
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": None})
     assert obj.reason == "no reason provided"
 
 
 def test_domain_confidence_coerces_float_string() -> None:
     """Small models occasionally return numeric confidences as strings —
     accept ``"0.95"`` and similar."""
-    obj = DomainClassificationSchema.model_validate(
-        {"domain": "MEDICAL", "domain_confidence": "0.95"}
-    )
+    obj = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "0.95"})
     assert obj.domain_confidence == 0.95
 
 
 def test_domain_confidence_coerces_percent_string() -> None:
     """Accept percentage-style strings (``"85%"`` -> 0.85)."""
-    obj = DomainClassificationSchema.model_validate(
-        {"domain": "MEDICAL", "domain_confidence": "85%"}
-    )
+    obj = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "85%"})
     assert obj.domain_confidence == pytest.approx(0.85)
 
 
 def test_domain_confidence_coerces_unparseable_to_default() -> None:
     """Non-numeric strings (``"high"``) fall back to the 0.5 default."""
-    obj = DomainClassificationSchema.model_validate(
-        {"domain": "MEDICAL", "domain_confidence": "high"}
-    )
+    obj = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "high"})
     assert obj.domain_confidence == 0.5
 
 
 def test_domain_confidence_clamps_out_of_range() -> None:
     """String confidence > 1.0 clamps to 1.0; negatives clamp to 0.0."""
-    obj_hi = DomainClassificationSchema.model_validate(
-        {"domain": "MEDICAL", "domain_confidence": "1.5"}
-    )
+    obj_hi = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "1.5"})
     assert obj_hi.domain_confidence == 1.0
-    obj_lo = DomainClassificationSchema.model_validate(
-        {"domain": "MEDICAL", "domain_confidence": "-0.2"}
-    )
+    obj_lo = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "-0.2"})
     assert obj_lo.domain_confidence == 0.0

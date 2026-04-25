@@ -202,10 +202,7 @@ class LatentEntitySchema(BaseModel):
 
     category: str = Field(
         default="",
-        description=(
-            "one of: latent_identifier | latent_sensitive_attribute "
-            "(see LatentCategory enum)"
-        ),
+        description=("one of: latent_identifier | latent_sensitive_attribute (see LatentCategory enum)"),
     )
     label: str = Field(
         default="",

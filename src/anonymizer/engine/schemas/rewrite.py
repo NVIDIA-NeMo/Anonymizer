@@ -179,29 +179,83 @@ class CombinedRiskLevel(str, Enum):
 # category assignment here. Any label not in this table falls back to
 # "quasi_identifier" which is the most conservative (protect-cautiously)
 # choice.
-_DIRECT_ID_LABELS: frozenset[str] = frozenset({
-    "first_name", "last_name", "email", "phone_number", "fax_number",
-    "ssn", "national_id", "street_address", "postcode",
-    "credit_debit_card", "account_number", "bank_routing_number", "tax_id",
-    "medical_record_number", "health_plan_beneficiary_number",
-    "api_key", "password", "ipv4", "ipv6", "mac_address", "url",
-    "user_name", "employee_id", "customer_id", "unique_id",
-    "biometric_identifier", "device_identifier", "license_plate",
-    "vehicle_identifier", "swift_bic", "pin", "cvv", "http_cookie",
-})
-_QUASI_ID_LABELS: frozenset[str] = frozenset({
-    "age", "date", "date_of_birth", "date_time", "time",
-    "city", "state", "country", "county", "place_name", "landmark",
-    "coordinate", "occupation", "organization_name", "company_name",
-    "university", "court_name", "prison_detention_facility",
-    "degree", "field_of_study", "education_level", "language",
-    "nationality", "employment_status", "monetary_amount",
-    "certificate_license_number",
-})
-_SENSITIVE_ATTR_LABELS: frozenset[str] = frozenset({
-    "gender", "sexuality", "race_ethnicity", "religious_belief",
-    "political_view", "blood_type",
-})
+_DIRECT_ID_LABELS: frozenset[str] = frozenset(
+    {
+        "first_name",
+        "last_name",
+        "email",
+        "phone_number",
+        "fax_number",
+        "ssn",
+        "national_id",
+        "street_address",
+        "postcode",
+        "credit_debit_card",
+        "account_number",
+        "bank_routing_number",
+        "tax_id",
+        "medical_record_number",
+        "health_plan_beneficiary_number",
+        "api_key",
+        "password",
+        "ipv4",
+        "ipv6",
+        "mac_address",
+        "url",
+        "user_name",
+        "employee_id",
+        "customer_id",
+        "unique_id",
+        "biometric_identifier",
+        "device_identifier",
+        "license_plate",
+        "vehicle_identifier",
+        "swift_bic",
+        "pin",
+        "cvv",
+        "http_cookie",
+    }
+)
+_QUASI_ID_LABELS: frozenset[str] = frozenset(
+    {
+        "age",
+        "date",
+        "date_of_birth",
+        "date_time",
+        "time",
+        "city",
+        "state",
+        "country",
+        "county",
+        "place_name",
+        "landmark",
+        "coordinate",
+        "occupation",
+        "organization_name",
+        "company_name",
+        "university",
+        "court_name",
+        "prison_detention_facility",
+        "degree",
+        "field_of_study",
+        "education_level",
+        "language",
+        "nationality",
+        "employment_status",
+        "monetary_amount",
+        "certificate_license_number",
+    }
+)
+_SENSITIVE_ATTR_LABELS: frozenset[str] = frozenset(
+    {
+        "gender",
+        "sexuality",
+        "race_ethnicity",
+        "religious_belief",
+        "political_view",
+        "blood_type",
+    }
+)
 
 _ENTITY_LABEL_TO_CATEGORY: dict[str, str] = (
     {lbl: "direct_identifier" for lbl in _DIRECT_ID_LABELS}
@@ -277,8 +331,12 @@ class SimpleDispositionItem(BaseModel):
     protection_reason: str = Field(default="")
 
     @field_validator(
-        "source", "entity_label", "entity_value",
-        "category", "sensitivity", "protection_method_suggestion",
+        "source",
+        "entity_label",
+        "entity_value",
+        "category",
+        "sensitivity",
+        "protection_method_suggestion",
         "protection_reason",
         mode="before",
     )
@@ -448,10 +506,7 @@ class MeaningUnitSchema(BaseModel):
     id: int = Field(ge=1, default=1)
     aspect: str = Field(
         default="",
-        description=(
-            "one of the MeaningUnitAspect values (see "
-            "anonymizer.engine.schemas.rewrite.MeaningUnitAspect)"
-        ),
+        description=("one of the MeaningUnitAspect values (see anonymizer.engine.schemas.rewrite.MeaningUnitAspect)"),
     )
     unit: str = Field(default="")
 
@@ -502,10 +557,7 @@ class MeaningUnitsSchema(BaseModel):
         # explicit positive int id the LLM did emit, but renumber only when
         # at least one collision or missing id is detected.
         if isinstance(v, list) and v:
-            raw_ids = [
-                item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
-                for item in v
-            ]
+            raw_ids = [item.get("id") if isinstance(item, dict) else getattr(item, "id", None) for item in v]
             valid = [i for i in raw_ids if isinstance(i, int) and i >= 1]
             if len(valid) != len(raw_ids) or len(set(valid)) != len(valid):
                 for idx, item in enumerate(v, start=1):
@@ -685,9 +737,8 @@ class QualityAnswersSchema(BaseModel):
                 _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
             except ValueError as e:
                 import logging
-                logging.getLogger(__name__).warning(
-                    "QualityAnswersSchema post-normalization coverage warning: %s", e
-                )
+
+                logging.getLogger(__name__).warning("QualityAnswersSchema post-normalization coverage warning: %s", e)
         return self
 
 
@@ -750,9 +801,8 @@ class PrivacyAnswersSchema(BaseModel):
                 _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
             except ValueError as e:
                 import logging
-                logging.getLogger(__name__).warning(
-                    "PrivacyAnswersSchema post-normalization coverage warning: %s", e
-                )
+
+                logging.getLogger(__name__).warning("PrivacyAnswersSchema post-normalization coverage warning: %s", e)
         return self
 
 
@@ -796,7 +846,6 @@ class QACompareResultsSchema(BaseModel):
                 _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
             except ValueError as e:
                 import logging
-                logging.getLogger(__name__).warning(
-                    "QACompareResultsSchema post-normalization coverage warning: %s", e
-                )
+
+                logging.getLogger(__name__).warning("QACompareResultsSchema post-normalization coverage warning: %s", e)
         return self

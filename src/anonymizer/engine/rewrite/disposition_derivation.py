@@ -159,6 +159,7 @@ def _coerce_entity_list(raw: object) -> list[dict]:
     encoded string, or None. Normalize to a plain list of dicts.
     """
     import json
+
     if raw is None:
         return []
     if isinstance(raw, str):
@@ -215,11 +216,13 @@ def _flatten_context(
         for label in labels:
             flat.append({"source": "tagged", "entity_label": label, "entity_value": value})
     for le in _coerce_entity_list(latent_entities):
-        flat.append({
-            "source": "latent",
-            "entity_label": le.get("label", ""),
-            "entity_value": le.get("value", ""),
-        })
+        flat.append(
+            {
+                "source": "latent",
+                "entity_label": le.get("label", ""),
+                "entity_value": le.get("value", ""),
+            }
+        )
     return flat
 
 
@@ -312,15 +315,13 @@ def reconstruct_full_disposition(
 
         # Keep LLM reason if usable, else template.
         raw_reason = (item.protection_reason or "").strip()
-        reason = raw_reason if len(raw_reason) >= 10 else template_protection_reason(
-            category, method, sensitivity
-        )
+        reason = raw_reason if len(raw_reason) >= 10 else template_protection_reason(category, method, sensitivity)
 
         full_items.append(
             EntityDispositionSchema(
                 id=item.id,
                 source=src,
-                category=category,       # strict schema coerces via its before-validator
+                category=category,  # strict schema coerces via its before-validator
                 sensitivity=sensitivity,
                 entity_label=lbl,
                 entity_value=val,
