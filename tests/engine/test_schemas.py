@@ -570,6 +570,29 @@ def test_meaning_units_renumber_on_id_collision() -> None:
     assert [u.id for u in result.units] == [1, 2]
 
 
+def test_meaning_units_accepts_bare_list() -> None:
+    """qwen3.5-4b on legal_court rewrite emits the units as a top-level
+    array without the ``units`` wrapper. Same pattern as the
+    SimpleDispositionResult bare-list fix; same two-layer tolerance
+    (oneOf widening at the wire level + before-validator normalization)."""
+    bare = [
+        {"id": 1, "aspect": "ROLE", "unit": "engineer"},
+        {"id": 2, "aspect": "ENVIRONMENT", "unit": "remote"},
+    ]
+    result = MeaningUnitsSchema.model_validate(bare)
+    assert len(result.units) == 2
+    assert result.units[0].id == 1
+    assert result.units[1].aspect == "environment"
+
+
+def test_meaning_units_json_schema_widened_to_oneof() -> None:
+    schema = MeaningUnitsSchema.model_json_schema()
+    assert "oneOf" in schema, f"expected oneOf, got: {schema!r}"
+    branches = schema["oneOf"]
+    types = sorted(b.get("type") for b in branches if isinstance(b, dict))
+    assert types == ["array", "object"], f"branch types: {types}"
+
+
 def test_meaning_units_preserve_explicit_unique_ids() -> None:
     """When the LLM emits valid, unique ids, keep them verbatim — even if
     not strictly sequential."""

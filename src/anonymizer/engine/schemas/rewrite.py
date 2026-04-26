@@ -577,9 +577,33 @@ class MeaningUnitsSchema(BaseModel):
     decide what to do downstream. ``_ensure_list`` only coerces non-list
     wire shapes (dict, scalar) into a list; it does not filter empty
     units — downstream consumers handle that.
+
+    Tolerates two LLM output shapes at the wire layer (same pattern as
+    ``SimpleDispositionResult``):
+
+    1. The canonical wrapper: ``{"units": [item, ...]}``
+    2. A bare list at the top level: ``[item, ...]`` — observed on
+       qwen3.5-4b for legal documents where the model omits the wrapper
+       key. ``__get_pydantic_json_schema__`` widens to ``oneOf`` of the
+       two shapes so DD's ``jsonschema.validate()`` pre-check accepts
+       both, and ``_accept_bare_list`` normalizes the bare-list shape
+       to the wrapper dict before pydantic validates.
     """
 
     units: list[MeaningUnitSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_bare_list(cls, data: object) -> object:
+        if isinstance(data, list):
+            return {"units": data}
+        return data
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, schema, handler):
+        wrapped = handler(schema)
+        bare_list = wrapped["properties"]["units"]
+        return {"oneOf": [wrapped, bare_list]}
 
     @field_validator("units", mode="before")
     @classmethod
