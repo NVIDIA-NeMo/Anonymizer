@@ -126,6 +126,37 @@ def test_raw_validation_decisions_payload_from_raw_list() -> None:
     assert payload.decisions[0].decision.value == "keep"
 
 
+def test_raw_validation_decisions_coerces_null_proposed_label() -> None:
+    """gemma4-e4b on the chunked-validation path emits ``proposed_label: null``
+    for ``decision: keep``. The schema's _coerce_proposed_label normalizes
+    None to '' so the record survives instead of dropping (which lost the
+    whole row's worth of validator work, ~13–50s wall, in the pre-fix bench).
+    """
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "city_3_10", "decision": "keep", "proposed_label": None, "reason": None},
+                {"id": "name_5_10", "decision": "keep", "proposed_label": None, "reason": "kept"},
+            ]
+        }
+    )
+    assert len(payload.decisions) == 2
+    assert payload.decisions[0].proposed_label == ""
+    assert payload.decisions[1].proposed_label == ""
+
+
+def test_raw_validation_decisions_coerces_int_proposed_label() -> None:
+    """Same coercer also handles int / bool drift (matches ValidationDecisionSchema)."""
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "x", "decision": "keep", "proposed_label": 42, "reason": "nope"},
+            ]
+        }
+    )
+    assert payload.decisions[0].proposed_label == "42"
+
+
 def test_raw_validation_decisions_payload_from_malformed_list_returns_empty() -> None:
     payload = RawValidationDecisionsSchema.from_raw({"decisions": ["bad-item"]})
     assert payload.decisions == []

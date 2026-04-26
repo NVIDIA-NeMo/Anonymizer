@@ -60,6 +60,23 @@ class RawValidationDecisionSchema(BaseModel):
     proposed_label: str = Field(default="")
     reason: str | None = None
 
+    @field_validator("proposed_label", mode="before")
+    @classmethod
+    def _coerce_proposed_label(cls, v: object) -> object:
+        """Mirror ValidationDecisionSchema._coerce_proposed_label.
+
+        Small models (gemma4-e4b on the chunked-validation path) emit
+        ``proposed_label: null`` when the decision is "keep" — pydantic
+        otherwise rejects None for the str-typed field, dropping the
+        whole record. The validator chunk schema needs the same loose
+        coercion the wire ValidationDecisionSchema already has.
+        """
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
+
 
 class RawValidationDecisionsSchema(BaseModel):
     decisions: list[RawValidationDecisionSchema] = Field(default_factory=list)
