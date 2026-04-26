@@ -42,6 +42,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from anonymizer.engine.schemas.shared import accept_bare_list, loose_list_wrapper_json_schema
+
 # ---------------------------------------------------------------------------
 # Domain
 # ---------------------------------------------------------------------------
@@ -377,22 +379,12 @@ class SimpleDispositionResult(BaseModel):
 
     sensitivity_disposition: list[SimpleDispositionItem] = Field(default_factory=list)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _accept_bare_list(cls, data: object) -> object:
-        if isinstance(data, list):
-            return {"sensitivity_disposition": data}
-        return data
+    # Wrap top-level bare-list responses into the canonical wrapper dict.
+    _accept_bare_list = model_validator(mode="before")(accept_bare_list(list_field="sensitivity_disposition"))
 
     @classmethod
     def __get_pydantic_json_schema__(cls, schema, handler):
-        # Widen the wire schema so DD's jsonschema gate accepts both the
-        # wrapper-object and the bare-array shape. The bare-array shape is
-        # specified as `array of SimpleDispositionItem` — same item schema
-        # the wrapper carries on its inner field.
-        wrapped = handler(schema)
-        bare_list = wrapped["properties"]["sensitivity_disposition"]
-        return {"oneOf": [wrapped, bare_list]}
+        return loose_list_wrapper_json_schema(handler, schema, list_field="sensitivity_disposition")
 
 
 class SensitivityDispositionSchema(BaseModel):
@@ -592,18 +584,12 @@ class MeaningUnitsSchema(BaseModel):
 
     units: list[MeaningUnitSchema] = Field(default_factory=list)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _accept_bare_list(cls, data: object) -> object:
-        if isinstance(data, list):
-            return {"units": data}
-        return data
+    # Wrap top-level bare-list responses into the canonical wrapper dict.
+    _accept_bare_list = model_validator(mode="before")(accept_bare_list(list_field="units"))
 
     @classmethod
     def __get_pydantic_json_schema__(cls, schema, handler):
-        wrapped = handler(schema)
-        bare_list = wrapped["properties"]["units"]
-        return {"oneOf": [wrapped, bare_list]}
+        return loose_list_wrapper_json_schema(handler, schema, list_field="units")
 
     @field_validator("units", mode="before")
     @classmethod

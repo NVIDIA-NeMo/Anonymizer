@@ -754,3 +754,43 @@ def test_domain_confidence_clamps_out_of_range() -> None:
     assert obj_hi.domain_confidence == 1.0
     obj_lo = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "-0.2"})
     assert obj_lo.domain_confidence == 0.0
+
+
+def test_loose_list_wrapper_widens_to_oneof() -> None:
+    """Helper widens a normal wrapper schema to ``oneOf({wrapper}, {array})``."""
+    from anonymizer.engine.schemas.shared import loose_list_wrapper_json_schema
+
+    fake_inline = {
+        "type": "object",
+        "title": "MySchema",
+        "properties": {
+            "items": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["items"],
+    }
+    result = loose_list_wrapper_json_schema(lambda s: fake_inline, schema=None, list_field="items")
+    assert "oneOf" in result
+    assert len(result["oneOf"]) == 2
+    types = sorted(branch.get("type") for branch in result["oneOf"])
+    assert types == ["array", "object"], result
+
+
+def test_loose_list_wrapper_falls_back_when_property_missing(caplog) -> None:
+    """If pydantic ever restructures so the inline property schema is not
+    accessible (e.g. moves behind a ``$ref``), the helper returns the
+    unwidened wrapper and emits a warning. Defensive — current pydantic
+    2.x always exposes inline properties, but a future bump may not."""
+    fake_without_property = {
+        "type": "object",
+        "title": "Indirected",
+        "properties": {"items": {"$ref": "#/$defs/Items"}},
+    }
+    from anonymizer.engine.schemas.shared import loose_list_wrapper_json_schema
+
+    with caplog.at_level("WARNING"):
+        result = loose_list_wrapper_json_schema(lambda s: fake_without_property, schema=None, list_field="items")
+
+    # No oneOf — the helper degraded gracefully to the unwidened wrapper.
+    assert "oneOf" not in result
+    assert result is fake_without_property
+    assert any("Indirected" in r.message or "items" in r.message for r in caplog.records)

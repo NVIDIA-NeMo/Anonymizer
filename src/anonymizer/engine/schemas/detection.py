@@ -62,8 +62,13 @@ class RawValidationDecisionSchema(BaseModel):
 
     @field_validator("decision", mode="before")
     @classmethod
-    def _normalize_decision(cls, v: object) -> object:
-        """Tolerate small-model decision-field drift.
+    def _normalize_decision_preserve_none(cls, v: object) -> object:
+        """Tolerate small-model decision-field drift while preserving None.
+
+        Renamed from ``_normalize_decision`` to make the None-preserving
+        semantics visible at every call site without requiring readers
+        to compare docstrings against ``ValidationDecisionSchema``'s
+        same-name (now removed) variant.
 
         Small models (gemma4-e4b on legal_court bench) emit free-form
         prose in the decision slot — observed: ``"No specific entity
@@ -208,12 +213,14 @@ class ValidationDecisionSchema(BaseModel):
         conservative choice that preserves detection. A substring match
         catches small-model variants like 'Keep.' or 'DROP!'.
 
-        Note: a similarly-named normalizer exists on
-        ``RawValidationDecisionSchema`` (the chunked-validation path) but
-        deliberately preserves None — see that docstring for why. The two
-        diverge because this schema's field is ``decision: str`` (default
-        "keep"), while the chunked path uses ``decision: ValidationChoice
-        | None`` to signal "no answer" to ``merge_chunk_decisions``.
+        Note: a related normalizer
+        ``RawValidationDecisionSchema._normalize_decision_preserve_none``
+        exists on the chunked-validation path. It deliberately preserves
+        None — see that docstring for why. The two diverge because this
+        schema's field is ``decision: str`` (default "keep"), while the
+        chunked path uses ``decision: ValidationChoice | None`` to signal
+        "no answer" to ``merge_chunk_decisions``. The chunked variant is
+        explicitly named so the divergence is visible at every call site.
         """
         if v is None or not isinstance(v, str) or not v.strip():
             return "keep"
