@@ -60,6 +60,46 @@ class RawValidationDecisionSchema(BaseModel):
     proposed_label: str = Field(default="")
     reason: str | None = None
 
+    @field_validator("decision", mode="before")
+    @classmethod
+    def _normalize_decision(cls, v: object) -> object:
+        """Tolerate small-model decision-field drift.
+
+        Small models (gemma4-e4b on legal_court bench) emit free-form
+        prose in the decision slot — observed: ``"No specific entity
+        type for the date placeholder."`` and ``"No specific field
+        matched for this token."``. Without coercion pydantic rejects
+        the whole chunk's records.
+
+        Distinct from ValidationDecisionSchema._normalize_decision in
+        ONE important way: this schema's chunked-validation merger
+        (``merge_chunk_decisions``) treats ``decision=None`` as "no
+        answer, skip" so a later chunk can supply a real verdict for
+        the same id. We must therefore preserve None-ness — only
+        normalize *strings*.
+
+        Strategy:
+          * None / non-string / blank string -> ``None`` (preserves the
+            "no answer" semantics the merger relies on).
+          * Exact match ``keep``/``reclass``/``drop`` (case-insensitive) -> as-is.
+          * Substring match (``"Keep."``, ``"DROP!"``, ``"reclass entity"``)
+            -> the matched choice. Most-specific first so ``"reclass"``
+            wins over ``"keep"`` when both substrings appear.
+          * Free-form prose with no recognizable choice -> ``"keep"``
+            (conservative: preserve detection over silently dropping it).
+        """
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            return None
+        cleaned = v.strip().lower()
+        if cleaned in {"keep", "reclass", "drop"}:
+            return cleaned
+        for choice in ("reclass", "drop", "keep"):
+            if choice in cleaned:
+                return choice
+        return "keep"
+
     @field_validator("proposed_label", mode="before")
     @classmethod
     def _coerce_proposed_label(cls, v: object) -> object:

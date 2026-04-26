@@ -157,6 +157,51 @@ def test_raw_validation_decisions_coerces_int_proposed_label() -> None:
     assert payload.decisions[0].proposed_label == "42"
 
 
+def test_raw_validation_decisions_coerces_freeform_decision_to_keep() -> None:
+    """gemma4-e4b on legal_court rewrite emits free-form prose in the
+    decision slot (e.g. 'No specific entity type for the date placeholder.').
+    Free-form prose without a recognizable choice substring falls back to
+    'keep' (conservative: preserve detection over silently dropping it).
+
+    Distinct case: blank or None decision returns None (not 'keep') so the
+    chunked merger's "no answer, skip" semantics still work — a later
+    chunk can supply a real verdict for the same id."""
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "x", "decision": "No specific entity type for the date placeholder.", "proposed_label": ""},
+                {"id": "y", "decision": "No specific field matched for this token.", "proposed_label": ""},
+                {"id": "z", "decision": "", "proposed_label": ""},
+                {"id": "w", "decision": None, "proposed_label": ""},
+            ]
+        }
+    )
+    # Free-form prose -> keep
+    assert payload.decisions[0].decision is not None and payload.decisions[0].decision.value == "keep"
+    assert payload.decisions[1].decision is not None and payload.decisions[1].decision.value == "keep"
+    # Blank / None -> None (preserved for merger's no-answer handling)
+    assert payload.decisions[2].decision is None
+    assert payload.decisions[3].decision is None
+
+
+def test_raw_validation_decisions_substring_match_decision() -> None:
+    """Display variants ('Keep.', 'DROP!', 'reclass this entity') round-trip
+    to the canonical enum value. Most-specific first so 'reclass' wins over
+    'keep' when prose contains both."""
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "a", "decision": "Keep.", "proposed_label": ""},
+                {"id": "b", "decision": "DROP!", "proposed_label": ""},
+                {"id": "c", "decision": "reclass entity to last_name", "proposed_label": "last_name"},
+                {"id": "d", "decision": "keep but reclass if necessary", "proposed_label": ""},  # reclass wins
+            ]
+        }
+    )
+    decisions = [d.decision.value for d in payload.decisions]
+    assert decisions == ["keep", "drop", "reclass", "reclass"]
+
+
 def test_raw_validation_decisions_payload_from_malformed_list_returns_empty() -> None:
     payload = RawValidationDecisionsSchema.from_raw({"decisions": ["bad-item"]})
     assert payload.decisions == []
