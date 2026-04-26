@@ -630,9 +630,13 @@ def test_reconstruct_handles_uppercase_method_from_llm() -> None:
     behaviour was a ValidationError dropping the row; post-fix the
     reconstructor lowercases via _normalize_method and the row survives."""
     simple = _make_simple(
-        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
-         "protection_method_suggestion": "REPLACE",
-         "protection_reason": "Direct id; replace with surrogate."},
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "REPLACE",
+            "protection_reason": "Direct id; replace with surrogate.",
+        },
     )
     full = reconstruct_full_disposition(simple, [{"value": "Alice", "labels": ["first_name"]}], [])
     assert full.sensitivity_disposition[0].protection_method_suggestion == "replace"
