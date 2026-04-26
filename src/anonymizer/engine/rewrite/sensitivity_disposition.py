@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from pydantic import ValidationError
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -25,6 +27,8 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.disposition_derivation import reconstruct_full_disposition
 from anonymizer.engine.schemas import SimpleDispositionResult
+
+logger = logging.getLogger(__name__)
 
 
 def _get_sensitivity_disposition_prompt(
@@ -228,11 +232,34 @@ def _reconstruct_full_disposition_column(row: dict[str, Any]) -> dict[str, Any]:
 
     # reconstruct_full_disposition's _coerce_entity_list handles every
     # shape DD might pass (dict wrapper, raw list, JSON string).
-    full = reconstruct_full_disposition(
-        simple,
-        row.get(COL_ENTITIES_BY_VALUE),
-        row.get(COL_LATENT_ENTITIES),
-    )
+    #
+    # Empty-result short-circuit + ValidationError guard: when every
+    # SimpleDispositionItem id is out-of-range AND the model omitted the
+    # entity_label/value echoes (orphans-only response), the reconstructor
+    # produces an empty list, which trips
+    # SensitivityDispositionSchema.min_length=1 and raises ValidationError.
+    # That exception would propagate from this generator and drop the
+    # record — exactly the failure mode this PR is meant to prevent. Catch
+    # and emit an empty disposition column instead so downstream consumers
+    # treat it as "no entities to protect" rather than dropping the row.
+    if not simple.sensitivity_disposition:
+        logger.warning("reconstruct: empty SimpleDispositionResult for row; emitting empty sensitivity_disposition")
+        row[COL_SENSITIVITY_DISPOSITION] = {"sensitivity_disposition": []}
+        return row
+    try:
+        full = reconstruct_full_disposition(
+            simple,
+            row.get(COL_ENTITIES_BY_VALUE),
+            row.get(COL_LATENT_ENTITIES),
+        )
+    except ValidationError as exc:
+        logger.warning(
+            "reconstruct: ValidationError after orphan-skipping (likely all items out of context range); "
+            "emitting empty sensitivity_disposition. detail=%s",
+            str(exc)[:200],
+        )
+        row[COL_SENSITIVITY_DISPOSITION] = {"sensitivity_disposition": []}
+        return row
     row[COL_SENSITIVITY_DISPOSITION] = full.model_dump()
     return row
 

@@ -811,10 +811,16 @@ class PrivacyAnswerItemSchema(BaseModel):
     @classmethod
     def _truncate_reason(cls, v: object) -> object:
         """Small-model observed emitting 250+ char reasons (nemotron-3-nano on
-        vLLM). Truncate to fit max_length=200 rather than dropping the record."""
+        vLLM). Truncate to fit max_length=200 rather than dropping the record.
+
+        Also handles None and empty/whitespace-only strings — both fall
+        through to ``min_length=1`` rejection without this guard. The
+        wire-loose contract is "reason is best-effort"; coerce missing
+        forms to a placeholder so the record survives.
+        """
         if isinstance(v, str) and len(v) > 200:
             return v[:197].rstrip() + "..."
-        if v is None:
+        if v is None or (isinstance(v, str) and not v.strip()):
             return "no reason provided"
         return v
 

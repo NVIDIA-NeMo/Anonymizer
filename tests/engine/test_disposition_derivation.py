@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from anonymizer.engine.rewrite.disposition_derivation import (
     _flatten_context,
     _normalize_category,
+    _normalize_method,
     derive_needs_protection,
     reconstruct_full_disposition,
     template_protection_reason,
@@ -591,3 +592,47 @@ def test_flatten_context_includes_latent_after_tagged() -> None:
     flat = _flatten_context(entities_by_value, latent)
     assert [s["source"] for s in flat] == ["tagged", "latent"]
     assert [s["entity_label"] for s in flat] == ["first_name", "employer"]
+
+
+# ---------------------------------------------------------------------------
+# _normalize_method — case-folding + drift tolerance
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_method_case_drift() -> None:
+    """Pydantic enum coercion on ProtectionMethod is case-sensitive, so
+    a small-model emission like ``"REPLACE"`` would otherwise raise
+    ValidationError. Lowercase + match resolves the canonical enum."""
+    assert _normalize_method("REPLACE") == "replace"
+    assert _normalize_method("Replace") == "replace"
+    assert _normalize_method("LEAVE_AS_IS") == "leave_as_is"
+    assert _normalize_method("Suppress_Inference") == "suppress_inference"
+
+
+def test_normalize_method_substring_drift() -> None:
+    """Free-form drift like ``"replace_with_surrogate"`` resolves to
+    the closest canonical value."""
+    assert _normalize_method("replace_with_surrogate") == "replace"
+    assert _normalize_method("leave_as_is_for_now") == "leave_as_is"
+    assert _normalize_method("generalize to age band") == "generalize"
+
+
+def test_normalize_method_empty_signals_caller_default() -> None:
+    """Empty / None / non-string returns ``""`` so the caller can apply
+    its own pessimistic default."""
+    assert _normalize_method("") == ""
+    assert _normalize_method(None) == ""
+    assert _normalize_method("totally_unknown_action") == ""
+
+
+def test_reconstruct_handles_uppercase_method_from_llm() -> None:
+    """End-to-end: LLM emits ``"REPLACE"`` for the method field. Pre-fix
+    behaviour was a ValidationError dropping the row; post-fix the
+    reconstructor lowercases via _normalize_method and the row survives."""
+    simple = _make_simple(
+        {"id": 1, "category": "direct_identifier", "sensitivity": "high",
+         "protection_method_suggestion": "REPLACE",
+         "protection_reason": "Direct id; replace with surrogate."},
+    )
+    full = reconstruct_full_disposition(simple, [{"value": "Alice", "labels": ["first_name"]}], [])
+    assert full.sensitivity_disposition[0].protection_method_suggestion == "replace"

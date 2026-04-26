@@ -650,6 +650,26 @@ def test_simple_disposition_result_accepts_wrapper_dict() -> None:
     assert len(result.sensitivity_disposition) == 1
 
 
+def test_simple_disposition_result_accepts_empty_bare_list() -> None:
+    """An empty bare list should normalize to an empty wrapper dict —
+    not error. Mirrors the wrapper's default_factory=list behaviour."""
+    result = SimpleDispositionResult.model_validate([])
+    assert result.sensitivity_disposition == []
+
+
+def test_simple_disposition_result_does_not_double_wrap() -> None:
+    """Defensive: if the LLM somehow emits ``[{"sensitivity_disposition":
+    [...]}]`` (a bare list containing a wrapper), the before-validator
+    must not double-wrap. The list contents are passed through as-is to
+    pydantic field validation, which then rejects the dict-shaped item
+    because it lacks an ``id`` field — better than silently double-wrapping."""
+    nested = [{"sensitivity_disposition": [{"id": 1}]}]
+    # Pydantic rejects the inner dict (it lacks the required `id` int
+    # at the SimpleDispositionItem level).
+    with pytest.raises(ValidationError):
+        SimpleDispositionResult.model_validate(nested)
+
+
 def test_simple_disposition_result_json_schema_widened_to_oneof() -> None:
     """Emitted JSON Schema must use ``oneOf`` so DD's jsonschema.validate()
     pre-check accepts both the wrapper-object and the bare-array shape."""
@@ -690,6 +710,17 @@ def test_privacy_answer_reason_at_boundary_unchanged() -> None:
     boundary = "y" * 200
     obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": boundary})
     assert obj.reason == boundary
+
+
+def test_privacy_answer_empty_reason_defaults_to_placeholder() -> None:
+    """``reason: str = Field(min_length=1)`` rejects ``""``. The
+    before-validator must coerce empty/whitespace-only strings to a
+    placeholder so the record survives — same shape of fix as for None."""
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": ""})
+    assert obj.reason == "no reason provided"
+
+    obj_ws = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": "   "})
+    assert obj_ws.reason == "no reason provided"
 
 
 def test_privacy_answer_none_reason_defaults_to_placeholder() -> None:

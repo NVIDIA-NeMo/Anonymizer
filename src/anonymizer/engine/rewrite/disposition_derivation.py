@@ -63,8 +63,6 @@ def _normalize_category(raw: object, *, entity_label: str = "") -> str:
         return normalized
     if normalized.endswith("s") and normalized[:-1] in _VALID_CATEGORIES:
         return normalized[:-1]
-    if normalized.endswith("_identifiers"):
-        return normalized[:-1]
     # Merged-enum hallucination: order = strongest protection wins so that
     # "latent_sensitive_attribute" maps to sensitive_attribute (harm) rather
     # than latent_identifier (inference).
@@ -85,6 +83,36 @@ def _normalize_category(raw: object, *, entity_label: str = "") -> str:
     if entity_label and normalized == entity_label.strip().lower():
         return "quasi_identifier"
     return "quasi_identifier"
+
+
+_VALID_METHODS: frozenset[str] = frozenset({"replace", "generalize", "remove", "suppress_inference", "leave_as_is"})
+
+
+def _normalize_method(raw: str) -> str:
+    """Resolve a (potentially case-drifted) protection_method_suggestion
+    string into a valid ProtectionMethod enum value.
+
+    Returns ``""`` when no recognizable choice can be extracted, signaling
+    the caller should apply a pessimistic default. ``raw`` is expected to
+    already be ``.strip().lower()``-ed; the function is forgiving anyway.
+
+    Strategy mirrors ``_normalize_category``:
+      * Empty / non-string -> ``""``.
+      * Exact match -> as-is.
+      * Substring match in priority order ``replace -> generalize ->
+        suppress_inference -> remove -> leave_as_is`` so e.g.
+        ``"replace_with_surrogate"`` resolves to ``"replace"``,
+        ``"leave_as_is_for_now"`` resolves to ``"leave_as_is"``.
+    """
+    if not raw or not isinstance(raw, str):
+        return ""
+    cleaned = raw.strip().lower()
+    if cleaned in _VALID_METHODS:
+        return cleaned
+    for choice in ("suppress_inference", "leave_as_is", "generalize", "replace", "remove"):
+        if choice in cleaned:
+            return choice
+    return ""
 
 
 def derive_needs_protection(method: str) -> bool:
@@ -301,16 +329,20 @@ def reconstruct_full_disposition(
         category = _normalize_category(item.category, entity_label=lbl)
         sensitivity = (item.sensitivity or "").strip().lower() or "medium"
 
-        # Derive method. When the model omits it, default pessimistically
-        # for high-risk entities so a direct_identifier with sensitivity=high
-        # never silently slips through as leave_as_is.
-        raw_method = (item.protection_method_suggestion or "").strip()
-        if raw_method:
-            method = raw_method
-        elif category in ("direct_identifier", "sensitive_attribute") or sensitivity in ("medium", "high"):
-            method = "replace"
-        else:
-            method = "leave_as_is"
+        # Derive method. Normalize case + drift before strict-schema construction
+        # — Pydantic's enum coercion on ProtectionMethod is case-sensitive, so
+        # raw "REPLACE" or "Replace" would raise ValidationError and drop the
+        # record (the failure mode this PR is meant to fix). Lowercase, then
+        # exact-match, then substring-match (e.g. "replace_with_surrogate" ->
+        # "replace"). When the model omits the field, default pessimistically
+        # for high-risk entities.
+        raw_method = (item.protection_method_suggestion or "").strip().lower()
+        method = _normalize_method(raw_method)
+        if not method:
+            if category in ("direct_identifier", "sensitive_attribute") or sensitivity in ("medium", "high"):
+                method = "replace"
+            else:
+                method = "leave_as_is"
         needs = derive_needs_protection(method)
 
         # Keep LLM reason if usable, else template.

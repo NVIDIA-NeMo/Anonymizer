@@ -207,6 +207,13 @@ class ValidationDecisionSchema(BaseModel):
         None / non-string / unknown strings default to 'keep' — the
         conservative choice that preserves detection. A substring match
         catches small-model variants like 'Keep.' or 'DROP!'.
+
+        Note: a similarly-named normalizer exists on
+        ``RawValidationDecisionSchema`` (the chunked-validation path) but
+        deliberately preserves None — see that docstring for why. The two
+        diverge because this schema's field is ``decision: str`` (default
+        "keep"), while the chunked path uses ``decision: ValidationChoice
+        | None`` to signal "no answer" to ``merge_chunk_decisions``.
         """
         if v is None or not isinstance(v, str) or not v.strip():
             return "keep"
