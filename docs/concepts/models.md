@@ -127,7 +127,7 @@ model_configs:
 ```python
 anonymizer = Anonymizer(
     model_configs="my_models.yaml",
-    model_providers="providers",  # or my_providers.yaml
+    model_providers=providers,  # or "my_providers.yaml"
 )
 ```
 
