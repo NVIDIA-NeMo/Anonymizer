@@ -49,9 +49,9 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
 
 !!! warning "Default hosted models are best for experimentation"
 
-    The default `build.nvidia.com` setup is a convenient way to try Anonymizer and iterate on previews. For privacy-sensitive or production data, configure Anonymizer to use a secure endpoint you trust and to which you are comfortable sending data.
+    The default `build.nvidia.com` (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
 
-    Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint if you need stronger privacy guarantees or higher throughput.
+    Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint for production data and usage.
 
 !!! info "Record length"
 
