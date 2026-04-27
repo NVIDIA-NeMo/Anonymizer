@@ -259,7 +259,7 @@ def test_detect_missing_records_short_circuit_warns_when_input_missing_id(
     warning_msg = warning_records[0].getMessage()
     assert "3" in warning_msg
     assert "detection skipped" in warning_msg
-    assert "invariant violation" in warning_msg
+    assert "cannot verify" in warning_msg
     _assert_no_backend_reference(warning_msg)
 
     debug_records = _unique_records(caplog, level=logging.DEBUG)
