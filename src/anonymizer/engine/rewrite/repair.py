@@ -149,15 +149,67 @@ Leakage mass: <<LEAKAGE_MASS>> (target: < <<MAX_PRIVACY_LEAK>>)<<HIGH_WARN>>
 <<LEAKED_ITEMS>>
 </privacy_issues>
 
+<adversarial_goal>
+Assume a motivated reader is actively trying to infer these attributes.
+Your rewrite is successful ONLY if the attribute can no longer be reliably inferred.
+</adversarial_goal>
+
+<inference_rules>
+To prevent inference, you MUST remove or weaken all evidence enabling it.
+
+Use one or more of the following:
+- Generalize or remove specific details
+- Break combinations of clues (not just individual phrases)
+- Replace concrete descriptions with vague or abstract ones
+- Introduce ambiguity so multiple interpretations are plausible
+- Replace implication-causing statements with alternative explanations that do NOT uniquely support the attribute
+- Remove or rewrite statements that imply a condition through patterns or context
+- Disrupt causal or narrative chains that lead to inference
+
+If multiple clues point to the same attribute, you MUST break the combination.
+</inference_rules>
+
+<critical_warnings>
+- DO NOT simply rephrase the same evidence
+- DO NOT preserve combinations of clues that reveal the attribute
+- If a reasonable reader can still guess the attribute, it is NOT fixed
+</critical_warnings>
+
+<success_criteria>
+A privacy issue is FIXED only if:
+- A reasonable reader cannot confidently infer the attribute
+- Multiple plausible interpretations exist
+- The original inference is no longer the most likely explanation
+
+If the attribute is still the most natural conclusion, the issue is NOT fixed.
+</success_criteria>
+
 <task>
-Fix the privacy leaks by suppressig inference - modify text so the attribute cannot be reliably inferred.
-You may modify surrounding context beyond the explicit entity span to break inferential leakage.
-This may involve reducing specificity, removing or weakening key details, breaking causal or identifying
-linkages, or introducing ambiguity, while preserving overall narrative coherence.
+Fix the privacy leaks by suppressing inference.
 
-Maintain content quality (utility score: <<UTILITY_SCORE>>), consistency, and naturalness.
+Before rewriting, internally identify all leakage patterns and how they arise (phrases, combinations, narrative implications). Use this to guide your rewrite. Do NOT output this analysis.
 
-Provide ONLY the rewritten text. Do not include explanations, comments, or markdown formatting.
+You MUST do the following for EACH leaked item:
+- Identify all phrases, clues, and narrative patterns enabling the inference
+- Remove, weaken, or rewrite them so the attribute is no longer the most likely conclusion
+- Break combinations of clues, not just individual phrases
+
+Requirements:
+- Rewrite as much as needed; do not preserve partially leaking sentences
+- Any phrase or pattern contributing to a leaked attribute MUST be modified or removed
+- Even subtle or indirect contributors MUST be neutralized
+- Treat common life-pattern signals (e.g., routine, schedule, aging, daily activities) as leakage ONLY when they contribute
+- Fix shared patterns across multiple leaks
+- Do not alter content that does not contribute to leakage
+- Ensure multiple plausible interpretations remain
+
+Before finalizing:
+- Ask: "What would a motivated reader guess?"
+- If the leaked attribute is still the most likely guess, revise again
+
+Maintain overall coherence, consistency, and naturalness (utility score: <<UTILITY_SCORE>>).
+
+Provide ONLY the rewritten text.
 </task>
 """
     replacements = {
@@ -185,8 +237,6 @@ def _inject_leaked_items_column(row: dict[str, Any]) -> dict[str, Any]:
     """Format leaked privacy items into a text block for the repair prompt."""
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
-    leaked_items = _leaked_items_text(privacy_answers, privacy_qa)
-    logger.debug("Leaked privacy items:\n%s", leaked_items)
     row[COL_LEAKED_PRIVACY_ITEMS] = _leaked_items_text(privacy_answers, privacy_qa)
     return row
 

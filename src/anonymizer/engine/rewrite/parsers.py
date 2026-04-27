@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
+
+logger = logging.getLogger("anonymizer.rewrite.parsers")
 
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswerItemSchema,
