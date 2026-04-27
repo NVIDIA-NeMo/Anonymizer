@@ -153,8 +153,7 @@ class NddAdapter:
             logger.warning(
                 "Missing-record detection skipped: input DataFrame lacks the record-tracking "
                 "column, so the adapter cannot verify whether any of %d input record(s) were "
-                "dropped. This indicates an internal invariant violation - `_attach_record_ids` "
-                "was not called on this DataFrame before detection.",
+                "dropped.",
                 len(input_df),
             )
             logger.debug(
