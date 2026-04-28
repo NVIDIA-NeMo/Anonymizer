@@ -20,7 +20,12 @@ def _make_result(num_rows: int = 2, num_failures: int = 0) -> AnonymizerResult:
         {"bio": [f"original {i}" for i in range(num_rows)], "bio_replaced": [f"REDACTED_{i}" for i in range(num_rows)]}
     )
     failures = [FailedRecord(record_id=str(i), step="detect", reason="test") for i in range(num_failures)]
-    return AnonymizerResult(dataframe=df, trace_dataframe=df.copy(), failed_records=failures)
+    return AnonymizerResult(
+        dataframe=df,
+        trace_dataframe=df.copy(),
+        original_text_column="bio",
+        failed_records=failures,
+    )
 
 
 @pytest.fixture
@@ -132,6 +137,7 @@ def test_preview_prints_dataframe(tmp_path: Path, capsys: pytest.CaptureFixture,
     preview_result = PreviewResult(
         dataframe=result.dataframe,
         trace_dataframe=result.trace_dataframe,
+        original_text_column="bio",
         failed_records=[],
         preview_num_records=2,
     )

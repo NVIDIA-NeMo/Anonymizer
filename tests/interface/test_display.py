@@ -226,8 +226,13 @@ def _make_preview(rows: int = 2) -> PreviewResult:
             COL_REPLACEMENT_MAP: [{} for _ in range(rows)],
         }
     )
-    df.attrs["original_text_column"] = "text"
-    return PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=rows)
+    return PreviewResult(
+        dataframe=df,
+        trace_dataframe=df,
+        original_text_column="text",
+        failed_records=[],
+        preview_num_records=rows,
+    )
 
 
 def test_render_record_html_uses_detected_entities_over_map_scan() -> None:

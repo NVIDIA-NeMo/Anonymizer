@@ -60,7 +60,7 @@ class LlmReplaceWorkflow:
 
         if entity_rows.empty:
             return LlmReplaceResult(
-                dataframe=merge_and_reorder(passthrough_rows, attrs=dataframe.attrs),
+                dataframe=merge_and_reorder(passthrough_rows),
                 failed_records=[],
             )
 
@@ -96,9 +96,7 @@ class LlmReplaceWorkflow:
             axis=1,
         )
 
-        combined = merge_and_reorder(
-            output_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
-        )
+        combined = merge_and_reorder(output_df, passthrough_rows)
         return LlmReplaceResult(dataframe=combined, failed_records=run_result.failed_records)
 
 
