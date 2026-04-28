@@ -50,7 +50,6 @@ def _stub_anonymizer() -> Anonymizer:
             COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
         }
     )
-    _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = ReplacementResult(
         dataframe=_replace_df,

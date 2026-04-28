@@ -14,10 +14,11 @@ from anonymizer.engine.ndd.adapter import WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 
 
-def test_generate_map_only_preserves_input_attrs(
+def test_generate_map_only_returns_replacement_map(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
+    """Workflow operates on plain DataFrames; pipeline metadata is the orchestrator's job."""
     adapter = Mock()
     adapter.run_workflow.return_value = WorkflowRunResult(
         dataframe=pd.DataFrame(
@@ -38,7 +39,6 @@ def test_generate_map_only_preserves_input_attrs(
             "tagged_text": ["<<SENSITIVE:first_name>>Alice<</SENSITIVE:first_name>> works at Acme"],
         }
     )
-    input_df.attrs["original_text_column"] = "bio"
 
     result = workflow.generate_map_only(
         input_df,
@@ -46,7 +46,7 @@ def test_generate_map_only_preserves_input_attrs(
         selected_models=stub_replace_model_selection,
     )
 
-    assert result.dataframe.attrs["original_text_column"] == "bio"
+    assert COL_REPLACEMENT_MAP in result.dataframe.columns
 
 
 def test_generate_map_only_skips_llm_for_rows_without_entities(
