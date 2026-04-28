@@ -1,0 +1,109 @@
+/* NVIDIA brand green */
+.nvidia-green {
+    color: #76B900;
+}
+
+/* Style "NeMo" in the site name with green */
+.md-header__topic:first-child .md-ellipsis {
+    visibility: hidden;
+    position: relative;
+}
+
+.md-header__topic:first-child .md-ellipsis::after {
+    content: "NeMo Anonymizer";
+    visibility: visible;
+    position: absolute;
+    left: 0;
+    top: 0;
+    background: linear-gradient(90deg, #76B900 0%, #76B900 4.8ch, currentColor 4.8ch, currentColor 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Prevent selection of prompt and output markers */
+.highlight .gp,
+.highlight .go {
+    user-select: none;
+}
+
+/* Hide the secondary header topic (page title on scroll) */
+.md-header__topic:nth-child(2) {
+    display: none;
+}
+
+/* Reduce space between logo and site name */
+.md-header__button.md-logo {
+    margin-right: -1rem;
+}
+
+/* NVIDIA green header logo */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+    fill: #76B900;
+    color: #76B900;
+}
+
+/* Remove background from Jupyter notebook outputs */
+.jp-RenderedText pre,
+.jp-OutputArea-output pre,
+.output_stderr,
+.output_stdout,
+.output_stream,
+div.output_area pre,
+div.output_subarea pre,
+.jupyter-wrapper .output_stream,
+.jupyter-wrapper .output_stdout,
+.jupyter-wrapper .output_stderr,
+.jp-RenderedText[data-mime-type="application/vnd.jupyter.stderr"],
+.jp-RenderedText[data-mime-type="application/vnd.jupyter.stderr"] pre,
+.jp-OutputArea-output[data-mime-type="application/vnd.jupyter.stderr"],
+.jp-OutputArea-output[data-mime-type="application/vnd.jupyter.stderr"] pre {
+    background-color: transparent !important;
+}
+
+/* Override stderr-specific styling */
+.highlight .err {
+    background-color: transparent !important;
+    border: none !important;
+}
+
+/* Make notebook cells grow with window size */
+.jp-Cell,
+.jupyter-wrapper .cell {
+    max-width: 100% !important;
+}
+
+/* NVIDIA green for card grid header links */
+.grid.cards a strong {
+    color: #76B900;
+}
+
+/* Headers in NVIDIA green */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+    color: #76B900;
+}
+
+/* Code block background in light mode */
+[data-md-color-scheme="default"] .highlight {
+    background-color: #f5f5f5;
+    border-radius: 0.3rem;
+}
+
+/* NVIDIA green accent for links and highlights */
+:root {
+    --md-primary-fg-color: #76b900;
+    --md-primary-fg-color--light: #8fcf00;
+    --md-primary-fg-color--dark: #5a8f00;
+    --md-accent-fg-color: #76b900;
+}
+
+[data-md-color-scheme="slate"] {
+    --md-primary-fg-color: #76b900;
+    --md-primary-fg-color--light: #8fcf00;
+    --md-primary-fg-color--dark: #5a8f00;
+    --md-accent-fg-color: #76b900;
+}
