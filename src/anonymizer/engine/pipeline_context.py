@@ -3,10 +3,8 @@
 
 """Typed container for pipeline-level metadata that travels with a DataFrame.
 
-Replaces the use of ``DataFrame.attrs`` (an experimental pandas slot that is
-silently dropped by ``merge``/``concat``/``groupby``) for threading metadata
-through workflow stages. Add new pipeline-wide fields here rather than
-reintroducing ``df.attrs``.
+Threads metadata (such as the user's original text column) through workflow
+stages as explicit, typed fields. Add new pipeline-wide metadata here.
 """
 
 from __future__ import annotations
