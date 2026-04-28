@@ -1412,8 +1412,8 @@ export NVIDIA_API_KEY="your-nvidia-api-key"</code></pre>
 By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based anonymization. You can also <a href="concepts/models/">bring your own models</a>.</p>
 <div class="admonition warning">
 <p class="admonition-title">Default hosted models are best for experimentation</p>
-<p>The default <code>build.nvidia.com</code> setup is a convenient way to try Anonymizer and iterate on previews. For privacy-sensitive or production data, configure Anonymizer to use a secure endpoint you trust and to which you are comfortable sending data.</p>
-<p>Request and token rate limits on <code>build.nvidia.com</code> vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with <code>preview()</code> on a small sample, then move to your own endpoint if you need stronger privacy guarantees or higher throughput.</p>
+<p>The default <code>build.nvidia.com</code> (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.</p>
+<p>Request and token rate limits on <code>build.nvidia.com</code> vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with <code>preview()</code> on a small sample, then move to your own endpoint for production data and usage.</p>
 </div>
 <div class="admonition info">
 <p class="admonition-title">Record length</p>
