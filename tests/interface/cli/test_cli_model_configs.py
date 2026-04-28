@@ -211,7 +211,7 @@ def test_model_providers_none_returns_none() -> None:
 
 def test_model_providers_list_passthrough() -> None:
     """A pre-built list of ModelProvider objects is returned as-is."""
-    from data_designer.config.models import ModelProvider
+    from anonymizer import ModelProvider
 
     providers = [ModelProvider(name="my-provider", endpoint="https://example.com/v1")]
     result = _resolve_model_providers(providers)
