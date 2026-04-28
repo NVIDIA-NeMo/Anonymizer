@@ -1243,6 +1243,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerWorkflowError
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1507,6 +1518,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerWorkflowError
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1670,6 +1692,14 @@
               </div>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerWorkflowError (anonymizer.interface.errors.AnonymizerWorkflowError)" href="#anonymizer.interface.errors.AnonymizerWorkflowError">AnonymizerWorkflowError</a></code></td>
+            <td>
+              <div class="doc-md-description">
+                <p>Raised when an underlying workflow step (preview, execution, or dataset load) fails.</p>
+              </div>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -1815,6 +1845,45 @@
 
 
         <p>Raised when file IO operations fail.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="anonymizer.interface.errors.AnonymizerWorkflowError" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerWorkflowError</code>
+
+
+<a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
+
+
+
+        <p>Raised when an underlying workflow step (preview, execution, or dataset load) fails.</p>
+<p>The original backend exception is preserved as <code>__cause__</code> via <code>raise ... from exc</code>
+so callers can inspect the exact failure without the anonymizer layer leaking backend
+exception types into its own public error hierarchy.</p>
 
 
 
