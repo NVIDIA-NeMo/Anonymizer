@@ -29,7 +29,9 @@ make install
 
 By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — GLiNER-PII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
 
-Use the default build.nvidia.com setup as a convenient way to experiment with Anonymizer and iterate on small samples. For privacy-sensitive or production data, point Anonymizer at a secure endpoint you trust and to which you are comfortable sending data. Request and token rate limits on build.nvidia.com vary by account and model access, and lower-volume development access can be slow for full-dataset runs.
+The default build.nvidia.com (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
+
+Request and token rate limits on build.nvidia.com vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with preview() on a small sample, then move to your own endpoint for production data and usage.
 
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
