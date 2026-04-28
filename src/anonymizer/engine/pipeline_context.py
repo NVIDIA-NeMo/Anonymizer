@@ -16,7 +16,11 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class PipelineContext:
-    """A DataFrame plus the pipeline-level metadata that describes it."""
+    """A DataFrame plus the pipeline-level metadata that describes it.
+
+    Note: ``==`` and ``hash()`` are unsupported (the ``dataframe`` field is
+    not hashable and not bool-coercible). Compare fields explicitly if needed.
+    """
 
     dataframe: pd.DataFrame
     original_text_column: str
