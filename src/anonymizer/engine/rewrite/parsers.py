@@ -11,8 +11,6 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-logger = logging.getLogger("anonymizer.rewrite.parsers")
-
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswerItemSchema,
     PrivacyAnswersSchema,
@@ -24,6 +22,8 @@ from anonymizer.engine.schemas.rewrite import (
     SensitivityDispositionSchema,
     StrictSensitivityDispositionSchema,
 )
+
+logger = logging.getLogger("anonymizer.rewrite.parsers")
 
 
 def field(model: type, name: str) -> str:

@@ -20,10 +20,8 @@ from anonymizer.engine.constants import (
     COL_LEAKED_PRIVACY_ITEMS,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
-    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
-    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
@@ -31,14 +29,10 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
-    field,
-    normalize_payload,
     parse_privacy_answers,
     parse_privacy_qa,
-    parse_sensitivity_disposition,
 )
 from anonymizer.engine.schemas.rewrite import (
-    EntityDispositionSchema,
     PrivacyAnswer,
     PrivacyAnswerItemSchema,
     PrivacyQAPairsSchema,
@@ -46,24 +40,6 @@ from anonymizer.engine.schemas.rewrite import (
 )
 
 logger = logging.getLogger("anonymizer.rewrite.repair")
-
-
-_F_NEEDS_PROTECTION = field(EntityDispositionSchema, "needs_protection")
-_F_ENTITY_LABEL = field(EntityDispositionSchema, "entity_label")
-_F_ENTITY_VALUE = field(EntityDispositionSchema, "entity_value")
-_F_PROTECTION_METHOD = field(EntityDispositionSchema, "protection_method_suggestion")
-_F_PROTECTION_REASON = field(EntityDispositionSchema, "protection_reason")
-
-
-def _replacement_map_is_empty(raw_map: Any) -> bool:
-    """Return True when the replacement map is absent or has no replacements."""
-    normalized = normalize_payload(raw_map)
-    if normalized is None:
-        return True
-    if not isinstance(normalized, dict):
-        return False
-    replacements = normalized.get("replacements")
-    return isinstance(replacements, list) and len(replacements) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -104,31 +80,8 @@ def _leaked_items_text(
     return "\n".join(lines)
 
 
-def _format_protection_block(row: dict[str, Any]) -> str:
-    """Format the protection decisions section of the repair prompt."""
-    disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
-    lines = [
-        f'- {e.entity_label}: "{e.entity_value}" -> {e.protection_method_suggestion}\n  Reason: {e.protection_reason}'
-        for e in disposition.sensitivity_disposition
-        if e.needs_protection
-    ]
-    return "\n".join(lines)
-
-
 def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
     """Build the repair prompt from row values (no Jinja2)."""
-    disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
-    has_replace_entities = any(
-        e.protection_method_suggestion == "replace" and e.needs_protection for e in disposition.sensitivity_disposition
-    )
-    raw_map = row.get(COL_REPLACEMENT_MAP_FOR_PROMPT)
-    map_is_empty = _replacement_map_is_empty(raw_map)
-    if has_replace_entities and map_is_empty:
-        logger.warning(
-            "Repair prompt has entities requiring replacement but COL_REPLACEMENT_MAP_FOR_PROMPT is empty; "
-            "the LLM will have no synthetic values to use."
-        )
-
     prompt = """You are helping to rewrite text for privacy protection.
 
 <privacy_goal>
@@ -248,9 +201,7 @@ def _make_repair_column(repairer_alias: str) -> Any:
         required_columns=[
             COL_LEAKED_PRIVACY_ITEMS,
             COL_REWRITTEN_TEXT,
-            COL_SENSITIVITY_DISPOSITION,
             COL_TEXT,
-            COL_REPLACEMENT_MAP_FOR_PROMPT,
             COL_LEAKAGE_MASS,
             COL_ANY_HIGH_LEAKED,
             COL_UTILITY_SCORE,
