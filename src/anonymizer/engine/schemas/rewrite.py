@@ -403,6 +403,7 @@ class PrivacyAnswerItemSchema(BaseModel):
     answer: PrivacyAnswer
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1, max_length=200)
+    evidence: list[str] = Field(default_factory=list)
 
 
 class PrivacyAnswersSchema(BaseModel):
