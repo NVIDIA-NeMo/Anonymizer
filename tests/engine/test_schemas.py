@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     EntitiesSchema,
@@ -19,7 +20,14 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema
+from anonymizer.engine.schemas.rewrite import (
+    _ENTITY_LABEL_TO_CATEGORY,
+    DomainClassificationSchema,
+    EntityDispositionSchema,
+    MeaningUnitsSchema,
+    PrivacyAnswerItemSchema,
+    SimpleDispositionResult,
+)
 
 
 def test_entities_payload_from_raw_dict() -> None:
@@ -116,6 +124,82 @@ def test_raw_validation_decisions_payload_from_raw_list() -> None:
     assert len(payload.decisions) == 1
     assert payload.decisions[0].decision is not None
     assert payload.decisions[0].decision.value == "keep"
+
+
+def test_raw_validation_decisions_coerces_null_proposed_label() -> None:
+    """gemma4-e4b on the chunked-validation path emits ``proposed_label: null``
+    for ``decision: keep``. The schema's _coerce_proposed_label normalizes
+    None to '' so the record survives instead of dropping (which lost the
+    whole row's worth of validator work, ~13–50s wall, in the pre-fix bench).
+    """
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "city_3_10", "decision": "keep", "proposed_label": None, "reason": None},
+                {"id": "name_5_10", "decision": "keep", "proposed_label": None, "reason": "kept"},
+            ]
+        }
+    )
+    assert len(payload.decisions) == 2
+    assert payload.decisions[0].proposed_label == ""
+    assert payload.decisions[1].proposed_label == ""
+
+
+def test_raw_validation_decisions_coerces_int_proposed_label() -> None:
+    """Same coercer also handles int / bool drift (matches ValidationDecisionSchema)."""
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "x", "decision": "keep", "proposed_label": 42, "reason": "nope"},
+            ]
+        }
+    )
+    assert payload.decisions[0].proposed_label == "42"
+
+
+def test_raw_validation_decisions_coerces_freeform_decision_to_keep() -> None:
+    """gemma4-e4b on legal_court rewrite emits free-form prose in the
+    decision slot (e.g. 'No specific entity type for the date placeholder.').
+    Free-form prose without a recognizable choice substring falls back to
+    'keep' (conservative: preserve detection over silently dropping it).
+
+    Distinct case: blank or None decision returns None (not 'keep') so the
+    chunked merger's "no answer, skip" semantics still work — a later
+    chunk can supply a real verdict for the same id."""
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "x", "decision": "No specific entity type for the date placeholder.", "proposed_label": ""},
+                {"id": "y", "decision": "No specific field matched for this token.", "proposed_label": ""},
+                {"id": "z", "decision": "", "proposed_label": ""},
+                {"id": "w", "decision": None, "proposed_label": ""},
+            ]
+        }
+    )
+    # Free-form prose -> keep
+    assert payload.decisions[0].decision is not None and payload.decisions[0].decision.value == "keep"
+    assert payload.decisions[1].decision is not None and payload.decisions[1].decision.value == "keep"
+    # Blank / None -> None (preserved for merger's no-answer handling)
+    assert payload.decisions[2].decision is None
+    assert payload.decisions[3].decision is None
+
+
+def test_raw_validation_decisions_substring_match_decision() -> None:
+    """Display variants ('Keep.', 'DROP!', 'reclass this entity') round-trip
+    to the canonical enum value. Most-specific first so 'reclass' wins over
+    'keep' when prose contains both."""
+    payload = RawValidationDecisionsSchema.from_raw(
+        {
+            "decisions": [
+                {"id": "a", "decision": "Keep.", "proposed_label": ""},
+                {"id": "b", "decision": "DROP!", "proposed_label": ""},
+                {"id": "c", "decision": "reclass entity to last_name", "proposed_label": "last_name"},
+                {"id": "d", "decision": "keep but reclass if necessary", "proposed_label": ""},  # reclass wins
+            ]
+        }
+    )
+    decisions = [d.decision.value for d in payload.decisions]
+    assert decisions == ["keep", "drop", "reclass", "reclass"]
 
 
 def test_raw_validation_decisions_payload_from_malformed_list_returns_empty() -> None:
@@ -241,15 +325,22 @@ def mixed_disposition() -> SensitivityDispositionSchema:
 # EntityDispositionSchema — protection consistency
 
 
-def test_entity_disposition_invalid_no_protection_but_method_set() -> None:
-    with pytest.raises(ValidationError, match="needs_protection=False"):
+def test_entity_disposition_rejects_no_protection_but_method_set() -> None:
+    """EntityDispositionSchema is strict — inconsistent (needs_protection,
+    method) pairs are rejected. Class K reconciliation is the
+    reconstructor's job (derive_needs_protection makes the pair
+    tautologically consistent), so the schema must reject anything that
+    bypasses the reconstructor."""
+    with pytest.raises(ValidationError):
         EntityDispositionSchema.model_validate(
             _make_entity(needs_protection=False, protection_method_suggestion="replace")
         )
 
 
-def test_entity_disposition_invalid_needs_protection_but_leave_as_is() -> None:
-    with pytest.raises(ValidationError, match="needs_protection=True"):
+def test_entity_disposition_rejects_needs_protection_but_leave_as_is() -> None:
+    """Inverse class K: also rejected by the strict schema. Class K
+    reconciliation lives in reconstruct_full_disposition, not here."""
+    with pytest.raises(ValidationError):
         EntityDispositionSchema.model_validate(
             _make_entity(needs_protection=True, protection_method_suggestion="leave_as_is")
         )
@@ -376,12 +467,16 @@ def test_qa_compare_results_use_integer_ids() -> None:
 # Context-validated answer coverage
 
 
-def test_quality_answers_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_pad_missing_ids_with_context() -> None:
+    """Missing ids are padded with a placeholder so the record survives."""
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]
+    # Padded entry has the placeholder answer
+    assert any(a.id == 2 and a.answer == "missing" for a in result.answers)
 
 
 def test_quality_answers_accept_complete_with_context() -> None:
@@ -397,33 +492,305 @@ def test_quality_answers_no_enforcement_without_context() -> None:
     assert len(result.answers) == 1
 
 
-def test_privacy_answers_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing answer IDs"):
-        PrivacyAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_privacy_answers_pad_missing_ids_with_context() -> None:
+    """Missing ids are padded with a pessimistic 'yes' so the record survives
+    and downstream triggers human review rather than silently passing."""
+    result = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": 0.0, "reason": "not inferable"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]
+    padded = next(a for a in result.answers if a.id == 2)
+    assert padded.answer.value == "yes"  # pessimistic default
+    assert padded.confidence == 0.5
 
 
-def test_qa_compare_reject_missing_ids_with_context() -> None:
-    with pytest.raises(ValidationError, match="Missing compare IDs"):
-        QACompareResultsSchema.model_validate(
-            {"per_item": [{"id": 1, "score": 0.9}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_qa_compare_pad_missing_ids_with_context() -> None:
+    """Missing ids are padded with a neutral 0.5 score so the record survives."""
+    result = QACompareResultsSchema.model_validate(
+        {"per_item": [{"id": 1, "score": 0.9}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.per_item]
+    assert ids == [1, 2]
+    padded = next(a for a in result.per_item if a.id == 2)
+    assert padded.score == 0.5
 
 
-def test_quality_answers_reject_duplicate_ids() -> None:
-    with pytest.raises(ValidationError, match="Duplicate answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_dedup_duplicate_ids() -> None:
+    """Duplicate ids are deduplicated (first occurrence wins) instead of rejected."""
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 1, "answer": "no"}, {"id": 2, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]
+    # First occurrence wins
+    assert next(a for a in result.answers if a.id == 1).answer == "yes"
 
 
-def test_quality_answers_reject_extra_ids() -> None:
-    with pytest.raises(ValidationError, match="Extra answer IDs"):
-        QualityAnswersSchema.model_validate(
-            {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
-            context={"expected_ids": [1, 2]},
-        )
+def test_quality_answers_drop_extra_ids() -> None:
+    """Extra ids outside the expected set are dropped instead of rejecting the record."""
+    result = QualityAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
+        context={"expected_ids": [1, 2]},
+    )
+    ids = [a.id for a in result.answers]
+    assert ids == [1, 2]  # 99 dropped
+
+
+def test_meaning_units_renumber_when_ids_omitted() -> None:
+    """MeaningUnitSchema.id defaults to 1 to keep the wire schema permissive
+    for small-model output. When the LLM emits multiple units and omits ids
+    on all of them, _ensure_list reassigns sequential 1..N so downstream
+    prompts that reference units by id stay unambiguous."""
+    raw = {
+        "units": [
+            {"aspect": "role", "unit": "individual is a software engineer"},
+            {"aspect": "environment", "unit": "they work remotely"},
+            {"aspect": "temporal_sequence", "unit": "for the past two years"},
+        ]
+    }
+    result = MeaningUnitsSchema.model_validate(raw)
+    assert [u.id for u in result.units] == [1, 2, 3]
+
+
+def test_meaning_units_renumber_on_id_collision() -> None:
+    """If the LLM emits duplicate ids, renumber to avoid downstream
+    ambiguity. Otherwise downstream prompts referencing 'unit 1' would be
+    ambiguous."""
+    raw = {
+        "units": [
+            {"id": 1, "aspect": "role", "unit": "engineer"},
+            {"id": 1, "aspect": "environment", "unit": "remote"},
+        ]
+    }
+    result = MeaningUnitsSchema.model_validate(raw)
+    assert [u.id for u in result.units] == [1, 2]
+
+
+def test_meaning_units_accepts_bare_list() -> None:
+    """qwen3.5-4b on legal_court rewrite emits the units as a top-level
+    array without the ``units`` wrapper. Same pattern as the
+    SimpleDispositionResult bare-list fix; same two-layer tolerance
+    (oneOf widening at the wire level + before-validator normalization)."""
+    bare = [
+        {"id": 1, "aspect": "ROLE", "unit": "engineer"},
+        {"id": 2, "aspect": "ENVIRONMENT", "unit": "remote"},
+    ]
+    result = MeaningUnitsSchema.model_validate(bare)
+    assert len(result.units) == 2
+    assert result.units[0].id == 1
+    assert result.units[1].aspect == "environment"
+
+
+def test_meaning_units_json_schema_widened_to_oneof() -> None:
+    schema = MeaningUnitsSchema.model_json_schema()
+    assert "oneOf" in schema, f"expected oneOf, got: {schema!r}"
+    branches = schema["oneOf"]
+    types = sorted(b.get("type") for b in branches if isinstance(b, dict))
+    assert types == ["array", "object"], f"branch types: {types}"
+
+
+def test_meaning_units_preserve_explicit_unique_ids() -> None:
+    """When the LLM emits valid, unique ids, keep them verbatim — even if
+    not strictly sequential."""
+    raw = {
+        "units": [
+            {"id": 5, "aspect": "role", "unit": "engineer"},
+            {"id": 7, "aspect": "environment", "unit": "remote"},
+        ]
+    }
+    result = MeaningUnitsSchema.model_validate(raw)
+    assert [u.id for u in result.units] == [5, 7]
+
+
+def test_simple_disposition_result_accepts_bare_list() -> None:
+    """nemotron-3-nano:4b on rewrite mode emits the items as a top-level
+    array without the ``sensitivity_disposition`` wrapper. The wire schema
+    must accept both shapes — bare list normalizes to the wrapper dict so
+    the reconstructor sees the canonical type."""
+    bare = [
+        {
+            "id": 1,
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "protection_method_suggestion": "replace",
+            "protection_reason": "Direct id; replaced.",
+        },
+        {
+            "id": 2,
+            "category": "quasi_identifier",
+            "sensitivity": "medium",
+            "protection_method_suggestion": "generalize",
+            "protection_reason": "Quasi-id; generalized.",
+        },
+    ]
+    result = SimpleDispositionResult.model_validate(bare)
+    assert len(result.sensitivity_disposition) == 2
+    assert result.sensitivity_disposition[0].id == 1
+    assert result.sensitivity_disposition[1].category == "quasi_identifier"
+
+
+def test_simple_disposition_result_accepts_wrapper_dict() -> None:
+    """The canonical wrapper shape still works after the bare-list fix."""
+    wrapped = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "protection_method_suggestion": "replace",
+                "protection_reason": "Direct id.",
+            },
+        ]
+    }
+    result = SimpleDispositionResult.model_validate(wrapped)
+    assert len(result.sensitivity_disposition) == 1
+
+
+def test_simple_disposition_result_accepts_empty_bare_list() -> None:
+    """An empty bare list should normalize to an empty wrapper dict —
+    not error. Mirrors the wrapper's default_factory=list behaviour."""
+    result = SimpleDispositionResult.model_validate([])
+    assert result.sensitivity_disposition == []
+
+
+def test_simple_disposition_result_does_not_double_wrap() -> None:
+    """Defensive: if the LLM somehow emits ``[{"sensitivity_disposition":
+    [...]}]`` (a bare list containing a wrapper), the before-validator
+    must not double-wrap. The list contents are passed through as-is to
+    pydantic field validation, which then rejects the dict-shaped item
+    because it lacks an ``id`` field — better than silently double-wrapping."""
+    nested = [{"sensitivity_disposition": [{"id": 1}]}]
+    # Pydantic rejects the inner dict (it lacks the required `id` int
+    # at the SimpleDispositionItem level).
+    with pytest.raises(ValidationError):
+        SimpleDispositionResult.model_validate(nested)
+
+
+def test_simple_disposition_result_json_schema_widened_to_oneof() -> None:
+    """Emitted JSON Schema must use ``oneOf`` so DD's jsonschema.validate()
+    pre-check accepts both the wrapper-object and the bare-array shape."""
+    schema = SimpleDispositionResult.model_json_schema()
+    assert "oneOf" in schema, f"expected oneOf, got: {schema!r}"
+    branches = schema["oneOf"]
+    assert len(branches) == 2
+    # One branch must be type=object (wrapper); the other type=array (bare list).
+    types = sorted(b.get("type") for b in branches if isinstance(b, dict))
+    assert types == ["array", "object"], f"branch types: {types}"
+
+
+def test_entity_label_to_category_covers_default_labels() -> None:
+    """Every label in DEFAULT_ENTITY_LABELS must have a category assignment.
+    Without this guard, adding a new label to engine/constants.py without
+    updating the category sets in schemas/rewrite.py would silently lose
+    the entity-label-stuffed-in-category fallback for that label."""
+    missing = set(DEFAULT_ENTITY_LABELS) - set(_ENTITY_LABEL_TO_CATEGORY)
+    assert not missing, (
+        f"DEFAULT_ENTITY_LABELS contains labels with no category assignment "
+        f"in _ENTITY_LABEL_TO_CATEGORY: {sorted(missing)}. Add each to one "
+        f"of _DIRECT_ID_LABELS / _QUASI_ID_LABELS / _SENSITIVE_ATTR_LABELS "
+        f"in src/anonymizer/engine/schemas/rewrite.py."
+    )
+
+
+def test_privacy_answer_truncates_overlong_reason() -> None:
+    """nemotron-3-nano on vLLM observed emitting 250+ char reasons; the
+    schema must truncate rather than reject the record (max_length=200)."""
+    long_reason = "x" * 250
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": long_reason})
+    assert len(obj.reason) <= 200
+    assert obj.reason.endswith("...")
+
+
+def test_privacy_answer_reason_at_boundary_unchanged() -> None:
+    """A reason of exactly 200 chars passes through untouched."""
+    boundary = "y" * 200
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": boundary})
+    assert obj.reason == boundary
+
+
+def test_privacy_answer_empty_reason_defaults_to_placeholder() -> None:
+    """``reason: str = Field(min_length=1)`` rejects ``""``. The
+    before-validator must coerce empty/whitespace-only strings to a
+    placeholder so the record survives — same shape of fix as for None."""
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": ""})
+    assert obj.reason == "no reason provided"
+
+    obj_ws = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": "   "})
+    assert obj_ws.reason == "no reason provided"
+
+
+def test_privacy_answer_none_reason_defaults_to_placeholder() -> None:
+    """None reason coerces to a placeholder string rather than raising."""
+    obj = PrivacyAnswerItemSchema.model_validate({"id": 1, "answer": "yes", "confidence": 0.9, "reason": None})
+    assert obj.reason == "no reason provided"
+
+
+def test_domain_confidence_coerces_float_string() -> None:
+    """Small models occasionally return numeric confidences as strings —
+    accept ``"0.95"`` and similar."""
+    obj = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "0.95"})
+    assert obj.domain_confidence == 0.95
+
+
+def test_domain_confidence_coerces_percent_string() -> None:
+    """Accept percentage-style strings (``"85%"`` -> 0.85)."""
+    obj = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "85%"})
+    assert obj.domain_confidence == pytest.approx(0.85)
+
+
+def test_domain_confidence_coerces_unparseable_to_default() -> None:
+    """Non-numeric strings (``"high"``) fall back to the 0.5 default."""
+    obj = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "high"})
+    assert obj.domain_confidence == 0.5
+
+
+def test_domain_confidence_clamps_out_of_range() -> None:
+    """String confidence > 1.0 clamps to 1.0; negatives clamp to 0.0."""
+    obj_hi = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "1.5"})
+    assert obj_hi.domain_confidence == 1.0
+    obj_lo = DomainClassificationSchema.model_validate({"domain": "MEDICAL", "domain_confidence": "-0.2"})
+    assert obj_lo.domain_confidence == 0.0
+
+
+def test_loose_list_wrapper_widens_to_oneof() -> None:
+    """Helper widens a normal wrapper schema to ``oneOf({wrapper}, {array})``."""
+    from anonymizer.engine.schemas.shared import loose_list_wrapper_json_schema
+
+    fake_inline = {
+        "type": "object",
+        "title": "MySchema",
+        "properties": {
+            "items": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["items"],
+    }
+    result = loose_list_wrapper_json_schema(lambda s: fake_inline, schema=None, list_field="items")
+    assert "oneOf" in result
+    assert len(result["oneOf"]) == 2
+    types = sorted(branch.get("type") for branch in result["oneOf"])
+    assert types == ["array", "object"], result
+
+
+def test_loose_list_wrapper_falls_back_when_property_missing(caplog) -> None:
+    """If pydantic ever restructures so the inline property schema is not
+    accessible (e.g. moves behind a ``$ref``), the helper returns the
+    unwidened wrapper and emits a warning. Defensive — current pydantic
+    2.x always exposes inline properties, but a future bump may not."""
+    fake_without_property = {
+        "type": "object",
+        "title": "Indirected",
+        "properties": {"items": {"$ref": "#/$defs/Items"}},
+    }
+    from anonymizer.engine.schemas.shared import loose_list_wrapper_json_schema
+
+    with caplog.at_level("WARNING"):
+        result = loose_list_wrapper_json_schema(lambda s: fake_without_property, schema=None, list_field="items")
+
+    # No oneOf — the helper degraded gracefully to the unwidened wrapper.
+    assert "oneOf" not in result
+    assert result is fake_without_property
+    assert any("Indirected" in r.message or "items" in r.message for r in caplog.records)

@@ -33,14 +33,16 @@ Each schema group corresponds to one pipeline step:
         Uses LLMJudgeColumnConfig with Score rubrics (no custom schema needed)
 
 Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
-                  ProtectionMethod, CombinedRiskLevel, MeaningUnitAspect, PrivacyAnswer
+                  ProtectionMethod, MeaningUnitAspect, PrivacyAnswer
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+from anonymizer.engine.schemas.shared import accept_bare_list, loose_list_wrapper_json_schema
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -77,10 +79,53 @@ class Domain(str, Enum):
 
 
 class DomainClassificationSchema(BaseModel):
-    """LLM output schema for domain classification step."""
+    """LLM output schema for domain classification step.
 
-    domain: Domain
-    domain_confidence: float = Field(ge=0.0, le=1.0)
+    Wire contract is loose (domain: str, confidence accepts string) so DD’s
+    jsonschema pre-check cannot reject enum drift or string-typed floats.
+    A before-validator normalizes drift ("biography" → "BIOGRAPHY"; "0.95"
+    → 0.95); unknown domains fall back to Domain.OTHER.
+    """
+
+    domain: str = Field(
+        default=Domain.OTHER.value,
+        description=(
+            "one of the Domain enum values (see anonymizer.engine.schemas.rewrite.Domain). "
+            "Unknown values coerce to OTHER."
+        ),
+    )
+    domain_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def _normalize_domain(cls, v: object) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            return Domain.OTHER.value
+        cleaned = v.strip().upper().replace(" ", "_").replace("-", "_")
+        allowed = {d.value for d in Domain}
+        if cleaned in allowed:
+            return cleaned
+        # Substring match — pick first Domain that appears as substring.
+        for d in Domain:
+            if d.value in cleaned or cleaned in d.value:
+                return d.value
+        return Domain.OTHER.value
+
+    @field_validator("domain_confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, v: object) -> float:
+        if isinstance(v, (int, float)):
+            return max(0.0, min(1.0, float(v)))
+        if isinstance(v, str):
+            try:
+                raw = v.strip().rstrip("%")
+                val = float(raw)
+                if "%" in v:
+                    val /= 100.0
+                return max(0.0, min(1.0, val))
+            except (ValueError, TypeError):
+                return 0.5
+        return 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +160,110 @@ class ProtectionMethod(str, Enum):
 
 
 class CombinedRiskLevel(str, Enum):
+    """Per-entity combined risk band, used by StrictEntityDispositionSchema
+    only. The non-strict EntityDispositionSchema does not carry this field —
+    it was deleted from the strict-by-default path as schema debt that
+    flowed into nothing downstream. Restored here as a strict-mode-only
+    field so the strict_entity_protection feature has a place to record it.
+    """
+
     low = "low"
     medium = "medium"
     high = "high"
+
+
+# Mapping from Anonymizer entity-labels to EntityCategory, used when the
+# disposition LLM outputs an entity_label in the `category` field (observed
+# with small Gemma models). Derived from three category sets so the source
+# of truth lives in one place per category — see
+# test_entity_label_to_category_covers_default_labels for the CI guard
+# that fires when a label is added to DEFAULT_ENTITY_LABELS without a
+# category assignment here. Any label not in this table falls back to
+# "quasi_identifier" which is the most conservative (protect-cautiously)
+# choice.
+_DIRECT_ID_LABELS: frozenset[str] = frozenset(
+    {
+        "first_name",
+        "last_name",
+        "email",
+        "phone_number",
+        "fax_number",
+        "ssn",
+        "national_id",
+        "street_address",
+        "postcode",
+        "credit_debit_card",
+        "account_number",
+        "bank_routing_number",
+        "tax_id",
+        "medical_record_number",
+        "health_plan_beneficiary_number",
+        "api_key",
+        "password",
+        "ipv4",
+        "ipv6",
+        "mac_address",
+        "url",
+        "user_name",
+        "employee_id",
+        "customer_id",
+        "unique_id",
+        "biometric_identifier",
+        "device_identifier",
+        "license_plate",
+        "vehicle_identifier",
+        "swift_bic",
+        "pin",
+        "cvv",
+        "http_cookie",
+    }
+)
+_QUASI_ID_LABELS: frozenset[str] = frozenset(
+    {
+        "age",
+        "date",
+        "date_of_birth",
+        "date_time",
+        "time",
+        "city",
+        "state",
+        "country",
+        "county",
+        "place_name",
+        "landmark",
+        "coordinate",
+        "occupation",
+        "organization_name",
+        "company_name",
+        "university",
+        "court_name",
+        "prison_detention_facility",
+        "degree",
+        "field_of_study",
+        "education_level",
+        "language",
+        "nationality",
+        "employment_status",
+        "monetary_amount",
+        "certificate_license_number",
+    }
+)
+_SENSITIVE_ATTR_LABELS: frozenset[str] = frozenset(
+    {
+        "gender",
+        "sexuality",
+        "race_ethnicity",
+        "religious_belief",
+        "political_view",
+        "blood_type",
+    }
+)
+
+_ENTITY_LABEL_TO_CATEGORY: dict[str, str] = (
+    {lbl: "direct_identifier" for lbl in _DIRECT_ID_LABELS}
+    | {lbl: "quasi_identifier" for lbl in _QUASI_ID_LABELS}
+    | {lbl: "sensitive_attribute" for lbl in _SENSITIVE_ATTR_LABELS}
+)
 
 
 class EntityDispositionSchema(BaseModel):
@@ -138,7 +284,6 @@ class EntityDispositionSchema(BaseModel):
     needs_protection: bool
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
-    combined_risk_level: CombinedRiskLevel
 
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
@@ -152,6 +297,94 @@ class EntityDispositionSchema(BaseModel):
                 f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='leave_as_is'"
             )
         return self
+
+
+class SimpleDispositionItem(BaseModel):
+    """Loose wire-contract shape for one disposition decision from the LLM.
+
+    Used as the `output_format` for the disposition_analyzer LLM column. A
+    server-side reconstruction column (see engine/rewrite/disposition_derivation.py)
+    then pairs these with the entity context columns to produce the strict
+    EntityDispositionSchema that downstream consumers read.
+
+    Why "loose": every field is typed as `str` (not the corresponding enum)
+    and has a permissive default. This keeps the emitted JSON Schema free of
+    `enum`, `required`, and `minLength` constraints that DataDesigner’s
+    `jsonschema.validate()` runs BEFORE pydantic’s coercion. Small models
+    drift at those constraints; the loose wire gate lets drifted output
+    survive to the server-side reconstruction.
+    """
+
+    id: int = Field(ge=1)
+    # Echoed from the entity context for belt-and-braces pairing. Optional so
+    # the server can fall back to id-based lookup if the model omits them.
+    source: str = Field(default="")
+    entity_label: str = Field(default="")
+    entity_value: str = Field(default="")
+    # LLM judgments; typed str so enum drift ("latent_sensitive_attribute",
+    # "DIRECT IDENTIFIER", etc.) is accepted at the wire layer and
+    # normalized during reconstruction.
+    category: str = Field(default="")
+    sensitivity: str = Field(default="")
+    protection_method_suggestion: str = Field(default="")
+    # Optional: when the model emits a document-specific rationale we keep
+    # it verbatim; otherwise the reconstructor templates one from (category,
+    # method, sensitivity).
+    protection_reason: str = Field(default="")
+
+    @field_validator(
+        "source",
+        "entity_label",
+        "entity_value",
+        "category",
+        "sensitivity",
+        "protection_method_suggestion",
+        "protection_reason",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_scalar_to_str(cls, v: object) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
+
+
+class SimpleDispositionResult(BaseModel):
+    """Wire-contract wrapper around a list of SimpleDispositionItem.
+
+    This is the output_format handed to DataDesigner for the disposition
+    LLM column. The corresponding reconstruction column downstream produces
+    the strict SensitivityDispositionSchema from it.
+
+    Tolerates two LLM output shapes at the wire layer:
+
+    1. The canonical wrapper: ``{"sensitivity_disposition": [item, ...]}``
+    2. A bare list at the top level: ``[item, ...]`` — observed
+       consistently on ``nemotron-3-nano:4b`` (rewrite mode, 5/5 records)
+       and intermittently on Gemma4-edge models for dense entity sets.
+
+    The fix is two-layered to match the rest of PR #130's wire schemas:
+
+    - ``__get_pydantic_json_schema__`` widens the emitted JSON Schema to a
+      ``oneOf`` of the wrapper-object form and a bare-array form. DataDesigner
+      runs ``jsonschema.validate()`` on the raw LLM response BEFORE pydantic's
+      coercion, so without this widening a bare-list response is rejected as
+      ``is not of type 'object'`` and the record is dropped.
+    - ``_accept_bare_list`` (mode="before") normalizes the bare-list shape to
+      the wrapper dict so downstream consumers continue to read the canonical
+      ``sensitivity_disposition`` field.
+    """
+
+    sensitivity_disposition: list[SimpleDispositionItem] = Field(default_factory=list)
+
+    # Wrap top-level bare-list responses into the canonical wrapper dict.
+    _accept_bare_list = model_validator(mode="before")(accept_bare_list(list_field="sensitivity_disposition"))
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, schema, handler):
+        return loose_list_wrapper_json_schema(handler, schema, list_field="sensitivity_disposition")
 
 
 class SensitivityDispositionSchema(BaseModel):
@@ -232,6 +465,9 @@ class StrictEntityDispositionSchema(BaseModel):
     combined_risk_level: CombinedRiskLevel
 
     def to_entity_disposition(self) -> EntityDispositionSchema:
+        # combined_risk_level is StrictEntityDispositionSchema-only; the
+        # non-strict EntityDispositionSchema dropped the field as unused
+        # downstream, so it does not flow through the conversion.
         return EntityDispositionSchema(
             id=self.id,
             source=self.source,
@@ -242,7 +478,6 @@ class StrictEntityDispositionSchema(BaseModel):
             needs_protection=True,
             protection_reason=self.protection_reason,
             protection_method_suggestion=self.protection_method_suggestion,
-            combined_risk_level=self.combined_risk_level,
         )
 
 
@@ -288,16 +523,94 @@ class MeaningUnitAspect(str, Enum):
 
 
 class MeaningUnitSchema(BaseModel):
-    id: int = Field(ge=1)
-    aspect: MeaningUnitAspect
-    unit: str = Field(min_length=1)
+    """Single meaning unit extracted by the meaning_extractor role.
+
+    Loose wire: aspect is str (not MeaningUnitAspect enum) so small-model
+    enum drift ("ROLE" vs "role", "the role", etc.) is accepted at the
+    wire layer and normalized by the before-validator.
+    """
+
+    id: int = Field(ge=1, default=1)
+    aspect: str = Field(
+        default="",
+        description=("one of the MeaningUnitAspect values (see anonymizer.engine.schemas.rewrite.MeaningUnitAspect)"),
+    )
+    unit: str = Field(default="")
+
+    @field_validator("aspect", mode="before")
+    @classmethod
+    def _normalize_aspect(cls, v: object) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            return ""
+        cleaned = v.strip().lower().replace(" ", "_").replace("-", "_")
+        allowed = {a.value for a in MeaningUnitAspect}
+        if cleaned in allowed:
+            return cleaned
+        for a in MeaningUnitAspect:
+            if a.value in cleaned or cleaned in a.value:
+                return a.value
+        return ""  # unknown aspect falls through; downstream can filter
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _coerce_unit(cls, v: object) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
 
 
 class MeaningUnitsSchema(BaseModel):
-    """LLM output schema for meaning unit extraction step."""
+    """LLM output schema for meaning unit extraction step.
 
-    # Non-empty by design: meaning extraction only runs when entities were detected.
-    units: list[MeaningUnitSchema] = Field(min_length=1)
+    Outer list has default_factory=list (was min_length=1); if the model
+    emits an empty list the record still survives so the pipeline can
+    decide what to do downstream. ``_ensure_list`` only coerces non-list
+    wire shapes (dict, scalar) into a list; it does not filter empty
+    units — downstream consumers handle that.
+
+    Tolerates two LLM output shapes at the wire layer (same pattern as
+    ``SimpleDispositionResult``):
+
+    1. The canonical wrapper: ``{"units": [item, ...]}``
+    2. A bare list at the top level: ``[item, ...]`` — observed on
+       qwen3.5-4b for legal documents where the model omits the wrapper
+       key. ``__get_pydantic_json_schema__`` widens to ``oneOf`` of the
+       two shapes so DD's ``jsonschema.validate()`` pre-check accepts
+       both, and ``_accept_bare_list`` normalizes the bare-list shape
+       to the wrapper dict before pydantic validates.
+    """
+
+    units: list[MeaningUnitSchema] = Field(default_factory=list)
+
+    # Wrap top-level bare-list responses into the canonical wrapper dict.
+    _accept_bare_list = model_validator(mode="before")(accept_bare_list(list_field="units"))
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, schema, handler):
+        return loose_list_wrapper_json_schema(handler, schema, list_field="units")
+
+    @field_validator("units", mode="before")
+    @classmethod
+    def _ensure_list(cls, v: object) -> list:
+        if not isinstance(v, list):
+            v = [v] if isinstance(v, dict) else []
+        # MeaningUnitSchema.id defaults to 1; if the LLM omits ids the wire
+        # collapses every unit to id=1. Reassign sequentially so downstream
+        # prompts that reference units by id stay unambiguous. Preserve any
+        # explicit positive int id the LLM did emit, but renumber only when
+        # at least one collision or missing id is detected.
+        if isinstance(v, list) and v:
+            raw_ids = [item.get("id") if isinstance(item, dict) else getattr(item, "id", None) for item in v]
+            valid = [i for i in raw_ids if isinstance(i, int) and i >= 1]
+            if len(valid) != len(raw_ids) or len(set(valid)) != len(valid):
+                for idx, item in enumerate(v, start=1):
+                    if isinstance(item, dict):
+                        item["id"] = idx
+                    elif hasattr(item, "id"):
+                        item.id = idx  # type: ignore[misc]
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +689,56 @@ def _validate_id_coverage(expected_ids: list[int], returned_ids: list[int], labe
         raise ValueError(f"Extra {label} IDs not in expected set: {extra}")
 
 
+def _normalize_id_covered_list(
+    raw: list,
+    *,
+    expected_ids: list[int] | None,
+    default_item_for_id,
+) -> list:
+    """Normalize a list of id-bearing items to exact-coverage shape.
+
+    Used as the wire-layer normalizer on all context-validated answer
+    schemas (QualityAnswersSchema / PrivacyAnswersSchema /
+    QACompareResultsSchema). Dedupes by id (first occurrence wins),
+    pads missing ids via ``default_item_for_id(id) -> dict``, drops
+    extras. When ``expected_ids`` is None, only dedupes.
+
+    Each item can be a dict or a BaseModel instance. Items without a
+    parseable ``id`` are skipped.
+    """
+    seen: set[int] = set()
+    deduped: list = []
+    for item in raw:
+        if hasattr(item, "model_dump"):
+            item = item.model_dump()
+        if not isinstance(item, dict):
+            continue
+        try:
+            iid = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if iid in seen:
+            continue
+        seen.add(iid)
+        deduped.append(item)
+
+    if expected_ids is None:
+        return deduped
+
+    expected_set = set(expected_ids)
+    # Drop extras (ids not in expected_set)
+    deduped = [it for it in deduped if int(it["id"]) in expected_set]
+    # Pad missing ids
+    present = {int(it["id"]) for it in deduped}
+    for eid in expected_ids:
+        if eid not in present:
+            deduped.append(default_item_for_id(eid))
+    # Preserve expected_ids ordering for stability
+    order = {eid: i for i, eid in enumerate(expected_ids)}
+    deduped.sort(key=lambda it: order.get(int(it["id"]), len(order)))
+    return deduped
+
+
 class QualityAnswerSchema(BaseModel):
     id: int
     answer: str
@@ -384,17 +747,43 @@ class QualityAnswerSchema(BaseModel):
 class QualityAnswersSchema(BaseModel):
     """LLM output schema for quality QA re-answer step (on rewritten text).
 
-    When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    When validated with ``context={"expected_ids": [1, 2, ...]}``, normalizes
+    the returned list to exactly that ID set: dedupes by id (first wins),
+    pads missing ids with a placeholder answer, and drops extras. Prevents
+    an LLM that emits a duplicate or misses an id from dropping the whole
+    record (observed on gpt-oss-20b × 05_legal_court rewrite).
     """
 
-    answers: list[QualityAnswerSchema]
+    answers: list[QualityAnswerSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_answers(cls, data: object, info: ValidationInfo) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("answers") or []
+        if not isinstance(raw, list):
+            raw = []
+        expected = (info.context or {}).get("expected_ids") if info.context else None
+        data["answers"] = _normalize_id_covered_list(
+            raw,
+            expected_ids=expected,
+            default_item_for_id=lambda i: {"id": i, "answer": "missing"},
+        )
+        return data
 
     @model_validator(mode="after")
     def _check_coverage(self, info: ValidationInfo) -> QualityAnswersSchema:
+        # Soft check: the before-validator already normalized. If coverage
+        # still fails here it indicates a schema-level bug, not LLM drift.
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            try:
+                _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            except ValueError as e:
+                import logging
+
+                logging.getLogger(__name__).warning("QualityAnswersSchema post-normalization coverage warning: %s", e)
         return self
 
 
@@ -404,21 +793,67 @@ class PrivacyAnswerItemSchema(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1, max_length=200)
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _truncate_reason(cls, v: object) -> object:
+        """Small-model observed emitting 250+ char reasons (nemotron-3-nano on
+        vLLM). Truncate to fit max_length=200 rather than dropping the record.
+
+        Also handles None and empty/whitespace-only strings — both fall
+        through to ``min_length=1`` rejection without this guard. The
+        wire-loose contract is "reason is best-effort"; coerce missing
+        forms to a placeholder so the record survives.
+        """
+        if isinstance(v, str) and len(v) > 200:
+            return v[:197].rstrip() + "..."
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "no reason provided"
+        return v
+
 
 class PrivacyAnswersSchema(BaseModel):
     """LLM output schema for privacy QA re-answer step (on rewritten text).
 
-    When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    When validated with ``context={"expected_ids": [1, 2, ...]}``, normalizes
+    the returned list to exactly that ID set: dedupes by id (first wins),
+    pads missing ids with a pessimistic answer ("yes" = assume leak), and
+    drops extras. Pessimistic default because a missing answer should bias
+    toward triggering human review rather than silently passing.
     """
 
-    answers: list[PrivacyAnswerItemSchema]
+    answers: list[PrivacyAnswerItemSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_answers(cls, data: object, info: ValidationInfo) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("answers") or []
+        if not isinstance(raw, list):
+            raw = []
+        expected = (info.context or {}).get("expected_ids") if info.context else None
+        data["answers"] = _normalize_id_covered_list(
+            raw,
+            expected_ids=expected,
+            default_item_for_id=lambda i: {
+                "id": i,
+                "answer": "yes",  # pessimistic default — flag for human review
+                "confidence": 0.5,
+                "reason": "missing answer - defaulted to pessimistic",
+            },
+        )
+        return data
 
     @model_validator(mode="after")
     def _check_coverage(self, info: ValidationInfo) -> PrivacyAnswersSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            try:
+                _validate_id_coverage(expected_ids, [a.id for a in self.answers], "answer")
+            except ValueError as e:
+                import logging
+
+                logging.getLogger(__name__).warning("PrivacyAnswersSchema post-normalization coverage warning: %s", e)
         return self
 
 
@@ -431,15 +866,37 @@ class QACompareItemSchema(BaseModel):
 class QACompareResultsSchema(BaseModel):
     """LLM output schema for quality QA comparison step.
 
-    When validated with ``context={"expected_ids": [1, 2, ...]}``,
-    enforces exact coverage: no missing, duplicate, or extra IDs.
+    When validated with ``context={"expected_ids": [1, 2, ...]}``, normalizes
+    the returned list to exactly that ID set: dedupes, pads missing ids
+    with a neutral 0.5 score, and drops extras.
     """
 
-    per_item: list[QACompareItemSchema]
+    per_item: list[QACompareItemSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_per_item(cls, data: object, info: ValidationInfo) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("per_item") or []
+        if not isinstance(raw, list):
+            raw = []
+        expected = (info.context or {}).get("expected_ids") if info.context else None
+        data["per_item"] = _normalize_id_covered_list(
+            raw,
+            expected_ids=expected,
+            default_item_for_id=lambda i: {"id": i, "score": 0.5, "reason": None},
+        )
+        return data
 
     @model_validator(mode="after")
     def _check_coverage(self, info: ValidationInfo) -> QACompareResultsSchema:
         expected_ids = (info.context or {}).get("expected_ids")
         if expected_ids is not None:
-            _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
+            try:
+                _validate_id_coverage(expected_ids, [a.id for a in self.per_item], "compare")
+            except ValueError as e:
+                import logging
+
+                logging.getLogger(__name__).warning("QACompareResultsSchema post-normalization coverage warning: %s", e)
         return self
