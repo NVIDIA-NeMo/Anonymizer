@@ -48,7 +48,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validat
 
 
 class Domain(str, Enum):
-    """Valid domain types for domain classification and meaning unit extraction."""
+    """Valid domain types for domain classification and meaning unit extraction.
+
+    Adding a value here also requires a matching entry in ``DOMAIN_METADATA``
+    (``anonymizer.engine.rewrite.domain_classification``); that module fails
+    to import if the two drift.
+    """
 
     BIOGRAPHY = "BIOGRAPHY"
     CHAT_EMAIL_CSAT = "CHAT_EMAIL_CSAT"
