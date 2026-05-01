@@ -402,7 +402,7 @@ def _render_scores_section(row: pd.Series) -> str:
 
     judge_raw = row.get(COL_JUDGE_EVALUATION)
     judge_scores = _extract_judge_scores(judge_raw)
-    if judge_raw is not None and not pd.isna(judge_raw) and not judge_scores:
+    if isinstance(judge_raw, dict) and not judge_scores:
         logger.warning(
             "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
         )
