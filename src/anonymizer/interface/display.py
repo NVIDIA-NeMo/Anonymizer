@@ -9,8 +9,6 @@ import logging
 import re
 from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
-
 import pandas as pd
 
 from anonymizer.engine.constants import (
@@ -21,6 +19,8 @@ from anonymizer.engine.constants import (
     COL_SENSITIVITY_DISPOSITION,
 )
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
+
+logger = logging.getLogger(__name__)
 
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
@@ -402,7 +402,7 @@ def _render_scores_section(row: pd.Series) -> str:
 
     judge_raw = row.get(COL_JUDGE_EVALUATION)
     judge_scores = _extract_judge_scores(judge_raw)
-    if judge_raw is not None and not judge_scores:
+    if judge_raw is not None and not pd.isna(judge_raw) and not judge_scores:
         logger.warning(
             "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
         )

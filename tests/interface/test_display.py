@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -514,6 +516,49 @@ def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
     assert f"{PRIVACY_RUBRIC.name}: 8/10" in result
     assert f"{QUALITY_RUBRIC.name}: 9/10" in result
     assert f"{NATURALNESS_RUBRIC.name}: 7/10" in result
+
+
+def test_render_record_html_rewrite_mode_nan_judge_column_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the judge column exists but a row's value is NaN (typical pandas
+    missing-value sentinel for object columns), the renderer must not emit
+    the 'unexpected shape' warning - that's a normal not-yet-judged row."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            "_judge_evaluation": np.nan,
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
+        render_record_html(row, record_index=0)
+    assert not any("Judge evaluation present but produced no scores" in rec.message for rec in caplog.records)
+
+
+def test_render_record_html_rewrite_mode_malformed_judge_dict_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A judge column whose value is a dict that yields no extractable scores
+    is a real upstream-shape regression and SHOULD emit the warning."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            "_judge_evaluation": {"unexpected_key": "no score field here"},
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
+        render_record_html(row, record_index=0)
+    assert any("Judge evaluation present but produced no scores" in rec.message for rec in caplog.records)
 
 
 def test_render_record_html_rewrite_mode_with_disposition() -> None:
