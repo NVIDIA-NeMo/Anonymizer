@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 
@@ -381,13 +384,13 @@ def _render_scores_section(row: pd.Series) -> str:
     needs_review = row.get("needs_human_review")
 
     if utility is not None:
-        parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {float(utility):.2f}</span>")
+        parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {utility:.2f}</span>")
     if leakage is not None:
-        parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {float(leakage):.2f}</span>")
+        parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {leakage:.2f}</span>")
     if weighted_leakage_rate is not None:
         parts.append(
             "<span style='margin-right:16px'><strong>Weighted Leakage Rate:</strong> "
-            f"{float(weighted_leakage_rate):.2f}</span>"
+            f"{weighted_leakage_rate:.2f}</span>"
         )
     if needs_review is not None:
         badge_color = "#ef4444" if needs_review else "#22c55e"
@@ -399,6 +402,10 @@ def _render_scores_section(row: pd.Series) -> str:
 
     judge_raw = row.get(COL_JUDGE_EVALUATION)
     judge_scores = _extract_judge_scores(judge_raw)
+    if judge_raw is not None and not judge_scores:
+        logger.warning(
+            "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
+        )
     if judge_scores:
         score_strs = [f"{name}: {score}/10" for name, score in judge_scores]
         parts.append(f"<span><strong>Judge:</strong> {html.escape(', '.join(score_strs))}</span>")
@@ -411,18 +418,9 @@ def _render_scores_section(row: pd.Series) -> str:
 def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
     """Extract (name, score) pairs from the judge evaluation column.
 
-    LLMJudgeColumnConfig output is keyed by rubric name, each value carrying
-    ``{"score": <enum_value>, "reasoning": "..."}``.
+    LLMJudgeColumnConfig output is a plain dict keyed by rubric name, each
+    value carrying ``{"score": <int>, "reasoning": "..."}``.
     """
-    if raw is None:
-        return []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump()
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
     if not isinstance(raw, dict):
         return []
     result: list[tuple[str, int]] = []
@@ -473,21 +471,17 @@ def _render_disposition_table(row: pd.Series) -> str:
 
 
 def _normalize_disposition(raw: object) -> list[dict[str, str]]:
-    """Extract disposition entries from the raw column value."""
-    if raw is None:
+    """Extract disposition entries from the raw column value.
+
+    LLMStructuredColumnConfig output lands as a plain dict keyed by
+    ``sensitivity_disposition``, each entry being an EntityDispositionSchema dict.
+    """
+    if not isinstance(raw, dict):
         return []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump()
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if isinstance(raw, dict):
-        entries = raw.get("sensitivity_disposition", [])
-        if isinstance(entries, list):
-            return [e if isinstance(e, dict) else getattr(e, "model_dump", dict)() for e in entries]
-    return []
+    entries = raw.get("sensitivity_disposition", [])
+    if not isinstance(entries, list):
+        return []
+    return [e for e in entries if isinstance(e, dict)]
 
 
 # ---------------------------------------------------------------------------

@@ -7,8 +7,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES, COL_REPLACEMENT_MAP
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
+    COL_REPLACEMENT_MAP,
+    COL_SENSITIVITY_DISPOSITION,
+)
+from anonymizer.engine.rewrite.final_judge import NATURALNESS_RUBRIC, PRIVACY_RUBRIC, QUALITY_RUBRIC
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
+from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, SensitivityDispositionSchema
 from anonymizer.interface.display import (
     _build_replaced_entities,
     _normalize_replacement_map,
@@ -486,6 +493,12 @@ def test_render_record_html_rewrite_mode_shows_rewrite_layout() -> None:
 
 
 def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
+    # Derive keys from the actual rubric configs so test↔runtime drift is impossible.
+    judge_eval = {
+        PRIVACY_RUBRIC.name: {"score": 8, "reasoning": "good privacy"},
+        QUALITY_RUBRIC.name: {"score": 9, "reasoning": "high quality"},
+        NATURALNESS_RUBRIC.name: {"score": 7, "reasoning": "mostly natural"},
+    }
     row = pd.Series(
         {
             "text": "Alice works at Acme",
@@ -494,20 +507,34 @@ def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
             "utility_score": 0.9,
             "leakage_mass": 0.1,
             "needs_human_review": False,
-            "_judge_evaluation": {
-                "privacy": {"score": 8, "reasoning": "good privacy"},
-                "quality": {"score": 9, "reasoning": "high quality"},
-                "naturalness": {"score": 7, "reasoning": "mostly natural"},
-            },
+            "_judge_evaluation": judge_eval,
         }
     )
     result = render_record_html(row, record_index=0)
-    assert "privacy: 8/10" in result
-    assert "quality: 9/10" in result
-    assert "naturalness: 7/10" in result
+    assert f"{PRIVACY_RUBRIC.name}: 8/10" in result
+    assert f"{QUALITY_RUBRIC.name}: 9/10" in result
+    assert f"{NATURALNESS_RUBRIC.name}: 7/10" in result
 
 
 def test_render_record_html_rewrite_mode_with_disposition() -> None:
+    # Construct the fixture via model_dump() so it matches the exact dict shape
+    # that LLMStructuredColumnConfig writes to the dataframe at runtime.
+    disposition = SensitivityDispositionSchema(
+        sensitivity_disposition=[
+            EntityDispositionSchema(
+                id=1,
+                source="tagged",
+                category="direct_identifier",
+                sensitivity="high",
+                entity_label="first_name",
+                entity_value="Alice",
+                needs_protection=True,
+                protection_reason="Direct identifier that uniquely identifies the subject.",
+                protection_method_suggestion="replace",
+                combined_risk_level="high",
+            ),
+        ]
+    ).model_dump()
     row = pd.Series(
         {
             "text": "Alice works at Acme",
@@ -516,16 +543,7 @@ def test_render_record_html_rewrite_mode_with_disposition() -> None:
             "utility_score": 0.85,
             "leakage_mass": 0.3,
             "needs_human_review": False,
-            "_sensitivity_disposition": {
-                "sensitivity_disposition": [
-                    {
-                        "entity_value": "Alice",
-                        "entity_label": "first_name",
-                        "sensitivity": "high",
-                        "protection_method_suggestion": "replace",
-                    },
-                ]
-            },
+            COL_SENSITIVITY_DISPOSITION: disposition,
         }
     )
     result = render_record_html(row, record_index=0)
