@@ -32,6 +32,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_augment_prompt,
     _get_latent_prompt,
     _get_validation_prompt,
+    _pad_empty_latent_column,
     _resolve_detection_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -478,6 +479,51 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     assert "server_name" in final_labels
     assert "hostname" in final_labels
     assert "ipv4" in final_labels
+
+
+# ---------------------------------------------------------------------------
+# _pad_empty_latent_column — pyarrow struct-inference workaround
+# ---------------------------------------------------------------------------
+
+
+def test_pad_empty_latent_column_injects_sentinel_into_empty_dict_cell() -> None:
+    """When DD's latent workflow returns ``{"latent_entities": []}`` for
+    every row, pyarrow can't infer the nested struct schema and the
+    parquet write fails. _pad_empty_latent_column injects a default
+    LatentEntitySchema so pyarrow sees at least one populated nested
+    record."""
+    df = pd.DataFrame({COL_LATENT_ENTITIES: [{"latent_entities": []}, {"latent_entities": []}]})
+    out = _pad_empty_latent_column(df)
+    assert out is not df  # returns a copy
+    for cell in out[COL_LATENT_ENTITIES]:
+        assert cell["latent_entities"], "expected sentinel injected into empty cell"
+        assert isinstance(cell["latent_entities"], list)
+        assert isinstance(cell["latent_entities"][0], dict)
+
+
+def test_pad_empty_latent_column_preserves_populated_cells() -> None:
+    """Cells that already have entries are left alone."""
+    populated = {"latent_entities": [{"label": "employer", "value": "UW"}]}
+    df = pd.DataFrame({COL_LATENT_ENTITIES: [populated]})
+    out = _pad_empty_latent_column(df)
+    assert out[COL_LATENT_ENTITIES].iloc[0] == populated
+
+
+def test_pad_empty_latent_column_handles_bare_empty_list_cells() -> None:
+    """Some adapter paths emit a bare ``[]`` instead of the wrapped dict.
+    The padder swaps it for the sentinel list as well."""
+    df = pd.DataFrame({COL_LATENT_ENTITIES: [[], []]})
+    out = _pad_empty_latent_column(df)
+    for cell in out[COL_LATENT_ENTITIES]:
+        assert isinstance(cell, list) and cell, "empty list should be padded"
+
+
+def test_pad_empty_latent_column_no_op_when_column_missing() -> None:
+    """Defensive: returns the df unchanged if the column is absent."""
+    df = pd.DataFrame({COL_TEXT: ["hello"]})
+    out = _pad_empty_latent_column(df)
+    assert COL_LATENT_ENTITIES not in out.columns
+    assert out is df  # unchanged identity
 
 
 # ---------------------------------------------------------------------------
