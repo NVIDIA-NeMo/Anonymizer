@@ -31,60 +31,58 @@ Each pipeline stage has a **role** mapped to one of these aliases. See the full 
 
 ## Custom providers
 
-To use models from a different provider (OpenAI, OpenRouter, etc.), configure one or more providers when constructing the `Anonymizer`. Each provider maps a `name` to an API endpoint; the name is later referenced from your model configs.
+Use `model_providers` to define named API endpoints for hosted models such as OpenAI or OpenRouter.
 
-Providers can be defined either in a YAML file or programmatically in Python — both forms accept the same fields and are equivalent.
-
-Set your provider API keys as environment variables first:
+Set your API keys first:
 
 ```bash
 export OPENAI_API_KEY="your-openai-api-key"
 export OPENROUTER_API_KEY="your-openrouter-api-key"
 ```
 
-### YAML file
+=== "YAML"
 
-Define the providers in a YAML file and pass the path. API keys are read from the environment by the underlying client, so they don't need to appear in the file.
+    Define providers in a YAML file and pass the path to `Anonymizer`.
 
-```yaml
-# my_providers.yaml
-providers:
-  - name: openai
-    endpoint: https://api.openai.com/v1
-  - name: openrouter
-    endpoint: https://openrouter.ai/api/v1
-```
+    ```yaml
+    providers:
+      - name: openai
+        endpoint: https://api.openai.com/v1
+      - name: openrouter
+        endpoint: https://openrouter.ai/api/v1
+    ```
 
-```python
-from anonymizer import Anonymizer
+    ```python
+    from anonymizer import Anonymizer
 
-anonymizer = Anonymizer(model_providers="my_providers.yaml")
-```
+    anonymizer = Anonymizer(model_providers="my_providers.yaml")
+    ```
 
-### Programmatic
+=== "Python"
 
-Build a list of `ModelProvider` instances in code. Useful when you want your setup to be self-contained, or need to pull secrets from a vault rather than the environment.
+    Construct `ModelProvider` objects directly in code.
 
-```python
-import os
+    ```python
+    import os
+    from anonymizer import Anonymizer, ModelProvider
 
-from anonymizer import Anonymizer, ModelProvider
+    providers = [
+        ModelProvider(
+            name="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key=os.environ["OPENAI_API_KEY"],
+        ),
+        ModelProvider(
+            name="openrouter",
+            endpoint="https://openrouter.ai/api/v1",
+            api_key=os.environ["OPENROUTER_API_KEY"],
+        ),
+    ]
 
-providers = [
-    ModelProvider(
-        name="openai",
-        endpoint="https://api.openai.com/v1",
-        api_key=os.environ["OPENAI_API_KEY"],
-    ),
-    ModelProvider(
-        name="openrouter",
-        endpoint="https://openrouter.ai/api/v1",
-        api_key=os.environ["OPENROUTER_API_KEY"],
-    ),
-]
+    anonymizer = Anonymizer(model_providers=providers)
+    ```
 
-anonymizer = Anonymizer(model_providers=providers)
-```
+After defining providers, reference them from your model configs as described below.
 
 ---
 
