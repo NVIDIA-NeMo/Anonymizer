@@ -7,7 +7,6 @@ from importlib.metadata import version
 
 __version__ = version("nemo-anonymizer")
 
-# Re-exports from Data Designer so users don't import it directly.
 from data_designer.config.models import ModelProvider as ModelProvider
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite, RiskTolerance
