@@ -36,8 +36,10 @@ Use `model_providers` to define named API endpoints for hosted models such as Op
 Set your API keys first:
 
 ```bash
+export NVIDIA_API_KEY="your-nvidia-api-key"  # Used by the nvidia provider (build.nvidia.com)
 export OPENAI_API_KEY="your-openai-api-key"
 export OPENROUTER_API_KEY="your-openrouter-api-key"
+
 ```
 
 === "YAML"
@@ -46,6 +48,8 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"
 
     ```yaml
     providers:
+      - name: nvidia
+        endpoint: https://integrate.api.nvidia.com/v1
       - name: openai
         endpoint: https://api.openai.com/v1
       - name: openrouter
@@ -88,7 +92,7 @@ After defining providers, reference them from your model configs as described be
 
 ## Custom models
 
-Override specific roles by passing a unified YAML path to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name -- use `nvidia` for build.nvidia.com, or a custom provider defined above.
+Override specific roles by passing a unified YAML path to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name from the custom providers defined above.
 
 ```yaml
 # my_models.yaml
