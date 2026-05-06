@@ -20,7 +20,7 @@ anonymizer = "anonymizer.interface.cli.main:main"
 [dependency-groups]
 dev = [
     "pre-commit>=4.0.0,<5",
-    "pytest>=8.0,<9",
+    "pytest>=9.0.3,<10",
     "pytest-cov>=7.0,<8",
     "ruff>=0.12.3,<1",
     "ty>=0.0.23,<0.1",
