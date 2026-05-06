@@ -207,33 +207,6 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
     assert COL_ENTITIES_BY_VALUE not in result.dataframe.columns
 
 
-def test_run_does_not_thread_pipeline_metadata_via_attrs(
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    """Regression guard: pipeline metadata lives on ``PipelineContext``, not ``df.attrs``."""
-    adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-            }
-        ),
-        failed_records=[],
-    )
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    result = workflow.run(
-        pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=False,
-        privacy_goal=None,
-    )
-    assert "original_text_column" not in result.dataframe.attrs
-
-
 def test_run_with_latent_detection_merges_failures_in_order(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,

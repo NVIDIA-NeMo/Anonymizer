@@ -219,23 +219,41 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
     assert result.resolved_text_column == "bio"
 
 
-def test_run_threads_original_text_column_via_context_not_df_attrs(
+def test_run_ignores_workflow_output_attrs_for_text_column_resolution(
     stub_anonymizer_config: AnonymizerConfig,
     tmp_path: Path,
 ) -> None:
-    """Regression guard: orchestrator must read the user's text column name
-    from :class:`PipelineContext`, not from workflow output ``df.attrs``.
+    """Behavioral guarantee: the orchestrator's text-column resolution comes
+    from :class:`ResolvedInput`, never from workflow output ``DataFrame.attrs``.
+
+    Construct workflow mocks whose returned dataframes carry deliberately
+    misleading ``attrs`` (a key that historical implementations might have
+    relied on). If the orchestrator silently consulted ``attrs`` it would
+    produce a column named ``WRONG_COL`` instead of ``bio``, and
+    ``display_record`` would fail to find the text. We assert the user-facing
+    dataframe and the display HTML both reflect the user's actual
+    ``text_column`` request.
     """
+    detection_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice bio text"],
+            COL_FINAL_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+        }
+    )
+    detection_df.attrs = {"resolved_text_column": "WRONG_COL", "requested_text_column": "WRONG_COL"}
     replace_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice bio text"],
             COL_REPLACED_TEXT: ["[REDACTED] bio text"],
             COL_TAGGED_TEXT: ["<first_name>Alice</first_name> bio text"],
-            COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}],
+            COL_REPLACEMENT_MAP: [{"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[REDACTED]"}]}],
         }
     )
-    assert "original_text_column" not in replace_df.attrs
+    replace_df.attrs = {"resolved_text_column": "WRONG_COL", "extra": "noise"}
+
     anonymizer, _, _, _ = _make_anonymizer(
+        detection_return=EntityDetectionResult(dataframe=detection_df, failed_records=[]),
         replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
     )
 
@@ -249,6 +267,20 @@ def test_run_threads_original_text_column_via_context_not_df_attrs(
     assert result.resolved_text_column == "bio"
     assert "bio" in result.dataframe.columns
     assert "bio_replaced" in result.dataframe.columns
+    assert "WRONG_COL" not in result.dataframe.columns
+    assert "WRONG_COL" not in result.trace_dataframe.columns
+
+    from anonymizer.interface.display import render_record_html
+
+    rendered = render_record_html(
+        result.trace_dataframe.iloc[0],
+        record_index=0,
+        resolved_text_column=result.resolved_text_column,
+    )
+    assert "Alice" in rendered
+    assert "bio text" in rendered
+    assert "[REDACTED]" in rendered
+    assert "WRONG_COL" not in rendered
 
 
 def test_run_with_colliding_internal_text_column_raises(

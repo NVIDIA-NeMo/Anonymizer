@@ -217,28 +217,6 @@ def test_passthrough_defaults_populated(
     assert df[COL_REPAIR_ITERATIONS].tolist() == [0, 0]
 
 
-def test_fast_path_does_not_thread_pipeline_metadata_via_attrs(
-    stub_model_configs: list[ModelConfig],
-    stub_rewrite_model_selection: RewriteModelSelection,
-    stub_replace_model_selection: ReplaceModelSelection,
-    stub_df_no_entities: pd.DataFrame,
-) -> None:
-    """Regression guard: pipeline metadata lives on ``PipelineContext``, not ``df.attrs``."""
-    adapter = Mock()
-    wf = RewriteWorkflow(adapter=adapter)
-
-    result = wf.run(
-        stub_df_no_entities,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=_EVALUATION,
-    )
-
-    assert "original_text_column" not in result.dataframe.attrs
-
-
 def test_has_entities_returns_true_when_present(stub_entities_by_value_with_entities: dict) -> None:
     from anonymizer.engine.rewrite.rewrite_workflow import _has_entities
 
@@ -338,40 +316,6 @@ def test_failed_records_accumulated_across_steps(
 
     record_ids = {f.record_id for f in result.failed_records}
     assert record_ids == {"a", "b", "c", "d"}
-
-
-# ---------------------------------------------------------------------------
-# Tests: attrs propagation
-# ---------------------------------------------------------------------------
-
-
-def test_full_pipeline_does_not_thread_pipeline_metadata_via_attrs(
-    stub_model_configs: list[ModelConfig],
-    stub_rewrite_model_selection: RewriteModelSelection,
-    stub_replace_model_selection: ReplaceModelSelection,
-    stub_df_with_entities: pd.DataFrame,
-    stub_replace_df: pd.DataFrame,
-    stub_pipeline_df: pd.DataFrame,
-    stub_eval_df: pd.DataFrame,
-    stub_judge_df: pd.DataFrame,
-) -> None:
-    """Regression guard: pipeline metadata lives on ``PipelineContext``, not ``df.attrs``."""
-    adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
-
-    with patch(_REPLACE_PATCH) as mock_replace_cls:
-        _mock_replace(mock_replace_cls, stub_replace_df)
-        wf = RewriteWorkflow(adapter=adapter)
-        result = wf.run(
-            stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
-        )
-
-    assert "original_text_column" not in result.dataframe.attrs
 
 
 # ---------------------------------------------------------------------------
