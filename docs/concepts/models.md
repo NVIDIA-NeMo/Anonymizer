@@ -31,35 +31,68 @@ Each pipeline stage has a **role** mapped to one of these aliases. See the full 
 
 ## Custom providers
 
-To use models from a different provider (OpenAI, OpenRouter, etc.), define a providers YAML:
+Use `model_providers` to define named API endpoints for hosted models such as OpenAI or OpenRouter.
 
-```yaml
-# my_providers.yaml
-providers:
-  - name: openai
-    base_url: https://api.openai.com/v1
-    api_key_env_var: OPENAI_API_KEY
-  - name: openrouter
-    base_url: https://openrouter.ai/api/v1
-    api_key_env_var: OPENROUTER_API_KEY
-```
-
-Make sure the environment variables are set:
+Set your API keys first:
 
 ```bash
+export NVIDIA_API_KEY="your-nvidia-api-key"  # Used by the nvidia provider (build.nvidia.com)
 export OPENAI_API_KEY="your-openai-api-key"
 export OPENROUTER_API_KEY="your-openrouter-api-key"
+
 ```
 
-```python
-anonymizer = Anonymizer(model_providers="my_providers.yaml")
-```
+=== "YAML"
+
+    Define providers in a YAML file and pass the path to `Anonymizer`.
+
+    ```yaml
+    providers:
+      - name: nvidia
+        endpoint: https://integrate.api.nvidia.com/v1
+      - name: openai
+        endpoint: https://api.openai.com/v1
+      - name: openrouter
+        endpoint: https://openrouter.ai/api/v1
+    ```
+
+    ```python
+    from anonymizer import Anonymizer
+
+    anonymizer = Anonymizer(model_providers="my_providers.yaml")
+    ```
+
+=== "Python"
+
+    Construct `ModelProvider` objects directly in code.
+
+    ```python
+    import os
+    from anonymizer import Anonymizer, ModelProvider
+
+    providers = [
+        ModelProvider(
+            name="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key=os.environ["OPENAI_API_KEY"],
+        ),
+        ModelProvider(
+            name="openrouter",
+            endpoint="https://openrouter.ai/api/v1",
+            api_key=os.environ["OPENROUTER_API_KEY"],
+        ),
+    ]
+
+    anonymizer = Anonymizer(model_providers=providers)
+    ```
+
+After defining providers, reference them from your model configs as described below.
 
 ---
 
 ## Custom models
 
-Override specific roles by passing a unified YAML path to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name -- use `nvidia` for build.nvidia.com, or a custom provider defined above.
+Override specific roles by passing a unified YAML path to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name from the custom providers defined above.
 
 ```yaml
 # my_models.yaml
@@ -96,7 +129,7 @@ model_configs:
 ```python
 anonymizer = Anonymizer(
     model_configs="my_models.yaml",
-    model_providers="my_providers.yaml",
+    model_providers=providers,  # or "my_providers.yaml"
 )
 ```
 
