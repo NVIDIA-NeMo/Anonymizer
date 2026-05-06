@@ -12,9 +12,10 @@ from anonymizer.interface.display import render_record_html
 
 
 class _DisplayMixin:
-    """Shared display_record behavior for result types."""
+    """Shared ``display_record`` behavior for result types."""
 
     trace_dataframe: pd.DataFrame
+    original_text_column: str
     _display_cycle_index: int
 
     def display_record(self, index: int | None = None) -> None:
@@ -28,8 +29,7 @@ class _DisplayMixin:
             raise IndexError(f"Record index {i} is out of bounds for {len(self.trace_dataframe)} records.")
 
         row = self.trace_dataframe.iloc[i]
-        original_text_column = str(self.trace_dataframe.attrs["original_text_column"])
-        html_str = render_record_html(row, record_index=i, original_text_column=original_text_column)
+        html_str = render_record_html(row, record_index=i, original_text_column=self.original_text_column)
 
         try:
             from IPython.display import HTML, display
@@ -49,11 +49,13 @@ class AnonymizerResult(_DisplayMixin):
     Attributes:
         dataframe: User-facing columns only (text, replaced/rewritten text, scores).
         trace_dataframe: Full pipeline trace including all internal columns.
+        original_text_column: Name of the user-facing text column.
         failed_records: Records that failed during pipeline processing.
     """
 
     dataframe: pd.DataFrame
     trace_dataframe: pd.DataFrame
+    original_text_column: str
     failed_records: list[FailedRecord]
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
@@ -75,12 +77,14 @@ class PreviewResult(_DisplayMixin):
     Attributes:
         dataframe: User-facing columns only (text, replaced/rewritten text, scores).
         trace_dataframe: Full pipeline trace including all internal columns.
+        original_text_column: Name of the user-facing text column.
         failed_records: Records that failed during pipeline processing.
         preview_num_records: Number of records requested for the preview.
     """
 
     dataframe: pd.DataFrame
     trace_dataframe: pd.DataFrame
+    original_text_column: str
     failed_records: list[FailedRecord]
     preview_num_records: int
     _display_cycle_index: int = field(default=0, init=False, repr=False)

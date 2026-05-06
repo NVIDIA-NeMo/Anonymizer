@@ -19,6 +19,7 @@ def test_anonymizer_result_repr_is_compact() -> None:
                 COL_DETECTED_ENTITIES: [[]],
             }
         ),
+        original_text_column="bio",
         failed_records=[],
     )
     rendered = repr(result)
@@ -41,6 +42,7 @@ def test_preview_result_repr_is_compact() -> None:
                 COL_DETECTED_ENTITIES: [[]],
             }
         ),
+        original_text_column="bio",
         failed_records=[],
         preview_num_records=10,
     )

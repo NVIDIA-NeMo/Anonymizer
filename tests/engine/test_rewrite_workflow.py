@@ -217,13 +217,13 @@ def test_passthrough_defaults_populated(
     assert df[COL_REPAIR_ITERATIONS].tolist() == [0, 0]
 
 
-def test_attrs_propagated_on_fast_path(
+def test_fast_path_does_not_thread_pipeline_metadata_via_attrs(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
     stub_df_no_entities: pd.DataFrame,
 ) -> None:
-    stub_df_no_entities.attrs["original_text_column"] = "bio"
+    """Regression guard: pipeline metadata lives on ``PipelineContext``, not ``df.attrs``."""
     adapter = Mock()
     wf = RewriteWorkflow(adapter=adapter)
 
@@ -236,7 +236,7 @@ def test_attrs_propagated_on_fast_path(
         evaluation=_EVALUATION,
     )
 
-    assert result.dataframe.attrs.get("original_text_column") == "bio"
+    assert "original_text_column" not in result.dataframe.attrs
 
 
 def test_has_entities_returns_true_when_present(stub_entities_by_value_with_entities: dict) -> None:
@@ -345,7 +345,7 @@ def test_failed_records_accumulated_across_steps(
 # ---------------------------------------------------------------------------
 
 
-def test_attrs_propagated_to_final_output(
+def test_full_pipeline_does_not_thread_pipeline_metadata_via_attrs(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
@@ -355,7 +355,7 @@ def test_attrs_propagated_to_final_output(
     stub_eval_df: pd.DataFrame,
     stub_judge_df: pd.DataFrame,
 ) -> None:
-    stub_df_with_entities.attrs["original_text_column"] = "bio"
+    """Regression guard: pipeline metadata lives on ``PipelineContext``, not ``df.attrs``."""
     adapter = Mock()
     adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
 
@@ -371,7 +371,7 @@ def test_attrs_propagated_to_final_output(
             evaluation=_EVALUATION,
         )
 
-    assert result.dataframe.attrs.get("original_text_column") == "bio"
+    assert "original_text_column" not in result.dataframe.attrs
 
 
 # ---------------------------------------------------------------------------
