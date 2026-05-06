@@ -20,10 +20,8 @@ from anonymizer.engine.constants import (
     COL_LEAKED_PRIVACY_ITEMS,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
-    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
-    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
@@ -31,14 +29,10 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
-    field,
-    normalize_payload,
     parse_privacy_answers,
     parse_privacy_qa,
-    parse_sensitivity_disposition,
 )
 from anonymizer.engine.schemas.rewrite import (
-    EntityDispositionSchema,
     PrivacyAnswer,
     PrivacyAnswerItemSchema,
     PrivacyQAPairsSchema,
@@ -46,24 +40,6 @@ from anonymizer.engine.schemas.rewrite import (
 )
 
 logger = logging.getLogger("anonymizer.rewrite.repair")
-
-
-_F_NEEDS_PROTECTION = field(EntityDispositionSchema, "needs_protection")
-_F_ENTITY_LABEL = field(EntityDispositionSchema, "entity_label")
-_F_ENTITY_VALUE = field(EntityDispositionSchema, "entity_value")
-_F_PROTECTION_METHOD = field(EntityDispositionSchema, "protection_method_suggestion")
-_F_PROTECTION_REASON = field(EntityDispositionSchema, "protection_reason")
-
-
-def _replacement_map_is_empty(raw_map: Any) -> bool:
-    """Return True when the replacement map is absent or has no replacements."""
-    normalized = normalize_payload(raw_map)
-    if normalized is None:
-        return True
-    if not isinstance(normalized, dict):
-        return False
-    replacements = normalized.get("replacements")
-    return isinstance(replacements, list) and len(replacements) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -92,47 +68,25 @@ def _leaked_items_text(
         if answer.answer == PrivacyAnswer.yes:
             item = qa_lookup.get(answer.id)
             if item:
+                evidence_str = ""
+                if answer.evidence:
+                    quoted = "; ".join(f'"{e}"' for e in answer.evidence)
+                    evidence_str = f"\n  Evidence: {quoted}"
                 lines.append(
                     f'- [{item.sensitivity.upper()}] {item.entity_label}: "{item.entity_value}" -- {item.question} '
                     f"(confidence_leakage_occurred: {answer.confidence:.2f}; reason: {answer.reason})"
+                    f"{evidence_str}"
                 )
-    return "\n".join(lines)
-
-
-def _format_protection_block(row: dict[str, Any]) -> str:
-    """Format the protection decisions section of the repair prompt."""
-    disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
-    lines = [
-        f'- {e.entity_label}: "{e.entity_value}" -> {e.protection_method_suggestion}\n  Reason: {e.protection_reason}'
-        for e in disposition.sensitivity_disposition
-        if e.needs_protection
-    ]
     return "\n".join(lines)
 
 
 def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
     """Build the repair prompt from row values (no Jinja2)."""
-    disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
-    has_replace_entities = any(
-        e.protection_method_suggestion == "replace" and e.needs_protection for e in disposition.sensitivity_disposition
-    )
-    raw_map = row.get(COL_REPLACEMENT_MAP_FOR_PROMPT)
-    map_is_empty = _replacement_map_is_empty(raw_map)
-    if has_replace_entities and map_is_empty:
-        logger.warning(
-            "Repair prompt has entities requiring replacement but COL_REPLACEMENT_MAP_FOR_PROMPT is empty; "
-            "the LLM will have no synthetic values to use."
-        )
-
     prompt = """You are helping to rewrite text for privacy protection.
 
 <privacy_goal>
 <<PRIVACY_GOAL>>
 </privacy_goal>
-
-<protection_decisions>
-<<PROTECTION_BLOCK>>
-</protection_decisions>
 
 <original_text>
 <<ORIGINAL_TEXT>>
@@ -142,41 +96,80 @@ def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
 <<REWRITTEN_TEXT>>
 </previous_rewrite>
 
-<replacement_map>
-<<REPLACEMENT_MAP>>
-</replacement_map>
-
 <privacy_issues>
 The following questions about sensitive information can still be answered from the rewrite.
 Leakage mass: <<LEAKAGE_MASS>> (target: < <<MAX_PRIVACY_LEAK>>)<<HIGH_WARN>>
 <<LEAKED_ITEMS>>
 </privacy_issues>
 
+<adversarial_goal>
+Assume a motivated reader is actively trying to infer these attributes.
+Your rewrite is successful ONLY if the attribute can no longer be reliably inferred.
+</adversarial_goal>
+
+<inference_rules>
+To prevent inference, you MUST remove or weaken all evidence enabling it.
+
+Use one or more of the following:
+- Generalize or remove specific details
+- Break combinations of clues (not just individual phrases)
+- Replace concrete descriptions with vague or abstract ones
+- Introduce ambiguity so multiple interpretations are plausible
+- Replace implication-causing statements with alternative explanations that do NOT uniquely support the attribute
+- Remove or rewrite statements that imply a condition through patterns or context
+- Disrupt causal or narrative chains that lead to inference
+
+If multiple clues point to the same attribute, you MUST break the combination.
+</inference_rules>
+
+<critical_warnings>
+- DO NOT simply rephrase the same evidence
+- DO NOT preserve combinations of clues that reveal the attribute
+- If a reasonable reader can still guess the attribute, it is NOT fixed
+</critical_warnings>
+
+<success_criteria>
+A privacy issue is FIXED only if:
+- A reasonable reader cannot confidently infer the attribute
+- Multiple plausible interpretations exist
+- The original inference is no longer the most likely explanation
+
+If the attribute is still the most natural conclusion, the issue is NOT fixed.
+</success_criteria>
+
 <task>
-Fix the privacy leaks by following the protection decisions above:
-1. For "replace" - use synthetic values from the replacement map
-2. For "generalize" - use broader categories
-3. For "remove" - omit the detail entirely
-4. For "suppress_inference" - modify text so the attribute cannot be reliably inferred
+Fix the privacy leaks by suppressing inference.
 
-If privacy issues remain, you may override earlier "leave_as_is" decisions when needed to satisfy privacy goals.
-You may modify surrounding context beyond the explicit entity span to break inferential leakage.
-Modify the text such that latent attributes cannot be reliably inferred by a motivated reader.
-This may involve reducing specificity, removing or weakening key details, breaking causal or identifying linkages,
-or introducing ambiguity, while preserving overall narrative coherence.
+Before rewriting, internally identify all leakage patterns and how they arise (phrases, combinations, narrative implications). Use this to guide your rewrite. Do NOT output this analysis.
 
-Maintain content quality (utility score: <<UTILITY_SCORE>>), consistency, and naturalness.
+You MUST do the following for EACH leaked item:
+- Identify all phrases, clues, and narrative patterns enabling the inference
+- Remove, weaken, or rewrite them so the attribute is no longer the most likely conclusion
+- Break combinations of clues, not just individual phrases
 
-Provide ONLY the rewritten text. Do not include explanations, comments, or markdown formatting.
+Requirements:
+- Rewrite as much as needed; do not preserve partially leaking sentences
+- Any phrase or pattern contributing to a leaked attribute MUST be modified or removed
+- Even subtle or indirect contributors MUST be neutralized
+- Treat common life-pattern signals (e.g., routine, schedule, aging, daily activities) as leakage ONLY when they contribute
+- Fix shared patterns across multiple leaks
+- Do not alter content that does not contribute to leakage
+- Ensure multiple plausible interpretations remain
+
+Before finalizing:
+- Ask: "What would a motivated reader guess?"
+- If the leaked attribute is still the most likely guess, revise again
+
+Maintain overall coherence, consistency, and naturalness (utility score: <<UTILITY_SCORE>>).
+
+Provide ONLY the rewritten text.
 </task>
 """
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
-        "<<PROTECTION_BLOCK>>": _format_protection_block(row),
         "<<ORIGINAL_TEXT>>": str(row.get(COL_TEXT, "")),
         "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
-        "<<REPLACEMENT_MAP>>": str(row.get(COL_REPLACEMENT_MAP_FOR_PROMPT, "")),
         "<<LEAKAGE_MASS>>": str(row.get(COL_LEAKAGE_MASS, 0.0)),
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
         if bool(row.get(COL_ANY_HIGH_LEAKED, False))
@@ -208,9 +201,7 @@ def _make_repair_column(repairer_alias: str) -> Any:
         required_columns=[
             COL_LEAKED_PRIVACY_ITEMS,
             COL_REWRITTEN_TEXT,
-            COL_SENSITIVITY_DISPOSITION,
             COL_TEXT,
-            COL_REPLACEMENT_MAP_FOR_PROMPT,
             COL_LEAKAGE_MASS,
             COL_ANY_HIGH_LEAKED,
             COL_UTILITY_SCORE,
