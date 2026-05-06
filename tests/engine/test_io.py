@@ -79,7 +79,8 @@ def test_read_input_from_remote_csv_url(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(pd, "read_csv", _read_csv)
     result = read_input(AnonymizerInput(source=source))
     assert result.dataframe[COL_TEXT].tolist() == ["Alice works at Acme"]
-    assert result.original_text_column == "text"
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_read_input_from_remote_parquet_url_with_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,7 +94,8 @@ def test_read_input_from_remote_parquet_url_with_query_params(monkeypatch: pytes
     monkeypatch.setattr(pd, "read_parquet", _read_parquet)
     result = read_input(AnonymizerInput(source=source))
     assert result.dataframe[COL_TEXT].tolist() == ["Alice works at Acme"]
-    assert result.original_text_column == "text"
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_read_input_from_remote_csv_url_with_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,7 +109,8 @@ def test_read_input_from_remote_csv_url_with_fragment(monkeypatch: pytest.Monkey
     monkeypatch.setattr(pd, "read_csv", _read_csv)
     result = read_input(AnonymizerInput(source=source))
     assert result.dataframe[COL_TEXT].tolist() == ["Alice works at Acme"]
-    assert result.original_text_column == "text"
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_read_input_remote_url_with_unsupported_format_raises() -> None:
@@ -120,7 +123,8 @@ def test_read_input_renames_text_column(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"content": ["hello world"]}), tmp_path, text_column="content")
     result = read_input(inp)
     assert COL_TEXT in result.dataframe.columns
-    assert result.original_text_column == "content"
+    assert result.requested_text_column == "content"
+    assert result.resolved_text_column == "content"
 
 
 def test_read_input_missing_text_column_raises(tmp_path: Path) -> None:
@@ -187,8 +191,9 @@ def test_read_input_text_column_equal_to_static_output_renames_with_warning(
 ) -> None:
     """Selecting a text column whose name matches a fixed output column is treated
     like any other collision: the input column is renamed with the ``__input``
-    suffix and ``original_text_column`` reflects the renamed identifier so the
+    suffix and ``resolved_text_column`` reflects the renamed identifier so the
     end-of-pipeline rename does not clash with the pipeline's own output column.
+    ``requested_text_column`` retains the user's original request.
     """
     inp = _write_input(
         pd.DataFrame({static_column: ["hello"]}),
@@ -200,7 +205,8 @@ def test_read_input_text_column_equal_to_static_output_renames_with_warning(
     assert COL_TEXT in result.dataframe.columns
     assert static_column not in result.dataframe.columns
     renamed = f"{static_column}__input"
-    assert result.original_text_column == renamed
+    assert result.requested_text_column == static_column
+    assert result.resolved_text_column == renamed
     assert list(result.dataframe.columns).count(COL_TEXT) == 1
     assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
 
@@ -225,7 +231,8 @@ def test_read_input_text_column_is_static_plus_other_static_collision(
     )
     with caplog.at_level("WARNING", logger="anonymizer"):
         result = read_input(inp)
-    assert result.original_text_column == "final_entities__input"
+    assert result.requested_text_column == "final_entities"
+    assert result.resolved_text_column == "final_entities__input"
     assert {"utility_score__input", "needs_human_review__input"}.issubset(result.dataframe.columns)
     assert "final_entities" not in result.dataframe.columns
     assert "utility_score" not in result.dataframe.columns
@@ -300,7 +307,8 @@ def test_read_input_unsupported_format_raises(tmp_path: Path) -> None:
 def test_read_input_preserves_text_attr_when_column_exists(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": ["hello"]}), tmp_path)
     result = read_input(inp)
-    assert result.original_text_column == "text"
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_anonymizer_input_missing_path_raises_validation_error(tmp_path: Path) -> None:
@@ -393,7 +401,8 @@ def test_read_input_nrows_preserves_context(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"bio": [f"row {i}" for i in range(10)]}), tmp_path, text_column="bio")
     result = read_input(inp, nrows=3)
     assert len(result.dataframe) == 3
-    assert result.original_text_column == "bio"
+    assert result.requested_text_column == "bio"
+    assert result.resolved_text_column == "bio"
     assert COL_TEXT in result.dataframe.columns
 
 

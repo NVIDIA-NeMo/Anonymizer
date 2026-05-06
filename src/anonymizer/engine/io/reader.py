@@ -20,14 +20,14 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
-from anonymizer.engine.pipeline_context import PipelineContext
+from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
 logger = logging.getLogger("anonymizer")
 
 
-def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> PipelineContext:
-    """Load input into a :class:`PipelineContext` with the canonical internal text column.
+def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> ResolvedInput:
+    """Load input into a :class:`ResolvedInput` with the canonical internal text column.
 
     Args:
         input_data: Input source definition.
@@ -39,7 +39,7 @@ def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> Pipe
         raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
     _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
     resolved = _resolve_output_column_collisions(dataframe, selected_text_column=selected_text_column)
-    renamed = resolved.dataframe.rename(columns={resolved.original_text_column: COL_TEXT})
+    renamed = resolved.dataframe.rename(columns={resolved.resolved_text_column: COL_TEXT})
     return resolved.with_dataframe(renamed)
 
 
@@ -72,7 +72,7 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
         )
 
 
-def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_column: str) -> PipelineContext:
+def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_column: str) -> ResolvedInput:
     """Rename input columns whose names collide with Anonymizer output columns.
 
     The pipeline writes a known set of output columns derived from the text
@@ -86,7 +86,8 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
 
     If the selected text column itself collides with a fixed output name (e.g.
     ``text_column='final_entities'``) it is renamed the same way; the returned
-    context's ``original_text_column`` reflects the non-colliding identifier.
+    ``ResolvedInput.resolved_text_column`` reflects the non-colliding
+    identifier while ``requested_text_column`` retains what the user asked for.
     """
     candidate_output_columns: list[str] = [f"{selected_text_column}{suffix}" for suffix in _OUTPUT_COLUMN_SUFFIXES]
     candidate_output_columns.extend(_STATIC_OUTPUT_COLUMNS)
@@ -94,7 +95,11 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
     existing_columns: set[str] = set(dataframe.columns)
     collisions: list[str] = [name for name in candidate_output_columns if name in existing_columns]
     if not collisions:
-        return PipelineContext(dataframe=dataframe, original_text_column=selected_text_column)
+        return ResolvedInput(
+            dataframe=dataframe,
+            requested_text_column=selected_text_column,
+            resolved_text_column=selected_text_column,
+        )
 
     rename_map: dict[str, str] = {}
     for original_name in collisions:
@@ -108,9 +113,10 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
         "Update your input schema to remove this warning.",
         formatted,
     )
-    return PipelineContext(
+    return ResolvedInput(
         dataframe=dataframe.rename(columns=rename_map),
-        original_text_column=rename_map.get(selected_text_column, selected_text_column),
+        requested_text_column=selected_text_column,
+        resolved_text_column=rename_map.get(selected_text_column, selected_text_column),
     )
 
 

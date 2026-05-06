@@ -36,8 +36,8 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkfl
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
-from anonymizer.engine.pipeline_context import PipelineContext
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
@@ -164,7 +164,7 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput,
-        context: PipelineContext,
+        context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
         input_df = context.dataframe
@@ -287,7 +287,7 @@ class Anonymizer:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
-        text_col = context.original_text_column
+        text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, original_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         return AnonymizerResult(
