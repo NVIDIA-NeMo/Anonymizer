@@ -216,7 +216,7 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
     assert "replaced_text" not in result.dataframe.columns
     assert result.dataframe["bio"].iloc[0] == "Alice bio text"
     assert result.dataframe["bio_replaced"].iloc[0] == "[REDACTED] bio text"
-    assert result.original_text_column == "bio"
+    assert result.resolved_text_column == "bio"
 
 
 def test_run_threads_original_text_column_via_context_not_df_attrs(
@@ -246,7 +246,7 @@ def test_run_threads_original_text_column_via_context_not_df_attrs(
         data=AnonymizerInput(source=str(input_csv), text_column="bio"),
     )
 
-    assert result.original_text_column == "bio"
+    assert result.resolved_text_column == "bio"
     assert "bio" in result.dataframe.columns
     assert "bio_replaced" in result.dataframe.columns
 

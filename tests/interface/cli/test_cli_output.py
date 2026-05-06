@@ -23,7 +23,7 @@ def _make_result(num_rows: int = 2, num_failures: int = 0) -> AnonymizerResult:
     return AnonymizerResult(
         dataframe=df,
         trace_dataframe=df.copy(),
-        original_text_column="bio",
+        resolved_text_column="bio",
         failed_records=failures,
     )
 
@@ -137,7 +137,7 @@ def test_preview_prints_dataframe(tmp_path: Path, capsys: pytest.CaptureFixture,
     preview_result = PreviewResult(
         dataframe=result.dataframe,
         trace_dataframe=result.trace_dataframe,
-        original_text_column="bio",
+        resolved_text_column="bio",
         failed_records=[],
         preview_num_records=2,
     )

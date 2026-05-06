@@ -229,7 +229,7 @@ def _make_preview(rows: int = 2) -> PreviewResult:
     return PreviewResult(
         dataframe=df,
         trace_dataframe=df,
-        original_text_column="text",
+        resolved_text_column="text",
         failed_records=[],
         preview_num_records=rows,
     )

@@ -150,7 +150,7 @@ class Anonymizer:
         return PreviewResult(
             dataframe=result.dataframe,
             trace_dataframe=result.trace_dataframe,
-            original_text_column=result.original_text_column,
+            resolved_text_column=result.resolved_text_column,
             failed_records=result.failed_records,
             preview_num_records=num_records,
         )
@@ -288,12 +288,12 @@ class Anonymizer:
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         text_col = context.resolved_text_column
-        renamed_trace = _rename_output_columns(final_df, original_text_column=text_col)
+        renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace, original_text_column=text_col),
+            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
             trace_dataframe=renamed_trace,
-            original_text_column=text_col,
+            resolved_text_column=text_col,
             failed_records=all_failures,
         )
 
@@ -366,23 +366,23 @@ def _resolve_model_providers(
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
 
-def _rename_output_columns(df: pd.DataFrame, *, original_text_column: str) -> pd.DataFrame:
+def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Rename internal column names to user-facing names."""
     rename_map: dict[str, str] = {}
     if COL_TEXT in df.columns:
-        rename_map[COL_TEXT] = original_text_column
+        rename_map[COL_TEXT] = resolved_text_column
     if COL_REPLACED_TEXT in df.columns:
-        rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
+        rename_map[COL_REPLACED_TEXT] = f"{resolved_text_column}_replaced"
     if COL_TAGGED_TEXT in df.columns:
-        rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
+        rename_map[COL_TAGGED_TEXT] = f"{resolved_text_column}_with_spans"
     if COL_REWRITTEN_TEXT in df.columns:
-        rename_map[COL_REWRITTEN_TEXT] = f"{original_text_column}_rewritten"
+        rename_map[COL_REWRITTEN_TEXT] = f"{resolved_text_column}_rewritten"
     if not rename_map:
         return df
     return df.rename(columns=rename_map)
 
 
-def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, original_text_column: str) -> pd.DataFrame:
+def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities
@@ -391,7 +391,7 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, original_text_column
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
     """
     t = trace_dataframe
-    text_col = original_text_column
+    text_col = resolved_text_column
 
     if f"{text_col}_rewritten" in t.columns:
         allowed = {
