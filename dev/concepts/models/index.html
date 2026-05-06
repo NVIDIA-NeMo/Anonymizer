@@ -1682,22 +1682,53 @@
 <p>Each pipeline stage has a <strong>role</strong> mapped to one of these aliases. See the full role list in the default configs: <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml"><code>detection.yaml</code></a>, <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml"><code>replace.yaml</code></a>, <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml"><code>rewrite.yaml</code></a>.</p>
 <hr />
 <h2 id="custom-providers">Custom providers<a class="headerlink" href="#custom-providers" title="Permanent link">&para;</a></h2>
-<p>To use models from a different provider (OpenAI, OpenRouter, etc.), define a providers YAML:</p>
-<pre class="highlight"><code class="language-yaml"># my_providers.yaml
-providers:
+<p>Use <code>model_providers</code> to define named API endpoints for hosted models such as OpenAI or OpenRouter.</p>
+<p>Set your API keys first:</p>
+<pre class="highlight"><code class="language-bash">export NVIDIA_API_KEY="your-nvidia-api-key"  # Used by the nvidia provider (build.nvidia.com)
+export OPENAI_API_KEY="your-openai-api-key"
+export OPENROUTER_API_KEY="your-openrouter-api-key"
+</code></pre>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">YAML</label><label for="__tabbed_1_2">Python</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>Define providers in a YAML file and pass the path to <code>Anonymizer</code>.</p>
+<pre class="highlight"><code class="language-yaml">providers:
+  - name: nvidia
+    endpoint: https://integrate.api.nvidia.com/v1
   - name: openai
-    base_url: https://api.openai.com/v1
-    api_key_env_var: OPENAI_API_KEY
+    endpoint: https://api.openai.com/v1
   - name: openrouter
-    base_url: https://openrouter.ai/api/v1
-    api_key_env_var: OPENROUTER_API_KEY</code></pre>
-<p>Make sure the environment variables are set:</p>
-<pre class="highlight"><code class="language-bash">export OPENAI_API_KEY="your-openai-api-key"
-export OPENROUTER_API_KEY="your-openrouter-api-key"</code></pre>
-<pre class="highlight"><code class="language-python">anonymizer = Anonymizer(model_providers="my_providers.yaml")</code></pre>
+    endpoint: https://openrouter.ai/api/v1</code></pre>
+<pre class="highlight"><code class="language-python">from anonymizer import Anonymizer
+
+anonymizer = Anonymizer(model_providers="my_providers.yaml")</code></pre>
+</div>
+<div class="tabbed-block">
+<p>Construct <code>ModelProvider</code> objects directly in code.</p>
+<pre class="highlight"><code class="language-python">import os
+from anonymizer import Anonymizer, ModelProvider
+
+providers = [
+    ModelProvider(
+        name="openai",
+        endpoint="https://api.openai.com/v1",
+        api_key=os.environ["OPENAI_API_KEY"],
+    ),
+    ModelProvider(
+        name="openrouter",
+        endpoint="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+    ),
+]
+
+anonymizer = Anonymizer(model_providers=providers)</code></pre>
+</div>
+</div>
+</div>
+<p>After defining providers, reference them from your model configs as described below.</p>
 <hr />
 <h2 id="custom-models">Custom models<a class="headerlink" href="#custom-models" title="Permanent link">&para;</a></h2>
-<p>Override specific roles by passing a unified YAML path to <code>Anonymizer(model_configs=...)</code>. The <code>provider</code> field references a provider by name -- use <code>nvidia</code> for build.nvidia.com, or a custom provider defined above.</p>
+<p>Override specific roles by passing a unified YAML path to <code>Anonymizer(model_configs=...)</code>. The <code>provider</code> field references a provider by name from the custom providers defined above.</p>
 <pre class="highlight"><code class="language-yaml"># my_models.yaml
 selected_models:
   detection:
@@ -1729,7 +1760,7 @@ model_configs:
       temperature: 0.3</code></pre>
 <pre class="highlight"><code class="language-python">anonymizer = Anonymizer(
     model_configs="my_models.yaml",
-    model_providers="my_providers.yaml",
+    model_providers=providers,  # or "my_providers.yaml"
 )</code></pre>
 <p>You can pass <code>model_configs</code> as either a YAML file path or a YAML string.</p>
 <p>Roles you don't override keep their default alias selections, but those aliases must still exist in your <code>model_configs</code> pool.</p>
