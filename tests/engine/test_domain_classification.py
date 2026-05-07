@@ -97,7 +97,7 @@ def test_domain_classification_prompt_omits_data_context_when_none() -> None:
 
 
 def test_domain_metadata_covers_every_domain_exactly_once() -> None:
-    """Backstop for the module-level _validate_domain_coverage guard: every Domain has
+    """Backstop for the module-level ``_build_domain_index`` guard: every Domain has
     exactly one DomainMetadata entry, so rewrite/privacy/classification
     lookups can never drift from the enum."""
     assert {m.domain for m in DOMAIN_METADATA} == set(Domain)
@@ -107,3 +107,24 @@ def test_domain_metadata_covers_every_domain_exactly_once() -> None:
         assert meta.classification_description
         assert meta.rewrite_supplement
         assert meta.privacy_supplement
+
+
+def test_domain_metadata_defaults_privacy_supplement_to_rewrite() -> None:
+    meta = DomainMetadata(
+        domain=Domain.BIOGRAPHY,
+        classification_description="desc",
+        rewrite_supplement="rewrite",
+    )
+
+    assert meta.privacy_supplement == "rewrite"
+
+
+def test_domain_metadata_preserves_explicit_privacy_supplement() -> None:
+    meta = DomainMetadata(
+        domain=Domain.LEGAL,
+        classification_description="desc",
+        rewrite_supplement="rewrite",
+        privacy_supplement="privacy",
+    )
+
+    assert meta.privacy_supplement == "privacy"
