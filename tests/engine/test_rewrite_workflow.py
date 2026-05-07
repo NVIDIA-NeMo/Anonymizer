@@ -101,7 +101,7 @@ def stub_df_mixed(stub_entities_by_value_with_entities: dict) -> pd.DataFrame:
 @pytest.fixture
 def stub_pre_gen_df(stub_df_with_entities: pd.DataFrame) -> pd.DataFrame:
     df = stub_df_with_entities.copy()
-    df[COL_DOMAIN] = "BIOGRAPHY"
+    df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     df["_anonymizer_row_order"] = [0]
     df[RECORD_ID_COLUMN] = ["rec-0"]
     return df
@@ -424,7 +424,7 @@ def test_judge_partial_row_loss_preserves_all_rows(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
     pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
 
@@ -518,7 +518,7 @@ def test_repair_loop_runs_up_to_max_iterations(
     max_iters = 2
 
     pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0]
 
     rewrite_gen_df = pre_gen_df.copy()
@@ -586,7 +586,7 @@ def test_only_failing_rows_sent_to_repair(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
 
     rewrite_gen_df = pre_gen_df.copy()
@@ -657,7 +657,7 @@ def test_repair_iterations_tracked_per_row(
     adapter = Mock()
 
     pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0]
 
     rewrite_gen_df = pre_gen_df.copy()
@@ -757,7 +757,7 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
     pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
 
@@ -815,7 +815,7 @@ def test_repair_dropping_rows_degrades_gracefully(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
     pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
 
@@ -898,7 +898,7 @@ def test_passthrough_rows_get_defaults(
     ].copy()
 
     pre_gen_df = entity_df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0]
 
     rewrite_gen_df = pre_gen_df.copy()

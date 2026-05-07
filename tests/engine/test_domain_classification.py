@@ -18,6 +18,7 @@ from anonymizer.engine.rewrite.domain_classification import (
     DOMAIN_METADATA,
     DomainClassificationWorkflow,
     DomainMetadata,
+    _build_domain_index,
     _enrich_domain,
     _enrich_domain_privacy,
     _get_domain_classification_prompt,
@@ -40,14 +41,14 @@ def test_columns_returns_exactly_three_in_order(
 
 
 def test_enrich_domain_populates_supplement_for_known_domain() -> None:
-    result = _enrich_domain({COL_DOMAIN: {"domain": Domain.BIOGRAPHY, "domain_confidence": 0.9}})
-    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].quality_supplement
+    result = _enrich_domain({COL_DOMAIN: {"domain": Domain.BIOGRAPHY_PROFILE, "domain_confidence": 0.9}})
+    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY_PROFILE].quality_supplement
 
 
 def test_enrich_domain_accepts_schema_instance() -> None:
-    domain_obj = DomainClassificationSchema(domain=Domain.BIOGRAPHY, domain_confidence=0.9)
+    domain_obj = DomainClassificationSchema(domain=Domain.BIOGRAPHY_PROFILE, domain_confidence=0.9)
     result = _enrich_domain({COL_DOMAIN: domain_obj})
-    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].quality_supplement
+    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY_PROFILE].quality_supplement
 
 
 def test_enrich_domain_requires_domain_column() -> None:
@@ -60,14 +61,14 @@ def test_enrich_domain_requires_domain_column() -> None:
 
 
 def test_enrich_domain_privacy_populates_supplement_for_known_domain() -> None:
-    result = _enrich_domain_privacy({COL_DOMAIN: {"domain": Domain.BIOGRAPHY, "domain_confidence": 0.9}})
-    assert result[COL_DOMAIN_SUPPLEMENT_PRIVACY] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].privacy_supplement
+    result = _enrich_domain_privacy({COL_DOMAIN: {"domain": Domain.BIOGRAPHY_PROFILE, "domain_confidence": 0.9}})
+    assert result[COL_DOMAIN_SUPPLEMENT_PRIVACY] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY_PROFILE].privacy_supplement
 
 
 def test_enrich_domain_privacy_accepts_schema_instance() -> None:
-    domain_obj = DomainClassificationSchema(domain=Domain.BIOGRAPHY, domain_confidence=0.9)
+    domain_obj = DomainClassificationSchema(domain=Domain.BIOGRAPHY_PROFILE, domain_confidence=0.9)
     result = _enrich_domain_privacy({COL_DOMAIN: domain_obj})
-    assert result[COL_DOMAIN_SUPPLEMENT_PRIVACY] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].privacy_supplement
+    assert result[COL_DOMAIN_SUPPLEMENT_PRIVACY] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY_PROFILE].privacy_supplement
 
 
 def test_enrich_domain_privacy_requires_domain_column() -> None:
@@ -111,7 +112,7 @@ def test_domain_metadata_covers_every_domain_exactly_once() -> None:
 
 def test_domain_metadata_defaults_privacy_supplement_to_quality() -> None:
     meta = DomainMetadata(
-        domain=Domain.BIOGRAPHY,
+        domain=Domain.BIOGRAPHY_PROFILE,
         classification_description="desc",
         quality_supplement="quality",
     )
@@ -128,3 +129,42 @@ def test_domain_metadata_preserves_explicit_privacy_supplement() -> None:
     )
 
     assert meta.privacy_supplement == "privacy"
+
+
+def test_build_domain_index_raises_on_duplicate_entries() -> None:
+    metadata = (
+        DomainMetadata(
+            domain=Domain.OTHER,
+            classification_description="first",
+            quality_supplement="first",
+        ),
+        DomainMetadata(
+            domain=Domain.OTHER,
+            classification_description="second",
+            quality_supplement="second",
+        ),
+    )
+
+    try:
+        _build_domain_index(metadata)
+    except RuntimeError as exc:
+        assert "duplicate entry" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError when DOMAIN_METADATA contains duplicate entries")
+
+
+def test_build_domain_index_raises_on_missing_domain_coverage() -> None:
+    metadata = (
+        DomainMetadata(
+            domain=Domain.OTHER,
+            classification_description="only one",
+            quality_supplement="only one",
+        ),
+    )
+
+    try:
+        _build_domain_index(metadata)
+    except RuntimeError as exc:
+        assert "missing entries for Domain values" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError when DOMAIN_METADATA is missing domain coverage")
