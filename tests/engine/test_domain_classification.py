@@ -41,13 +41,13 @@ def test_columns_returns_exactly_three_in_order(
 
 def test_enrich_domain_populates_supplement_for_known_domain() -> None:
     result = _enrich_domain({COL_DOMAIN: {"domain": Domain.BIOGRAPHY, "domain_confidence": 0.9}})
-    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].rewrite_supplement
+    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].quality_supplement
 
 
 def test_enrich_domain_accepts_schema_instance() -> None:
     domain_obj = DomainClassificationSchema(domain=Domain.BIOGRAPHY, domain_confidence=0.9)
     result = _enrich_domain({COL_DOMAIN: domain_obj})
-    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].rewrite_supplement
+    assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY].quality_supplement
 
 
 def test_enrich_domain_requires_domain_column() -> None:
@@ -105,25 +105,25 @@ def test_domain_metadata_covers_every_domain_exactly_once() -> None:
     for meta in DOMAIN_METADATA:
         assert isinstance(meta, DomainMetadata)
         assert meta.classification_description
-        assert meta.rewrite_supplement
+        assert meta.quality_supplement
         assert meta.privacy_supplement
 
 
-def test_domain_metadata_defaults_privacy_supplement_to_rewrite() -> None:
+def test_domain_metadata_defaults_privacy_supplement_to_quality() -> None:
     meta = DomainMetadata(
         domain=Domain.BIOGRAPHY,
         classification_description="desc",
-        rewrite_supplement="rewrite",
+        quality_supplement="quality",
     )
 
-    assert meta.privacy_supplement == "rewrite"
+    assert meta.privacy_supplement == "quality"
 
 
 def test_domain_metadata_preserves_explicit_privacy_supplement() -> None:
     meta = DomainMetadata(
         domain=Domain.LEGAL,
         classification_description="desc",
-        rewrite_supplement="rewrite",
+        quality_supplement="quality",
         privacy_supplement="privacy",
     )
 
