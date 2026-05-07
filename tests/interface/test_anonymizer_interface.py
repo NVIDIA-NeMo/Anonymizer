@@ -246,8 +246,12 @@ def test_run_ignores_workflow_output_attrs_for_text_column_resolution(
             COL_TEXT: ["Alice bio text"],
             COL_REPLACED_TEXT: ["[REDACTED] bio text"],
             COL_TAGGED_TEXT: ["<first_name>Alice</first_name> bio text"],
-            COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}],
-            COL_REPLACEMENT_MAP: [{"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[REDACTED]"}]}],
+            COL_DETECTED_ENTITIES: [
+                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+            ],
+            COL_REPLACEMENT_MAP: [
+                {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[REDACTED]"}]}
+            ],
         }
     )
     replace_df.attrs = {"resolved_text_column": "WRONG_COL", "extra": "noise"}
