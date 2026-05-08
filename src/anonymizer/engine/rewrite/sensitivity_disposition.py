@@ -117,26 +117,44 @@ Re-identification is successful if the adversary can reasonably narrow identity 
 
 <<STRICT_PROTECTION_BLOCK>>
 <entity_categories>
-DIRECT IDENTIFIERS (high-risk, standalone)
-- Uniquely identify on their own: full names, exact addresses, SSNs, email, phone.
-- Default action: REPLACE with plausible synthetic alternative.
-- Use abstraction/removal only if replacement distorts meaning.
+Assign sensitivity based on re-identification risk only — not on the nature of the content itself.
+Attributes like religion, political views, or sexual orientation may require protection,
+but their sensitivity level is set by re-identification risk alone.
 
-QUASI-IDENTIFIERS (context-dependent)
-- Not unique alone, but identifying in combination: age, city, occupation, dates, institutions.
-- NOT automatically sensitive: modify ONLY if combination increases re-identification risk.
-- When modification needed: prefer generalization over removal.
+DIRECT IDENTIFIERS — sensitivity: always high
+  Uniquely identify an individual on their own.
+  Examples: full name, email, phone number, SSN, exact address, full date of birth,
+  account number, medical record number, national ID, tax ID.
+  Note: full date of birth (month + day + year) qualifies. A year-only or decade
+  reference is a quasi-identifier, not a direct identifier.
 
-SENSITIVE ATTRIBUTES (harmful to disclose)
-- Sensitive because of content, not identifiability: health conditions, sexual orientation,
-  mental health, substance use, legal issues, political/religious views.
-- Protect when disclosure itself is harmful, even if identifiability risk is low.
-- Can ALSO function as quasi-identifiers if distinctive in context.
+  Default protection: replace with a plausible synthetic alternative.
+  Use generalization or removal only if replacement distorts meaning.
 
-LATENT IDENTIFIERS (inferred)
-- Can be deduced from context even if not explicitly stated.
-- Mitigation may require: paraphrasing context, removing supporting details, generalizing facts.
-- Usually cannot use "replace" since value isn't explicitly in text.
+QUASI-IDENTIFIERS — sensitivity: high, medium, or low
+  Not identifying alone, but narrowing in combination with other known facts.
+  Examples: age, city, occupation, employer, gender, nationality, education,
+  marital status, religion, political view, sexual orientation.
+
+  Sensitivity assignment:
+  Assign high when the entity value is itself so rare or distinctive that it
+  substantially narrows identity even without other context (e.g. a very small
+  ethnic group, an uncommon birthplace, a highly specific institutional role).
+  Assign medium when this specific value, in this document, meaningfully narrows
+  the candidate set — not merely because the entity type is generally quasi-identifying.
+  Assign low when this specific value adds little narrowing in context, even if
+  the entity type is generally quasi-identifying (e.g., a nationality obvious from
+  the respondent state).
+
+  Default protection:
+  Not automatically protected: modify only if the combination increases re-identification risk.
+  When modification is needed: prefer generalization over removal.
+
+LATENT IDENTIFIERS — sensitivity: high, medium, or low
+  Inferred from context rather than explicitly stated.
+  Apply the same re-identification risk logic as quasi-identifiers.
+  Mitigation requires paraphrasing, removing supporting details, or generalizing facts.
+  Replace is rarely appropriate since the value is not explicitly in the text.
 </entity_categories>
 
 <protection_principles>
@@ -154,6 +172,7 @@ LATENT IDENTIFIERS (inferred)
    Avoid unnecessary abstraction.
 
 5. DOMAIN-SPECIFIC PRESERVATION: Apply the domain guidance above—preserve what matters for utility.
+
 </protection_principles>
 <output_requirements>
 CONSISTENCY RULES:

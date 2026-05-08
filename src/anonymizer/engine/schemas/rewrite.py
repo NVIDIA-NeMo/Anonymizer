@@ -96,7 +96,6 @@ class EntitySource(str, Enum):
 class EntityCategory(str, Enum):
     direct_identifier = "direct_identifier"
     quasi_identifier = "quasi_identifier"
-    sensitive_attribute = "sensitive_attribute"
     latent_identifier = "latent_identifier"
 
 

@@ -93,7 +93,7 @@ You are given a SENSITIVITY DISPOSITION BLOCK, which contains entries like:
 - entity_value (surface form from the original text)
 - does_need_protection (True/False)
 - protection_method_suggestion (replace/remove/generalize/suppress_inference/leave_as_is)
-- category (direct_identifier/quasi_identifier/sensitive_attribute/latent_identifier/etc.)
+- category (direct_identifier/quasi_identifier/latent_identifier/etc.)
 
 Use it as follows:
 
