@@ -5,7 +5,7 @@
 
 Conventions for NeMo Anonymizer that ruff and ty cannot enforce. Read before adding a new module, workflow, or config class.
 
-NeMo Anonymizer wraps [NeMo Data Designer](https://github.com/NVIDIA-NeMo/DataDesigner) (NDD) for LLM column generation. References to NDD below mean that library.
+NeMo Anonymizer wraps [DataDesigner](https://github.com/NVIDIA-NeMo/DataDesigner) (NDD) for LLM column generation. References to NDD below mean that library.
 
 For architecture and pipeline identity, see [AGENTS.md](AGENTS.md).
 For contribution workflow and branch naming, see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -118,7 +118,7 @@ Prompts live as inline triple-quoted strings in the workflow file that uses them
 
 Type annotations are required on all functions, methods, and class attributes including tests.
 
-Use `TYPE_CHECKING` blocks for imports only needed for type hints — prevents circular imports and avoids loading heavy libraries at import time:
+Use `TYPE_CHECKING` blocks for imports needed *only* in type annotations. This prevents circular imports and avoids loading heavy libraries at import time:
 
 ```python
 from typing import TYPE_CHECKING
@@ -127,7 +127,7 @@ if TYPE_CHECKING:
     import pandas as pd
 ```
 
-`pandas` is import-time expensive — only import it at the top level where it is actually needed at runtime.
+If a module uses `pandas` at runtime — calls `pd.DataFrame`, indexes a DataFrame in a function body, etc. — import it at the top level. A `TYPE_CHECKING` import raises `NameError` if you reference it at runtime. `pandas` is import-time expensive, so keep top-level imports of it limited to modules that genuinely need it.
 
 ---
 
