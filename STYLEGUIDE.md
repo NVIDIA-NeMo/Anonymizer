@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Style Guide
 
 Conventions for NeMo Anonymizer that ruff and ty cannot enforce. Read before adding a new module, workflow, or config class.
