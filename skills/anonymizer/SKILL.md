@@ -149,6 +149,14 @@ def main() -> None:
         result = anonymizer.preview(config=config, data=data, num_records=args.num_records)
         print(f"Previewed {len(result.dataframe)} rows.")
 
+        # Save preview output so you can investigate without re-running.
+        # trace_dataframe is a superset of dataframe — it has the user-facing
+        # columns plus internal columns (validation decisions, sensitivity
+        # dispositions, etc.) that explain why entities were kept, dropped,
+        # or rewritten.
+        result.trace_dataframe.to_parquet("preview.parquet")
+        print("Saved: preview.parquet (load with pd.read_parquet)")
+
     # Failure-first protocol: dropped rows are infra issues, not strategy issues.
     if result.failed_records:
         print(f"\n⚠️  {len(result.failed_records)} record(s) failed:")

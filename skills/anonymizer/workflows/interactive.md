@@ -34,7 +34,7 @@ Iterative design with the user. Do not disengage from the loop until the user sa
 6. **Preview** — Run `python <script>.py` (no flags = preview 5 rows).
    - **First check `failed_records`.** If non-empty, STOP iterating on strategy. The script's failure-first guard already exits non-zero. Read [`docs/troubleshooting.md`](../../../docs/troubleshooting.md) "Did the run actually complete cleanly?" and "Rate limits / dropped rows". Fix the infra issue, then re-preview.
    - For Rewrite, read the leakage / utility summary the script prints. For Replace, eyeball the output rows directly.
-   - For deeper inspection, open a Python session and `from <script> import build_config; ... result = anonymizer.preview(...)` to get back the live `result.trace_dataframe` for filtering and analysis.
+   - For deeper inspection: the script saves `preview.parquet` (trace dataframe — superset of the user-facing columns). Load with `pd.read_parquet("preview.parquet")` to inspect per-entity validation decisions, sensitivity dispositions, and other trace columns.
 
 7. **Iterate**
    - Ask the user how the preview looks.
