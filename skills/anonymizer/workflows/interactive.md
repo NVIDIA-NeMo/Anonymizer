@@ -5,8 +5,12 @@
 
 Iterative design with the user. Do not disengage from the loop until the user says they're satisfied.
 
-1. **Verify install** — Run `python -c "import anonymizer; print(anonymizer.__version__)"`.
-   - If the import fails, STOP and follow the Troubleshooting section in `SKILL.md`. Do not continue.
+1. **Verify environment**
+   - **Install**: run `python -c "import anonymizer; print(anonymizer.__version__)"`. If the import fails, STOP and follow the Troubleshooting section in `SKILL.md`.
+   - **Model providers**: before going further, confirm an LLM provider is configured. Anonymizer cannot run without one. Check that:
+     - An API key is set in the environment (`NVIDIA_API_KEY` for the shipped default, or the equivalent for the user's provider)
+     - A `providers.yaml` exists (defaults ship at `src/anonymizer/config/default_model_configs/providers.yaml`)
+   - If either is missing, STOP and walk the user through [`docs/concepts/models.md`](../../../docs/concepts/models.md) setup. Do not proceed to data inspection until the user confirms providers are ready.
 
 2. **Inspect the data** — Read the first few rows of the source file with pandas. You need to know:
    - Path, format, encoding.
@@ -21,6 +25,7 @@ Iterative design with the user. Do not disengage from the loop until the user sa
    - **For Rewrite**: what must be protected? what must be preserved? how strict (`risk_tolerance`)? Read [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) sections 5–6 with the user's answers in mind.
    - **Domain-specific entity labels** the defaults won't cover (e.g. `"medical record number"`, `"case number"`, `"internal project codename"`). If yes, read [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) section 2.
    - **Cross-record consistency requirement** (does the same person/ID need the same replacement everywhere)? If yes, use `Hash`; do not promise this with `Substitute`.
+   - **Model providers**: use shipped defaults (`Anonymizer()` — calls `build.nvidia.com` via `NVIDIA_API_KEY`) or a custom `providers.yaml`? Defaults are right for most cases; only ask for a path if the user has a non-NVIDIA endpoint or a specific deployment to target. If custom, capture the path now so the script can pass it via `Anonymizer(model_providers="path/to/providers.yaml")`.
 
 4. **Plan** — Briefly state the config you intend to write (mode, strategy, key fields, any non-default detection knobs). Confirm with the user before writing the script.
 
