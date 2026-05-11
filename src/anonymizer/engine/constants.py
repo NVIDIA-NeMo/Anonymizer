@@ -46,6 +46,13 @@ COL_ENTITIES_BY_VALUE = "_entities_by_value"
 COL_REPLACED_TEXT = "__nemo_anonymizer_text_output__"
 COL_REPLACEMENT_MAP = "_replacement_map"
 
+# LlmReplaceWorkflow internal prompt-construction columns. Created by
+# `LlmReplaceWorkflow.generate_map_only` for the replacement-generator prompt
+# template, dropped before returning. Not part of the output surface.
+COL_ENTITY_EXAMPLES = "_entity_examples"
+COL_ENTITIES_FOR_REPLACE = "_entities_for_replace"
+COL_ENTITIES_FOR_REPLACE_JSON = "_entities_for_replace_json"
+
 # Latent detection (optional second workflow)
 COL_LATENT_ENTITIES = "_latent_entities"
 

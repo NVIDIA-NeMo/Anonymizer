@@ -11,7 +11,7 @@ from data_designer.config.models import ModelConfig
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, COL_TEXT
 from anonymizer.engine.ndd.adapter import WorkflowRunResult
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.llm_replace_workflow import _INTERNAL_COLUMNS, LlmReplaceWorkflow
 
 
 def test_generate_map_only_preserves_input_attrs(
@@ -168,3 +168,74 @@ def test_generate_map_only_preserves_original_anonymizer_row_order_with_mixed_ro
         {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]},
         {"replacements": []},
     ]
+
+
+def test_generate_map_only_strips_internal_prompt_columns(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Workflow-internal prompt-construction columns must be stripped from the
+    result. They carry pyarrow-backed pandas extension dtypes that would break
+    a downstream `trace_dataframe.to_parquet` round-trip, and nothing
+    downstream of this workflow consumes them.
+    """
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme"],
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+                "tagged_text": ["<<PII:first_name>>Alice<</PII:first_name>> works at Acme"],
+                "_anonymizer_row_order": [0],
+                COL_REPLACEMENT_MAP: [
+                    {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = LlmReplaceWorkflow(adapter=adapter)
+
+    input_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+            "tagged_text": ["<<PII:first_name>>Alice<</PII:first_name>> works at Acme"],
+        }
+    )
+
+    result = workflow.generate_map_only(
+        input_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+
+    for col in _INTERNAL_COLUMNS:
+        assert col not in result.dataframe.columns, f"workflow-internal column {col!r} leaked into result"
+
+
+def test_generate_map_only_strips_internal_prompt_columns_when_no_entities(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Same guarantee as above for the early-return path (no entities → no NDD call)."""
+    adapter = Mock()
+    workflow = LlmReplaceWorkflow(adapter=adapter)
+
+    input_df = pd.DataFrame(
+        {
+            COL_TEXT: ["No entities here"],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}],
+            "tagged_text": ["No entities here"],
+        }
+    )
+
+    result = workflow.generate_map_only(
+        input_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+
+    adapter.run_workflow.assert_not_called()
+    for col in _INTERNAL_COLUMNS:
+        assert col not in result.dataframe.columns, f"workflow-internal column {col!r} leaked into result"
