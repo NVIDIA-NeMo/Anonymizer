@@ -222,7 +222,7 @@ Entities to replace:
 - "{{ entity.value }}" ({{ entity.labels_str }})
 {%- endfor %}
 
-Examples: {{ _entity_examples }}
+Examples: {{ <<ENTITY_EXAMPLES_COLUMN>> }}
 
 Rules:
 1. Related entities must stay consistent:
@@ -262,6 +262,7 @@ Before generating replacements, verify:
         {
             "<<INSTRUCTION_BLOCK>>": instruction_block,
             "<<ENTITIES_COLUMN>>": entities_column,
+            "<<ENTITY_EXAMPLES_COLUMN>>": COL_ENTITY_EXAMPLES,
         },
     )
 
