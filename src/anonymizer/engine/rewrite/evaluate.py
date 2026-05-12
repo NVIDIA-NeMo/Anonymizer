@@ -176,6 +176,7 @@ def _render_quality_compare_prompt(row: dict[str, Any]) -> str:
     skeleton = [
         {
             "id": item.id,
+            "importance": item.importance,
             "question": item.question,
             "expected_answer": item.reference_answer,
             "student_answer": answer_lookup.get(item.id, "(no answer)"),
@@ -197,10 +198,16 @@ Compare the student's answer to the reference answer and grade each on a 0.0-1.0
 </scoring_rubric>
 
 <grading_rules>
-* Grade conservatively
-* No credit for invented/contradictory info
+* No credit for invented or contradictory information
 * Semantically equivalent answers get full credit
 * "unknown" answers get 0.0 score
+* A generalized or abstracted answer that preserves core semantic meaning is NOT wrong —
+  score it on whether the meaning survives, not on whether specific details are retained.
+  Example: "a state university" matching "a public university in New Jersey" scores ≥ 0.7
+  if the institutional type is what matters.
+* For "important" units: if the answer is correct at a higher level of abstraction,
+  score ≥ 0.7 even if specific details are omitted.
+* For "critical" units: hold to a stricter standard — core meaning must be present.
 </grading_rules>
 
 <task>
@@ -347,15 +354,26 @@ def _normalize_answer_items(
 # ---------------------------------------------------------------------------
 
 
-def compute_utility_score(compare_scores: list[float]) -> float:
-    """Mean of per-item QA comparison scores.
+def compute_utility_score(
+    compare_scores: list[float],
+    importance_levels: list[str] | None = None,
+) -> float:
+    """Importance-weighted mean of per-item QA comparison scores.
+
+    Critical units (weight 2.0) count twice as much as important units (weight 1.0).
+    Falls back to a flat mean if importance_levels is not provided or mismatched.
 
     Answer coverage is enforced upstream by the context-validated parser
     on QACompareResultsSchema, so all expected IDs are guaranteed present.
     """
     if not compare_scores:
         return 0.0
-    return sum(compare_scores) / len(compare_scores)
+    weights = {"critical": 2.0, "important": 1.0}
+    if not importance_levels or len(importance_levels) != len(compare_scores):
+        return sum(compare_scores) / len(compare_scores)
+    weighted_sum = sum(weights.get(imp, 1.0) * score for imp, score in zip(importance_levels, compare_scores))
+    total_weight = sum(weights.get(imp, 1.0) for imp in importance_levels)
+    return weighted_sum / total_weight
 
 
 def compute_leakage_mass(
@@ -490,11 +508,14 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
 )
 def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParams) -> dict[str, Any]:
     """Compute utility_score, leakage_mass, weighted_leakage_rate, and any_high_leaked from evaluation outputs."""
-    _, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
+    ids, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
+    qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
+    importance_lookup = {item.id: item.importance for item in qa.items}
+    importance_levels = [importance_lookup.get(i, "important") for i in ids]
 
-    row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores)
+    row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores, importance_levels)
     leakage_mass = compute_leakage_mass(privacy_answers, privacy_qa, generator_params.sensitivity_weights)
     row[COL_LEAKAGE_MASS] = leakage_mass
     row[COL_WEIGHTED_LEAKAGE_RATE] = compute_weighted_leakage_rate(

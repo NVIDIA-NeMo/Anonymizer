@@ -151,13 +151,39 @@ DROP details that are:
 - Hyper-local or overly specific identifiers that don't affect the underlying logic or meaning.
 
 Each meaning unit must contain only the information required to support a single quality-check question.
+
+Meaning units should preserve only the minimum semantic detail
+necessary to retain the text's functional utility.
+
+Prefer abstractions that remain true after safe anonymization.
+
+Only output meaning units that should become Quality QA obligations.
+
+Before emitting a meaning unit, ask:
+"If this information were lost after anonymization, would the text lose
+important functional utility?"
+
+If no, do not emit the unit.
+
+Each emitted meaning unit must include an importance level:
+
+- critical:
+  Loss would materially damage the text's core utility,
+  major meaning, role, process, obligation, or outcome.
+
+- important:
+  Useful to preserve when privacy allows, but acceptable
+  to generalize or omit if needed for anonymization.
 </importance_criteria>
 
 <segmentation_rules>
-- Each meaning unit must express ONE coherent idea.
-- If a sentence encodes multiple important ideas, split them into separate units.
-- If two sentences form a single coherent idea that cannot be separated without losing meaning,
-  merge them into one unit.
+- Each meaning unit must contain only ONE independently preservable semantic obligation.
+- Do not combine multiple attributes, relationships, beliefs, activities,
+or demographic traits into a single unit.
+- If different parts could reasonably survive anonymization independently,
+split or simplify the unit.
+- If two sentences form a single semantic obligation that cannot be separated
+without losing meaning, they may be merged into one unit.
 </segmentation_rules>
 
 <domain_context>
@@ -224,6 +250,8 @@ Each meaning unit has:
 - "id": an integer identifier
 - "aspect": a label describing the type of information
 - "unit": a short sentence or clause capturing one important idea
+- "importance": either "critical" (loss would materially damage core utility) or
+  "important" (useful to preserve but acceptable to generalize or omit if needed)
 
 Your task is to generate, for EACH meaning unit:
 - ONE open-ended question that checks whether that unit is still true in an anonymized version of the text.
@@ -248,6 +276,9 @@ Your task is to generate, for EACH meaning unit:
    - Be short and factual.
    - Align directly with the "unit" text at the same abstraction level.
    - NOT add new information beyond what is in the unit.
+
+5. For each meaning unit, carry the "importance" value ("critical" or "important")
+   through to the output item unchanged.
 </constraints>
 
 <input>
