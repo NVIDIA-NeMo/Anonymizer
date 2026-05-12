@@ -190,6 +190,9 @@ def test_generate_map_only_strips_internal_prompt_columns(
                 COL_REPLACEMENT_MAP: [
                     {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
                 ],
+                # NDD passes input columns through to its output; simulate that so the
+                # drop in the entity-rows return path actually has work to do.
+                **{col: [""] for col in _INTERNAL_COLUMNS},
             }
         ),
         failed_records=[],
