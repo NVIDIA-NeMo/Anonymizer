@@ -285,8 +285,13 @@ class TestMergeChunkDecisions:
         by_id = {d["id"]: d for d in merged["decisions"]}
         assert by_id["a"]["decision"] == "keep"
         assert by_id["b"]["decision"] == "drop"
-        assert by_id["a"]["value"] == "Alice"  # enriched from candidate
-        assert by_id["a"]["label"] == "first_name"
+        # value/label are NOT carried on the wire shape — they were dropped
+        # from ValidationDecisionSchema to eliminate small-model drift surface
+        # and are re-filled server-side in enrich_validation_decisions from
+        # candidate_lookup. Pydantic strips them during ValidationDecisionsSchema
+        # validation, so they are absent from the merged payload by design.
+        assert "value" not in by_id["a"]
+        assert "label" not in by_id["a"]
 
     def test_drops_decisions_without_verdict(self) -> None:
         """A decision with ``decision=None`` is equivalent to 'no answer' and must not leak through.
@@ -311,11 +316,11 @@ class TestMergeChunkDecisions:
         chunk_one = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": None}]})
         chunk_two = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": "keep"}]})
         merged = merge_chunk_decisions([chunk_one, chunk_two], candidates)
+        # value/label are dropped by the wire ValidationDecisionSchema —
+        # see the comment in test_filters_unknown_ids_and_deduplicates.
         assert merged["decisions"] == [
             {
                 "id": "a",
-                "value": "Alice",
-                "label": "first_name",
                 "decision": "keep",
                 "proposed_label": "",
                 "reason": None,

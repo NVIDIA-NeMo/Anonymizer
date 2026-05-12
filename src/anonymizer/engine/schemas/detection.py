@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from anonymizer.engine.schemas.shared import _parse_raw_wrapper
 
@@ -60,6 +60,68 @@ class RawValidationDecisionSchema(BaseModel):
     proposed_label: str = Field(default="")
     reason: str | None = None
 
+    @field_validator("decision", mode="before")
+    @classmethod
+    def _normalize_decision_preserve_none(cls, v: object) -> object:
+        """Tolerate small-model decision-field drift while preserving None.
+
+        Renamed from ``_normalize_decision`` to make the None-preserving
+        semantics visible at every call site without requiring readers
+        to compare docstrings against ``ValidationDecisionSchema``'s
+        same-name (now removed) variant.
+
+        Small models (gemma4-e4b on legal_court bench) emit free-form
+        prose in the decision slot — observed: ``"No specific entity
+        type for the date placeholder."`` and ``"No specific field
+        matched for this token."``. Without coercion pydantic rejects
+        the whole chunk's records.
+
+        Distinct from ValidationDecisionSchema._normalize_decision in
+        ONE important way: this schema's chunked-validation merger
+        (``merge_chunk_decisions``) treats ``decision=None`` as "no
+        answer, skip" so a later chunk can supply a real verdict for
+        the same id. We must therefore preserve None-ness — only
+        normalize *strings*.
+
+        Strategy:
+          * None / non-string / blank string -> ``None`` (preserves the
+            "no answer" semantics the merger relies on).
+          * Exact match ``keep``/``reclass``/``drop`` (case-insensitive) -> as-is.
+          * Substring match (``"Keep."``, ``"DROP!"``, ``"reclass entity"``)
+            -> the matched choice. Most-specific first so ``"reclass"``
+            wins over ``"keep"`` when both substrings appear.
+          * Free-form prose with no recognizable choice -> ``"keep"``
+            (conservative: preserve detection over silently dropping it).
+        """
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            return None
+        cleaned = v.strip().lower()
+        if cleaned in {"keep", "reclass", "drop"}:
+            return cleaned
+        for choice in ("reclass", "drop", "keep"):
+            if choice in cleaned:
+                return choice
+        return "keep"
+
+    @field_validator("proposed_label", mode="before")
+    @classmethod
+    def _coerce_proposed_label(cls, v: object) -> object:
+        """Mirror ValidationDecisionSchema._coerce_proposed_label.
+
+        Small models (gemma4-e4b on the chunked-validation path) emit
+        ``proposed_label: null`` when the decision is "keep" — pydantic
+        otherwise rejects None for the str-typed field, dropping the
+        whole record. The validator chunk schema needs the same loose
+        coercion the wire ValidationDecisionSchema already has.
+        """
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
+
 
 class RawValidationDecisionsSchema(BaseModel):
     decisions: list[RawValidationDecisionSchema] = Field(default_factory=list)
@@ -100,17 +162,75 @@ class ValidationSkeletonSchema(BaseModel):
 
 
 class ValidationDecisionSchema(BaseModel):
-    """Per-entity validation decision from the LLM validator."""
+    """Loose wire-contract for per-entity validation decisions from the LLM.
+
+    The strict internal shape has only the three fields the server actually
+    consumes: `id`, `decision`, `proposed_label` (+ optional `reason`). The
+    previous schema also carried `value` and `label`, but those are
+    overridden from the trusted candidate_lookup in
+    enrich_validation_decisions — they were pure drift surface.
+
+    Wire-layer looseness addresses classes M/N/O from the bench:
+      * `decision` is typed `str` (not ValidationChoice) so DD’s
+        jsonschema pre-check cannot reject enum drift; before-validator
+        normalizes to a valid enum. Default "keep" means the field is
+        NOT in `required`, so omission does not drop the record.
+      * `proposed_label` is `str | None` so the emitted JSON Schema is
+        `anyOf: [string, null]` — explicit `null` emissions no longer
+        fail `type: "string"` at the pre-check.
+      * `value`/`label` removed entirely — any int/null drift on those
+        fields is now impossible because they’re not in the schema.
+    """
 
     id: str
-    value: str = Field(default="", description="Entity value (echoed from skeleton)")
-    label: str = Field(default="", description="Entity label (echoed from skeleton)")
-    decision: ValidationChoice
-    proposed_label: str = Field(
+    decision: str = Field(
+        default="keep",
+        description='one of: "keep" | "reclass" | "drop"',
+    )
+    proposed_label: str | None = Field(
         default="",
         description="Correct label when decision is 'reclass', otherwise empty",
     )
     reason: str | None = None
+
+    @field_validator("proposed_label", mode="before")
+    @classmethod
+    def _coerce_proposed_label(cls, v: object) -> object:
+        """Coerce None / non-string to empty string so the strict downstream
+        shape is always a string (RawValidationDecisionSchema expects str)."""
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def _normalize_decision(cls, v: object) -> str:
+        """Coerce drift into a valid ValidationChoice value.
+
+        None / non-string / unknown strings default to 'keep' — the
+        conservative choice that preserves detection. A substring match
+        catches small-model variants like 'Keep.' or 'DROP!'.
+
+        Note: a related normalizer
+        ``RawValidationDecisionSchema._normalize_decision_preserve_none``
+        exists on the chunked-validation path. It deliberately preserves
+        None — see that docstring for why. The two diverge because this
+        schema's field is ``decision: str`` (default "keep"), while the
+        chunked path uses ``decision: ValidationChoice | None`` to signal
+        "no answer" to ``merge_chunk_decisions``. The chunked variant is
+        explicitly named so the divergence is visible at every call site.
+        """
+        if v is None or not isinstance(v, str) or not v.strip():
+            return "keep"
+        cleaned = v.strip().lower()
+        if cleaned in {"keep", "reclass", "drop"}:
+            return cleaned
+        for choice in ("reclass", "drop", "keep"):  # check most-specific first
+            if choice in cleaned:
+                return choice
+        return "keep"
 
 
 class ValidationDecisionsSchema(BaseModel):
@@ -138,33 +258,140 @@ class LatentConfidence(str, Enum):
 
 
 class LatentEntitySchema(BaseModel):
-    category: LatentCategory
+    """Single latent (inferred) entity from the latent_detector role.
+
+    Loose wire contract across every field so small-model drift does not
+    drop records at DataDesigner’s jsonschema pre-check:
+      * category / confidence: typed str (not LatentCategory / LatentConfidence);
+        a before-validator normalizes case and substring-matches drift.
+      * label / value: permissive default "", coerce None/int.
+      * evidence: any list shape accepted at wire; before-validator
+        clamps to [0, 2] non-empty strings.
+      * rationale: wire has no min_length; before-validator truncates if
+        too long and pads with ellipsis if too short.
+    """
+
+    category: str = Field(
+        default="",
+        description=("one of: latent_identifier | latent_sensitive_attribute (see LatentCategory enum)"),
+    )
     label: str = Field(
-        min_length=1,
+        default="",
         description=(
             "General category/class of the inference in snake_case "
-            "(e.g., employer, specific_institution, home_location, medication, health_condition)"
+            "(e.g., employer, specific_institution, home_location)"
         ),
     )
     value: str = Field(
-        min_length=1,
-        description="Concise inferred value (generalize if not pinned down strongly by evidence)",
+        default="",
+        description="Concise inferred value",
     )
-    confidence: LatentConfidence
+    confidence: str = Field(
+        default="medium",
+        description="one of: high | medium (see LatentConfidence enum)",
+    )
     evidence: list[str] = Field(
-        min_length=1,
-        max_length=2,
-        description="One or two short quotes from the text that support this inference",
+        default_factory=list,
+        description="Up to 2 short quotes supporting this inference",
     )
     rationale: str = Field(
-        min_length=20,
-        max_length=150,
+        default="",
         description="One sentence explaining the inference without adding new facts",
     )
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _normalize_category(cls, v: object) -> str:
+        if v is None or not isinstance(v, str) or not v.strip():
+            return "latent_identifier"
+        cleaned = v.strip().lower().replace(" ", "_").replace("-", "_")
+        allowed = {c.value for c in LatentCategory}
+        if cleaned in allowed:
+            return cleaned
+        if "sensitive" in cleaned:
+            return LatentCategory.latent_sensitive_attribute.value
+        return LatentCategory.latent_identifier.value
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _normalize_confidence(cls, v: object) -> str:
+        if v is None:
+            return "medium"
+        # Numeric -> band
+        if isinstance(v, (int, float)):
+            f = float(v)
+            if f >= 0.66:
+                return "high"
+            return "medium"
+        if not isinstance(v, str) or not v.strip():
+            return "medium"
+        cleaned = v.strip().lower()
+        if cleaned in {"high", "medium"}:
+            return cleaned
+        if cleaned in {"h", "hi"}:
+            return "high"
+        return "medium"
+
+    @field_validator("label", "value", mode="before")
+    @classmethod
+    def _coerce_to_str(cls, v: object) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        return v
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _clamp_evidence(cls, v: object) -> list[str]:
+        """Accept any list shape; keep at most 2 non-empty string quotes."""
+        if not isinstance(v, list):
+            return []
+        out: list[str] = []
+        for item in v:
+            if item is None:
+                continue
+            if not isinstance(item, str):
+                item = str(item)
+            item = item.strip()
+            if item:
+                out.append(item)
+            if len(out) >= 2:
+                break
+        return out
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def _cap_rationale(cls, v: object) -> str:
+        """Truncate verbose rationales (Nemotron-observed 260 chars > 150 max).
+        Server reads rationale for context only; no lower bound enforced.
+        """
+        if v is None:
+            return ""
+        if isinstance(v, (int, float, bool)):
+            v = str(v)
+        if not isinstance(v, str):
+            return ""
+        s = v.strip()
+        if len(s) > 150:
+            return s[:147].rstrip() + "..."
+        return s
 
 
 class LatentEntitiesSchema(BaseModel):
     latent_entities: list[LatentEntitySchema] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _ensure_parquet_writable(self) -> "LatentEntitiesSchema":
+        """DataDesigner writes this column to parquet; an empty list of
+        structs makes pyarrow fail with 'Cannot write struct type with no
+        child field' because it can't infer the nested schema. Inject a
+        single all-defaults sentinel when empty — downstream code (e.g.
+        reconstruct_full_disposition) already filters entries with empty
+        label/value so the sentinel is invisible semantically."""
+        if not self.latent_entities:
+            self.latent_entities = [LatentEntitySchema()]
+        return self
 
 
 class EntityByValueSchema(BaseModel):
