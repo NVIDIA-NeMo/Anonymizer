@@ -80,6 +80,7 @@ class ReplaceModelSelection(BaseModel):
     replacement_generator: str
     detection_judge: str
     type_fidelity_judge: str
+    relational_consistency_judge: str
 
 
 class RewriteModelSelection(BaseModel):

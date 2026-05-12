@@ -17,6 +17,9 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+    COL_RELATIONAL_CONSISTENCY_JUDGE,
+    COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
     COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
@@ -106,6 +109,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
     table_html = _render_replacement_table(replacement_map)
     detection_judge_html = _render_detection_judge_section(row)
     type_fidelity_section = _render_type_fidelity_section(row, replacement_map)
+    relational_consistency_section = _render_relational_consistency_section(row)
 
     index_label = f" (record {record_index})" if record_index is not None else ""
 
@@ -115,6 +119,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
         replaced_html=replaced_html,
         detection_judge_html=detection_judge_html,
         type_fidelity_section=type_fidelity_section,
+        relational_consistency_section=relational_consistency_section,
         table_html=table_html,
     )
 
@@ -572,6 +577,150 @@ def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str
     )
 
 
+def _render_relational_consistency_section(row: pd.Series) -> str:
+    """Render the relational-consistency verdict for Substitute runs.
+
+    Always lists every relation the judge checked (passes and fails) so the
+    reader can see WHICH entities the metric inspected, not just which ones
+    failed. Returns "" when the judge did not run for this row.
+    """
+    if COL_RELATIONAL_CONSISTENCY_VALID not in row.index:
+        return ""
+    valid = row.get(COL_RELATIONAL_CONSISTENCY_VALID)
+    all_relations = _extract_all_relations(row)
+    invalid_count = sum(1 for r in all_relations if not bool(r.get("passes", False)))
+    # Fall back to the invalid-relations column when the raw output is missing,
+    # so success_rate still surfaces "at least this many failures".
+    if not all_relations:
+        fallback_invalid = _normalize_relations(row.get(COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS))
+        invalid_count = len(fallback_invalid)
+        all_relations = [{**entry, "passes": False} for entry in fallback_invalid]
+    total = len(all_relations)
+    correct = max(total - invalid_count, 0)
+
+    if valid is None:
+        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
+        rate_html = ""
+    else:
+        verdict_text = "Yes" if bool(valid) else "No"
+        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
+        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
+        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Relational Consistency:</strong> {badge}{html.escape(rate_html)}"
+        "</div>"
+    )
+
+    body = header
+    if all_relations:
+        body += _render_relations_table(all_relations)
+
+    return (
+        "<div style='margin-bottom:16px'>"
+        "<div style=\"font-size:0.8em;font-weight:600;text-transform:uppercase;"
+        "letter-spacing:0.05em;margin-bottom:6px;opacity:0.5\">Relational Consistency</div>"
+        f"{body}"
+        "</div>"
+    )
+
+
+def _render_relations_table(relations: list[dict[str, object]]) -> str:
+    """Render a drilldown listing every relation the judge inspected."""
+    rows_html: list[str] = []
+    for entry in relations:
+        description = html.escape(str(entry.get("description", "")))
+        entities = entry.get("entities", []) or []
+        entities_str = html.escape(
+            ", ".join(
+                f"{e.get('original', '')} ({e.get('label', '')}) -> {e.get('synthetic', '')}"
+                for e in entities
+                if isinstance(e, dict)
+            )
+        )
+        passes = bool(entry.get("passes", False))
+        status_color = "#22c55e" if passes else "#ef4444"
+        status_label = "Pass" if passes else "Fail"
+        status_html = (
+            f"<span style='color:{status_color};font-weight:600'>{status_label}</span>"
+        )
+        reasoning = html.escape(str(entry.get("reasoning", "")))
+        rows_html.append(
+            "<tr>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{description}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{entities_str}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{status_html}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+            "</tr>"
+        )
+    return (
+        "<details style='margin-top:8px'>"
+        f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(relations)} "
+        "checked relation(s)</summary>"
+        "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+        "<thead><tr>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Relation</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Entities</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Status</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+        "</details>"
+    )
+
+
+def _extract_all_relations(row: pd.Series) -> list[dict[str, object]]:
+    """Read the full relations list (passes + fails) from the raw judge column."""
+    raw = row.get(COL_RELATIONAL_CONSISTENCY_JUDGE) if COL_RELATIONAL_CONSISTENCY_JUDGE in row.index else None
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump(mode="python")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if not isinstance(raw, dict):
+        return []
+    relations = raw.get("relations", [])
+    if hasattr(relations, "tolist"):
+        relations = relations.tolist()
+    if not isinstance(relations, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in relations:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def _normalize_relations(raw: object) -> list[dict[str, object]]:
+    """Coerce the invalid-relations column into a list of plain dicts."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in raw:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
 def _count_detected_entity_label_pairs(row: pd.Series) -> int:
     """Count (value, label) pairs the judge had a chance to evaluate.
 
@@ -721,6 +870,7 @@ letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Detection Judge</div>
         {detection_judge_html}
       </div>
       {type_fidelity_section}
+      {relational_consistency_section}
       <div>
         <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
 letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replacement Map</div>

@@ -62,6 +62,11 @@ COL_TYPE_FIDELITY_JUDGE = "_type_fidelity_judge"  # raw judge output, internal
 COL_TYPE_FIDELITY_VALID = "type_fidelity_valid"  # user-facing bool (None if judge unavailable)
 COL_TYPE_FIDELITY_INVALID_REPLACEMENTS = "type_fidelity_invalid_replacements"  # list of {original, label, synthetic, reasoning}
 
+# Replace evaluation: relational-consistency judge (Substitute only)
+COL_RELATIONAL_CONSISTENCY_JUDGE = "_relational_consistency_judge"  # raw judge output (kept for display denominator)
+COL_RELATIONAL_CONSISTENCY_VALID = "relational_consistency_valid"  # user-facing bool (None if judge unavailable)
+COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS = "relational_consistency_invalid_relations"  # list of failing relations
+
 # ---------------------------------------------------------------------------
 # Rewrite pipeline
 # ---------------------------------------------------------------------------

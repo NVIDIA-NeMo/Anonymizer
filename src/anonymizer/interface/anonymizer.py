@@ -38,6 +38,7 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
@@ -114,6 +115,7 @@ class Anonymizer:
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
             detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
             type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=self._adapter),
+            relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=self._adapter),
         )
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
 

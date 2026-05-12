@@ -107,8 +107,15 @@ generic phrase, or boilerplate flagged as PII).
 - wrong_label: the span IS sensitive, but the chosen label does not fit (e.g. a company name labeled \
 `first_name`; an email labeled `url`; a job title labeled `degree`).
 - not_in_text: the literal `value` does not appear in the original text.
-- wrong_boundary: the span is a clear partial or over-extended capture of the real entity \
-(e.g. "John" labeled as full `last_name`; "Dr. John Smith MD" labeled as `first_name`).
+- wrong_boundary: the span is a clear partial or over-extended capture of the real entity. \
+Flag this ONLY when the span itself is broken — i.e. it omits part of the actual value, or \
+it absorbs surrounding tokens (titles, prepositions, conjunctions, function words) that are \
+not part of the value. \
+Treat the span as CORRECT when it captures the bare value of the entity, even if that value \
+appears inside a longer descriptive phrase or compound expression. Surrounding descriptive \
+words in natural prose are NOT part of the entity, and trimming them is the right behavior, \
+not a boundary error. Apply the "form-field" test: if you were filling out a structured form \
+for this entity type, the bare value would be the answer.
 - contextual_mismatch: in this context the span refers to something other than the labeled entity type \
 (e.g. "Apple" used as the fruit and labeled `company_name`; "May" used as a verb/month and labeled `first_name`).
 </invalid_criteria>
