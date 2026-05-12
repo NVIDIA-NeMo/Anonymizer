@@ -55,7 +55,7 @@ What to leave out:
 
 ## 2. (Detection) Detection knobs
 
-For most datasets the [detection](detection.md) defaults work. The main reason to tune `entity_labels` is when your data has **domain-specific entities that can be described in plain English** — GLiNER is zero-shot, so any label you can name in natural language (e.g. `"medical record number"`, `"internal project codename"`) becomes a thing it can find. If the entities you care about aren't in `DEFAULT_ENTITY_LABELS`, write them down as natural-language labels and add them. Tune `gliner_threshold` only when you see a specific recall or precision problem in preview.
+For most datasets the [detection](detection.md) defaults work. The main reason to tune `entity_labels` is when your data has **domain-specific entities that can be described in plain English** — GLiNER is zero-shot, so any concept you can name (e.g. `"clinical_facility"`, `"internal_project_codename"`) becomes a thing it can find. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. If the entities you care about aren't in the default list, write them down and add them. Tune `gliner_threshold` only when you see a specific recall or precision problem in preview.
 
 ### `entity_labels`
 
@@ -66,10 +66,10 @@ For most datasets the [detection](detection.md) defaults work. The main reason t
 
 Common ways to extend the default list:
 
-- Healthcare: `mrn`, `clinical_facility`, `diagnosis_code`, `medication_name`
-- Legal: `case_number`, `court_name`, `docket_number`, `judge_name`
+- Healthcare: `clinical_facility`, `diagnosis_code`, `medication_name`, `lab_test_code`
+- Legal: `case_number`, `docket_number`, `statute_citation`, `judge_name`
 - Customer support: `ticket_id`, `internal_user_id`, `transaction_id`
-- Internal: `employee_id`, `cost_center`, `internal_project_codename`
+- Internal: `cost_center`, `internal_project_codename`, `experiment_id`
 
 ```python
 from anonymizer import DEFAULT_ENTITY_LABELS, Detect

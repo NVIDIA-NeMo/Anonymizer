@@ -23,7 +23,7 @@ Iterative design with the user. Do not disengage from the loop until the user sa
    - **Mode**: Replace (entities only) vs Rewrite (full text transformation that also removes inferable identifiers like "ringing the bell" → cancer)? Default per the rule in `SKILL.md`.
    - **For Replace**: which strategy? (`Substitute` for realistic-looking, `Redact` for explicit `[REDACTED_…]` markers, `Hash` for stable cross-row identifiers, `Annotate` for inspection only).
    - **For Rewrite**: what must be protected? what must be preserved? how strict (`risk_tolerance`)? Read [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) sections 5–6 with the user's answers in mind.
-   - **Domain-specific entity labels** the defaults won't cover (e.g. `"medical record number"`, `"case number"`, `"internal project codename"`). If yes, read [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) section 2.
+   - **Domain-specific entity labels** the defaults won't cover (e.g. `"clinical_facility"`, `"case_number"`, `"internal_project_codename"`). If yes, read [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) section 2.
    - **Cross-record consistency requirement** (does the same person/ID need the same replacement everywhere)? If yes, use `Hash`; do not promise this with `Substitute`.
    - **Model providers**: use shipped defaults (`Anonymizer()` — calls `build.nvidia.com` via `NVIDIA_API_KEY`) or a custom `providers.yaml`? Defaults are right for most cases; only ask for a path if the user has a non-NVIDIA endpoint or a specific deployment to target. If custom, capture the path now so the script can pass it via `Anonymizer(model_providers="path/to/providers.yaml")`.
 
