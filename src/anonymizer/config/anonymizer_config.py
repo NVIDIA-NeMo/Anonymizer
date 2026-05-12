@@ -147,7 +147,20 @@ class Rewrite(BaseModel):
 
     @property
     def evaluation(self) -> EvaluationCriteria:
-        """Internal: construct EvaluationCriteria for the engine."""
+        """Construct `EvaluationCriteria` from this `Rewrite` config for the engine.
+
+        `Rewrite` and `EvaluationCriteria` both carry `max_repair_iterations`.
+        This property keeps them in sync: it passes through `self.risk_tolerance`
+        and `self.max_repair_iterations`. Leakage thresholds and repair
+        parameters are derived from `risk_tolerance` via `_RiskToleranceBundle`
+        (see `rewrite.py`).
+
+        Production code that starts from a user-facing `Rewrite` should pass
+        `rewrite.evaluation` into the engine — never duplicate the mapping
+        manually. Tests and engine-internal callers may construct
+        `EvaluationCriteria` directly when they aren't routing through a
+        user-facing `Rewrite`.
+        """
         return EvaluationCriteria(
             risk_tolerance=self.risk_tolerance,
             max_repair_iterations=self.max_repair_iterations,

@@ -10,13 +10,14 @@ If you are an agent helping a user **anonymize data**, use the [product document
 
 ## Module Map
 
-`nemo-anonymizer` is a single package with three modules:
+`nemo-anonymizer` is a single package with three primary subpackages plus top-level public utilities:
 
 - **`anonymizer.config`** — user-facing configuration: `AnonymizerConfig`, `AnonymizerInput`, replace strategies (`Substitute`, `Redact`, `Annotate`, `Hash`), and rewrite config (`Rewrite`, `EvaluationCriteria`, `RiskTolerance`). New user-facing knobs go here.
 - **`anonymizer.engine`** — internal pipeline implementation: detection, replacement, and rewrite sub-workflows, the NDD adapter, prompt utilities, and all `COL_*` column constants. Never imported directly by users.
 - **`anonymizer.interface`** — user-facing entry points: the `Anonymizer` class, CLI, `AnonymizerResult`, `PreviewResult`, and canonical error types. Thin layer that wires config → engine and exposes results.
+- **`anonymizer.logging`** — public logging configuration (`LoggingConfig`, `configure_logging`) used by the API, CLI, and examples.
 
-NeMo Anonymizer wraps [DataDesigner](https://github.com/NVIDIA-NeMo/DataDesigner) (NDD) for LLM column generation. `NddAdapter` is the only place this dependency crosses — engine sub-workflows declare NDD column configs and hand them to the adapter, which manages DataDesigner internally.
+NeMo Anonymizer wraps [DataDesigner](https://github.com/NVIDIA-NeMo/DataDesigner) (NDD) for LLM column generation. `NddAdapter.run_workflow()` is the engine boundary for *executing* DataDesigner workflows — engine sub-workflows may declare DataDesigner column configs (e.g. `LLMStructuredColumnConfig`), but they do not call `DataDesigner.create()` or `preview()` directly.
 
 ## Core Concepts
 
@@ -70,37 +71,26 @@ Records with no detected entities skip all LLM sub-workflows and pass through wi
 
 ## Config Pattern
 
-`AnonymizerConfig.rewrite` is the user-facing `Rewrite` model. The engine never receives `Rewrite` directly — it receives `EvaluationCriteria` via the `Rewrite.evaluation` property.
-
-`Rewrite` and `EvaluationCriteria` both hold `max_repair_iterations`. They must stay in sync:
-
-- `Rewrite.max_repair_iterations` is the user-facing field (default 3)
-- `Rewrite.evaluation` constructs `EvaluationCriteria(risk_tolerance=..., max_repair_iterations=self.max_repair_iterations)`
-- **Never construct `EvaluationCriteria` with hardcoded values** — always go through `Rewrite.evaluation`
-
-Leakage thresholds and repair parameters are derived from `RiskTolerance` via `_RiskToleranceBundle` in `config/rewrite.py`. Don't hardcode them elsewhere.
+`AnonymizerConfig.rewrite` is the user-facing `Rewrite` model. The engine never receives `Rewrite` directly — it receives `EvaluationCriteria` via the `Rewrite.evaluation` property. See that property's docstring for the sync contract (how `risk_tolerance` and `max_repair_iterations` flow into the engine, why production code should not duplicate the mapping).
 
 ## NDD Adapter
 
-`NddAdapter.run_workflow()` (`engine/ndd/adapter.py`) wraps a DataFrame slice + NDD column configs into a DataDesigner run and returns `WorkflowRunResult(dataframe, failed_records)`. Records missing from the output surface as `FailedRecord` objects rather than silently disappearing. Never access DataDesigner directly from engine workflows — always go through `NddAdapter`.
+`NddAdapter.run_workflow()` (`engine/ndd/adapter.py`) is the engine boundary for *executing* DataDesigner workflows. See its docstring for the contract (input/output shapes, `FailedRecord` semantics).
 
 ## Prompt Conventions
 
-All column references in NDD prompt templates go through `_jinja()` (`engine/constants.py`) — never format column names directly into strings. Dynamic prompt values use `substitute_placeholders()` (`engine/prompt_utils.py`) with `<<PLACEHOLDER>>` markers; see its docstring for the substitution contract. Prompts are inline triple-quoted strings in the workflow file that uses them; there is no separate registry.
+NDD prompts are inline triple-quoted strings in the workflow file that uses them; there is no separate registry. For DataFrame column references inside templates, use `_jinja()`; for dynamic prompt values, use `substitute_placeholders()`. See each function's docstring for details.
 
 ## Structural Invariants
 
-- `from __future__ import annotations` in every Python file
-- Absolute imports only (enforced by ruff `TID`)
-- Type annotations on all functions, methods, and class attributes
-- SPDX license header on every file
-- All column names defined in `engine/constants.py` — never use string literals for column names
-- `COL_TEXT` is the internal name for the input text column; renamed to the user's original column name in final output
+Code conventions enforced in review (future-annotations import, absolute imports, type annotations, SPDX headers, column-name constants) live in [STYLEGUIDE.md](STYLEGUIDE.md).
+
+One pipeline-specific fact worth knowing: `COL_TEXT` is the internal name for the input text column; it's renamed to the user's original column name in final output.
 
 ## What NOT To Do
 
-- **Don't bypass `Rewrite.evaluation`** — don't construct `EvaluationCriteria` with hardcoded thresholds
-- **Don't call DataDesigner directly** — always go through `NddAdapter.run_workflow()`
+- **Don't duplicate the `Rewrite` → `EvaluationCriteria` mapping** when production code starts from a `Rewrite`; route it through `Rewrite.evaluation`.
+- **Don't execute DataDesigner workflows directly** — call `DataDesigner.create()` / `.preview()` only via `NddAdapter.run_workflow()`. Declaring column configs (`LLMStructuredColumnConfig`, etc.) is fine.
 - **Don't use string literals for column names** — use `COL_*` constants from `engine/constants.py`
 - **Don't add a domain to only one supplement map** — see `engine/rewrite/domain_classification.py` for the sync invariant
 - **Don't hardcode `gliner_threshold`** — it belongs in `Detect` config (default 0.3)

@@ -210,14 +210,14 @@ The `main` branch has the following protections:
 
 ### Agent-Assisted Development
 
-If you use Claude Code, Cursor, Codex, or another coding agent, follow the standard [Pull Request Process](#pull-request-process) plus these additions:
+When automating edits with coding agents (IDE assistants, CLI tools, or hosted models), follow the standard [Pull Request Process](#pull-request-process) plus these additions:
 
 1. **For non-trivial changes, draft a plan first.** Non-trivial includes: changes spanning more than one of the `config` / `engine` / `interface` subsystems, introducing a new public API, or modifying an invariant called out in [AGENTS.md](AGENTS.md) or [STYLEGUIDE.md](STYLEGUIDE.md).
    - Write a markdown file detailing the approach, trade-offs considered, affected subsystems, and delivery strategy — enough for reviewers to evaluate the design before implementation begins. (Have the agent draft it; review and refine before submitting.)
    - Save it at `plans/<issue-number>/<short-name>.md` and submit it as its own PR for review.
    - Once the plan is approved, implement it in a follow-up PR.
 
-2. **Implement following [AGENTS.md](AGENTS.md) and [STYLEGUIDE.md](STYLEGUIDE.md).** Both capture pipeline structure, naming conventions, and invariants ruff and ty cannot enforce. The agent should read these before non-trivial changes.
+2. **Implement following [AGENTS.md](AGENTS.md) and [STYLEGUIDE.md](STYLEGUIDE.md).** Both capture pipeline structure, naming conventions, and invariants ruff and ty cannot enforce. Implementers — human or agentic — should read these before non-trivial changes.
 
 ## Issues and Discussions
 
