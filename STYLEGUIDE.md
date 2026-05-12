@@ -131,6 +131,37 @@ If a module uses `pandas` at runtime — calls `pd.DataFrame`, indexes a DataFra
 
 ---
 
+## Import Style
+
+- **ALWAYS** use absolute imports, never relative imports (enforced by `TID`)
+- Place imports at module level, not inside functions (exception: unavoidable for performance reasons)
+- Import sorting is handled by `ruff`'s `isort` — imports should be grouped and sorted:
+  1. Standard library imports
+  2. Third-party imports
+  3. First-party imports (`anonymizer`)
+- Use standard import conventions (enforced by `ICN`)
+
+```python
+# Good
+from anonymizer.config.anonymizer_config import AnonymizerConfig
+
+# Bad - relative import (will cause linter errors)
+from .anonymizer_config import AnonymizerConfig
+
+# Good - imports at module level
+from pathlib import Path
+
+def process_file(filename: str) -> None:
+    path = Path(filename)
+
+# Bad - import inside function
+def process_file(filename: str) -> None:
+    from pathlib import Path
+    path = Path(filename)
+```
+
+---
+
 ## Code Organization
 
 - Public functions and methods before private (`_`-prefixed) ones within a module or class
@@ -172,3 +203,28 @@ Every Python file must include `from __future__ import annotations` after the li
 ## Docstrings
 
 Google style (`Args:`, `Returns:`, `Raises:`). Public API classes and methods get docstrings; private helpers (`_`-prefixed) only when the logic is non-obvious. Don't restate the signature — explain why or what, not what the type annotation already says.
+
+---
+
+## Design Principles
+
+**DRY**
+
+- Extract shared logic into pure helper functions rather than duplicating across similar call sites
+- Rule of thumb: tolerate duplication until the third occurrence, then extract
+
+**KISS**
+
+- Prefer flat, obvious code over clever abstractions — two similar lines is better than a premature helper
+- When in doubt between DRY and KISS, favor readability over deduplication
+
+**YAGNI**
+
+- Don't add parameters, config, or abstraction layers for hypothetical future use cases
+- Don't generalize until the third caller appears
+
+**SOLID**
+
+- Wrap third-party exceptions at module boundaries — callers depend on canonical error types, not leaked internals
+- Use `Protocol` for contracts between layers
+- One function, one job — separate logic from I/O
