@@ -52,6 +52,11 @@ COL_LATENT_ENTITIES = "_latent_entities"
 # Final output
 COL_FINAL_ENTITIES = "final_entities"
 
+# Replace evaluation: detection-validity judge
+COL_DETECTION_JUDGE = "_detection_judge"  # raw judge output, internal
+COL_DETECTION_VALID = "detection_valid"  # user-facing bool (None if judge unavailable)
+COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"  # user-facing list of {value, label, reasoning}
+
 # ---------------------------------------------------------------------------
 # Rewrite pipeline
 # ---------------------------------------------------------------------------

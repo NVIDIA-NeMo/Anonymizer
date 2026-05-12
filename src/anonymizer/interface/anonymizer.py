@@ -36,6 +36,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkfl
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
+from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
@@ -109,7 +110,8 @@ class Anonymizer:
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
         self._replace_runner = replace_runner or ReplacementWorkflow(
-            llm_workflow=LlmReplaceWorkflow(adapter=self._adapter)
+            llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
+            detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
         )
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
 

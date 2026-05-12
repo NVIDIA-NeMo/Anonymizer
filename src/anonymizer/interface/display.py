@@ -12,12 +12,15 @@ import pandas as pd
 
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_VALID,
+    COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
 )
-from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntitySchema
 
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
@@ -78,7 +81,7 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
 
 
 def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | None) -> str:
-    """Replace-mode layout: Original, Replaced, Replacement Map."""
+    """Replace-mode layout: Original, Replaced, Detection Judge, Replacement Map."""
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
     entities = _resolve_display_entities(row)
@@ -94,6 +97,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
         replaced_entities = _build_replaced_entities_from_map(replacement_map, replaced_text)
     replaced_html = _render_highlighted_text(replaced_text, replaced_entities)
     table_html = _render_replacement_table(replacement_map)
+    detection_judge_html = _render_detection_judge_section(row)
 
     index_label = f" (record {record_index})" if record_index is not None else ""
 
@@ -101,6 +105,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
         index_label=html.escape(index_label),
         original_html=original_html,
         replaced_html=replaced_html,
+        detection_judge_html=detection_judge_html,
         table_html=table_html,
     )
 
@@ -436,6 +441,102 @@ def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
     return result
 
 
+def _render_detection_judge_section(row: pd.Series) -> str:
+    """Render the detection-judge verdict plus a drilldown when invalid entities exist."""
+    if COL_DETECTION_VALID not in row.index:
+        return ""
+    valid = row.get(COL_DETECTION_VALID)
+    invalid_entries = _normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
+    total = _count_detected_entity_label_pairs(row)
+    correct = max(total - len(invalid_entries), 0)
+
+    if valid is None:
+        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
+        rate_html = ""
+    else:
+        verdict_text = "Yes" if bool(valid) else "No"
+        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
+        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
+        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Detection Valid:</strong> {badge}{html.escape(rate_html)}"
+        "</div>"
+    )
+
+    if not invalid_entries:
+        return header
+
+    rows_html: list[str] = []
+    for entry in invalid_entries:
+        value = html.escape(str(entry.get("value", "")))
+        label = html.escape(str(entry.get("label", "")))
+        reasoning = html.escape(str(entry.get("reasoning", "")))
+        rows_html.append(
+            "<tr>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{value}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+            "</tr>"
+        )
+
+    detail = (
+        "<details style='margin-top:8px'>"
+        f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(invalid_entries)} flagged "
+        "entity(ies)</summary>"
+        "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+        "<thead><tr>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Value</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+        "</details>"
+    )
+    return header + detail
+
+
+def _count_detected_entity_label_pairs(row: pd.Series) -> int:
+    """Count (value, label) pairs the judge had a chance to evaluate.
+
+    The judge schema flags entities at the (value, label) granularity, so the
+    denominator for the success rate is the total number of such pairs in the
+    deduped entity payload, not the number of unique values.
+    """
+    raw = row.get(COL_ENTITIES_BY_VALUE) if COL_ENTITIES_BY_VALUE in row.index else None
+    if raw is None:
+        return 0
+    try:
+        parsed = EntitiesByValueSchema.from_raw(raw)
+    except Exception:
+        return 0
+    return sum(len(entity.labels) for entity in parsed.entities_by_value)
+
+
+def _normalize_invalid_entities(raw: object) -> list[dict[str, str]]:
+    """Coerce the invalid-entities column into a list of plain dicts."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for entry in raw:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
 def _render_disposition_table(row: pd.Series) -> str:
     """Render entity disposition table from _sensitivity_disposition column."""
     raw = row.get(COL_SENSITIVITY_DISPOSITION)
@@ -514,6 +615,11 @@ letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replaced</div>
         <div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.85em;\
 line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;\
 border-radius:6px;opacity:0.85">{replaced_html}</div>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
+letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Detection Judge</div>
+        {detection_judge_html}
       </div>
       <div>
         <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\

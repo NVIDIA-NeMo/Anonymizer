@@ -17,7 +17,9 @@ from anonymizer.config.replace_strategies import (
     ReplaceMethod,
     Substitute,
 )
+from anonymizer.engine.constants import COL_DETECTION_INVALID_ENTITIES, COL_DETECTION_JUDGE, COL_DETECTION_VALID
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
 
@@ -35,8 +37,13 @@ class ReplacementResult:
 class ReplacementWorkflow:
     """Dispatch replace execution between local and LLM-backed strategies."""
 
-    def __init__(self, llm_workflow: LlmReplaceWorkflow | None = None) -> None:
+    def __init__(
+        self,
+        llm_workflow: LlmReplaceWorkflow | None = None,
+        detection_judge: DetectionJudgeWorkflow | None = None,
+    ) -> None:
         self._llm_workflow = llm_workflow
+        self._detection_judge = detection_judge
 
     def run(
         self,
@@ -51,9 +58,8 @@ class ReplacementWorkflow:
 
         if isinstance(replace_method, (Annotate, Redact, Hash)):
             local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
-            return ReplacementResult(dataframe=local_df, failed_records=[])
-
-        if isinstance(replace_method, Substitute):
+            failed_records: list[FailedRecord] = []
+        elif isinstance(replace_method, Substitute):
             if self._llm_workflow is None:
                 raise ValueError("Substitute requires an llm_workflow, but none was provided.")
             map_result = self._llm_workflow.generate_map_only(
@@ -63,7 +69,47 @@ class ReplacementWorkflow:
                 instructions=replace_method.instructions,
                 preview_num_records=preview_num_records,
             )
-            replaced_df = apply_replacement_map(map_result.dataframe)
-            return ReplacementResult(dataframe=replaced_df, failed_records=map_result.failed_records)
+            local_df = apply_replacement_map(map_result.dataframe)
+            failed_records = list(map_result.failed_records)
+        else:
+            raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-        raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
+        judged_df = self._run_detection_judge(
+            local_df,
+            model_configs=model_configs,
+            selected_models=selected_models,
+            preview_num_records=preview_num_records,
+            failed_records=failed_records,
+        )
+        return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
+
+    # ---------------------------------------------------------------------------
+    # Detection judge (non-critical)
+    # ---------------------------------------------------------------------------
+
+    def _run_detection_judge(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        preview_num_records: int | None,
+        failed_records: list[FailedRecord],
+    ) -> pd.DataFrame:
+        if self._detection_judge is None:
+            return dataframe
+        try:
+            judge_result = self._detection_judge.evaluate(
+                dataframe,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+            )
+            failed_records.extend(judge_result.failed_records)
+            return judge_result.dataframe
+        except Exception:
+            logger.warning("Detection judge step failed; populating defaults", exc_info=True)
+            dataframe[COL_DETECTION_JUDGE] = None
+            dataframe[COL_DETECTION_VALID] = None
+            dataframe[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(dataframe))]
+            return dataframe
