@@ -8,6 +8,14 @@ If you are an agent helping a user **anonymize data**, use the [product document
 
 **NeMo Anonymizer** detects and protects PII through context-aware entity replacement and LLM-powered rewriting. Users supply a text dataset and a strategy; Anonymizer detects entities and transforms the text.
 
+## Agent compatibility
+
+`AGENTS.md` is the canonical instruction file for coding agents working in this repository. Keep it tool-neutral:
+
+- Use plain Markdown and repository-relative links.
+- Do not rely on vendor-specific include syntax, slash commands, MCP names, or IDE-only behavior.
+- Put tool-specific adapter instructions in thin wrapper files such as `CLAUDE.md`.
+
 ## Module Map
 
 `nemo-anonymizer` is a single package with three primary subpackages plus top-level public utilities:
