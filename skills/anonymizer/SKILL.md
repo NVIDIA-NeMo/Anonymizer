@@ -143,7 +143,8 @@ def main() -> None:
 
     if args.full:
         result = anonymizer.run(config=config, data=data)
-        out_path = result.output_path
+        out_path = "output.parquet"  # TODO: change path/format (.csv, .jsonl) as needed
+        result.dataframe.to_parquet(out_path)
         print(f"Wrote {len(result.dataframe)} rows to {out_path}")
     else:
         result = anonymizer.preview(config=config, data=data, num_records=args.num_records)
