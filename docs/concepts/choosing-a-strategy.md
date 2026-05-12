@@ -43,7 +43,7 @@ What to include:
 - The domain (clinical, legal, financial, customer support, etc.)
 - The genre (notes, transcripts, opinions, biographies)
 - Anything about the source the engine couldn't infer from a single record (e.g. "transcribed phone calls — expect disfluencies")
-- *(Augmenter-only)* When you leave `entity_labels=None`, this is currently also the only place to nudge the augmenter LLM **away** from inventing labels you don't care about (e.g. "do not tag generic anatomical terms, medication class names, or job titles as PII"). Treat it as a soft do-not-tag list.
+- `data_summary` is the only way to provide a soft do-not-tag list for the augmenter when `entity_labels=None` — the augmenter is free to invent labels beyond `DEFAULT_ENTITY_LABELS`, so use it to tell the LLM what *not* to tag (e.g. "do not tag generic anatomical terms, medication class names, or job titles as PII").
 
 What to leave out:
 
@@ -99,7 +99,7 @@ Both modes start from the same [detection](detection.md) pipeline. The differenc
 | Is the goal "scrub the entities and keep everything else"? | ✅ | — |
 | Is the goal "produce a privacy-safe version of this text that downstream models can train on"? | — | ✅ |
 | Are there inferable / latent identifiers that aren't explicitly stated (e.g. "ringing the bell" → cancer treatment)? | ❌ leaves them | ✅ removes them |
-| Cost per record | ~1 LLM call (Substitute) or 0 LLM calls (Redact/Annotate/Hash) | Many LLM calls (domain → disposition → QA → rewrite → evaluate → repair → judge) |
+| Additional LLM calls (beyond shared detection) | ~1 (Substitute) or 0 (Redact/Annotate/Hash) | Many (domain → disposition → QA → rewrite → evaluate → repair → judge) |
 | Output text length | ≈ same as input | Often shorter / restructured |
 | Best for | Structured records, log scrubbing, known-list redaction | Free-text data with implicit identifiers (clinical notes, biographies, depositions, support transcripts) |
 
