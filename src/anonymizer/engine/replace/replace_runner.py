@@ -17,11 +17,19 @@ from anonymizer.config.replace_strategies import (
     ReplaceMethod,
     Substitute,
 )
-from anonymizer.engine.constants import COL_DETECTION_INVALID_ENTITIES, COL_DETECTION_JUDGE, COL_DETECTION_VALID
+from anonymizer.engine.constants import (
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_JUDGE,
+    COL_DETECTION_VALID,
+    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+    COL_TYPE_FIDELITY_JUDGE,
+    COL_TYPE_FIDELITY_VALID,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 
 logger = logging.getLogger("anonymizer.replace")
 
@@ -41,9 +49,11 @@ class ReplacementWorkflow:
         self,
         llm_workflow: LlmReplaceWorkflow | None = None,
         detection_judge: DetectionJudgeWorkflow | None = None,
+        type_fidelity_judge: TypeFidelityJudgeWorkflow | None = None,
     ) -> None:
         self._llm_workflow = llm_workflow
         self._detection_judge = detection_judge
+        self._type_fidelity_judge = type_fidelity_judge
 
     def run(
         self,
@@ -55,11 +65,12 @@ class ReplacementWorkflow:
         preview_num_records: int | None = None,
     ) -> ReplacementResult:
         logger.debug("replacement strategy: %s on %d records", type(replace_method).__name__, len(dataframe))
+        is_substitute = isinstance(replace_method, Substitute)
 
         if isinstance(replace_method, (Annotate, Redact, Hash)):
             local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
             failed_records: list[FailedRecord] = []
-        elif isinstance(replace_method, Substitute):
+        elif is_substitute:
             if self._llm_workflow is None:
                 raise ValueError("Substitute requires an llm_workflow, but none was provided.")
             map_result = self._llm_workflow.generate_map_only(
@@ -81,6 +92,14 @@ class ReplacementWorkflow:
             preview_num_records=preview_num_records,
             failed_records=failed_records,
         )
+        if is_substitute:
+            judged_df = self._run_type_fidelity_judge(
+                judged_df,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+                failed_records=failed_records,
+            )
         return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
 
     # ---------------------------------------------------------------------------
@@ -112,4 +131,35 @@ class ReplacementWorkflow:
             dataframe[COL_DETECTION_JUDGE] = None
             dataframe[COL_DETECTION_VALID] = None
             dataframe[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(dataframe))]
+            return dataframe
+
+    # ---------------------------------------------------------------------------
+    # Type-fidelity judge (Substitute only, non-critical)
+    # ---------------------------------------------------------------------------
+
+    def _run_type_fidelity_judge(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        preview_num_records: int | None,
+        failed_records: list[FailedRecord],
+    ) -> pd.DataFrame:
+        if self._type_fidelity_judge is None:
+            return dataframe
+        try:
+            judge_result = self._type_fidelity_judge.evaluate(
+                dataframe,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+            )
+            failed_records.extend(judge_result.failed_records)
+            return judge_result.dataframe
+        except Exception:
+            logger.warning("Type-fidelity judge step failed; populating defaults", exc_info=True)
+            dataframe[COL_TYPE_FIDELITY_JUDGE] = None
+            dataframe[COL_TYPE_FIDELITY_VALID] = None
+            dataframe[COL_TYPE_FIDELITY_INVALID_REPLACEMENTS] = [[] for _ in range(len(dataframe))]
             return dataframe

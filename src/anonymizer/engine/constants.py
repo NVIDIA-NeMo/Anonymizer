@@ -57,6 +57,11 @@ COL_DETECTION_JUDGE = "_detection_judge"  # raw judge output, internal
 COL_DETECTION_VALID = "detection_valid"  # user-facing bool (None if judge unavailable)
 COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"  # user-facing list of {value, label, reasoning}
 
+# Replace evaluation: type-fidelity judge (Substitute only)
+COL_TYPE_FIDELITY_JUDGE = "_type_fidelity_judge"  # raw judge output, internal
+COL_TYPE_FIDELITY_VALID = "type_fidelity_valid"  # user-facing bool (None if judge unavailable)
+COL_TYPE_FIDELITY_INVALID_REPLACEMENTS = "type_fidelity_invalid_replacements"  # list of {original, label, synthetic, reasoning}
+
 # ---------------------------------------------------------------------------
 # Rewrite pipeline
 # ---------------------------------------------------------------------------

@@ -19,8 +19,15 @@ from anonymizer.engine.constants import (
     COL_JUDGE_EVALUATION,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
+    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+    COL_TYPE_FIDELITY_VALID,
 )
-from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntitySchema
+from anonymizer.engine.schemas import (
+    EntitiesByValueSchema,
+    EntitiesSchema,
+    EntityReplacementMapSchema,
+    EntitySchema,
+)
 
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
@@ -81,7 +88,7 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
 
 
 def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | None) -> str:
-    """Replace-mode layout: Original, Replaced, Detection Judge, Replacement Map."""
+    """Replace-mode layout: Original, Replaced, Detection Judge, optional Type Fidelity, Replacement Map."""
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
     entities = _resolve_display_entities(row)
@@ -98,6 +105,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
     replaced_html = _render_highlighted_text(replaced_text, replaced_entities)
     table_html = _render_replacement_table(replacement_map)
     detection_judge_html = _render_detection_judge_section(row)
+    type_fidelity_section = _render_type_fidelity_section(row, replacement_map)
 
     index_label = f" (record {record_index})" if record_index is not None else ""
 
@@ -106,6 +114,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
         original_html=original_html,
         replaced_html=replaced_html,
         detection_judge_html=detection_judge_html,
+        type_fidelity_section=type_fidelity_section,
         table_html=table_html,
     )
 
@@ -461,7 +470,7 @@ def _render_detection_judge_section(row: pd.Series) -> str:
 
     header = (
         "<div style='font-size:0.9em;line-height:1.8'>"
-        f"<strong>Detection Valid:</strong> {badge}{html.escape(rate_html)}"
+        f"<strong>Detection Validity:</strong> {badge}{html.escape(rate_html)}"
         "</div>"
     )
 
@@ -498,6 +507,71 @@ def _render_detection_judge_section(row: pd.Series) -> str:
     return header + detail
 
 
+def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str, str]]) -> str:
+    """Render the type-fidelity verdict for Substitute runs. Returns "" when judge did not run."""
+    if COL_TYPE_FIDELITY_VALID not in row.index:
+        return ""
+    valid = row.get(COL_TYPE_FIDELITY_VALID)
+    invalid_entries = _normalize_invalid_entities(row.get(COL_TYPE_FIDELITY_INVALID_REPLACEMENTS))
+    total = _count_replacement_triples(row, fallback=replacement_map)
+    correct = max(total - len(invalid_entries), 0)
+
+    if valid is None:
+        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
+        rate_html = ""
+    else:
+        verdict_text = "Yes" if bool(valid) else "No"
+        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
+        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
+        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Type Fidelity:</strong> {badge}{html.escape(rate_html)}"
+        "</div>"
+    )
+
+    body = header
+    if invalid_entries:
+        rows_html: list[str] = []
+        for entry in invalid_entries:
+            original = html.escape(str(entry.get("original", "")))
+            label = html.escape(str(entry.get("label", "")))
+            synthetic = html.escape(str(entry.get("synthetic", "")))
+            reasoning = html.escape(str(entry.get("reasoning", "")))
+            rows_html.append(
+                "<tr>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{original}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{synthetic}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+                "</tr>"
+            )
+        body += (
+            "<details style='margin-top:8px'>"
+            f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(invalid_entries)} "
+            "flagged replacement(s)</summary>"
+            "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+            "<thead><tr>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Original</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Synthetic</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows_html)}</tbody>"
+            "</table>"
+            "</details>"
+        )
+
+    return (
+        "<div style='margin-bottom:16px'>"
+        "<div style=\"font-size:0.8em;font-weight:600;text-transform:uppercase;"
+        "letter-spacing:0.05em;margin-bottom:6px;opacity:0.5\">Type Fidelity</div>"
+        f"{body}"
+        "</div>"
+    )
+
+
 def _count_detected_entity_label_pairs(row: pd.Series) -> int:
     """Count (value, label) pairs the judge had a chance to evaluate.
 
@@ -513,6 +587,31 @@ def _count_detected_entity_label_pairs(row: pd.Series) -> int:
     except Exception:
         return 0
     return sum(len(entity.labels) for entity in parsed.entities_by_value)
+
+
+def _count_replacement_triples(row: pd.Series, *, fallback: list[dict[str, str]]) -> int:
+    """Count replacement entries the type-fidelity judge had a chance to evaluate.
+
+    ``_normalize_replacement_map`` (used to render the table) rejects shapes
+    like ``{"replacements": numpy.ndarray(...)}`` from parquet round-trips,
+    which would silently zero out the success-rate denominator here. Validate
+    via Pydantic instead so the count matches what the judge actually saw.
+    """
+    raw = row.get(COL_REPLACEMENT_MAP) if COL_REPLACEMENT_MAP in row.index else None
+    if raw is not None:
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump(mode="python")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                raw = None
+        if isinstance(raw, dict):
+            try:
+                return len(EntityReplacementMapSchema.model_validate(raw).replacements)
+            except Exception:
+                pass
+    return len(fallback)
 
 
 def _normalize_invalid_entities(raw: object) -> list[dict[str, str]]:
@@ -621,6 +720,7 @@ border-radius:6px;opacity:0.85">{replaced_html}</div>
 letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Detection Judge</div>
         {detection_judge_html}
       </div>
+      {type_fidelity_section}
       <div>
         <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
 letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replacement Map</div>
