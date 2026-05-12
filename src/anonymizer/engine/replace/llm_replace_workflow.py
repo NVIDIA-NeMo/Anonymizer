@@ -12,7 +12,14 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import ReplaceModelSelection
-from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, ENTITY_LABEL_EXAMPLES
+from anonymizer.engine.constants import (
+    COL_ENTITIES_BY_VALUE,
+    COL_ENTITIES_FOR_REPLACE,
+    COL_ENTITIES_FOR_REPLACE_JSON,
+    COL_ENTITY_EXAMPLES,
+    COL_REPLACEMENT_MAP,
+    ENTITY_LABEL_EXAMPLES,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
@@ -20,6 +27,12 @@ from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
+
+# Workflow-internal scratch columns used only to build the replacement-generator
+# prompt. Created in `generate_map_only` and dropped before returning — nothing
+# downstream consumes them, and they carry pyarrow-backed pandas extension
+# dtypes that would break trace_dataframe.to_parquet round-trip.
+_INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES_FOR_REPLACE_JSON)
 
 
 @dataclass(frozen=True)
@@ -50,17 +63,18 @@ class LlmReplaceWorkflow:
 
         # Parse the per-row entity payload once, then reuse it for prompt inputs.
         parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
-        working_df["_entity_examples"] = parsed_entities.apply(_create_entity_examples)
-        working_df["_entities_for_replace"] = parsed_entities.apply(_enrich_entities_for_template)
-        working_df["_entities_for_replace_json"] = working_df["_entities_for_replace"].apply(json.dumps)
+        working_df[COL_ENTITY_EXAMPLES] = parsed_entities.apply(_create_entity_examples)
+        working_df[COL_ENTITIES_FOR_REPLACE] = parsed_entities.apply(_enrich_entities_for_template)
+        working_df[COL_ENTITIES_FOR_REPLACE_JSON] = working_df[COL_ENTITIES_FOR_REPLACE].apply(json.dumps)
 
         # Partition: rows with an empty entity list bypass replacement-map generation.
-        entity_rows, passthrough_rows = split_rows(working_df, column="_entities_for_replace", predicate=bool)
+        entity_rows, passthrough_rows = split_rows(working_df, column=COL_ENTITIES_FOR_REPLACE, predicate=bool)
         passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
 
         if entity_rows.empty:
+            passthrough_only = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
             return LlmReplaceResult(
-                dataframe=merge_and_reorder(passthrough_rows, attrs=dataframe.attrs),
+                dataframe=passthrough_only.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
                 failed_records=[],
             )
 
@@ -75,7 +89,7 @@ class LlmReplaceWorkflow:
                 LLMStructuredColumnConfig(
                     name=COL_REPLACEMENT_MAP,
                     prompt=_get_replacement_mapping_prompt(
-                        entities_column="_entities_for_replace",
+                        entities_column=COL_ENTITIES_FOR_REPLACE,
                         instructions=instructions,
                     ),
                     model_alias=replace_alias,
@@ -99,7 +113,10 @@ class LlmReplaceWorkflow:
         combined = merge_and_reorder(
             output_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
         )
-        return LlmReplaceResult(dataframe=combined, failed_records=run_result.failed_records)
+        return LlmReplaceResult(
+            dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
+            failed_records=run_result.failed_records,
+        )
 
 
 def _enrich_entities_for_template(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:
@@ -205,7 +222,7 @@ Entities to replace:
 - "{{ entity.value }}" ({{ entity.labels_str }})
 {%- endfor %}
 
-Examples: {{ _entity_examples }}
+Examples: {{ <<ENTITY_EXAMPLES_COLUMN>> }}
 
 Rules:
 1. Related entities must stay consistent:
@@ -245,6 +262,7 @@ Before generating replacements, verify:
         {
             "<<INSTRUCTION_BLOCK>>": instruction_block,
             "<<ENTITIES_COLUMN>>": entities_column,
+            "<<ENTITY_EXAMPLES_COLUMN>>": COL_ENTITY_EXAMPLES,
         },
     )
 
