@@ -5,10 +5,16 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal
+
+# When invoked via the CLI entry point, telemetry deployment type defaults to "cli".
+# Anonymizer's SDK path sets "sdk" via os.environ.setdefault in Anonymizer.__init__,
+# but the CLI is loaded first so its setdefault wins for CLI-driven runs.
+os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "cli")
 
 logger = logging.getLogger("anonymizer.cli")
 
@@ -110,6 +116,18 @@ class CliOpts:
     # -- shared between substitute (replace) and rewrite --
     instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the LLM.")] = None
 
+    # -- telemetry --
+    emit_telemetry: Annotated[
+        bool,
+        cyclopts.Parameter(
+            help=(
+                "Whether to emit anonymous Anonymizer telemetry events. "
+                "Use --no-emit-telemetry to opt out for this invocation. "
+                "Also overridable globally via NEMO_TELEMETRY_ENABLED=false."
+            )
+        ),
+    ] = True
+
     _REPLACE_ONLY_FLAGS: ClassVar[tuple[str, ...]] = ("format_template",)
     _REWRITE_ONLY_FLAGS: ClassVar[tuple[str, ...]] = ("protect", "preserve")
 
@@ -186,10 +204,10 @@ def _build_config_and_anonymizer(opts: CliOpts) -> tuple[AnonymizerConfig, Anony
     """Build the shared AnonymizerConfig and Anonymizer from CLI args."""
     if opts.rewrite:
         strategy = _build_rewrite_config(opts)
-        config = AnonymizerConfig(rewrite=strategy, detect=opts.detect)
+        config = AnonymizerConfig(rewrite=strategy, detect=opts.detect, emit_telemetry=opts.emit_telemetry)
     elif opts.replace:
         strategy = _build_replace_strategy(opts)
-        config = AnonymizerConfig(replace=strategy, detect=opts.detect)
+        config = AnonymizerConfig(replace=strategy, detect=opts.detect, emit_telemetry=opts.emit_telemetry)
     else:
         raise InvalidConfigError("Specify --replace <strategy> or --rewrite.")
 
