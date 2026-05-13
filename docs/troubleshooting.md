@@ -103,7 +103,7 @@ Try in order:
 
    ```python
    from anonymizer import DEFAULT_ENTITY_LABELS, Detect
-   detect = Detect(entity_labels=DEFAULT_ENTITY_LABELS + ["clinical_facility"])
+   detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"])
    ```
 
    Domain-specific labels (`clinical_facility`, `case_number`, `internal_project_codename`) won't be detected reliably without being listed this way.

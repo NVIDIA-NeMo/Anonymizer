@@ -35,7 +35,7 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 
 # Usage Tips and Common Pitfalls
 
-- **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected. To add domain labels, *extend* the default, don't replace it: `entity_labels=DEFAULT_ENTITY_LABELS + ["clinical_facility", ...]`. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`.
+- **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected. To add domain labels, *extend* the default, don't replace it: `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", ...]` (`DEFAULT_ENTITY_LABELS` is a tuple, so unpack it into a list). Match the snake_case convention of `DEFAULT_ENTITY_LABELS`.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
@@ -102,7 +102,7 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
 
     detect = Detect(
         # Add domain labels by *extending* the default, not replacing it.
-        # entity_labels=DEFAULT_ENTITY_LABELS + ["clinical_facility", "diagnosis_code"],
+        # entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code"],
         gliner_threshold=0.3,  # default; lower (0.2) for recall, raise (0.5) for cost
     )
 

@@ -75,7 +75,7 @@ Common ways to extend the default list:
 ```python
 from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
-detect = Detect(entity_labels=DEFAULT_ENTITY_LABELS + ["clinical_facility", "diagnosis_code", "medication_name"])
+detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])
 ```
 
 ### `gliner_threshold`
@@ -104,7 +104,7 @@ Both modes start from the same [detection](detection.md) pipeline. The differenc
 | Output text length | ≈ same as input | Often shorter / restructured |
 | Best for | Structured records, log scrubbing, known-list redaction | Free-text data with implicit identifiers (clinical notes, biographies, depositions, support transcripts) |
 
-**Picking between them.** Ask the user. If the data has inferable identifiers that survive entity-only scrubbing (clinical notes, biographies, depositions), Rewrite is the right fit. For structured records, logs, or single-cell PII, Replace is faster and preserves shape. If unsure, walk through a few sample rows with the user before choosing.
+**Picking between them.** If your data has inferable identifiers that survive entity-only scrubbing (clinical notes, biographies, depositions), Rewrite is the right fit. For structured records, logs, or single-cell PII, Replace is faster and preserves shape. If you're unsure, walk through a few sample rows before deciding.
 
 ---
 
@@ -119,7 +119,7 @@ The four strategies are summarised in [Replace](replace.md#strategy-comparison).
 | To inspect what was detected without losing the original | **Annotate** | Original text is preserved next to the label — **not privacy-safe on its own** |
 | Deterministic re-identification across documents (same person → same token) | **Hash** | Same input always produces the same hash digest |
 
-**Default:** if the user hasn't specified a strategy, use `Substitute`. It's the most general-purpose choice and matches the bulk of production usage.
+**If you're not sure which to pick, use `Substitute`.** It's the most general-purpose choice and matches the bulk of production usage.
 
 ### Writing `Substitute.instructions`
 
@@ -189,7 +189,7 @@ Being in a regulated domain (medical / legal / financial) is **not** by itself a
 
 `risk_tolerance` is a rewrite-only knob — it selects a coherent bundle of repair and review thresholds. The full table is in [Rewrite > Risk tolerance](rewrite.md#risk-tolerance); the choice rule is below.
 
-| User signal | Pick |
+| Goal | Pick |
 |---|---|
 | "Medical / legal / financial / external release" | `minimal` |
 | Default for most privacy-sensitive data | `low` |
