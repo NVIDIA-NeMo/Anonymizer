@@ -19,7 +19,13 @@ The text is then rewritten to reduce identifiability, applying targeted transfor
 
 **Sensitivity** measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision; it feeds the downstream leakage scoring system.
 
-**Protection method** describes how a sensitive entity is transformed. The choice reflects a holistic view of the document — what other entities are being protected and how shapes what each individual entity needs. The general defaults are: direct identifiers are replaced with plausible synthetic alternatives, quasi-identifiers are generalized to a broader form (e.g., an exact date becomes a quarter, a city becomes a region), and latent entities receive `suppress_inference`, meaning the surrounding text is rewritten to remove the cues that enable the inference rather than replacing a stated value. Entities that do not require protection are left as-is. Occasionally an entity is removed outright when neither replacement nor generalization can preserve meaning without retaining the identifying detail.
+**Protection method** describes how a sensitive entity is transformed. The choice reflects a holistic view of the document — what other entities are being protected and how shapes what each individual entity needs. The general defaults are:
+
+- **Direct identifiers** are replaced with plausible synthetic alternatives.
+- **Quasi-identifiers** are generalized to a broader form (e.g., an exact date becomes a quarter, a city becomes a region).
+- **Latent entities** receive `suppress_inference`: the surrounding text is rewritten to remove the cues that enable the inference rather than replacing a stated value.
+- **Low-risk entities** that do not require protection are left as-is.
+- Occasionally an entity is **removed outright** when neither replacement nor generalization can preserve meaning without retaining the identifying detail.
 
 ---
 
