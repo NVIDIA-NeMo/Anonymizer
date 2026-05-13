@@ -103,6 +103,9 @@ CLAUDE.local.md
 .claude/settings.local.json
 ai/tmp/
 
+# Claude worktrees
+.claude/worktrees/
+
 # Anonymizer execution artifacts
 .anonymizer-artifacts/
 docs/notebook_source/data/synth_bios_sample10_anonymized.csv

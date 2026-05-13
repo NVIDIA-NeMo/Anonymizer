@@ -61,7 +61,27 @@ class NddAdapter:
         workflow_name: str,
         preview_num_records: int | None = None,
     ) -> WorkflowRunResult:
-        """Run one workflow and return output with missing-record tracking."""
+        """Run one workflow and return output with missing-record tracking.
+
+        Wraps a DataFrame slice plus NDD column configs into a DataDesigner
+        run and returns `WorkflowRunResult(dataframe, failed_records)`.
+        Records missing from the output surface as `FailedRecord` objects
+        rather than silently disappearing.
+
+        This is the engine boundary for *executing* DataDesigner workflows.
+        Engine sub-workflows declare column configs and call this method;
+        they do not call `DataDesigner.create()` or `.preview()` directly.
+
+        Args:
+            df: Input DataFrame.
+            model_configs: NDD model aliases available to the workflow.
+            columns: NDD column configs to add to the workflow.
+            workflow_name: Identifier used in logs and on `FailedRecord` entries.
+            preview_num_records: If set, run in preview mode against this many rows.
+
+        Returns:
+            `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
+        """
         workflow_input_df = self._attach_record_ids(df=df)
         logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
         col_names = [c.name for c in columns]

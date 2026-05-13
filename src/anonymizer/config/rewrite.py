@@ -105,12 +105,12 @@ class PrivacyGoal(BaseModel):
 class EvaluationCriteria(BaseModel):
     """Criteria for privacy leakage evaluation and repair.
 
-    ``risk_tolerance`` controls the leakage threshold that triggers repair,
+    `risk_tolerance` controls the leakage threshold that triggers repair,
     whether individual high-sensitivity leaks trigger repair, and the
-    thresholds for flagging records for human review. See ``RiskTolerance``
+    thresholds for flagging records for human review. See `RiskTolerance`
     for preset descriptions.
 
-    ``max_repair_iterations`` caps how many repair rounds are attempted
+    `max_repair_iterations` caps how many repair rounds are attempted
     (each round = one LLM call per failing row). Set to 0 to disable repair
     while still producing evaluation metrics.
     """

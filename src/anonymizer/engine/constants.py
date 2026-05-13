@@ -193,9 +193,14 @@ DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
 
 
 def _jinja(col: str, *, key: str | None = None) -> str:
-    """Wrap a column name in Jinja2 template syntax for use in NDD prompts.
+    """Wrap a DataFrame column name in Jinja2 template syntax for NDD prompts.
 
-    When *key* is given the expression becomes ``{{ col['key'] }}``,
+    Use this for any DataFrame column reference inside an NDD prompt
+    template — it keeps column references grep-able. Local Jinja loop
+    variables (e.g. `entity.value` inside `{% for entity in ... %}`) are
+    scoped to the prompt and should *not* go through this helper.
+
+    When `key` is given the expression becomes `{{ col['key'] }}`,
     providing a single grep-able call site for nested schema access.
     """
     expr = col if key is None else f"{col}['{key}']"
