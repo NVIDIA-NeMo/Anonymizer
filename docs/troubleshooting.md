@@ -196,16 +196,14 @@ Symptoms: every "Alice" becomes "Maya," every city becomes "Springfield," every 
 
 1. **Add domain hints to `Substitute.instructions`** — see [Choosing a strategy > Writing Substitute.instructions](concepts/choosing-a-strategy.md#writing-substituteinstructions).
 2. **Check the `replacement_generator` model** — small models default-collapse to high-frequency names. Try a stronger model for this role.
-3. **`Substitute` is consistent within a row, not across rows.** Repeated mentions of the same value in one row collapse to one replacement (so a person's name stays consistent in a single document). Across rows the LLM has no shared state, so "Alice" in different rows usually gets different replacements. If you need stable cross-row mappings, use `Hash` or post-process `result.trace_dataframe["_replacement_map"]`.
+3. **If you need stable cross-row mappings**, use `Hash` or post-process `result.trace_dataframe["_replacement_map"]`. `Substitute` is consistent within a row but not across rows: repeated mentions of the same value in one row collapse to one replacement (so a person's name stays consistent in a single document), but across rows the LLM has no shared state, so "Alice" in different rows usually gets different replacements.
 
 ### Hash output isn't stable across runs
 
-Hashes are deterministic given the same `algorithm`, `digest_length`, and input text. Instability almost always means:
+The digest is deterministic given the same `algorithm`, `digest_length`, and *input text*. The label is **not** part of the digest — but it *is* templated into the output wrapper (default `format_template="<HASH_{label}_{digest}>"`). So:
 
-- The detected text differs (different whitespace, casing, surrounding context). Look at the `<your_text_column>_with_spans` column to confirm.
-- The label differs between runs (label normalization is lossy — e.g. `first_name` vs `FIRST_NAME` collapse to the same value, but `name` vs `first_name` do not).
-
-The hash itself is a function of `text`, not of `label`. If the *original entity text* is identical, the digest is identical.
+- **Digest differs across runs**: the detected entity text changed (whitespace, casing, surrounding context). Check the `<your_text_column>_with_spans` column to confirm.
+- **Only the wrapper differs** (digest is the same, but e.g. `<HASH_FIRST_NAME_abc>` becomes `<HASH_NAME_abc>`): the label changed between runs. The digest is still stable; only the wrapper text moved. To avoid label drift in the output, set `format_template="<HASH_{digest}>"` to drop the label entirely.
 
 ### Validation passed but `preview` errors at LLM call
 

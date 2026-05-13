@@ -57,7 +57,7 @@ Environment-level issues only. Quality and pipeline issues are in `docs/troubles
 
 - **`anonymizer` not installed:** Tell the user `nemo-anonymizer` is not in this Python environment (requires Python ≥ 3.11). Ask if they want you to install it (`pip install nemo-anonymizer`) or do it themselves. Do not install without permission.
 - **Model aliases not configured:** Anonymizer can't run without `models.yaml` and `providers.yaml`. Tell the user to set these up — see `docs/concepts/models.md`. If they don't have a config yet, point them at `src/anonymizer/config/default_model_configs/` for the shipped defaults.
-- **LLM calls failing at preview:** Probably auth / network / wrong base URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
+- **LLM calls failing at preview:** Usually an auth issue (missing or invalid API key), a network problem, or a wrong base URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
 
 # Output Template
 
@@ -103,7 +103,7 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
     detect = Detect(
         # Add domain labels by *extending* the default, not replacing it.
         # entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code"],
-        gliner_threshold=0.3,  # default; lower (0.2) for recall, raise (0.5) for cost
+        gliner_threshold=0.3,  # default; lower (0.2) for recall, raise (0.5) for cost savings
     )
 
     # ---- Pick ONE of the two strategies below ----
