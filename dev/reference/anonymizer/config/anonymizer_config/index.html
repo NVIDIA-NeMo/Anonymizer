@@ -2810,7 +2810,17 @@
 
     <div class="doc doc-contents ">
 
-        <p>Internal: construct EvaluationCriteria for the engine.</p>
+        <p>Construct <code>EvaluationCriteria</code> from this <code>Rewrite</code> config for the engine.</p>
+<p><code>Rewrite</code> and <code>EvaluationCriteria</code> both carry <code>max_repair_iterations</code>.
+This property keeps them in sync: it passes through <code>self.risk_tolerance</code>
+and <code>self.max_repair_iterations</code>. Leakage thresholds and repair
+parameters are derived from <code>risk_tolerance</code> via <code>_RiskToleranceBundle</code>
+(see <code>rewrite.py</code>).</p>
+<p>Production code that starts from a user-facing <code>Rewrite</code> should pass
+<code>rewrite.evaluation</code> into the engine — never duplicate the mapping
+manually. Tests and engine-internal callers may construct
+<code>EvaluationCriteria</code> directly when they aren't routing through a
+user-facing <code>Rewrite</code>.</p>
 
     </div>
 
