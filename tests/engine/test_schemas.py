@@ -232,6 +232,7 @@ def mixed_disposition() -> SensitivityDispositionSchema:
                     entity_value="Portland",
                     needs_protection=False,
                     protection_method_suggestion="leave_as_is",
+                    combined_risk_level="low",
                 ),
             ]
         }
@@ -320,7 +321,11 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protec
         {
             "sensitivity_disposition": [
                 _make_entity(
-                    id=1, sensitivity="low", needs_protection=False, protection_method_suggestion="leave_as_is"
+                    id=1,
+                    sensitivity="low",
+                    needs_protection=False,
+                    protection_method_suggestion="leave_as_is",
+                    combined_risk_level="low",
                 ),
             ]
         }
