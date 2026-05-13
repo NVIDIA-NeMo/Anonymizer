@@ -11,6 +11,9 @@ from dataclasses import dataclass
 import pandas as pd
 
 from anonymizer.engine.constants import (
+    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
+    COL_ATTRIBUTE_FIDELITY_JUDGE,
+    COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
@@ -109,6 +112,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
     table_html = _render_replacement_table(replacement_map)
     detection_judge_html = _render_detection_judge_section(row)
     type_fidelity_section = _render_type_fidelity_section(row, replacement_map)
+    attribute_fidelity_section = _render_attribute_fidelity_section(row)
     relational_consistency_section = _render_relational_consistency_section(row)
 
     index_label = f" (record {record_index})" if record_index is not None else ""
@@ -119,6 +123,7 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
         replaced_html=replaced_html,
         detection_judge_html=detection_judge_html,
         type_fidelity_section=type_fidelity_section,
+        attribute_fidelity_section=attribute_fidelity_section,
         relational_consistency_section=relational_consistency_section,
         table_html=table_html,
     )
@@ -577,6 +582,150 @@ def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str
     )
 
 
+def _render_attribute_fidelity_section(row: pd.Series) -> str:
+    """Render the attribute-fidelity verdict for Substitute runs.
+
+    Always lists every entity the judge evaluated (passes + fails), mirroring
+    the relational-consistency drilldown so the reader can see WHICH entities
+    were inspected. Returns "" when the judge did not run for this row.
+    """
+    if COL_ATTRIBUTE_FIDELITY_VALID not in row.index:
+        return ""
+    valid = row.get(COL_ATTRIBUTE_FIDELITY_VALID)
+    all_entries = _extract_all_attribute_entries(row)
+    invalid_count = sum(1 for e in all_entries if not bool(e.get("passes", False)))
+    if not all_entries:
+        fallback_invalid = _normalize_attribute_entries(row.get(COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES))
+        invalid_count = len(fallback_invalid)
+        all_entries = [{**entry, "passes": False} for entry in fallback_invalid]
+    total = len(all_entries)
+    correct = max(total - invalid_count, 0)
+
+    if valid is None:
+        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
+        rate_html = ""
+    else:
+        verdict_text = "Yes" if bool(valid) else "No"
+        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
+        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
+        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Attribute Fidelity:</strong> {badge}{html.escape(rate_html)}"
+        "</div>"
+    )
+
+    body = header
+    if all_entries:
+        body += _render_attribute_entries_table(all_entries)
+
+    return (
+        "<div style='margin-bottom:16px'>"
+        "<div style=\"font-size:0.8em;font-weight:600;text-transform:uppercase;"
+        "letter-spacing:0.05em;margin-bottom:6px;opacity:0.5\">Attribute Fidelity</div>"
+        f"{body}"
+        "</div>"
+    )
+
+
+def _render_attribute_entries_table(entries: list[dict[str, object]]) -> str:
+    """Render a drilldown listing every entity the attribute-fidelity judge inspected."""
+    rows_html: list[str] = []
+    for entry in entries:
+        original = html.escape(str(entry.get("original", "")))
+        label = html.escape(str(entry.get("label", "")))
+        synthetic = html.escape(str(entry.get("synthetic", "")))
+        attrs = entry.get("attributes_checked", [])
+        if hasattr(attrs, "tolist"):
+            attrs = attrs.tolist()
+        if not isinstance(attrs, list):
+            attrs = []
+        attrs_str = html.escape(", ".join(str(a) for a in attrs))
+        passes = bool(entry.get("passes", False))
+        status_color = "#22c55e" if passes else "#ef4444"
+        status_label = "Pass" if passes else "Fail"
+        status_html = f"<span style='color:{status_color};font-weight:600'>{status_label}</span>"
+        reasoning = html.escape(str(entry.get("reasoning", "")))
+        rows_html.append(
+            "<tr>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{original}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{synthetic}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{attrs_str}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{status_html}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+            "</tr>"
+        )
+    return (
+        "<details style='margin-top:8px'>"
+        f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(entries)} "
+        "evaluated entity(ies)</summary>"
+        "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+        "<thead><tr>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Original</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Synthetic</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Attributes</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Status</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+        "</details>"
+    )
+
+
+def _extract_all_attribute_entries(row: pd.Series) -> list[dict[str, object]]:
+    """Read the full entities list (passes + fails) from the raw attribute-fidelity column."""
+    raw = row.get(COL_ATTRIBUTE_FIDELITY_JUDGE) if COL_ATTRIBUTE_FIDELITY_JUDGE in row.index else None
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump(mode="python")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if not isinstance(raw, dict):
+        return []
+    entities = raw.get("entities", [])
+    if hasattr(entities, "tolist"):
+        entities = entities.tolist()
+    if not isinstance(entities, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in entities:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def _normalize_attribute_entries(raw: object) -> list[dict[str, object]]:
+    """Coerce the invalid-entities column into a list of plain dicts."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in raw:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
 def _render_relational_consistency_section(row: pd.Series) -> str:
     """Render the relational-consistency verdict for Substitute runs.
 
@@ -631,7 +780,11 @@ def _render_relations_table(relations: list[dict[str, object]]) -> str:
     rows_html: list[str] = []
     for entry in relations:
         description = html.escape(str(entry.get("description", "")))
-        entities = entry.get("entities", []) or []
+        entities = entry.get("entities", [])
+        if hasattr(entities, "tolist"):
+            entities = entities.tolist()
+        if not isinstance(entities, list):
+            entities = []
         entities_str = html.escape(
             ", ".join(
                 f"{e.get('original', '')} ({e.get('label', '')}) -> {e.get('synthetic', '')}"
@@ -870,6 +1023,7 @@ letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Detection Judge</div>
         {detection_judge_html}
       </div>
       {type_fidelity_section}
+      {attribute_fidelity_section}
       {relational_consistency_section}
       <div>
         <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\

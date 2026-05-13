@@ -79,6 +79,7 @@ def stub_slim_model_selection() -> ModelSelection:
             detection_judge="known",
             type_fidelity_judge="known",
             relational_consistency_judge="known",
+            attribute_fidelity_judge="known",
         ),
         rewrite=RewriteModelSelection(
             domain_classifier="known",

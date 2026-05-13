@@ -67,6 +67,11 @@ COL_RELATIONAL_CONSISTENCY_JUDGE = "_relational_consistency_judge"  # raw judge 
 COL_RELATIONAL_CONSISTENCY_VALID = "relational_consistency_valid"  # user-facing bool (None if judge unavailable)
 COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS = "relational_consistency_invalid_relations"  # list of failing relations
 
+# Replace evaluation: attribute-fidelity judge (Substitute only)
+COL_ATTRIBUTE_FIDELITY_JUDGE = "_attribute_fidelity_judge"  # raw judge output (kept for display denominator)
+COL_ATTRIBUTE_FIDELITY_VALID = "attribute_fidelity_valid"  # user-facing bool (None if judge unavailable)
+COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES = "attribute_fidelity_invalid_entities"  # list of failing per-entity checks
+
 # ---------------------------------------------------------------------------
 # Rewrite pipeline
 # ---------------------------------------------------------------------------

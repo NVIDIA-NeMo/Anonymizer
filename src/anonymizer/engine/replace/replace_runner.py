@@ -18,6 +18,9 @@ from anonymizer.config.replace_strategies import (
     Substitute,
 )
 from anonymizer.engine.constants import (
+    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
+    COL_ATTRIBUTE_FIDELITY_JUDGE,
+    COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_JUDGE,
     COL_DETECTION_VALID,
@@ -29,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
@@ -55,11 +59,13 @@ class ReplacementWorkflow:
         detection_judge: DetectionJudgeWorkflow | None = None,
         type_fidelity_judge: TypeFidelityJudgeWorkflow | None = None,
         relational_consistency_judge: RelationalConsistencyJudgeWorkflow | None = None,
+        attribute_fidelity_judge: AttributeFidelityJudgeWorkflow | None = None,
     ) -> None:
         self._llm_workflow = llm_workflow
         self._detection_judge = detection_judge
         self._type_fidelity_judge = type_fidelity_judge
         self._relational_consistency_judge = relational_consistency_judge
+        self._attribute_fidelity_judge = attribute_fidelity_judge
 
     def run(
         self,
@@ -107,6 +113,13 @@ class ReplacementWorkflow:
                 failed_records=failed_records,
             )
             judged_df = self._run_relational_consistency_judge(
+                judged_df,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+                failed_records=failed_records,
+            )
+            judged_df = self._run_attribute_fidelity_judge(
                 judged_df,
                 model_configs=model_configs,
                 selected_models=selected_models,
@@ -206,4 +219,35 @@ class ReplacementWorkflow:
             dataframe[COL_RELATIONAL_CONSISTENCY_JUDGE] = None
             dataframe[COL_RELATIONAL_CONSISTENCY_VALID] = None
             dataframe[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = [[] for _ in range(len(dataframe))]
+            return dataframe
+
+    # ---------------------------------------------------------------------------
+    # Attribute-fidelity judge (Substitute only, non-critical)
+    # ---------------------------------------------------------------------------
+
+    def _run_attribute_fidelity_judge(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        preview_num_records: int | None,
+        failed_records: list[FailedRecord],
+    ) -> pd.DataFrame:
+        if self._attribute_fidelity_judge is None:
+            return dataframe
+        try:
+            judge_result = self._attribute_fidelity_judge.evaluate(
+                dataframe,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+            )
+            failed_records.extend(judge_result.failed_records)
+            return judge_result.dataframe
+        except Exception:
+            logger.warning("Attribute-fidelity judge step failed; populating defaults", exc_info=True)
+            dataframe[COL_ATTRIBUTE_FIDELITY_JUDGE] = None
+            dataframe[COL_ATTRIBUTE_FIDELITY_VALID] = None
+            dataframe[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = [[] for _ in range(len(dataframe))]
             return dataframe
