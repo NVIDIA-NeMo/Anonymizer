@@ -107,3 +107,17 @@ div.output_subarea pre,
     --md-primary-fg-color--dark: #5a8f00;
     --md-accent-fg-color: #76b900;
 }
+
+/* Allow Mermaid diagrams to render at natural width with horizontal scroll
+   when the diagram is wider than the content column. Pairs with
+   `useMaxWidth: false` in the diagram's init directive. */
+.md-typeset .mermaid {
+    overflow-x: auto;
+    max-width: 100%;
+    text-align: center;
+}
+
+.md-typeset .mermaid svg {
+    max-width: none !important;
+    height: auto !important;
+}

@@ -5,3 +5,17 @@
 # author_id:
 #   name: Full Name
 #   description: Role
+#   avatar: https://avatars.githubusercontent.com/u/<USER_ID>?v=4
+#   url: https://github.com/<USER>
+
+authors:
+  lipikaramaswamy:
+    name: Lipika Ramaswamy
+    description: Researcher at NVIDIA
+    avatar: https://avatars.githubusercontent.com/u/31832945?v=4
+    url: https://github.com/lipikaramaswamy
+  asteier2026:
+    name: Amy Steier
+    description: Researcher at NVIDIA
+    avatar: https://avatars.githubusercontent.com/u/256168822?v=4
+    url: https://github.com/asteier2026
