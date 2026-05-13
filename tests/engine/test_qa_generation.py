@@ -35,6 +35,7 @@ from anonymizer.engine.schemas import (
     EntityDispositionSchema,
     EntitySource,
     MeaningUnitAspect,
+    MeaningUnitImportance,
     MeaningUnitSchema,
     MeaningUnitsSchema,
     PrivacyQAPairsSchema,
@@ -74,8 +75,8 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
 
 _STUB_MEANING_UNITS = MeaningUnitsSchema(
     units=[
-        MeaningUnitSchema(id=1, aspect=MeaningUnitAspect.ROLE, unit="An individual works as a software engineer."),
-        MeaningUnitSchema(id=2, aspect=MeaningUnitAspect.ENVIRONMENT, unit="The individual works remotely."),
+        MeaningUnitSchema(id=1, aspect=MeaningUnitAspect.ROLE, unit="An individual works as a software engineer.", importance=MeaningUnitImportance.critical),
+        MeaningUnitSchema(id=2, aspect=MeaningUnitAspect.ENVIRONMENT, unit="The individual works remotely.", importance=MeaningUnitImportance.important),
     ]
 )
 
