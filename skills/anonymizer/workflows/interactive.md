@@ -20,8 +20,10 @@ Iterative design with the user. Do not disengage from the loop until the user sa
 
 3. **Clarify** — Ask the user the questions you need to write a config. Keep the set short; batch related questions; provide concrete options where possible. Common things to make precise:
    - **Goal**: scrub PII for retention/sharing? produce training data? demos? compliance?
-   - **Mode**: Replace (entities only) vs Rewrite (full text transformation that also removes inferable identifiers like "ringing the bell" → cancer)? Default per the rule in `SKILL.md`.
-   - **For Replace**: which strategy? (`Substitute` for realistic-looking, `Redact` for explicit `[REDACTED_…]` markers, `Hash` for stable cross-row identifiers, `Annotate` for inspection only).
+   - **Mode**: ask the user, describing both options:
+     - **Replace** — detect entities and replace each in place. Faster, cheaper, keeps document structure. Best for structured records, logs, or single-cell PII.
+     - **Rewrite** — transform the full text to also remove inferable identifiers (e.g. "during her third round of chemo" implies cancer treatment). More expensive, may shorten or restructure. Best for free-text with implicit identifiers (clinical notes, biographies, depositions).
+   - **For Replace**: which strategy? Default to `Substitute` if the user hasn't specified. (`Substitute` for realistic-looking, `Redact` for explicit `[REDACTED_…]` markers, `Hash` for stable cross-row identifiers, `Annotate` for inspection only).
    - **For Rewrite**: what must be protected? what must be preserved? how strict (`risk_tolerance`)? Read [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) sections 5–6 with the user's answers in mind.
    - **Domain-specific entity labels** the defaults won't cover (e.g. `"clinical_facility"`, `"case_number"`, `"internal_project_codename"`). If yes, read [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) section 2.
    - **Cross-record consistency requirement** (does the same person/ID need the same replacement everywhere)? If yes, use `Hash`; do not promise this with `Substitute`.

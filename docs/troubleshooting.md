@@ -5,7 +5,7 @@
 
 Symptom-first guide to common problems and how to fix them. Each entry says how to diagnose, what knob to turn, and what to verify after.
 
-When something looks wrong, **first confirm the run completed cleanly** (no dropped rows). Once you know the pipeline ran, **run `preview` on the failing rows** — the trace columns it produces are how you'll diagnose nine cases out of ten.
+When something looks wrong, **first confirm the run completed cleanly** (no `failed_records` — these are rows that didn't make it through the pipeline at all, usually a rate-limit / infra issue). Once you know the pipeline ran, **run `preview` and inspect rows with quality issues** (`needs_human_review=True`) — the trace columns it produces are where to start.
 
 !!! note "This guide is written against the Python API"
 
@@ -99,9 +99,16 @@ print(preview.dataframe.iloc[0][f"{data.text_column}_with_spans"])
 Try in order:
 
 1. **Lower `gliner_threshold`** from `0.3` to `0.2` (or `0.15`). False positives get caught downstream by validation.
-2. **Add the entity's label to `entity_labels`** if it's not in `DEFAULT_ENTITY_LABELS`. Domain-specific labels (`mrn`, `case_number`, `internal_project_codename`) won't be detected reliably without being listed.
+2. **Extend the default list** with the entity's label if it's not in `DEFAULT_ENTITY_LABELS`. Setting `Detect.entity_labels` to a custom list switches detection to **strict mode** (only listed labels detected, augmenter can't invent), so to keep the defaults *plus* one extra label use:
+
+   ```python
+   from anonymizer import DEFAULT_ENTITY_LABELS, Detect
+   detect = Detect(entity_labels=DEFAULT_ENTITY_LABELS + ["clinical_facility"])
+   ```
+
+   Domain-specific labels (`clinical_facility`, `case_number`, `internal_project_codename`) won't be detected reliably without being listed this way.
 3. **Set `AnonymizerInput.data_summary`** so the augmenter LLM has domain context. A line like `"De-identified pediatric oncology progress notes"` materially improves coverage.
-4. **For rewrite mode**, latent entities are detected separately. If a piece of inferable information (e.g. "ringing the bell" → cancer treatment) is being preserved verbatim, the latent detector likely missed it — refine `Rewrite.privacy_goal.protect` to call out the inference category explicitly.
+4. **For rewrite mode**, latent entities are detected separately. If a piece of inferable information (e.g. "during her third round of chemo" → cancer treatment) is being preserved verbatim, the latent detector likely missed it — refine `Rewrite.privacy_goal.protect` to call out the inference category explicitly.
 
 Verify by re-running `preview` with `Annotate` and confirming the entity now appears tagged.
 

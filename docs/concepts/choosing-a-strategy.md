@@ -26,7 +26,7 @@ Steps 1–2 govern the [detection](detection.md) stage that runs first in **both
 
 ## 1. (Detection) `data_summary`
 
-`AnonymizerInput.data_summary` is an optional one-line description that flows into LLM prompts. It is the single cheapest quality lever you have, and it improves both detection and rewrite.
+`AnonymizerInput.data_summary` is an optional one-line description that flows into LLM prompts. It is the single cheapest quality lever you have. It improves **detection** — which runs first in both Replace and Rewrite modes, so it's a precursor to any transformation. In Rewrite mode it additionally provides context on what the data contains, helping the rewriter preserve meaning.
 
 ```python
 from anonymizer import AnonymizerInput
@@ -49,13 +49,14 @@ What to leave out:
 
 - Lists of entity types **you want detected** (those go in `Detect.entity_labels`)
 - Privacy/utility goals (those go in `Rewrite.privacy_goal`)
+- Substitute behavior instructions (e.g. "names should remain Portuguese", "preserve numeric magnitude") — those go in `Substitute(instructions)`
 - Generic phrasing ("text data" adds no signal)
 
 ---
 
 ## 2. (Detection) Detection knobs
 
-For most datasets the [detection](detection.md) defaults work. The main reason to tune `entity_labels` is when your data has **domain-specific entities that can be described in plain English** — GLiNER is zero-shot, so any concept you can name (e.g. `"clinical_facility"`, `"internal_project_codename"`) becomes a thing it can find. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. If the entities you care about aren't in the default list, write them down and add them. Tune `gliner_threshold` only when you see a specific recall or precision problem in preview.
+For most datasets the [detection](detection.md) defaults work. The main reason to adjust `entity_labels` is when your data has **domain-specific entities that can be described in plain English** — GLiNER is zero-shot, so any concept you can name (e.g. `"clinical_facility"`, `"internal_project_codename"`) becomes an entity it can find. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. If the entities you care about aren't in the default list, write them down and add them. Adjust `gliner_threshold` only when you see a specific recall or precision problem in preview.
 
 ### `entity_labels`
 
@@ -74,7 +75,7 @@ Common ways to extend the default list:
 ```python
 from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
-detect = Detect(entity_labels=DEFAULT_ENTITY_LABELS + ["mrn", "clinical_facility", "medication_name"])
+detect = Detect(entity_labels=DEFAULT_ENTITY_LABELS + ["clinical_facility", "diagnosis_code", "medication_name"])
 ```
 
 ### `gliner_threshold`
@@ -86,7 +87,7 @@ Default `0.3`. The validator catches false positives downstream, so erring low i
 | Entities are being missed | Lower | `0.2` or even `0.15` |
 | Validator is slow / expensive — it's being handed a huge candidate list | Raise | `0.4`–`0.5` |
 
-A low threshold doesn't hurt *accuracy* — the validator runs in batches of `validation_max_entities_per_call` (default `100`, tunable on `Detect`), so a long candidate list just becomes more validator calls, not a worse validator. The cost you're paying for `gliner_threshold=0.2` is latency and tokens, not precision. Raise the threshold when that cost matters; otherwise, leave it low.
+The trade-off is symmetric. **Lowering** the threshold doesn't hurt accuracy — the validator runs in batches of `validation_max_entities_per_call` (default `100`, tunable on `Detect`), so a long candidate list becomes more validator calls but not a worse validator. The cost of `gliner_threshold=0.2` is latency and tokens, not precision. **Raising** the threshold trades that cost for *recall risk*: GLiNER stops surfacing borderline candidates and you're relying on the augmenter LLM alone to fill the gap. Default `0.3` errs low; raise only when validator cost is hurting you, and verify with an `Annotate` preview before trusting a high-threshold setup.
 
 ---
 
@@ -98,12 +99,12 @@ Both modes start from the same [detection](detection.md) pipeline. The differenc
 |---|---|---|
 | Is the goal "scrub the entities and keep everything else"? | ✅ | — |
 | Is the goal "produce a privacy-safe version of this text that downstream models can train on"? | — | ✅ |
-| Are there inferable / latent identifiers that aren't explicitly stated (e.g. "ringing the bell" → cancer treatment)? | ❌ leaves them | ✅ removes them |
+| Are there inferable / latent identifiers that aren't explicitly stated (e.g. "during her third round of chemo" → cancer treatment)? | ❌ leaves them | ✅ removes them |
 | Additional LLM calls (beyond shared detection) | ~1 (Substitute) or 0 (Redact/Annotate/Hash) | Many (domain → disposition → QA → rewrite → evaluate → repair → judge) |
 | Output text length | ≈ same as input | Often shorter / restructured |
 | Best for | Structured records, log scrubbing, known-list redaction | Free-text data with implicit identifiers (clinical notes, biographies, depositions, support transcripts) |
 
-**Default:** if the user hasn't said otherwise, prefer Rewrite for higher privacy standards.
+**Picking between them.** Ask the user. If the data has inferable identifiers that survive entity-only scrubbing (clinical notes, biographies, depositions), Rewrite is the right fit. For structured records, logs, or single-cell PII, Replace is faster and preserves shape. If unsure, walk through a few sample rows with the user before choosing.
 
 ---
 
@@ -116,7 +117,9 @@ The four strategies are summarised in [Replace](replace.md#strategy-comparison).
 | Realistic-looking text safe for sharing or training | **Substitute** | LLM-generated synthetic values preserve readability |
 | Clear visual marking that an entity was removed | **Redact** | `[REDACTED_FIRST_NAME]` is unambiguous |
 | To inspect what was detected without losing the original | **Annotate** | Original text is preserved next to the label — **not privacy-safe on its own** |
-| Deterministic re-identification across rows (same person → same token) | **Hash** | Same input always produces the same hash digest |
+| Deterministic re-identification across documents (same person → same token) | **Hash** | Same input always produces the same hash digest |
+
+**Default:** if the user hasn't specified a strategy, use `Substitute`. It's the most general-purpose choice and matches the bulk of production usage.
 
 ### Writing `Substitute.instructions`
 
@@ -146,7 +149,7 @@ Keep instructions short (one or two sentences). Long instructions compete with t
 
 | Pattern | Example |
 |---|---|
-| Direct identifiers + quasi-identifiers | `"All patient names, MRNs, dates of birth, and any combinations of attributes that could re-identify an individual"` |
+| Direct identifiers + quasi-identifiers | `"All patient names, medical record numbers, dates of birth, and any combinations of attributes that could re-identify an individual"` |
 | Explicit category list | `"Names, addresses, phone numbers, employer names, and any references to specific institutions"` |
 | Inferable signals to suppress | `"Direct identifiers and any contextual phrases that could imply a specific medical condition or diagnosis"` |
 | Domain-specific identifiers | `"Case numbers, court names, judge names, and any geographic identifiers below the state level"` |
@@ -168,15 +171,17 @@ Keep instructions short (one or two sentences). Long instructions compete with t
 
 ### When to set `strict_entity_protection=True`
 
+**Default: `False`.** Only set `True` when explicitly required by compliance or audit policy — not just because the data is medical, legal, or financial.
+
 By default, low-risk quasi-identifiers may be left unchanged when the engine judges them safe in context. Set `strict_entity_protection=True` to force every detected entity into an active protection method.
 
 Use it when:
 
-- The data is from a regulated domain (medical, legal, financial) and a blanket policy is required
+- A documented compliance or audit policy *mandates* that every detected entity be actively protected (e.g. HIPAA Safe Harbor with strict interpretation, internal "zero unchanged identifiers" rule)
 - You're producing data for external sharing where any unchanged identifier is a compliance risk
 - Audit requires "every entity was actively protected"
 
-Don't use it when utility matters more than blanket protection — it tends to increase modifications and can lower `utility_score`.
+Being in a regulated domain (medical / legal / financial) is **not** by itself a reason to set this to `True` — most regulated-domain processing tolerates the default behavior. Don't use it when utility matters more than blanket protection — it tends to increase modifications and can lower `utility_score`.
 
 ---
 
@@ -188,7 +193,7 @@ Don't use it when utility matters more than blanket protection — it tends to i
 |---|---|
 | "Medical / legal / financial / external release" | `minimal` |
 | Default for most privacy-sensitive data | `low` |
-| "I want utility prioritised, this is internal-only" | `moderate` |
+| "I want utility prioritized, this is internal-only" | `moderate` |
 | "I just want to see the system run, will fix things by hand" | `high` |
 
 Notes:
@@ -208,8 +213,10 @@ A starting point for common scenarios. Always run `preview` and iterate from her
 | "Scrub PII from logs for retention" | Replace | `Redact()` |
 | "De-identify clinical notes for research sharing" | Rewrite | `Rewrite(privacy_goal=PrivacyGoal(protect="all PHI and any context that could imply a specific patient or facility", preserve="clinical findings, treatments, and outcomes"), risk_tolerance="minimal", strict_entity_protection=True)` |
 | "Produce realistic-looking biographies for demos" | Replace | `Substitute(instructions="Names and locations should remain plausible for the original cultural context.")` |
+| "Anonymize survey responses before sharing the dataset" | Replace | `Substitute()` |
+| "Anonymize customer support transcripts for fine-tuning a model" | Replace | `Substitute(instructions="Preserve domain-specific terminology and locale.")` |
 | "Anonymize legal opinions for an SFT dataset" | Rewrite | `Rewrite(privacy_goal=PrivacyGoal(protect="party names, case numbers, judge names, and locations below the state level", preserve="argument structure and procedural posture"), risk_tolerance="low")` |
 | "Allow re-joining records by identifier without keeping the identifier" | Replace | `Hash(algorithm="sha256", digest_length=16)` |
-| "I just want to see what the detector finds" | Replace | `Annotate()` (preview only — never ship Annotate output as anonymised data) |
+| "I just want to see what the detector finds" | Replace | `Annotate()` (preview only — never ship Annotate output as anonymized data) |
 
 Once you have a starting config, run `anonymizer validate <config>`, then `anonymizer preview --num-records 5 <config>`, then iterate. See [Troubleshooting](../troubleshooting.md) for what to change when preview shows a problem.
