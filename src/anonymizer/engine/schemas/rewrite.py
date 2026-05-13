@@ -151,6 +151,10 @@ class EntityDispositionSchema(BaseModel):
             raise ValueError(
                 f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='leave_as_is'"
             )
+        if self.combined_risk_level == CombinedRiskLevel.high and not self.needs_protection:
+            raise ValueError(f"Entity {self.id}: combined_risk_level='high' requires needs_protection=True")
+        if self.combined_risk_level == CombinedRiskLevel.low and self.needs_protection:
+            raise ValueError(f"Entity {self.id}: combined_risk_level='low' requires needs_protection=False")
         return self
 
 
