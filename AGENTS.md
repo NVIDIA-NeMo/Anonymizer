@@ -4,7 +4,7 @@
 # AGENTS.md
 
 This file is for agents **developing** NeMo Anonymizer — the codebase you are working in.
-If you are an agent helping a user **anonymize data**, use the [product documentation](https://nvidia-nemo.github.io/Anonymizer/) instead.
+If you are an agent helping a user **anonymize data**, use the [product documentation](https://nvidia-nemo.github.io/Anonymizer/) or the bundled agent skill at [`skills/anonymizer/`](skills/anonymizer/SKILL.md) instead.
 
 **NeMo Anonymizer** detects and protects PII through context-aware entity replacement and LLM-powered rewriting. Users supply a text dataset and a strategy; Anonymizer detects entities and transforms the text.
 
@@ -26,6 +26,8 @@ If you are an agent helping a user **anonymize data**, use the [product document
 - **`anonymizer.logging`** — public logging configuration (`LoggingConfig`, `configure_logging`) used by the API, CLI, and examples.
 
 NeMo Anonymizer wraps [DataDesigner](https://github.com/NVIDIA-NeMo/DataDesigner) (NDD) for LLM column generation. `NddAdapter.run_workflow()` is the engine boundary for *executing* DataDesigner workflows — engine sub-workflows may declare DataDesigner column configs (e.g. `LLMStructuredColumnConfig`), but they do not call `DataDesigner.create()` or `preview()` directly.
+
+Public-API changes (re-exports, signatures, kwargs, default values) may require a matching update to the bundled agent skill at [`skills/anonymizer/SKILL.md`](skills/anonymizer/SKILL.md), whose output template imports and instantiates these symbols. Check the template before shipping a change to anything in `anonymizer/__init__.py` or the public surface of `Detect`, `Substitute`, `Redact`, `Annotate`, `Hash`, `Rewrite`, `PrivacyGoal`, or `AnonymizerInput`.
 
 ## Core Concepts
 
