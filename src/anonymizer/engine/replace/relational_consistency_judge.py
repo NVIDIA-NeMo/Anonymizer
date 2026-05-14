@@ -145,6 +145,17 @@ GEOGRAPHIC:
   - country <-> any of: state, city, postcode, phone_number country code, nationality.
   - coordinate <-> any geographic entity: roughly consistent.
 
+  IMPORTANT — same-referent precondition for GEOGRAPHIC pairs: before flagging a \
+city/state/postcode/country pair as inconsistent, check the `replaced_text` to confirm \
+both entities describe the SAME person, place, or location. When the text makes clear \
+that one geographic entity describes one referent (e.g. the data subject's residence) \
+and another describes a different referent (e.g. an adult child who lives elsewhere, \
+an employer in another country, a relative abroad), they are INDEPENDENT narrative \
+threads — SKIP the relation rather than flag it. Apply this precondition only when the \
+two referents are clearly distinguished in the prose (separate sentences, separate \
+clauses, separate subjects). When the text leaves the referent ambiguous, fall back to \
+the standard pair check.
+
 TEMPORAL:
   - date_of_birth <-> age: age should equal current_year - dob_year within +/-1. \
     REQUIRES an entity whose label is literally `date_of_birth`. A generic `date` is NOT a \
