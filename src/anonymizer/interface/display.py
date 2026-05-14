@@ -372,26 +372,41 @@ def _render_replacement_table(replacement_map: list[dict[str, str]]) -> str:
 
 
 def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]:
+    """Coerce ``_replacement_map`` cell values into a list of ``{original, label, synthetic}`` dicts.
+
+    Cells can arrive as JSON strings, Pydantic models, plain dicts, or after a
+    parquet round-trip with ``replacements`` wrapped as a ``numpy.ndarray``.
+    Run the value through ``EntityReplacementMapSchema.model_validate`` so
+    Pydantic's coercion absorbs numpy shapes, then fall back to a permissive
+    hand-walk if validation rejects the payload.
+    """
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump(mode="python")
     if isinstance(raw, str):
         try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
             return []
-    elif hasattr(raw, "model_dump"):
-        data = raw.model_dump()
-    else:
-        data = raw
-    if not isinstance(data, dict):
+    if not isinstance(raw, dict):
         return []
-    replacements = data.get("replacements", [])
+    try:
+        parsed = EntityReplacementMapSchema.model_validate(raw)
+        return [r.model_dump() for r in parsed.replacements]
+    except Exception:
+        pass
+    replacements = raw.get("replacements", [])
+    if hasattr(replacements, "tolist"):
+        replacements = replacements.tolist()
     if not isinstance(replacements, list):
         return []
     result: list[dict[str, str]] = []
     for r in replacements:
+        if hasattr(r, "model_dump"):
+            r = r.model_dump()
         if isinstance(r, dict):
             result.append(r)
-        elif hasattr(r, "model_dump"):
-            result.append(r.model_dump())
     return result
 
 
