@@ -74,7 +74,13 @@ def stub_slim_model_selection() -> ModelSelection:
             entity_augmenter="known",
             latent_detector="known",
         ),
-        replace=ReplaceModelSelection(replacement_generator="known"),
+        replace=ReplaceModelSelection(
+            replacement_generator="known",
+            detection_judge="known",
+            type_fidelity_judge="known",
+            relational_consistency_judge="known",
+            attribute_fidelity_judge="known",
+        ),
         rewrite=RewriteModelSelection(
             domain_classifier="known",
             disposition_analyzer="known",

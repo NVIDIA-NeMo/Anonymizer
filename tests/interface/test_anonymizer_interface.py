@@ -367,7 +367,7 @@ def test_validate_config_raises_on_unknown_replace_alias_for_substitute(
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection
     anonymizer._selected_models = anonymizer._selected_models.model_copy(
-        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias", detection_judge="known", type_fidelity_judge="known", relational_consistency_judge="known", attribute_fidelity_judge="known")}
     )
 
     with pytest.raises(InvalidConfigError, match="bad-replace-alias"):
@@ -383,7 +383,7 @@ def test_validate_config_skips_replace_alias_for_non_substitute(
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection
     anonymizer._selected_models = anonymizer._selected_models.model_copy(
-        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias", detection_judge="known", type_fidelity_judge="known", relational_consistency_judge="known", attribute_fidelity_judge="known")}
     )
 
     anonymizer.validate_config(stub_anonymizer_config)
@@ -458,7 +458,7 @@ def test_run_raises_invalid_config_before_workflows(
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection
     anonymizer._selected_models = anonymizer._selected_models.model_copy(
-        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias", detection_judge="known", type_fidelity_judge="known", relational_consistency_judge="known", attribute_fidelity_judge="known")}
     )
 
     with pytest.raises(InvalidConfigError, match="bad-replace-alias"):
@@ -594,7 +594,7 @@ def test_validate_config_raises_on_unknown_replace_alias_in_rewrite_mode(
     anonymizer._model_configs = stub_known_model_configs
     anonymizer._selected_models = stub_slim_model_selection
     anonymizer._selected_models = anonymizer._selected_models.model_copy(
-        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias")}
+        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias", detection_judge="known", type_fidelity_judge="known", relational_consistency_judge="known", attribute_fidelity_judge="known")}
     )
 
     with pytest.raises(InvalidConfigError, match="bad-replace-alias"):

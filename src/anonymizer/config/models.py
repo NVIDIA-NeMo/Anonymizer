@@ -78,6 +78,10 @@ class ReplaceModelSelection(BaseModel):
     """Model aliases for the replacement pipeline."""
 
     replacement_generator: str
+    detection_judge: str
+    type_fidelity_judge: str
+    relational_consistency_judge: str
+    attribute_fidelity_judge: str
 
 
 class RewriteModelSelection(BaseModel):
