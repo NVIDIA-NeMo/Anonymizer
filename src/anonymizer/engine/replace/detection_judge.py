@@ -104,8 +104,13 @@ Return structured JSON:
 A detection is INVALID if any of the following hold:
 - false_positive: the span is not actually identifying or sensitive in this context (e.g. a common word, \
 generic phrase, or boilerplate flagged as PII).
-- wrong_label: the span IS sensitive, but the chosen label does not fit (e.g. a company name labeled \
-`first_name`; an email labeled `url`; a job title labeled `degree`).
+- wrong_label: the span IS sensitive, but the chosen label does not fit. Treat labels as \
+BUCKETS, not precise taxonomy nodes. A label is NOT wrong when the chosen label is a SIBLING \
+within the same broad domain — a more specific, more general, or peer member of the same \
+parent concept (e.g. higher-education institutions, organizational entities, geographic \
+places, communication identifiers). Only flag `wrong_label` when the chosen label sits in a \
+clearly DIFFERENT domain (e.g. a company name labeled `first_name`; an email labeled `url`; \
+a job title labeled `degree`).
 - not_in_text: the literal `value` does not appear in the original text.
 - wrong_boundary: the span is a clear partial or over-extended capture of the real entity. \
 Flag this ONLY when the span itself is broken — i.e. it omits part of the actual value, or \
@@ -139,6 +144,12 @@ that are not in that mapping.
 - Do NOT include entities you consider valid in `invalid_entities`.
 - Do NOT introduce entities that were not in the detected list.
 </guidance>
+
+<output_format>
+Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
+``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
+outside the JSON object. Your entire response must be a single valid JSON object.
+</output_format>
 """
     return substitute_placeholders(
         prompt,

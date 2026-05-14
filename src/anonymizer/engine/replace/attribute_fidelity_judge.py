@@ -181,6 +181,12 @@ are either checked by other metrics or are too unreliable to judge here.
   - `entities` may be empty when the record has no checkable attributes; that is a valid \
     `all_valid=true` outcome.
 </rules>
+
+<output_format>
+Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
+``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
+outside the JSON object. Your entire response must be a single valid JSON object.
+</output_format>
 """
     return substitute_placeholders(
         prompt,

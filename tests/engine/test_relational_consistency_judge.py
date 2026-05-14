@@ -116,8 +116,8 @@ def test_flatten_judgment_all_consistent_keeps_invalid_empty() -> None:
             {
                 "description": "city <-> state",
                 "entities": [
-                    {"original": "Austin", "label": "city", "synthetic": "Portland"},
-                    {"original": "TX", "label": "state", "synthetic": "OR"},
+                    "Austin (city) -> Portland",
+                    "TX (state) -> OR",
                 ],
                 "passes": True,
                 "reasoning": "Portland is in Oregon.",
@@ -235,8 +235,8 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
                         {
                             "description": "city <-> state",
                             "entities": [
-                                {"original": "Austin", "label": "city", "synthetic": "Portland"},
-                                {"original": "TX", "label": "state", "synthetic": "OR"},
+                                "Austin (city) -> Portland",
+                                "TX (state) -> OR",
                             ],
                             "passes": True,
                             "reasoning": "Portland is in Oregon.",
@@ -327,8 +327,8 @@ def test_evaluate_propagates_failing_relations(
                         {
                             "description": "date_of_birth <-> age",
                             "entities": [
-                                {"original": "1990", "label": "date_of_birth", "synthetic": "2015"},
-                                {"original": "35", "label": "age", "synthetic": "35"},
+                                "1990 (date_of_birth) -> 2015",
+                                "35 (age) -> 35",
                             ],
                             "passes": False,
                             "reasoning": "A 2015 birthdate does not yield age 35.",

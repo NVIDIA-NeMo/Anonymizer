@@ -217,6 +217,12 @@ as a valid instance of that label's type to a reasonable reader.
   - Do NOT introduce replacements that were not in the input list.
   - If `replacements` is empty, return `all_valid: true` and an empty list.
 </output_rules>
+
+<output_format>
+Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
+``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
+outside the JSON object. Your entire response must be a single valid JSON object.
+</output_format>
 """
     return substitute_placeholders(
         prompt,

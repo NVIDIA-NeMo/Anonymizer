@@ -37,12 +37,6 @@ _REPLACEMENTS_FOR_JUDGE_COL = "_replacements_for_relational_consistency_judge"
 # ---------------------------------------------------------------------------
 
 
-class RelationEntity(BaseModel):
-    original: str = Field(description="Original value taken verbatim from the replacement map.")
-    label: str = Field(description="Entity label assigned to the original value.")
-    synthetic: str = Field(description="Synthetic value that replaced the original.")
-
-
 class RelationCheck(BaseModel):
     description: str = Field(
         description=(
@@ -50,9 +44,12 @@ class RelationCheck(BaseModel):
             "'date_of_birth <-> age'."
         )
     )
-    entities: list[RelationEntity] = Field(
+    entities: list[str] = Field(
         default_factory=list,
-        description="The entities involved in this relation (two or more).",
+        description=(
+            "The entities involved in this relation, each rendered as a single string of the "
+            "form '<original> (<label>) -> <synthetic>'. Two or more entries per relation."
+        ),
     )
     passes: bool = Field(
         description=(
@@ -130,8 +127,10 @@ Only judge cross-entity coherence within this single record.
 relationship (see <relations_to_inspect>).
 2. For each relationship you can verify, decide whether the synthetic replacements preserve \
 that relationship.
-3. Emit one entry in `relations` per relationship you actually checked, with the verbatim \
-entities, a short `description`, `passes` (true/false), and a one-sentence `reasoning`.
+3. Emit one entry in `relations` per relationship you actually checked. Each entry has: \
+a short `description`; `entities` as a list of STRINGS (each formatted exactly as \
+`"<original> (<label>) -> <synthetic>"` — verbatim values, single string per participant); \
+`passes` (true/false); and a one-sentence `reasoning`.
 4. Set `all_consistent=true` ONLY if every entry in `relations` has `passes=true`. Otherwise \
 set it to false.
 5. If the record has NO checkable relations (e.g. one entity, or entities with no expected \
@@ -166,6 +165,26 @@ ORGANIZATIONAL:
   - company_name <-> url / email domain / organization_name: the domain or organization name \
     should reference the company.
 
+ROLE / EMPLOYMENT COHERENCE:
+  - occupation <-> company_name / organization_name: the role should be PLAUSIBLE at that \
+    organization (e.g. a "registered nurse" at a hospital is plausible; the same role at an \
+    oil-rig company is not). Be lenient — only flag CLEAR mismatches, not stylistic ones.
+  - occupation <-> education_level / degree / field_of_study: the role and credentials \
+    should be COMPATIBLE (e.g. a "surgeon" with a high-school education is a clear \
+    contradiction; a "surgeon" with a medical degree is consistent). Only flag clear \
+    contradictions.
+
+DEMOGRAPHIC COHERENCE:
+  - age <-> occupation: only flag CLEAR impossibilities (e.g. an 8-year-old neurosurgeon, a \
+    5-year-old CEO). Do NOT flag stylistic or unusual but possible combinations.
+  - age <-> education_level / degree: only flag CLEAR contradictions (e.g. a 10-year-old \
+    with a Ph.D., a 6-year-old with a bachelor's). Be lenient with mild gaps (e.g. someone \
+    who finished a degree a bit younger or older than typical is fine).
+  - date_of_birth <-> any life-event date (graduation, hire, marriage, etc.) present in the \
+    replacements: the life event should occur AFTER the DOB, with a plausible gap \
+    (no graduations a year after birth). REQUIRES an entity whose label is literally \
+    `date_of_birth`.
+
 COMMUNICATION:
   - phone_number country code <-> country: e.g. "+1" pairs with USA/Canada, "+44" with UK.
   - fax_number country code <-> country: same idea.
@@ -185,9 +204,10 @@ the data does not contain.
   - For each relation you check, ALWAYS include it in `relations` — even when it passes. \
     The total length of `relations` is used as the denominator for a success rate, so omitting \
     passing relations would distort the score.
-  - The `entities` field for each relation must list the participating entities verbatim \
-    from the replacement map (original, label, synthetic). For pronoun checks, include only \
-    the name entity.
+  - The `entities` field for each relation must be a LIST OF STRINGS, one per participant, \
+    each formatted exactly as `"<original> (<label>) -> <synthetic>"` using the verbatim \
+    values from the replacement map. For pronoun checks, include only the name entity. \
+    Do NOT emit nested objects in `entities` — strings only.
   - DO NOT include a relation where you cannot confidently judge pass/fail — skip it instead \
     of guessing.
   - DO NOT list the same relation twice. If the same pair of labels appears multiple times \
@@ -211,6 +231,12 @@ the data does not contain.
   - If a relation requires external knowledge you are unsure about (e.g. obscure city in a \
     small country) -> SKIP rather than guess.
 </edge_cases>
+
+<output_format>
+Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
+``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
+outside the JSON object. Your entire response must be a single valid JSON object.
+</output_format>
 """
     return substitute_placeholders(
         prompt,

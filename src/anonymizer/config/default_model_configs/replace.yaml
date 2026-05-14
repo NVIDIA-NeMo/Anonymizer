@@ -5,5 +5,5 @@ selected_models:
   replacement_generator: gpt-oss-120b
   detection_judge: nemotron-30b-thinking
   type_fidelity_judge: nemotron-30b-thinking
-  relational_consistency_judge: nemotron-30b-thinking
+  relational_consistency_judge: gpt-oss-120b
   attribute_fidelity_judge: nemotron-30b-thinking

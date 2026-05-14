@@ -785,13 +785,17 @@ def _render_relations_table(relations: list[dict[str, object]]) -> str:
             entities = entities.tolist()
         if not isinstance(entities, list):
             entities = []
-        entities_str = html.escape(
-            ", ".join(
-                f"{e.get('original', '')} ({e.get('label', '')}) -> {e.get('synthetic', '')}"
-                for e in entities
-                if isinstance(e, dict)
-            )
-        )
+        # Each participant may be either a plain string (new schema) or a {original, label,
+        # synthetic} dict (old schema kept for backward compatibility with cached runs).
+        entity_strs: list[str] = []
+        for e in entities:
+            if isinstance(e, str):
+                entity_strs.append(e)
+            elif isinstance(e, dict):
+                entity_strs.append(
+                    f"{e.get('original', '')} ({e.get('label', '')}) -> {e.get('synthetic', '')}"
+                )
+        entities_str = html.escape(", ".join(entity_strs))
         passes = bool(entry.get("passes", False))
         status_color = "#22c55e" if passes else "#ef4444"
         status_label = "Pass" if passes else "Fail"
