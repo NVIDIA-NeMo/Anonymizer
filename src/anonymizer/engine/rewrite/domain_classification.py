@@ -128,7 +128,7 @@ DOMAIN_METADATA: tuple[DomainMetadata, ...] = (
     ),
     DomainMetadata(
         domain=Domain.BUSINESS_OPERATIONS,
-        classification_description="Strategy docs, project plans, meeting notes, internal memos, operational  materials",
+        classification_description="Strategy docs, project plans, meeting notes, internal memos, operational materials",
         quality_supplement="Focus on: goals, KPIs, processes, decision criteria, resource allocation, and coordination patterns. Drop: individual identities and low-level scheduling minutiae unless essential.",
     ),
     DomainMetadata(
