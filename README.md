@@ -149,7 +149,7 @@ make install-pre-commit   # Install pre-commit hooks
 
 ## Telemetry and Privacy
 
-NeMo Anonymizer collects anonymous run-level telemetry to help prioritize product improvements. One event is sent per `Anonymizer.run()` / `Anonymizer.preview()` call, containing only technical metadata: the replacement strategy in use, models used, model hosts (e.g. `nvidia-build`, `openrouter`, `other`), input-record counts, run duration, and failure attribution by pipeline step. **No user data, record contents, prompts, or model outputs are collected.**
+NeMo Anonymizer collects anonymous run-level telemetry to help prioritize product improvements. One event is sent per `Anonymizer.run()` / `Anonymizer.preview()` call, containing only technical metadata: the replacement strategy in use, models used, model hosts (e.g. `nvidia-build`, `openrouter`, `other`), input-record counts, run duration, and failure attribution by pipeline step. **No user data, record contents, prompts, or model outputs are collected.** See the [Telemetry and Privacy docs](https://nvidia-nemo.github.io/Anonymizer/latest/#telemetry-and-privacy) for the full field list.
 
 You may opt out of telemetry at any time:
 

@@ -51,6 +51,7 @@ from anonymizer.telemetry import (
     TaskEnum,
     TaskStatusEnum,
     TelemetryHandler,
+    _telemetry_enabled,
     avg_tokens_per_record,
     classify_model_host,
     collect_model_hosts,
@@ -385,6 +386,11 @@ class Anonymizer:
         try:
             if not getattr(config, "emit_telemetry", True):
                 return
+            # Short-circuit before _build_telemetry_event so we don't pay the
+            # tiktoken cost on every record when telemetry is globally disabled
+            # via NEMO_TELEMETRY_ENABLED=false.
+            if not _telemetry_enabled():
+                return
             event = self._build_telemetry_event(
                 task=task,
                 status=status,
@@ -660,21 +666,23 @@ def _collect_step_models(
 
 def _step_to_field(step: str) -> str:
     """Map a FailedRecord.step (workflow_name) to a schema failure-count field key."""
-    if step == "entity-detection":
-        return "entity_detection"
-    if step == "latent-entity-detection":
-        return "latent_detection"
-    if step == "replace-map-generation":
-        return "replace_map_generation"
-    if step == "rewrite-pipeline":
-        return "rewrite_pipeline"
-    if _REWRITE_EVALUATE_RE.match(step):
-        return "rewrite_evaluate"
-    if _REWRITE_REPAIR_RE.match(step):
-        return "rewrite_repair"
-    if step == "rewrite-final-judge":
-        return "rewrite_final_judge"
-    return "unknown"
+    match step:
+        case "entity-detection":
+            return "entity_detection"
+        case "latent-entity-detection":
+            return "latent_detection"
+        case "replace-map-generation":
+            return "replace_map_generation"
+        case "rewrite-pipeline":
+            return "rewrite_pipeline"
+        case "rewrite-final-judge":
+            return "rewrite_final_judge"
+        case _ if _REWRITE_EVALUATE_RE.match(step):
+            return "rewrite_evaluate"
+        case _ if _REWRITE_REPAIR_RE.match(step):
+            return "rewrite_repair"
+        case _:
+            return "unknown"
 
 
 def _collect_failure_counts(failed: list[FailedRecord]) -> dict[str, int]:

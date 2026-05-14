@@ -404,10 +404,8 @@ class TestSendSemantics:
     def test_client_setup_failure_routes_to_dlq(self) -> None:
         """If httpx.AsyncClient construction fails, events must land in DLQ rather than vanish."""
         handler, q = self._make()
+        handler._events.append(q)
         with patch("httpx.AsyncClient", side_effect=RuntimeError("boom")):
-            asyncio.run(handler._flush_events.__wrapped__(handler)) if False else None  # noqa
-            # call _flush_events with an event present
-            handler._events.append(q)
             asyncio.run(handler._flush_events())
         assert len(handler._dlq) == 1
 

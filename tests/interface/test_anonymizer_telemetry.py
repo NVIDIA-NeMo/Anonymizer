@@ -147,7 +147,7 @@ class TestRunEmitsTelemetry:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
         assert len(captured_events) == 1
@@ -192,7 +192,7 @@ class TestPreviewEmitsTelemetry:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input, num_records=5)
 
         assert len(captured_events) == 1
@@ -211,7 +211,7 @@ class TestOptOut:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(
             config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
             data=stub_input,
@@ -224,28 +224,16 @@ class TestOptOut:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        """NEMO_TELEMETRY_ENABLED=false: enqueue() no-ops even when the path is reached."""
+        """``NEMO_TELEMETRY_ENABLED=false`` short-circuits BEFORE event construction.
+
+        The path must not pay the tiktoken cost or build the event when the env-var
+        opt-out is active — so the FakeHandler should never see anything enqueued.
+        """
         # captured_events fixture set this to "true"; flip back.
         monkeypatch.setenv("NEMO_TELEMETRY_ENABLED", "false")
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
-        # The FakeHandler always records, but real TelemetryHandler.enqueue would no-op.
-        # We monkeypatched the class, so emission still goes through — verify by directly
-        # exercising the real handler's env check.
-        from anonymizer.telemetry import TelemetryHandler as RealHandler
-
-        h = RealHandler()
-        h.enqueue(
-            AnonymizerEvent(
-                task=TaskEnum.BATCH,
-                task_status=TaskStatusEnum.COMPLETED,
-                transformation_type="redact",
-                entity_detector_model="x",
-                entity_validator_model="x",
-                entity_augmenter_model="x",
-            )
-        )
-        assert h._events == []
+        assert captured_events == []
 
 
 # =============================================================================
@@ -259,7 +247,7 @@ class TestFieldPopulation:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
 
         event = captured_events[0]
@@ -275,7 +263,7 @@ class TestFieldPopulation:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(
             config=AnonymizerConfig(rewrite=Rewrite(max_repair_iterations=2, strict_entity_protection=True)),
             data=stub_input,
@@ -300,7 +288,7 @@ class TestFieldPopulation:
         pd.DataFrame({"text": ["Alice"]}).to_csv(csv_path, index=False)
         data = AnonymizerInput(source=str(csv_path), data_summary="medical records about clinical trials")
 
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=data)
 
         assert captured_events[0].custom_data_summary_provided is True
@@ -322,7 +310,7 @@ class TestFieldPopulation:
         expected_value: str,
     ) -> None:
         """Every replace strategy must map to one of the schema's enum values."""
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=strategy_factory()), data=stub_input)
 
         assert captured_events[0].transformation_type == expected_value
@@ -333,7 +321,7 @@ class TestFieldPopulation:
         stub_input: AnonymizerInput,
     ) -> None:
         """When no providers are configured, hosts list contains only 'nvidia-build'."""
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
         assert captured_events[0].model_hosts == ["nvidia-build"]
@@ -358,7 +346,7 @@ class TestFailureAggregation:
             dataframe=pd.DataFrame({COL_TEXT: ["a"], COL_FINAL_ENTITIES: [{"entities": []}]}),
             failed_records=detection_failures,
         )
-        anonymizer, _, _, _ = _make_anonymizer(detection_return=detection_return)
+        anonymizer, *_ = _make_anonymizer(detection_return=detection_return)
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
         event = captured_events[0]
@@ -380,7 +368,7 @@ class TestFailureAggregation:
         _df.attrs["original_text_column"] = "text"
         rewrite_return = RewriteResult(dataframe=_df, failed_records=rewrite_failures)
 
-        anonymizer, _, _, _ = _make_anonymizer(rewrite_return=rewrite_return)
+        anonymizer, *_ = _make_anonymizer(rewrite_return=rewrite_return)
         anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
 
         event = captured_events[0]
@@ -398,7 +386,7 @@ class TestFailureAggregation:
             dataframe=pd.DataFrame({COL_TEXT: ["a"], COL_FINAL_ENTITIES: [{"entities": []}]}),
             failed_records=unknown_failures,
         )
-        anonymizer, _, _, _ = _make_anonymizer(detection_return=detection_return)
+        anonymizer, *_ = _make_anonymizer(detection_return=detection_return)
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
         event = captured_events[0]
@@ -410,7 +398,7 @@ class TestFailureAggregation:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        anonymizer, _, _, _ = _make_anonymizer()
+        anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
         event = captured_events[0]

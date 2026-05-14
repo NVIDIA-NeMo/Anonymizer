@@ -131,18 +131,23 @@ def avg_tokens_per_record(texts) -> int:
 
 
 def classify_model_host(provider: ModelProvider | None) -> ModelHostEnum:
-    """Classify a ModelProvider's endpoint into one of the ModelHostEnum values."""
+    """Classify a ModelProvider's endpoint URL into one of the ModelHostEnum values.
+
+    Substring-matches known host fragments against the (lower-cased) endpoint URL.
+    """
     if provider is None:
         return ModelHostEnum.OTHER
-    endpoint = getattr(provider, "endpoint", "") or ""
-    endpoint = endpoint.lower()
+    # ``endpoint`` is a single URL string; the ``in`` checks below are substring
+    # searches against that string (not iteration over characters).
+    endpoint = (getattr(provider, "endpoint", "") or "").lower()
     if "build.nvidia.com" in endpoint or "integrate.api.nvidia.com" in endpoint:
         return ModelHostEnum.NVIDIA_BUILD
     if "inference-api.nvidia.com" in endpoint:
         return ModelHostEnum.NVIDIA_INTERNAL
     if "openrouter.ai" in endpoint:
         return ModelHostEnum.OPENROUTER
-    if any(h in endpoint for h in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")):
+    local_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+    if any(host in endpoint for host in local_hosts):
         return ModelHostEnum.LOCAL
     return ModelHostEnum.OTHER
 
@@ -378,6 +383,14 @@ class TelemetryHandler:
             self._add_to_dlq(events)
 
     def _add_to_dlq(self, events: list[QueuedEvent]) -> None:
+        """Bookkeeping for events that hit a retryable failure.
+
+        Note: in anonymizer's fire-and-flush usage (``with TelemetryHandler(...) as h``),
+        ``flush()`` runs exactly once per handler lifetime, so DLQ entries are not
+        actually retried — they're effectively dropped. The structure is preserved to
+        match DataDesigner's handler shape and to support a future long-lived /
+        timer-driven usage pattern without restructuring. Telemetry is best-effort.
+        """
         for q in events:
             q.retry_count += 1
             if q.retry_count > self._max_retries:
