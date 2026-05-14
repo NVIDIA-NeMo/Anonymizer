@@ -209,6 +209,8 @@ narrowing after all high combined_risk_level anchors in this document are suppre
 CONSISTENCY RULES:
 - If needs_protection=false → protection_method_suggestion MUST be "leave_as_is".
 - If needs_protection=true → protection_method_suggestion MUST NOT be "leave_as_is".
+- If combined_risk_level='high' → needs_protection MUST be true.
+- If combined_risk_level='low' → needs_protection MUST be false.
 - For latent entities, "replace" is rarely appropriate (value not in text).
 - For source="tagged": entity_value MUST match tag exactly.
 - For source="latent": entity_label/value MUST match the provided latent entity.
