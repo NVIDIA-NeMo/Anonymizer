@@ -475,6 +475,30 @@ def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
     return result
 
 
+def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
+    """Return (badge_html, rate_html) for the tri-state verdict.
+
+    - ``valid is None``        -> Unavailable (gray, no rate).
+    - ``total == 0``           -> Satisfied (green, no rate).
+    - ``correct == total``     -> Satisfied (green, with rate).
+    - ``correct == 0``         -> Not Satisfied (red, with rate).
+    - otherwise                -> Partially Satisfied (amber, with rate).
+    """
+    if valid is None:
+        return "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>", ""
+    if total == 0:
+        return "<span style='color:#22c55e;font-weight:600'>Satisfied</span>", ""
+    if correct >= total:
+        verdict, color = "Satisfied", "#22c55e"
+    elif correct == 0:
+        verdict, color = "Not Satisfied", "#ef4444"
+    else:
+        verdict, color = "Partially Satisfied", "#f59e0b"
+    badge = f"<span style='color:{color};font-weight:600'>{verdict}</span>"
+    rate_html = f" (success_rate: {correct}/{total})"
+    return badge, rate_html
+
+
 def _render_detection_judge_section(row: pd.Series) -> str:
     """Render the detection-judge verdict plus a drilldown when invalid entities exist."""
     if COL_DETECTION_VALID not in row.index:
@@ -483,15 +507,7 @@ def _render_detection_judge_section(row: pd.Series) -> str:
     invalid_entries = _normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
     total = _count_detected_entity_label_pairs(row)
     correct = max(total - len(invalid_entries), 0)
-
-    if valid is None:
-        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
-        rate_html = ""
-    else:
-        verdict_text = "Yes" if bool(valid) else "No"
-        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
-        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
-        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+    badge, rate_html = _verdict_badge(valid, correct, total)
 
     header = (
         "<div style='font-size:0.9em;line-height:1.8'>"
@@ -540,15 +556,7 @@ def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str
     invalid_entries = _normalize_invalid_entities(row.get(COL_TYPE_FIDELITY_INVALID_REPLACEMENTS))
     total = _count_replacement_triples(row, fallback=replacement_map)
     correct = max(total - len(invalid_entries), 0)
-
-    if valid is None:
-        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
-        rate_html = ""
-    else:
-        verdict_text = "Yes" if bool(valid) else "No"
-        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
-        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
-        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+    badge, rate_html = _verdict_badge(valid, correct, total)
 
     header = (
         "<div style='font-size:0.9em;line-height:1.8'>"
@@ -615,15 +623,7 @@ def _render_attribute_fidelity_section(row: pd.Series) -> str:
         all_entries = [{**entry, "passes": False} for entry in fallback_invalid]
     total = len(all_entries)
     correct = max(total - invalid_count, 0)
-
-    if valid is None:
-        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
-        rate_html = ""
-    else:
-        verdict_text = "Yes" if bool(valid) else "No"
-        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
-        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
-        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+    badge, rate_html = _verdict_badge(valid, correct, total)
 
     header = (
         "<div style='font-size:0.9em;line-height:1.8'>"
@@ -761,15 +761,7 @@ def _render_relational_consistency_section(row: pd.Series) -> str:
         all_relations = [{**entry, "passes": False} for entry in fallback_invalid]
     total = len(all_relations)
     correct = max(total - invalid_count, 0)
-
-    if valid is None:
-        badge = "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>"
-        rate_html = ""
-    else:
-        verdict_text = "Yes" if bool(valid) else "No"
-        verdict_color = "#22c55e" if bool(valid) else "#ef4444"
-        badge = f"<span style='color:{verdict_color};font-weight:600'>{verdict_text}</span>"
-        rate_html = f" (success_rate: {correct}/{total})" if total else ""
+    badge, rate_html = _verdict_badge(valid, correct, total)
 
     header = (
         "<div style='font-size:0.9em;line-height:1.8'>"
