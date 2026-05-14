@@ -12,6 +12,7 @@ import pytest
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_FINAL_ENTITIES,
+    COL_JUDGE_EVALUATION,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
 )
@@ -509,7 +510,7 @@ def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
             "utility_score": 0.9,
             "leakage_mass": 0.1,
             "needs_human_review": False,
-            "_judge_evaluation": judge_eval,
+            COL_JUDGE_EVALUATION: judge_eval,
         }
     )
     result = render_record_html(row, record_index=0)
@@ -532,7 +533,7 @@ def test_render_record_html_rewrite_mode_nan_judge_column_does_not_warn(
             "utility_score": 0.9,
             "leakage_mass": 0.1,
             "needs_human_review": False,
-            "_judge_evaluation": np.nan,
+            COL_JUDGE_EVALUATION: np.nan,
         }
     )
     with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
@@ -553,7 +554,7 @@ def test_render_record_html_rewrite_mode_malformed_judge_dict_warns(
             "utility_score": 0.9,
             "leakage_mass": 0.1,
             "needs_human_review": False,
-            "_judge_evaluation": {"unexpected_key": "no score field here"},
+            COL_JUDGE_EVALUATION: {"unexpected_key": "no score field here"},
         }
     )
     with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
