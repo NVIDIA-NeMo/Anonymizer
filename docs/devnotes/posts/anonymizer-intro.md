@@ -1,4 +1,5 @@
 ---
+title: Introducing NeMo Anonymizer
 date:
   created: 2026-05-14
 readtime: 12
@@ -10,7 +11,8 @@ authors:
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+# Introducing NeMo Anonymizer
+*Text anonymization for the reasoning era*
 
 ![A redacted document on the left, its black bars hiding names and IDs, sits next to a rainbow fingerprint shaped like a human profile — reassembled from the latent clues that slipped past the redaction: Space Needle, ferry, rain, coffee, baseball pennant, map pin.](assets/anonymizer-intro-hero.png){ loading=lazy }
 
