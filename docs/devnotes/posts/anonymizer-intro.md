@@ -1,5 +1,4 @@
 ---
-title: Introducing NeMo Anonymizer
 date:
   created: 2026-05-14
 readtime: 12
@@ -8,15 +7,10 @@ authors:
   - lipikaramaswamy
 ---
 
+# **Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era**
+
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-
-# Introducing NeMo Anonymizer
-*Text anonymization for the reasoning era*
-
-![A redacted document on the left, its black bars hiding names and IDs, sits next to a rainbow fingerprint shaped like a human profile — reassembled from the latent clues that slipped past the redaction: Space Needle, ferry, rain, coffee, baseball pennant, map pin.](assets/anonymizer-intro-hero.png){ loading=lazy }
-
-<!-- more -->
 
 Picture this: you ship a year of customer support transcripts to a vendor for model fine-tuning. Names, emails, phone numbers, account IDs — every identifier you can think of — stripped. A week later, the vendor's eval team flags a transcript and identifies the account: the customer who escalated repeatedly after a regional outage last spring, then quietly churned a month later.
 
@@ -24,9 +18,15 @@ You didn't leak a name.
 
 > You leaked a *fingerprint*.
 
-The escalation pattern, the region, the churn timing — combined, they point to one account.
+The escalation pattern, the region, the churn timing — combined, they point to one account. This is the privacy problem that text anonymization actually has to solve in 2026, and it's the problem **NeMo Anonymizer** — **Anonymizer**, for short — is built for.
 
-This is the privacy problem that text anonymization actually has to solve in 2026, and it's the problem **NeMo Anonymizer** — **Anonymizer**, for short — is built for.
+<!-- more -->
+
+<div style="text-align: center;" markdown>
+
+![A redacted document on the left, its black bars hiding names and IDs, sits next to a rainbow fingerprint shaped like a human profile — reassembled from the latent clues that slipped past the redaction: Space Needle, ferry, rain, coffee, baseball pennant, map pin.](assets/anonymizer-intro-hero.png){ loading=lazy }
+
+</div>
 
 ---
 
