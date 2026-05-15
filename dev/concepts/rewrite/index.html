@@ -515,6 +515,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#key-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key concepts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#basic-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1568,6 +1579,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#key-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key concepts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#basic-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1738,6 +1760,76 @@
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <p><a href="../detection/">Detection</a> runs first (same as <a href="../replace/">Replace mode</a>, plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. </p>
 <p>The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. A final judge provides a qualitative assessment of the rewritten record. Any records that failed to meet standards are tagged for human review. </p>
+<hr />
+<h2 id="key-concepts">Key concepts<a class="headerlink" href="#key-concepts" title="Permanent link">&para;</a></h2>
+<p><strong>Sensitivity</strong> measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Meaning</th>
+<th>Examples</th>
+<th>Leakage weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>high</code></td>
+<td>Exposure alone can identify a person</td>
+<td>Names, ID numbers, contact details</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td><code>medium</code></td>
+<td>Meaningfully narrows the identity space</td>
+<td>Location, occupation, age</td>
+<td>0.6</td>
+</tr>
+<tr>
+<td><code>low</code></td>
+<td>Minimal standalone identifying power</td>
+<td>Generic attributes, widely shared traits</td>
+<td>0.3</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Protection method</strong> describes how a sensitive entity is transformed. The choice reflects a holistic view of the document — what other entities are being protected and how, then shapes what each individual entity needs.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>What it does</th>
+<th>Typical use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>replace</code></td>
+<td>Substitutes the entity with a plausible synthetic alternative</td>
+<td>Direct identifiers (names, IDs, contact details)</td>
+</tr>
+<tr>
+<td><code>generalize</code></td>
+<td>Replaces the entity with a broader form</td>
+<td>Quasi-identifiers (exact date → quarter, city → region)</td>
+</tr>
+<tr>
+<td><code>suppress_inference</code></td>
+<td>Rewrites the surrounding text to remove cues that enable the inference</td>
+<td>Latent entities that are implied rather than stated</td>
+</tr>
+<tr>
+<td><code>remove</code></td>
+<td>Deletes the entity entirely</td>
+<td>Cases where neither replacement nor generalization can preserve meaning without retaining the identifying detail</td>
+</tr>
+<tr>
+<td><code>leave_as_is</code></td>
+<td>Leaves the entity unchanged</td>
+<td>Entities judged not to require protection in context</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2 id="basic-usage">Basic usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
 <pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
