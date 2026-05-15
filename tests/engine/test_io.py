@@ -211,6 +211,31 @@ def test_read_input_text_column_equal_to_static_output_renames_with_warning(
     assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
 
 
+def test_read_input_reserves_outputs_derived_from_resolved_text_column(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "final_entities": ["hello"],
+                "final_entities__input_replaced": ["pre-existing"],
+            }
+        ),
+        tmp_path,
+        text_column="final_entities",
+    )
+
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+
+    assert result.requested_text_column == "final_entities"
+    assert result.resolved_text_column == "final_entities__input"
+    assert COL_TEXT in result.dataframe.columns
+    assert "final_entities__input_replaced" not in result.dataframe.columns
+    assert result.dataframe["final_entities__input_replaced__input"].tolist() == ["pre-existing"]
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+
 def test_read_input_text_column_is_static_plus_other_static_collision(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

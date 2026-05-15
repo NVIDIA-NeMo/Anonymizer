@@ -80,32 +80,61 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
     ``final_entities``. If the input already contains any of those names the
     output would silently overwrite the user's data, so we rename the input
     column in place by appending ``__input`` (with a numeric suffix if needed
-    to avoid a secondary collision) and emit a warning. This matches how
-    pandas disambiguates duplicate column names on read and keeps the
-    pipeline runnable without forcing the user to edit their input file.
+    to avoid a secondary collision) and emit a warning.
 
-    If the selected text column itself collides with a fixed output name (e.g.
-    ``text_column='final_entities'``) it is renamed the same way; the returned
-    ``ResolvedInput.resolved_text_column`` reflects the non-colliding
-    identifier while ``requested_text_column`` retains what the user asked for.
+    Resolution is a fixed-point loop: when the selected text column itself
+    collides with a fixed output name (e.g. ``text_column='final_entities'``)
+    it is renamed the same way, AND the derived candidate names (e.g.
+    ``final_entities__input_replaced``) are re-checked against the remaining
+    user columns. That second pass is necessary — without it, an input column
+    that matches a *post-rename* derived name (``final_entities__input_replaced``)
+    would never be reserved, and ``_rename_output_columns`` would later
+    overwrite it, producing duplicate user-facing labels.
+
+    The returned ``ResolvedInput.resolved_text_column`` reflects the final
+    non-colliding identifier; ``requested_text_column`` retains what the user
+    asked for.
     """
-    candidate_output_columns: list[str] = [f"{selected_text_column}{suffix}" for suffix in _OUTPUT_COLUMN_SUFFIXES]
-    candidate_output_columns.extend(_STATIC_OUTPUT_COLUMNS)
+    rename_map: dict[str, str] = {}
+    resolved_text_column = selected_text_column
+    original_columns: set[str] = set(dataframe.columns)
 
-    existing_columns: set[str] = set(dataframe.columns)
-    collisions: list[str] = [name for name in candidate_output_columns if name in existing_columns]
-    if not collisions:
+    # Iterate until no new collisions surface. Termination is guaranteed:
+    #   - Pass 1 resolves collisions against `selected_text_column`'s derived
+    #     names plus the static names. If the text column itself was renamed,
+    #     a second pass re-derives candidates from the new name and catches
+    #     any secondary collisions.
+    #   - No further pass is possible because every rename target produced by
+    #     `_next_available_name` contains the `__input` infix, and no candidate
+    #     output name does. A third-pass collision would require those sets to
+    #     overlap, which they cannot.
+    while True:
+        effective_columns = (original_columns - set(rename_map.keys())) | set(rename_map.values())
+
+        candidate_outputs: set[str] = {f"{resolved_text_column}{suffix}" for suffix in _OUTPUT_COLUMN_SUFFIXES}
+        candidate_outputs.update(_STATIC_OUTPUT_COLUMNS)
+
+        new_collisions = sorted(name for name in candidate_outputs if name in effective_columns)
+        if not new_collisions:
+            break
+
+        for original_name in new_collisions:
+            new_name = _next_available_name(
+                f"{original_name}{_INPUT_RENAME_SUFFIX}",
+                effective_columns | set(rename_map.values()),
+            )
+            rename_map[original_name] = new_name
+            effective_columns.add(new_name)
+
+        if resolved_text_column in rename_map:
+            resolved_text_column = rename_map[resolved_text_column]
+
+    if not rename_map:
         return ResolvedInput(
             dataframe=dataframe,
             requested_text_column=selected_text_column,
             resolved_text_column=selected_text_column,
         )
-
-    rename_map: dict[str, str] = {}
-    for original_name in collisions:
-        new_name = _next_available_name(f"{original_name}{_INPUT_RENAME_SUFFIX}", existing_columns)
-        rename_map[original_name] = new_name
-        existing_columns.add(new_name)
 
     formatted = ", ".join(f"{old!r} -> {new!r}" for old, new in rename_map.items())
     logger.warning(
@@ -116,7 +145,7 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
     return ResolvedInput(
         dataframe=dataframe.rename(columns=rename_map),
         requested_text_column=selected_text_column,
-        resolved_text_column=rename_map.get(selected_text_column, selected_text_column),
+        resolved_text_column=resolved_text_column,
     )
 
 
