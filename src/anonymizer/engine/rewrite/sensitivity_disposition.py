@@ -43,7 +43,7 @@ combined_risk_level must be 'high' or 'medium'. 'low' is not valid in strict mod
 because it implies no protection is needed.
 
 Ignore the MINIMUM NECESSARY CHANGE principle — it does not apply in strict mode.
-Ignore the QUASI-IDENTIFIERS guidance that says "NOT automatically sensitive" —
+Ignore the QUASI-IDENTIFIERS guidance that says "Not automatically protected" —
 all quasi-identifiers must be protected in strict mode.
 
 </strict_entity_protection>
