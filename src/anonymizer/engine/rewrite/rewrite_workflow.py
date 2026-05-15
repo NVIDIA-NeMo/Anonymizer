@@ -203,7 +203,7 @@ class RewriteWorkflow:
         # Fast path: no entities anywhere
         if entity_rows.empty:
             _apply_passthrough_defaults(passthrough_rows)
-            result_df = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            result_df = merge_and_reorder(passthrough_rows)
             return RewriteResult(dataframe=result_df, failed_records=all_failed)
 
         # --- Step 1: replacement map (needs only detection output) ---
@@ -268,7 +268,7 @@ class RewriteWorkflow:
 
         # --- Merge and return ---
         _apply_passthrough_defaults(passthrough_rows)
-        combined = merge_and_reorder(entity_rows, passthrough_rows, attrs=dataframe.attrs)
+        combined = merge_and_reorder(entity_rows, passthrough_rows)
         return RewriteResult(dataframe=combined, failed_records=all_failed)
 
     # ---------------------------------------------------------------------------

@@ -72,7 +72,7 @@ class LlmReplaceWorkflow:
         passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
 
         if entity_rows.empty:
-            passthrough_only = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            passthrough_only = merge_and_reorder(passthrough_rows)
             return LlmReplaceResult(
                 dataframe=passthrough_only.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
                 failed_records=[],
@@ -110,9 +110,7 @@ class LlmReplaceWorkflow:
             axis=1,
         )
 
-        combined = merge_and_reorder(
-            output_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
-        )
+        combined = merge_and_reorder(output_df, passthrough_rows)
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,

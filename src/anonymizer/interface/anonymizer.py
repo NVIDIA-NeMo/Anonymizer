@@ -38,6 +38,7 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
@@ -126,8 +127,8 @@ class Anonymizer:
             data: Input source with file path, text column, and optional data summary.
         """
         self._validate_preflight_config(config)
-        input_df = read_input(data)
-        return self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=None)
+        context = read_input(data)
+        return self._run_internal(config=config, data=data, context=context, preview_num_records=None)
 
     def preview(
         self,
@@ -144,11 +145,12 @@ class Anonymizer:
             num_records: Maximum records to process (default 10).
         """
         self._validate_preflight_config(config)
-        input_df = read_input(data, nrows=num_records)
-        result = self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=num_records)
+        context = read_input(data, nrows=num_records)
+        result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
         return PreviewResult(
             dataframe=result.dataframe,
             trace_dataframe=result.trace_dataframe,
+            resolved_text_column=result.resolved_text_column,
             failed_records=result.failed_records,
             preview_num_records=num_records,
         )
@@ -162,9 +164,10 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput,
-        input_df: pd.DataFrame,
+        context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
+        input_df = context.dataframe
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
             effective_records = min(preview_num_records, num_records)
@@ -284,11 +287,13 @@ class Anonymizer:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
-        renamed_trace = _rename_output_columns(final_df)
+        text_col = context.resolved_text_column
+        renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace),
+            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
             trace_dataframe=renamed_trace,
+            resolved_text_column=text_col,
             failed_records=all_failures,
         )
 
@@ -361,26 +366,23 @@ def _resolve_model_providers(
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
 
-def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename internal column names to user-facing names based on the original text column."""
-    original_text_column = str(df.attrs["original_text_column"])
+def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
+    """Rename internal column names to user-facing names."""
     rename_map: dict[str, str] = {}
     if COL_TEXT in df.columns:
-        rename_map[COL_TEXT] = original_text_column
+        rename_map[COL_TEXT] = resolved_text_column
     if COL_REPLACED_TEXT in df.columns:
-        rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
+        rename_map[COL_REPLACED_TEXT] = f"{resolved_text_column}_replaced"
     if COL_TAGGED_TEXT in df.columns:
-        rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
+        rename_map[COL_TAGGED_TEXT] = f"{resolved_text_column}_with_spans"
     if COL_REWRITTEN_TEXT in df.columns:
-        rename_map[COL_REWRITTEN_TEXT] = f"{original_text_column}_rewritten"
+        rename_map[COL_REWRITTEN_TEXT] = f"{resolved_text_column}_rewritten"
     if not rename_map:
         return df
-    renamed = df.rename(columns=rename_map)
-    renamed.attrs = dict(df.attrs)
-    return renamed
+    return df.rename(columns=rename_map)
 
 
-def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
+def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities
@@ -389,7 +391,7 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
     """
     t = trace_dataframe
-    text_col = str(t.attrs["original_text_column"])
+    text_col = resolved_text_column
 
     if f"{text_col}_rewritten" in t.columns:
         allowed = {
@@ -415,7 +417,4 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
             COL_FINAL_ENTITIES,
         }
 
-    user_columns = [col for col in t.columns if col in allowed]
-    user_dataframe = t[user_columns].copy()
-    user_dataframe.attrs = dict(t.attrs)
-    return user_dataframe
+    return t[[col for col in t.columns if col in allowed]].copy()
