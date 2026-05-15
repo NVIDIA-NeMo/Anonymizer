@@ -62,7 +62,6 @@ def _make_logging_anonymizer(
             COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
         }
     )
-    _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=replace_failures or [])
     _rewrite_df = pd.DataFrame(
@@ -75,7 +74,6 @@ def _make_logging_anonymizer(
             "needs_human_review": [False, False],
         }
     )
-    _rewrite_df.attrs["original_text_column"] = "text"
     rewrite_runner = Mock(spec=RewriteWorkflow)
     rewrite_runner.run.return_value = RewriteResult(dataframe=_rewrite_df, failed_records=[])
     return Anonymizer(
@@ -228,7 +226,6 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
             COL_FINAL_ENTITIES: entities,
         }
     )
-    det_df.attrs["original_text_column"] = "text"
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
     _replace_df = pd.DataFrame(
@@ -237,7 +234,6 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
             COL_REPLACED_TEXT: ["[REDACTED] works here" for _ in range(num_preview)],
         }
     )
-    _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=[])
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
@@ -270,7 +266,6 @@ def test_local_replace_logs_progress_for_large_datasets(tmp_path: Path, caplog: 
             COL_FINAL_ENTITIES: entities,
         }
     )
-    det_df.attrs["original_text_column"] = "text"
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
     detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
     replace_runner = ReplacementWorkflow()

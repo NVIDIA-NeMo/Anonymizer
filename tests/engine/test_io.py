@@ -65,7 +65,7 @@ def test_read_input_from_file(suffix: str, writer: object, tmp_path: Path) -> No
     writer(input_df, file_path)
     inp = AnonymizerInput(source=str(file_path))
     result = read_input(inp)
-    assert COL_TEXT in result.columns
+    assert COL_TEXT in result.dataframe.columns
 
 
 def test_read_input_from_remote_csv_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,8 +78,9 @@ def test_read_input_from_remote_csv_url(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(pd, "read_csv", _read_csv)
     result = read_input(AnonymizerInput(source=source))
-    assert result[COL_TEXT].tolist() == ["Alice works at Acme"]
-    assert result.attrs["original_text_column"] == "text"
+    assert result.dataframe[COL_TEXT].tolist() == ["Alice works at Acme"]
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_read_input_from_remote_parquet_url_with_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -92,8 +93,9 @@ def test_read_input_from_remote_parquet_url_with_query_params(monkeypatch: pytes
 
     monkeypatch.setattr(pd, "read_parquet", _read_parquet)
     result = read_input(AnonymizerInput(source=source))
-    assert result[COL_TEXT].tolist() == ["Alice works at Acme"]
-    assert result.attrs["original_text_column"] == "text"
+    assert result.dataframe[COL_TEXT].tolist() == ["Alice works at Acme"]
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_read_input_from_remote_csv_url_with_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,8 +108,9 @@ def test_read_input_from_remote_csv_url_with_fragment(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(pd, "read_csv", _read_csv)
     result = read_input(AnonymizerInput(source=source))
-    assert result[COL_TEXT].tolist() == ["Alice works at Acme"]
-    assert result.attrs["original_text_column"] == "text"
+    assert result.dataframe[COL_TEXT].tolist() == ["Alice works at Acme"]
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_read_input_remote_url_with_unsupported_format_raises() -> None:
@@ -119,8 +122,9 @@ def test_read_input_remote_url_with_unsupported_format_raises() -> None:
 def test_read_input_renames_text_column(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"content": ["hello world"]}), tmp_path, text_column="content")
     result = read_input(inp)
-    assert COL_TEXT in result.columns
-    assert result.attrs["original_text_column"] == "content"
+    assert COL_TEXT in result.dataframe.columns
+    assert result.requested_text_column == "content"
+    assert result.resolved_text_column == "content"
 
 
 def test_read_input_missing_text_column_raises(tmp_path: Path) -> None:
@@ -147,11 +151,11 @@ def test_read_input_output_column_collision_renames_with_warning(
     )
     with caplog.at_level("WARNING", logger="anonymizer"):
         result = read_input(inp)
-    assert COL_TEXT in result.columns
-    assert colliding_col not in result.columns
+    assert COL_TEXT in result.dataframe.columns
+    assert colliding_col not in result.dataframe.columns
     renamed = f"{colliding_col}__input"
-    assert renamed in result.columns
-    assert result[renamed].tolist() == ["existing"]
+    assert renamed in result.dataframe.columns
+    assert result.dataframe[renamed].tolist() == ["existing"]
     assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
 
 
@@ -166,8 +170,8 @@ def test_read_input_static_output_column_collision_renames_with_warning(
     )
     with caplog.at_level("WARNING", logger="anonymizer"):
         result = read_input(inp)
-    assert static_column not in result.columns
-    assert f"{static_column}__input" in result.columns
+    assert static_column not in result.dataframe.columns
+    assert f"{static_column}__input" in result.dataframe.columns
     assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
 
 
@@ -187,8 +191,9 @@ def test_read_input_text_column_equal_to_static_output_renames_with_warning(
 ) -> None:
     """Selecting a text column whose name matches a fixed output column is treated
     like any other collision: the input column is renamed with the ``__input``
-    suffix and ``original_text_column`` reflects the renamed identifier so the
+    suffix and ``resolved_text_column`` reflects the renamed identifier so the
     end-of-pipeline rename does not clash with the pipeline's own output column.
+    ``requested_text_column`` retains the user's original request.
     """
     inp = _write_input(
         pd.DataFrame({static_column: ["hello"]}),
@@ -197,11 +202,37 @@ def test_read_input_text_column_equal_to_static_output_renames_with_warning(
     )
     with caplog.at_level("WARNING", logger="anonymizer"):
         result = read_input(inp)
-    assert COL_TEXT in result.columns
-    assert static_column not in result.columns
+    assert COL_TEXT in result.dataframe.columns
+    assert static_column not in result.dataframe.columns
     renamed = f"{static_column}__input"
-    assert result.attrs["original_text_column"] == renamed
-    assert list(result.columns).count(COL_TEXT) == 1
+    assert result.requested_text_column == static_column
+    assert result.resolved_text_column == renamed
+    assert list(result.dataframe.columns).count(COL_TEXT) == 1
+    assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
+
+
+def test_read_input_reserves_outputs_derived_from_resolved_text_column(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    inp = _write_input(
+        pd.DataFrame(
+            {
+                "final_entities": ["hello"],
+                "final_entities__input_replaced": ["pre-existing"],
+            }
+        ),
+        tmp_path,
+        text_column="final_entities",
+    )
+
+    with caplog.at_level("WARNING", logger="anonymizer"):
+        result = read_input(inp)
+
+    assert result.requested_text_column == "final_entities"
+    assert result.resolved_text_column == "final_entities__input"
+    assert COL_TEXT in result.dataframe.columns
+    assert "final_entities__input_replaced" not in result.dataframe.columns
+    assert result.dataframe["final_entities__input_replaced__input"].tolist() == ["pre-existing"]
     assert any("collide with Anonymizer output column names" in rec.message for rec in caplog.records)
 
 
@@ -225,13 +256,14 @@ def test_read_input_text_column_is_static_plus_other_static_collision(
     )
     with caplog.at_level("WARNING", logger="anonymizer"):
         result = read_input(inp)
-    assert result.attrs["original_text_column"] == "final_entities__input"
-    assert {"utility_score__input", "needs_human_review__input"}.issubset(result.columns)
-    assert "final_entities" not in result.columns
-    assert "utility_score" not in result.columns
-    assert "needs_human_review" not in result.columns
-    assert result["utility_score__input"].iloc[0] == 0.9
-    assert bool(result["needs_human_review__input"].iloc[0]) is False
+    assert result.requested_text_column == "final_entities"
+    assert result.resolved_text_column == "final_entities__input"
+    assert {"utility_score__input", "needs_human_review__input"}.issubset(result.dataframe.columns)
+    assert "final_entities" not in result.dataframe.columns
+    assert "utility_score" not in result.dataframe.columns
+    assert "needs_human_review" not in result.dataframe.columns
+    assert result.dataframe["utility_score__input"].iloc[0] == 0.9
+    assert bool(result.dataframe["needs_human_review__input"].iloc[0]) is False
 
 
 def test_read_input_output_column_collision_renames_all(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -249,7 +281,7 @@ def test_read_input_output_column_collision_renames_all(tmp_path: Path, caplog: 
     )
     with caplog.at_level("WARNING", logger="anonymizer"):
         result = read_input(inp)
-    assert {"bio_replaced__input", "bio_rewritten__input", "final_entities__input"}.issubset(result.columns)
+    assert {"bio_replaced__input", "bio_rewritten__input", "final_entities__input"}.issubset(result.dataframe.columns)
     warning = next(
         rec.message for rec in caplog.records if "collide with Anonymizer output column names" in rec.message
     )
@@ -272,9 +304,9 @@ def test_read_input_output_column_collision_disambiguates_when_input_suffix_take
         text_column="bio",
     )
     result = read_input(inp)
-    assert "bio_replaced" not in result.columns
-    assert result["bio_replaced__input"].tolist() == ["already_renamed"]
-    assert result["bio_replaced__input_2"].tolist() == ["new"]
+    assert "bio_replaced" not in result.dataframe.columns
+    assert result.dataframe["bio_replaced__input"].tolist() == ["already_renamed"]
+    assert result.dataframe["bio_replaced__input_2"].tolist() == ["new"]
 
 
 def test_read_input_non_colliding_columns_pass(tmp_path: Path) -> None:
@@ -284,9 +316,9 @@ def test_read_input_non_colliding_columns_pass(tmp_path: Path) -> None:
         text_column="bio",
     )
     result = read_input(inp)
-    assert COL_TEXT in result.columns
-    assert "other_replaced" in result.columns
-    assert "score" in result.columns
+    assert COL_TEXT in result.dataframe.columns
+    assert "other_replaced" in result.dataframe.columns
+    assert "score" in result.dataframe.columns
 
 
 def test_read_input_unsupported_format_raises(tmp_path: Path) -> None:
@@ -300,7 +332,8 @@ def test_read_input_unsupported_format_raises(tmp_path: Path) -> None:
 def test_read_input_preserves_text_attr_when_column_exists(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": ["hello"]}), tmp_path)
     result = read_input(inp)
-    assert result.attrs["original_text_column"] == "text"
+    assert result.requested_text_column == "text"
+    assert result.resolved_text_column == "text"
 
 
 def test_anonymizer_input_missing_path_raises_validation_error(tmp_path: Path) -> None:
@@ -366,35 +399,36 @@ def test_write_output_unwritable_path_raises_anonymizer_io_error(
 def test_read_input_nrows_truncates_csv(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": [f"row {i}" for i in range(20)]}), tmp_path)
     result = read_input(inp, nrows=5)
-    assert len(result) == 5
-    assert result[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
+    assert len(result.dataframe) == 5
+    assert result.dataframe[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
 
 
 def test_read_input_nrows_truncates_parquet(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": [f"row {i}" for i in range(20)]}), tmp_path, suffix=".parquet")
     result = read_input(inp, nrows=5)
-    assert len(result) == 5
-    assert result[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
+    assert len(result.dataframe) == 5
+    assert result.dataframe[COL_TEXT].tolist() == [f"row {i}" for i in range(5)]
 
 
 def test_read_input_nrows_larger_than_file_returns_all(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path)
     result = read_input(inp, nrows=100)
-    assert len(result) == 3
+    assert len(result.dataframe) == 3
 
 
 def test_read_input_nrows_none_returns_all(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": [f"row {i}" for i in range(20)]}), tmp_path)
     result = read_input(inp, nrows=None)
-    assert len(result) == 20
+    assert len(result.dataframe) == 20
 
 
-def test_read_input_nrows_preserves_attrs(tmp_path: Path) -> None:
+def test_read_input_nrows_preserves_context(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"bio": [f"row {i}" for i in range(10)]}), tmp_path, text_column="bio")
     result = read_input(inp, nrows=3)
-    assert len(result) == 3
-    assert result.attrs["original_text_column"] == "bio"
-    assert COL_TEXT in result.columns
+    assert len(result.dataframe) == 3
+    assert result.requested_text_column == "bio"
+    assert result.resolved_text_column == "bio"
+    assert COL_TEXT in result.dataframe.columns
 
 
 def test_read_input_nrows_remote_csv(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -409,7 +443,7 @@ def test_read_input_nrows_remote_csv(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(pd, "read_csv", _read_csv)
     result = read_input(AnonymizerInput(source=source), nrows=5)
-    assert len(result) == 5
+    assert len(result.dataframe) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -420,26 +454,26 @@ def test_read_input_nrows_remote_csv(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_read_input_nrows_zero_returns_empty_parquet(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path, suffix=".parquet")
     result = read_input(inp, nrows=0)
-    assert len(result) == 0
-    assert COL_TEXT in result.columns
+    assert len(result.dataframe) == 0
+    assert COL_TEXT in result.dataframe.columns
 
 
 def test_read_input_nrows_zero_returns_empty_csv(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path)
     result = read_input(inp, nrows=0)
-    assert len(result) == 0
-    assert COL_TEXT in result.columns
+    assert len(result.dataframe) == 0
+    assert COL_TEXT in result.dataframe.columns
 
 
 def test_read_input_nrows_negative_returns_empty_parquet(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": ["a", "b", "c"]}), tmp_path, suffix=".parquet")
     result = read_input(inp, nrows=-5)
-    assert len(result) == 0
-    assert COL_TEXT in result.columns
+    assert len(result.dataframe) == 0
+    assert COL_TEXT in result.dataframe.columns
 
 
 def test_read_input_empty_parquet_returns_empty(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({"text": pd.Series([], dtype="object")}), tmp_path, suffix=".parquet")
     result = read_input(inp, nrows=5)
-    assert len(result) == 0
-    assert COL_TEXT in result.columns
+    assert len(result.dataframe) == 0
+    assert COL_TEXT in result.dataframe.columns

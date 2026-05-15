@@ -48,31 +48,33 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validat
 
 
 class Domain(str, Enum):
-    """Valid domain types for domain classification and meaning unit extraction."""
+    """Valid domain types for domain classification and meaning unit extraction.
 
-    BIOGRAPHY = "BIOGRAPHY"
-    CHAT_EMAIL_CSAT = "CHAT_EMAIL_CSAT"
-    PRODUCT_REVIEW = "PRODUCT_REVIEW"
-    NEWS_JOURNALISM = "NEWS_JOURNALISM"
-    MARKETING_ADVERTISING = "MARKETING_ADVERTISING"
-    TECHNICAL_ENGINEERING_SOFTWARE = "TECHNICAL_ENGINEERING_SOFTWARE"
-    SCIENTIFIC_ACADEMIC = "SCIENTIFIC_ACADEMIC"
+    Adding a value here also requires a matching entry in ``DOMAIN_METADATA``
+    (``anonymizer.engine.rewrite.domain_classification``); that module fails
+    to import if the two drift.
+    """
+
+    BIOGRAPHY_PROFILE = "BIOGRAPHY_PROFILE"
+    INSURANCE = "INSURANCE"
+    GOVERNMENT_PUBLIC_RECORDS = "GOVERNMENT_PUBLIC_RECORDS"
+    NEWS_PUBLIC_AFFAIRS = "NEWS_PUBLIC_AFFAIRS"
+    MARKETING_COMMERCIAL = "MARKETING_COMMERCIAL"
+    TECHNICAL_SOFTWARE_ENGINEERING = "TECHNICAL_SOFTWARE_ENGINEERING"
+    RESEARCH_SCIENTIFIC = "RESEARCH_SCIENTIFIC"
     SECURITY_INFOSEC = "SECURITY_INFOSEC"
     FINANCIAL = "FINANCIAL"
-    ECONOMIC = "ECONOMIC"
-    POLICY_REGULATORY_COMPLIANCE = "POLICY_REGULATORY_COMPLIANCE"
+    ECONOMIC_ANALYSIS = "ECONOMIC_ANALYSIS"
+    POLICY_REGULATORY = "POLICY_REGULATORY"
     LEGAL = "LEGAL"
-    HR_PEOPLE_OPS = "HR_PEOPLE_OPS"
-    MANAGEMENT_OPERATIONS = "MANAGEMENT_OPERATIONS"
-    CLINICAL_EHR_MEDICAL = "CLINICAL_EHR_MEDICAL"
-    EDUCATIONAL_PEDAGOGICAL = "EDUCATIONAL_PEDAGOGICAL"
-    FICTION_CREATIVE = "FICTION_CREATIVE"
+    HR_EMPLOYMENT = "HR_EMPLOYMENT"
+    BUSINESS_OPERATIONS = "BUSINESS_OPERATIONS"
+    MEDICAL_CLINICAL = "MEDICAL_CLINICAL"
+    EDUCATION = "EDUCATION"
+    CREATIVE_FICTION = "CREATIVE_FICTION"
     ENTERTAINMENT_MEDIA = "ENTERTAINMENT_MEDIA"
-    SOCIAL_CULTURAL_OPED = "SOCIAL_CULTURAL_OPED"
-    PROCEDURAL_INSTRUCTIONAL = "PROCEDURAL_INSTRUCTIONAL"
+    SOCIAL_COMMENTARY = "SOCIAL_COMMENTARY"
     META_TEXT = "META_TEXT"
-    SOCIAL_MEDIA = "SOCIAL_MEDIA"
-    TRANSCRIPTS_INTERVIEWS = "TRANSCRIPTS_INTERVIEWS"
     OTHER = "OTHER"
 
 
@@ -96,7 +98,6 @@ class EntitySource(str, Enum):
 class EntityCategory(str, Enum):
     direct_identifier = "direct_identifier"
     quasi_identifier = "quasi_identifier"
-    sensitive_attribute = "sensitive_attribute"
     latent_identifier = "latent_identifier"
 
 
@@ -151,6 +152,10 @@ class EntityDispositionSchema(BaseModel):
             raise ValueError(
                 f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='leave_as_is'"
             )
+        if self.combined_risk_level == CombinedRiskLevel.high and not self.needs_protection:
+            raise ValueError(f"Entity {self.id}: combined_risk_level='high' requires needs_protection=True")
+        if self.combined_risk_level == CombinedRiskLevel.low and self.needs_protection:
+            raise ValueError(f"Entity {self.id}: combined_risk_level='low' requires needs_protection=False")
         return self
 
 
@@ -216,6 +221,11 @@ class StrictProtectionMethod(str, Enum):
     suppress_inference = "suppress_inference"
 
 
+class StrictCombinedRiskLevel(str, Enum):
+    medium = "medium"
+    high = "high"
+
+
 class StrictEntityDispositionSchema(BaseModel):
     """Strict variant: needs_protection is always True and leave_as_is is excluded."""
 
@@ -229,7 +239,7 @@ class StrictEntityDispositionSchema(BaseModel):
     entity_value: str = Field(min_length=1)
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: StrictProtectionMethod
-    combined_risk_level: CombinedRiskLevel
+    combined_risk_level: StrictCombinedRiskLevel
 
     def to_entity_disposition(self) -> EntityDispositionSchema:
         return EntityDispositionSchema(

@@ -63,13 +63,13 @@ def _color_for_label(label: str) -> tuple[str, str]:
     return ENTITY_COLORS[idx], LABEL_BORDER_COLORS[idx]
 
 
-def render_record_html(row: pd.Series, record_index: int | None = None, original_text_column: str | None = None) -> str:
+def render_record_html(row: pd.Series, record_index: int | None = None, resolved_text_column: str | None = None) -> str:
     """Render a single anonymizer result record as self-contained HTML.
 
     Dispatches to rewrite-mode or replace-mode layout based on which output
     columns are present.
     """
-    text_col = original_text_column or "text"
+    text_col = resolved_text_column or "text"
 
     if f"{text_col}_rewritten" in row.index:
         return _render_rewrite_html(row, text_col=text_col, record_index=record_index)

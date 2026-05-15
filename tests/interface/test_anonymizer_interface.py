@@ -50,7 +50,6 @@ def _make_anonymizer(
     _replace_df = pd.DataFrame(
         {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
     )
-    _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
     replace_runner.run.return_value = replace_return or ReplacementResult(
         dataframe=_replace_df,
@@ -67,7 +66,6 @@ def _make_anonymizer(
             "needs_human_review": [False],
         }
     )
-    _rewrite_df.attrs["original_text_column"] = "text"
     rewrite_runner = Mock(spec=RewriteWorkflow)
     rewrite_runner.run.return_value = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
@@ -93,7 +91,6 @@ def test_run_merges_failed_records_from_both_stages(
         failed_records=detection_failures,
     )
     _replace_df = pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["Alice"]})
-    _replace_df.attrs["original_text_column"] = "text"
     replace_return = ReplacementResult(dataframe=_replace_df, failed_records=replace_failures)
 
     anonymizer, _, _, _ = _make_anonymizer(detection_return=detection_result, replace_return=replace_return)
@@ -152,7 +149,6 @@ def test_run_exposes_trace_dataframe_and_filters_internal_columns(
             COL_REPLACEMENT_MAP: [{"replacements": []}],
         }
     )
-    _replace_df.attrs["original_text_column"] = "text"
     replace_return = ReplacementResult(dataframe=_replace_df, failed_records=[])
     anonymizer, _, _, _ = _make_anonymizer(replace_return=replace_return)
 
@@ -177,7 +173,6 @@ def test_preview_exposes_trace_dataframe_for_display(
             COL_REPLACEMENT_MAP: [{"replacements": []}],
         }
     )
-    _replace_df.attrs["original_text_column"] = "text"
     replace_return = ReplacementResult(dataframe=_replace_df, failed_records=[])
     anonymizer, _, _, _ = _make_anonymizer(replace_return=replace_return)
 
@@ -203,7 +198,6 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
             COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
         }
     )
-    replace_df.attrs["original_text_column"] = "bio"
     replace_return = ReplacementResult(dataframe=replace_df, failed_records=[])
     anonymizer, _, _, _ = _make_anonymizer(replace_return=replace_return)
 
@@ -222,6 +216,75 @@ def test_run_restores_original_text_column_names_for_user_dataframe(
     assert "replaced_text" not in result.dataframe.columns
     assert result.dataframe["bio"].iloc[0] == "Alice bio text"
     assert result.dataframe["bio_replaced"].iloc[0] == "[REDACTED] bio text"
+    assert result.resolved_text_column == "bio"
+
+
+def test_run_ignores_workflow_output_attrs_for_text_column_resolution(
+    stub_anonymizer_config: AnonymizerConfig,
+    tmp_path: Path,
+) -> None:
+    """Behavioral guarantee: the orchestrator's text-column resolution comes
+    from :class:`ResolvedInput`, never from workflow output ``DataFrame.attrs``.
+
+    Construct workflow mocks whose returned dataframes carry deliberately
+    misleading ``attrs`` (a key that historical implementations might have
+    relied on). If the orchestrator silently consulted ``attrs`` it would
+    produce a column named ``WRONG_COL`` instead of ``bio``, and
+    ``display_record`` would fail to find the text. We assert the user-facing
+    dataframe and the display HTML both reflect the user's actual
+    ``text_column`` request.
+    """
+    detection_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice bio text"],
+            COL_FINAL_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+        }
+    )
+    detection_df.attrs = {"resolved_text_column": "WRONG_COL", "requested_text_column": "WRONG_COL"}
+    replace_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice bio text"],
+            COL_REPLACED_TEXT: ["[REDACTED] bio text"],
+            COL_TAGGED_TEXT: ["<first_name>Alice</first_name> bio text"],
+            COL_DETECTED_ENTITIES: [
+                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+            ],
+            COL_REPLACEMENT_MAP: [
+                {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[REDACTED]"}]}
+            ],
+        }
+    )
+    replace_df.attrs = {"resolved_text_column": "WRONG_COL", "extra": "noise"}
+
+    anonymizer, _, _, _ = _make_anonymizer(
+        detection_return=EntityDetectionResult(dataframe=detection_df, failed_records=[]),
+        replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
+    )
+
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame({"bio": ["Alice bio text"]}).to_csv(input_csv, index=False)
+    result = anonymizer.run(
+        config=stub_anonymizer_config,
+        data=AnonymizerInput(source=str(input_csv), text_column="bio"),
+    )
+
+    assert result.resolved_text_column == "bio"
+    assert "bio" in result.dataframe.columns
+    assert "bio_replaced" in result.dataframe.columns
+    assert "WRONG_COL" not in result.dataframe.columns
+    assert "WRONG_COL" not in result.trace_dataframe.columns
+
+    from anonymizer.interface.display import render_record_html
+
+    rendered = render_record_html(
+        result.trace_dataframe.iloc[0],
+        record_index=0,
+        resolved_text_column=result.resolved_text_column,
+    )
+    assert "Alice" in rendered
+    assert "bio text" in rendered
+    assert "[REDACTED]" in rendered
+    assert "WRONG_COL" not in rendered
 
 
 def test_run_with_colliding_internal_text_column_raises(
@@ -262,7 +325,6 @@ def test_run_with_colliding_output_column_renames_input_and_warns(
             "bio_replaced__input": ["pre-existing"],
         }
     )
-    replace_df.attrs["original_text_column"] = "bio"
     anonymizer, _, _, _ = _make_anonymizer(
         replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
     )
@@ -302,7 +364,6 @@ def test_run_with_text_column_matching_static_output_preserves_both_columns(
             COL_FINAL_ENTITIES: [entities_payload],
         }
     )
-    replace_df.attrs["original_text_column"] = "final_entities__input"
     anonymizer, _, _, _ = _make_anonymizer(
         replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
     )
@@ -532,7 +593,6 @@ def test_run_rewrite_internal_columns_only_in_trace(stub_input: AnonymizerInput)
             "needs_human_review": [False],
         }
     )
-    rewrite_df.attrs["original_text_column"] = "text"
     rewrite_return = RewriteResult(dataframe=rewrite_df, failed_records=[])
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, _, _, _ = _make_anonymizer(rewrite_return=rewrite_return)
@@ -564,7 +624,6 @@ def test_run_rewrite_merges_failed_records(stub_input: AnonymizerInput) -> None:
             "needs_human_review": [False],
         }
     )
-    _rewrite_df.attrs["original_text_column"] = "text"
     rewrite_return = RewriteResult(dataframe=_rewrite_df, failed_records=rewrite_failures)
 
     config = AnonymizerConfig(rewrite=Rewrite())

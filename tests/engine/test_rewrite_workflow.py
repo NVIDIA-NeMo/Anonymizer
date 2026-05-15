@@ -101,7 +101,7 @@ def stub_df_mixed(stub_entities_by_value_with_entities: dict) -> pd.DataFrame:
 @pytest.fixture
 def stub_pre_gen_df(stub_df_with_entities: pd.DataFrame) -> pd.DataFrame:
     df = stub_df_with_entities.copy()
-    df[COL_DOMAIN] = "BIOGRAPHY"
+    df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     df["_anonymizer_row_order"] = [0]
     df[RECORD_ID_COLUMN] = ["rec-0"]
     return df
@@ -217,28 +217,6 @@ def test_passthrough_defaults_populated(
     assert df[COL_REPAIR_ITERATIONS].tolist() == [0, 0]
 
 
-def test_attrs_propagated_on_fast_path(
-    stub_model_configs: list[ModelConfig],
-    stub_rewrite_model_selection: RewriteModelSelection,
-    stub_replace_model_selection: ReplaceModelSelection,
-    stub_df_no_entities: pd.DataFrame,
-) -> None:
-    stub_df_no_entities.attrs["original_text_column"] = "bio"
-    adapter = Mock()
-    wf = RewriteWorkflow(adapter=adapter)
-
-    result = wf.run(
-        stub_df_no_entities,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=_EVALUATION,
-    )
-
-    assert result.dataframe.attrs.get("original_text_column") == "bio"
-
-
 def test_has_entities_returns_true_when_present(stub_entities_by_value_with_entities: dict) -> None:
     from anonymizer.engine.rewrite.rewrite_workflow import _has_entities
 
@@ -341,40 +319,6 @@ def test_failed_records_accumulated_across_steps(
 
 
 # ---------------------------------------------------------------------------
-# Tests: attrs propagation
-# ---------------------------------------------------------------------------
-
-
-def test_attrs_propagated_to_final_output(
-    stub_model_configs: list[ModelConfig],
-    stub_rewrite_model_selection: RewriteModelSelection,
-    stub_replace_model_selection: ReplaceModelSelection,
-    stub_df_with_entities: pd.DataFrame,
-    stub_replace_df: pd.DataFrame,
-    stub_pipeline_df: pd.DataFrame,
-    stub_eval_df: pd.DataFrame,
-    stub_judge_df: pd.DataFrame,
-) -> None:
-    stub_df_with_entities.attrs["original_text_column"] = "bio"
-    adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
-
-    with patch(_REPLACE_PATCH) as mock_replace_cls:
-        _mock_replace(mock_replace_cls, stub_replace_df)
-        wf = RewriteWorkflow(adapter=adapter)
-        result = wf.run(
-            stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
-        )
-
-    assert result.dataframe.attrs.get("original_text_column") == "bio"
-
-
-# ---------------------------------------------------------------------------
 # Tests: final judge failure tolerance
 # ---------------------------------------------------------------------------
 
@@ -424,7 +368,7 @@ def test_judge_partial_row_loss_preserves_all_rows(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
     pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
 
@@ -518,7 +462,7 @@ def test_repair_loop_runs_up_to_max_iterations(
     max_iters = 2
 
     pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0]
 
     rewrite_gen_df = pre_gen_df.copy()
@@ -586,7 +530,7 @@ def test_only_failing_rows_sent_to_repair(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
 
     rewrite_gen_df = pre_gen_df.copy()
@@ -657,7 +601,7 @@ def test_repair_iterations_tracked_per_row(
     adapter = Mock()
 
     pre_gen_df = stub_df_with_entities.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0]
 
     rewrite_gen_df = pre_gen_df.copy()
@@ -757,7 +701,7 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
     pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
 
@@ -815,7 +759,7 @@ def test_repair_dropping_rows_degrades_gracefully(
     adapter = Mock()
 
     pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0, 1]
     pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
 
@@ -898,7 +842,7 @@ def test_passthrough_rows_get_defaults(
     ].copy()
 
     pre_gen_df = entity_df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY"
+    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
     pre_gen_df["_anonymizer_row_order"] = [0]
 
     rewrite_gen_df = pre_gen_df.copy()

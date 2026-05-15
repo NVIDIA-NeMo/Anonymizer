@@ -15,6 +15,28 @@ The text is then rewritten to reduce identifiability, applying targeted transfor
 
 ---
 
+## Key concepts
+
+**Sensitivity** measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.
+
+| Level | Meaning | Examples | Leakage weight |
+|-------|---------|---------|----------------|
+| `high` | Exposure alone can identify a person | Names, ID numbers, contact details | 1.0 |
+| `medium` | Meaningfully narrows the identity space | Location, occupation, age | 0.6 |
+| `low` | Minimal standalone identifying power | Generic attributes, widely shared traits | 0.3 |
+
+**Protection method** describes how a sensitive entity is transformed. The choice reflects a holistic view of the document — what other entities are being protected and how, then shapes what each individual entity needs.
+
+| Method | What it does | Typical use |
+|--------|-------------|-------------|
+| `replace` | Substitutes the entity with a plausible synthetic alternative | Direct identifiers (names, IDs, contact details) |
+| `generalize` | Replaces the entity with a broader form | Quasi-identifiers (exact date → quarter, city → region) |
+| `suppress_inference` | Rewrites the surrounding text to remove cues that enable the inference | Latent entities that are implied rather than stated |
+| `remove` | Deletes the entity entirely | Cases where neither replacement nor generalization can preserve meaning without retaining the identifying detail |
+| `leave_as_is` | Leaves the entity unchanged | Entities judged not to require protection in context |
+
+---
+
 ## Basic usage
 
 ```python

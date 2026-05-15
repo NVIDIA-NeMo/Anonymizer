@@ -310,8 +310,6 @@ class EntityDetectionWorkflow:
             )
             if compute_grouped:
                 final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
-        if "original_text_column" in dataframe.attrs:
-            final_df.attrs["original_text_column"] = dataframe.attrs["original_text_column"]
         return EntityDetectionResult(
             dataframe=final_df,
             failed_records=final_failures,
