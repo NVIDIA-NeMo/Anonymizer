@@ -17,7 +17,7 @@ The text is then rewritten to reduce identifiability, applying targeted transfor
 
 ## Key concepts
 
-**Sensitivity** measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision; it feeds the downstream leakage scoring system.
+**Sensitivity** measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.
 
 | Level | Meaning | Examples | Leakage weight |
 |-------|---------|---------|----------------|
