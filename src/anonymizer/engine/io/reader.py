@@ -99,15 +99,9 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
     resolved_text_column = selected_text_column
     original_columns: set[str] = set(dataframe.columns)
 
-    # Iterate until no new collisions surface. Termination is guaranteed:
-    #   - Pass 1 resolves collisions against `selected_text_column`'s derived
-    #     names plus the static names. If the text column itself was renamed,
-    #     a second pass re-derives candidates from the new name and catches
-    #     any secondary collisions.
-    #   - No further pass is possible because every rename target produced by
-    #     `_next_available_name` contains the `__input` infix, and no candidate
-    #     output name does. A third-pass collision would require those sets to
-    #     overlap, which they cannot.
+    # Iterate until no new collisions surface. If the selected text column is
+    # renamed, the derived output names change too, so the loop re-checks those
+    # post-rename names before returning.
     while True:
         effective_columns = (original_columns - set(rename_map.keys())) | set(rename_map.values())
 
