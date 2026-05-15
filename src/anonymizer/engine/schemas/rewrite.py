@@ -98,7 +98,6 @@ class EntitySource(str, Enum):
 class EntityCategory(str, Enum):
     direct_identifier = "direct_identifier"
     quasi_identifier = "quasi_identifier"
-    sensitive_attribute = "sensitive_attribute"
     latent_identifier = "latent_identifier"
 
 
@@ -153,6 +152,10 @@ class EntityDispositionSchema(BaseModel):
             raise ValueError(
                 f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='leave_as_is'"
             )
+        if self.combined_risk_level == CombinedRiskLevel.high and not self.needs_protection:
+            raise ValueError(f"Entity {self.id}: combined_risk_level='high' requires needs_protection=True")
+        if self.combined_risk_level == CombinedRiskLevel.low and self.needs_protection:
+            raise ValueError(f"Entity {self.id}: combined_risk_level='low' requires needs_protection=False")
         return self
 
 
@@ -218,6 +221,11 @@ class StrictProtectionMethod(str, Enum):
     suppress_inference = "suppress_inference"
 
 
+class StrictCombinedRiskLevel(str, Enum):
+    medium = "medium"
+    high = "high"
+
+
 class StrictEntityDispositionSchema(BaseModel):
     """Strict variant: needs_protection is always True and leave_as_is is excluded."""
 
@@ -231,7 +239,7 @@ class StrictEntityDispositionSchema(BaseModel):
     entity_value: str = Field(min_length=1)
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: StrictProtectionMethod
-    combined_risk_level: CombinedRiskLevel
+    combined_risk_level: StrictCombinedRiskLevel
 
     def to_entity_disposition(self) -> EntityDispositionSchema:
         return EntityDispositionSchema(
