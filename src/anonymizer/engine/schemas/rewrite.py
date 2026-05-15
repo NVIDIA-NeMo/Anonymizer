@@ -297,10 +297,16 @@ class MeaningUnitAspect(str, Enum):
     RIGHTS_IMPACT = "rights_impact"
 
 
+class MeaningUnitImportance(str, Enum):
+    critical = "critical"
+    important = "important"
+
+
 class MeaningUnitSchema(BaseModel):
     id: int = Field(ge=1)
     aspect: MeaningUnitAspect
     unit: str = Field(min_length=1)
+    importance: MeaningUnitImportance
 
 
 class MeaningUnitsSchema(BaseModel):
@@ -318,6 +324,7 @@ class MeaningUnitsSchema(BaseModel):
 class QualityQAItemSchema(BaseModel):
     id: int
     aspect: str
+    importance: MeaningUnitImportance
     question: str
     reference_answer: str
 
