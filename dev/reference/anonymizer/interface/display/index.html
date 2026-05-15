@@ -1632,7 +1632,7 @@
       </thead>
       <tbody>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            render_record_html(row, record_index=None, original_text_column=None) (anonymizer.interface.display.render_record_html)" href="#anonymizer.interface.display.render_record_html">render_record_html</a></code></td>
+              <td><code><a class="autorefs autorefs-internal" title="            render_record_html(row, record_index=None, resolved_text_column=None) (anonymizer.interface.display.render_record_html)" href="#anonymizer.interface.display.render_record_html">render_record_html</a></code></td>
               <td>
                 <div class="doc-md-description">
                   <p>Render a single anonymizer result record as self-contained HTML.</p>
@@ -1661,7 +1661,7 @@
 
 
 <h3 id="anonymizer.interface.display.render_record_html" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">render_record_html(row, record_index=None, original_text_column=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">render_record_html(row, record_index=None, resolved_text_column=None)</code>
 
 <a href="#anonymizer.interface.display.render_record_html" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -1675,13 +1675,13 @@ columns are present.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/anonymizer/interface/display.py</code></summary>
-              <pre class="highlight"><code class="language-python">def render_record_html(row: pd.Series, record_index: int | None = None, original_text_column: str | None = None) -&gt; str:
+              <pre class="highlight"><code class="language-python">def render_record_html(row: pd.Series, record_index: int | None = None, resolved_text_column: str | None = None) -&gt; str:
     """Render a single anonymizer result record as self-contained HTML.
 
     Dispatches to rewrite-mode or replace-mode layout based on which output
     columns are present.
     """
-    text_col = original_text_column or "text"
+    text_col = resolved_text_column or "text"
 
     if f"{text_col}_rewritten" in row.index:
         return _render_rewrite_html(row, text_col=text_col, record_index=record_index)
