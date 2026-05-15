@@ -161,6 +161,31 @@ make install-pre-commit   # Install pre-commit hooks
 
 ---
 
+## Telemetry and Privacy
+
+NeMo Anonymizer collects anonymous run-level telemetry to help prioritize product improvements. One event is sent per `Anonymizer.run()` / `Anonymizer.preview()` call, containing only technical metadata: the replacement strategy in use, models used, model hosts (e.g. `nvidia-build`, `openrouter`, `other`), input-record counts, run duration, and failure attribution by pipeline step. **No user data, record contents, prompts, or model outputs are collected.** See the [Telemetry and Privacy docs](https://nvidia-nemo.github.io/Anonymizer/latest/#telemetry-and-privacy) for the full field list.
+
+You may opt out of telemetry at any time:
+
+- **For one CLI invocation**: pass `--no-emit-telemetry`
+  ```bash
+  uv run anonymizer run --source data.csv --text-column text --replace redact --no-emit-telemetry
+  ```
+- **In the SDK**: set `emit_telemetry=False` on `AnonymizerConfig`
+  ```python
+  config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+  ```
+- **For the current shell**: set the environment variable
+  ```bash
+  export NEMO_TELEMETRY_ENABLED=false
+  ```
+
+Aggregate usage data (such as which models are most popular) will be shared back with the community. It is not used to track any individual user behavior.
+
+**Use of third-party endpoints, including NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [build.nvidia.com](https://build.nvidia.com), [OpenRouter](https://openrouter.ai), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
+
+---
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.

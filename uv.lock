@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -2417,8 +2417,10 @@ dependencies = [
     { name = "cryptography" },
     { name = "cyclopts" },
     { name = "data-designer" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "pygments" },
+    { name = "tiktoken" },
 ]
 
 [package.dev-dependencies]
@@ -2452,8 +2454,10 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
     { name = "data-designer", specifier = "==0.5.7" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "pygments", specifier = ">=2.20.0" },
+    { name = "tiktoken", specifier = ">=0.9.0" },
 ]
 
 [package.metadata.requires-dev]

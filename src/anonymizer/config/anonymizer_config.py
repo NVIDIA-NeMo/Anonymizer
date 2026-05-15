@@ -176,6 +176,13 @@ class AnonymizerConfig(BaseModel):
         description="Replacement method (Substitute(), Redact(), Annotate(), or Hash()).",
     )
     rewrite: Rewrite | None = Field(default=None, description="Optional rewrite-mode parameters. ")
+    emit_telemetry: bool = Field(
+        default=True,
+        description=(
+            "Whether to emit anonymous Anonymizer telemetry events. See the Telemetry section "
+            "in the README for what is collected and how to opt out at the environment or CLI level."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_exactly_one_mode(self) -> AnonymizerConfig:
