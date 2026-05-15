@@ -63,7 +63,7 @@ jobs:
 
       - name: Deploy docs with mike
         if: github.event_name == 'push'
-        run: uv run --group docs mike deploy --push --update-aliases dev latest
+        run: uv run --group docs mike deploy --push --update-aliases dev
 
   deploy-release:
     if: github.event_name == 'release'

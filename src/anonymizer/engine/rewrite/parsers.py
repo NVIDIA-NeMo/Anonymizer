@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -21,6 +22,8 @@ from anonymizer.engine.schemas.rewrite import (
     SensitivityDispositionSchema,
     StrictSensitivityDispositionSchema,
 )
+
+logger = logging.getLogger("anonymizer.rewrite.parsers")
 
 
 def field(model: type, name: str) -> str:

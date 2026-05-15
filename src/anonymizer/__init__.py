@@ -7,8 +7,11 @@ from importlib.metadata import version
 
 __version__ = version("nemo-anonymizer")
 
+from data_designer.config.models import ModelProvider as ModelProvider
+
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite, RiskTolerance
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS as _DEFAULT_ENTITY_LABELS
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import (
@@ -36,6 +39,8 @@ __all__ = [
     "InvalidConfigError",
     "InvalidInputError",
     "LoggingConfig",
+    "ModelProvider",
+    "PrivacyGoal",
     "Redact",
     "Rewrite",
     "RiskTolerance",

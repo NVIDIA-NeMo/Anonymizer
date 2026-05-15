@@ -132,3 +132,38 @@ jobs:
             --generate-notes \
             --title "v${VERSION}" \
             $PRERELEASE_FLAG
+
+  deploy-release-docs:
+    name: Deploy release docs
+    needs: [publish-wheel, create-gh-release]
+    if: ${{ inputs.create-gh-release }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout at release ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-ref }}
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          ref: ${{ inputs.release-ref }}
+          fetch-depth: "0"
+
+      - name: Install docs dependencies
+        run: uv sync --group dev --group docs
+
+      - name: Configure git for mike
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build docs
+        run: make docs-build
+
+      - name: Deploy release docs with mike
+        env:
+          VERSION: ${{ needs.publish-wheel.outputs.version }}
+        run: uv run --group docs mike deploy --push --update-aliases "$VERSION" latest
