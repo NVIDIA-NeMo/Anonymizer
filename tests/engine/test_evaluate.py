@@ -175,7 +175,7 @@ class TestComputeUtilityScore:
         assert compute_utility_score([1.0, 0.0], ["critical", "important"]) == pytest.approx(2 / 3)
 
     def test_weighted_order_matters(self) -> None:
-        # same scores, reversed importances → different results
+        # reversed scores, same importances → different results
         assert compute_utility_score([0.0, 1.0], ["critical", "important"]) != compute_utility_score(
             [1.0, 0.0], ["critical", "important"]
         )
