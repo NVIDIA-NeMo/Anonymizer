@@ -39,6 +39,8 @@ STRICT PROTECTION MODE IS ENABLED.
 
 All entities MUST be protected — you only decide HOW. Choose the most appropriate
 protection_method_suggestion for each entity. leave_as_is is not available.
+combined_risk_level must be 'high' or 'medium'. 'low' is not valid in strict mode
+because it implies no protection is needed.
 
 Ignore the MINIMUM NECESSARY CHANGE principle — it does not apply in strict mode.
 Ignore the QUASI-IDENTIFIERS guidance that says "NOT automatically sensitive" —

@@ -219,6 +219,11 @@ class StrictProtectionMethod(str, Enum):
     suppress_inference = "suppress_inference"
 
 
+class StrictCombinedRiskLevel(str, Enum):
+    medium = "medium"
+    high = "high"
+
+
 class StrictEntityDispositionSchema(BaseModel):
     """Strict variant: needs_protection is always True and leave_as_is is excluded."""
 
@@ -232,7 +237,7 @@ class StrictEntityDispositionSchema(BaseModel):
     entity_value: str = Field(min_length=1)
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: StrictProtectionMethod
-    combined_risk_level: CombinedRiskLevel
+    combined_risk_level: StrictCombinedRiskLevel
 
     def to_entity_disposition(self) -> EntityDispositionSchema:
         return EntityDispositionSchema(
