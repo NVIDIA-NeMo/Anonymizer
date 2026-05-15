@@ -767,6 +767,8 @@
       
         
       
+        
+      
     
     
     
@@ -1278,6 +1280,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/anonymizer/telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1539,6 +1569,26 @@ Access the main results -- original text, entities, and transformed text.
 <pre class="highlight"><code class="language-python">preview.dataframe</code></pre>
 Access the full pipeline trace with all internal columns.
 <pre class="highlight"><code class="language-python">preview.trace_dataframe</code></pre></p>
+<hr />
+<h2 id="telemetry-and-privacy">Telemetry and Privacy<a class="headerlink" href="#telemetry-and-privacy" title="Permanent link">&para;</a></h2>
+<p>NeMo Anonymizer includes an optional function to share anonymous run-level telemetry with NVIDIA for product improvement. One event is emitted per <code>Anonymizer.run()</code> / <code>Anonymizer.preview()</code> invocation and contains only technical metadata:</p>
+<ul>
+<li><strong>Run outcome</strong> — final task status (<code>completed</code> / <code>error</code> / <code>canceled</code>) and wall-clock duration</li>
+<li><strong>Pipeline configuration</strong> — transformation type (<code>annotate</code>, <code>redact</code>, <code>hash</code>, <code>substitute</code>, <code>rewrite</code>), whether <code>data_summary</code> / <code>privacy_goal</code> / <code>Substitute(instructions=...)</code> were customized, <code>max_repair_iterations</code>, <code>strict_entity_protection</code></li>
+<li><strong>Models used per step</strong> — model aliases for the detector, validator, augmenter, rewriter, etc. (whichever steps ran in this mode)</li>
+<li><strong>Model hosts</strong> — coarse classification of the inference endpoints used (<code>nvidia-build</code>, <code>nvidia-internal</code>, <code>openrouter</code>, <code>local</code>, <code>other</code>)</li>
+<li><strong>Aggregate counts</strong> — number of input records, success and failure counts, average tokens per record (estimated with <code>tiktoken cl100k_base</code>), and failure attribution by pipeline workflow</li>
+<li><strong>Deployment type</strong> — <code>sdk</code> or <code>cli</code></li>
+</ul>
+<p><strong>No user data, record contents, prompts, model outputs, or device information are collected.</strong> Aggregate usage data (such as which models are most popular) will be shared back with the community; it is not used to track any individual user behavior.</p>
+<p>You may opt out of telemetry collection at any time. Opting out applies only to data collection by NeMo Anonymizer itself.</p>
+<p>To disable telemetry in the SDK, set <code>emit_telemetry=False</code> on <code>AnonymizerConfig</code>:</p>
+<pre class="highlight"><code class="language-python">config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)</code></pre>
+<p>To disable telemetry for one CLI invocation, pass <code>--no-emit-telemetry</code>:</p>
+<pre class="highlight"><code class="language-bash">uv run anonymizer run --source data.csv --text-column text --replace redact --no-emit-telemetry</code></pre>
+<p>To disable telemetry for the current shell, set <code>NEMO_TELEMETRY_ENABLED=false</code> (other accepted disabling values: <code>0</code>, <code>no</code>) in your environment before running:</p>
+<pre class="highlight"><code class="language-bash">export NEMO_TELEMETRY_ENABLED=false</code></pre>
+<p><strong>Use of third-party endpoints, including NVIDIA Build:</strong> Anonymizer can be configured to use various inference endpoints, including <a href="https://build.nvidia.com">build.nvidia.com</a>, <a href="https://openrouter.ai">OpenRouter</a>, or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.</p>
 <hr />
 <h2 id="next-up">Next up<a class="headerlink" href="#next-up" title="Permanent link">&para;</a></h2>
 <div class="grid cards">

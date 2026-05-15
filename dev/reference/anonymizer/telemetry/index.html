@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/errors/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/telemetry/">
       
       
-        <link rel="prev" href="../display/">
+        <link rel="prev" href="../logging/">
       
       
-        <link rel="next" href="../results/">
+        <link rel="next" href="../../../devnotes/">
       
       
         
       
       
-      <link rel="icon" href="../../../../assets/favicon.svg">
+      <link rel="icon" href="../../../assets/favicon.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
     
     
       
-        <title>errors - NeMo Anonymizer</title>
+        <title>telemetry - NeMo Anonymizer</title>
       
     
     
-      <link rel="stylesheet" href="../../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,13 +53,13 @@
       
     
     
-      <link rel="stylesheet" href="../../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../../css/style.css">
+      <link rel="stylesheet" href="../../../css/style.css">
     
-      <link rel="stylesheet" href="../../../../css/mkdocstrings.css">
+      <link rel="stylesheet" href="../../../css/mkdocstrings.css">
     
-    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#anonymizer.interface.errors" class="md-skip">
+        <a href="#anonymizer.telemetry" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +104,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              errors
+              telemetry
             
           </span>
         </div>
@@ -242,7 +242,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -272,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   
@@ -358,7 +358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/models/" class="md-nav__link">
+      <a href="../../../concepts/models/" class="md-nav__link">
         
   
   
@@ -386,7 +386,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/detection/" class="md-nav__link">
+      <a href="../../../concepts/detection/" class="md-nav__link">
         
   
   
@@ -414,7 +414,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/replace/" class="md-nav__link">
+      <a href="../../../concepts/replace/" class="md-nav__link">
         
   
   
@@ -442,7 +442,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/rewrite/" class="md-nav__link">
+      <a href="../../../concepts/rewrite/" class="md-nav__link">
         
   
   
@@ -470,7 +470,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/choosing-a-strategy/" class="md-nav__link">
+      <a href="../../../concepts/choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -505,7 +505,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../troubleshooting/" class="md-nav__link">
+      <a href="../../../troubleshooting/" class="md-nav__link">
         
   
   
@@ -560,7 +560,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../tutorials/" class="md-nav__link ">
+            <a href="../../../tutorials/" class="md-nav__link ">
               
   
   
@@ -604,7 +604,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/01_your_first_anonymization/" class="md-nav__link">
+      <a href="../../../notebooks/01_your_first_anonymization/" class="md-nav__link">
         
   
   
@@ -632,7 +632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
+      <a href="../../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
         
   
   
@@ -660,7 +660,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
+      <a href="../../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
         
   
   
@@ -688,7 +688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/04_rewriting_biographies/" class="md-nav__link">
+      <a href="../../../notebooks/04_rewriting_biographies/" class="md-nav__link">
         
   
   
@@ -716,7 +716,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
+      <a href="../../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
         
   
   
@@ -867,7 +867,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/anonymizer_config/" class="md-nav__link">
+      <a href="../config/anonymizer_config/" class="md-nav__link">
         
   
   
@@ -895,7 +895,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/models/" class="md-nav__link">
+      <a href="../config/models/" class="md-nav__link">
         
   
   
@@ -923,7 +923,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/replace_strategies/" class="md-nav__link">
+      <a href="../config/replace_strategies/" class="md-nav__link">
         
   
   
@@ -951,7 +951,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/rewrite/" class="md-nav__link">
+      <a href="../config/rewrite/" class="md-nav__link">
         
   
   
@@ -984,10 +984,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1005,11 +1003,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
         
           
           <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
@@ -1030,7 +1028,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1048,7 +1046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anonymizer/" class="md-nav__link">
+      <a href="../interface/anonymizer/" class="md-nav__link">
         
   
   
@@ -1127,7 +1125,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/main/" class="md-nav__link">
+      <a href="../interface/cli/main/" class="md-nav__link">
         
   
   
@@ -1163,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../display/" class="md-nav__link">
+      <a href="../interface/display/" class="md-nav__link">
         
   
   
@@ -1188,35 +1186,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    errors
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../interface/errors/" class="md-nav__link">
         
   
   
@@ -1232,96 +1205,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;errors
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" errors">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidInputError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidInputError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidConfigError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidConfigError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerIOError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerIOError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerWorkflowError
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1334,7 +1217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../results/" class="md-nav__link">
+      <a href="../interface/results/" class="md-nav__link">
         
   
   
@@ -1370,7 +1253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../logging/" class="md-nav__link">
+      <a href="../logging/" class="md-nav__link">
         
   
   
@@ -1395,10 +1278,35 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../telemetry/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    telemetry
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1414,6 +1322,107 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#anonymizer.telemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;telemetry
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" telemetry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.telemetry.AnonymizerEvent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerEvent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.telemetry.TelemetryHandler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;TelemetryHandler
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.telemetry.avg_tokens_per_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;avg_tokens_per_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.telemetry.classify_model_host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;classify_model_host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.telemetry.collect_model_hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;collect_model_hosts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.telemetry.sort_join_aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;sort_join_aliases
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1453,7 +1462,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../devnotes/" class="md-nav__link ">
+            <a href="../../../devnotes/" class="md-nav__link ">
               
   
   
@@ -1497,7 +1506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   
@@ -1550,22 +1559,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors" class="md-nav__link">
+  <a href="#anonymizer.telemetry" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;errors
+        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;telemetry
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label=" errors">
+    <nav class="md-nav" aria-label=" telemetry">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerError" class="md-nav__link">
+  <a href="#anonymizer.telemetry.AnonymizerEvent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerError
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerEvent
       
     </span>
   </a>
@@ -1573,10 +1582,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidInputError" class="md-nav__link">
+  <a href="#anonymizer.telemetry.TelemetryHandler" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidInputError
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;TelemetryHandler
       
     </span>
   </a>
@@ -1584,10 +1593,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidConfigError" class="md-nav__link">
+  <a href="#anonymizer.telemetry.avg_tokens_per_record" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidConfigError
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;avg_tokens_per_record
       
     </span>
   </a>
@@ -1595,10 +1604,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerIOError" class="md-nav__link">
+  <a href="#anonymizer.telemetry.classify_model_host" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerIOError
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;classify_model_host
       
     </span>
   </a>
@@ -1606,10 +1615,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="md-nav__link">
+  <a href="#anonymizer.telemetry.collect_model_hosts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerWorkflowError
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;collect_model_hosts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.telemetry.sort_join_aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;sort_join_aliases
       
     </span>
   </a>
@@ -1646,7 +1666,7 @@
   
   
     <li class="md-path__item">
-      <a href="../../../.." class="md-path__link">
+      <a href="../../.." class="md-path__link">
         
   <span class="md-ellipsis">
     Home
@@ -1669,7 +1689,7 @@
     
     
       <li class="md-path__item">
-        <a href="../../config/anonymizer_config/" class="md-path__link">
+        <a href="../config/anonymizer_config/" class="md-path__link">
           
   <span class="md-ellipsis">
     API Reference
@@ -1680,24 +1700,6 @@
     
   
 
-    
-  
-
-      
-        
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../anonymizer/" class="md-path__link">
-          
-  <span class="md-ellipsis">
-    interface
-  </span>
-
-        </a>
-      </li>
     
   
 
@@ -1715,19 +1717,36 @@
   
 
 
-  <h1>errors</h1>
+  <h1>telemetry</h1>
 
 <div class="doc doc-object doc-module">
 
 
 
-<h2 id="anonymizer.interface.errors" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <code>errors</code>
+<h2 id="anonymizer.telemetry" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <code>telemetry</code>
 
 
-<a href="#anonymizer.interface.errors" class="headerlink" title="Permanent link">&para;</a></h2>
+<a href="#anonymizer.telemetry" class="headerlink" title="Permanent link">&para;</a></h2>
 
     <div class="doc doc-contents first">
+
+        <p>Anonymous telemetry handler for NeMo Anonymizer.</p>
+<p>Emits one <code>anonymizer_event</code> per <code>Anonymizer.run()</code> / <code>Anonymizer.preview()</code>
+invocation. Telemetry is opt-out via:</p>
+<ul>
+<li><code>NEMO_TELEMETRY_ENABLED=false</code> environment variable</li>
+<li><code>AnonymizerConfig(emit_telemetry=False)</code></li>
+<li><code>--no-emit-telemetry</code> CLI flag</li>
+</ul>
+<p>Related environment variables (read at runtime, not import time):</p>
+<ul>
+<li><code>NEMO_TELEMETRY_ENABLED</code>: set to <code>false</code> / <code>0</code> / <code>no</code> to disable.</li>
+<li><code>NEMO_DEPLOYMENT_TYPE</code>: <code>cli</code>, <code>sdk</code>, <code>nmp</code>. Defaults to <code>sdk</code>.</li>
+<li><code>NEMO_TELEMETRY_ENDPOINT</code>: override the destination URL.</li>
+<li><code>NEMO_SESSION_PREFIX</code>: prepended to session IDs. Set to <code>"anonymizer-"</code>
+  automatically by <code>Anonymizer.__init__</code> for dashboard filtering.</li>
+</ul>
 
 
 
@@ -1748,42 +1767,23 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></td>
+            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerEvent
+
+
+  
+      pydantic-model
+   (anonymizer.telemetry.AnonymizerEvent)" href="#anonymizer.telemetry.AnonymizerEvent">AnonymizerEvent</a></code></td>
             <td>
               <div class="doc-md-description">
-                <p>Base error for Anonymizer interface operations.</p>
+                <p>Pydantic model for the anonymizer_event payload.</p>
               </div>
             </td>
           </tr>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            InvalidInputError (anonymizer.interface.errors.InvalidInputError)" href="#anonymizer.interface.errors.InvalidInputError">InvalidInputError</a></code></td>
+            <td><code><a class="autorefs autorefs-internal" title="              TelemetryHandler(*, source_client_version='undefined', session_id='undefined', max_queue_size=50, max_retries=MAX_RETRIES) (anonymizer.telemetry.TelemetryHandler)" href="#anonymizer.telemetry.TelemetryHandler">TelemetryHandler</a></code></td>
             <td>
               <div class="doc-md-description">
-                <p>Raised when input data or configuration is invalid.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            InvalidConfigError (anonymizer.interface.errors.InvalidConfigError)" href="#anonymizer.interface.errors.InvalidConfigError">InvalidConfigError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Raised when model aliases or semantic configuration are invalid.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerIOError (anonymizer.interface.errors.AnonymizerIOError)" href="#anonymizer.interface.errors.AnonymizerIOError">AnonymizerIOError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Raised when file IO operations fail.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerWorkflowError (anonymizer.interface.errors.AnonymizerWorkflowError)" href="#anonymizer.interface.errors.AnonymizerWorkflowError">AnonymizerWorkflowError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Raised when an underlying workflow step (preview, execution, or dataset load) fails.</p>
+                <p>Fire-and-flush telemetry handler for Anonymizer.</p>
               </div>
             </td>
           </tr>
@@ -1791,6 +1791,51 @@
     </table>
 
 
+
+
+<p><span class="doc-section-title">Functions:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            avg_tokens_per_record(texts) (anonymizer.telemetry.avg_tokens_per_record)" href="#anonymizer.telemetry.avg_tokens_per_record">avg_tokens_per_record</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Mean tiktoken count across the input texts.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            classify_model_host(provider) (anonymizer.telemetry.classify_model_host)" href="#anonymizer.telemetry.classify_model_host">classify_model_host</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Classify a ModelProvider's endpoint URL into one of the ModelHostEnum values.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            collect_model_hosts(hosts) (anonymizer.telemetry.collect_model_hosts)" href="#anonymizer.telemetry.collect_model_hosts">collect_model_hosts</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Sort + dedupe per-provider host classifications into the wire-format list.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            sort_join_aliases(aliases) (anonymizer.telemetry.sort_join_aliases)" href="#anonymizer.telemetry.sort_join_aliases">sort_join_aliases</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Canonical pool serialization: sorted ascending, comma-joined, no spaces.</p>
+                </div>
+              </td>
+            </tr>
+      </tbody>
+    </table>
 
 
 
@@ -1810,20 +1855,191 @@
 
 
 
-<h3 id="anonymizer.interface.errors.AnonymizerError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerError</code>
+<h3 id="anonymizer.telemetry.AnonymizerEvent" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerEvent</code>
 
 
-<a href="#anonymizer.interface.errors.AnonymizerError" class="headerlink" title="Permanent link">&para;</a></h3>
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-model"><code>pydantic-model</code></small>
+  </span>
+
+<a href="#anonymizer.telemetry.AnonymizerEvent" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
             <p class="doc doc-class-bases">
-              Bases: <code><span title="Exception">Exception</span></code></p>
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+        <p>Pydantic model for the anonymizer_event payload.</p>
+<p>Field aliases match the camelCase schema in
+<code>aire/microservices/nemo-telemetry</code> <code>schemas/anonymous_events.json</code>.</p>
+
+    
+      <p>Config:</p>
+      <ul>
+          <li><code>default</code>: <code class="highlight language-python">{'populate_by_name': True}</code></li>
+      </ul>
+
+        <p>Fields:</p>
+        <ul>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.nemo_source">nemo_source</span></code>
+                (<code><span title="anonymizer.telemetry.NemoSourceEnum">NemoSourceEnum</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.task">task</span></code>
+                (<code><span title="anonymizer.telemetry.TaskEnum">TaskEnum</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.task_status">task_status</span></code>
+                (<code><span title="anonymizer.telemetry.TaskStatusEnum">TaskStatusEnum</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.deployment_type">deployment_type</span></code>
+                (<code><span title="anonymizer.telemetry.DeploymentTypeEnum">DeploymentTypeEnum</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.job_duration_sec">job_duration_sec</span></code>
+                (<code><span title="float">float</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.num_input_records">num_input_records</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.num_success_records">num_success_records</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.num_failure_records">num_failure_records</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.avg_tokens_per_record">avg_tokens_per_record</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.transformation_type">transformation_type</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.custom_data_summary_provided">custom_data_summary_provided</span></code>
+                (<code><span title="bool">bool</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.custom_privacy_goal_provided">custom_privacy_goal_provided</span></code>
+                (<code><span title="bool">bool</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.custom_substitute_instructions_provided">custom_substitute_instructions_provided</span></code>
+                (<code><span title="bool">bool</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.max_repair_iterations">max_repair_iterations</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.strict_entity_protection">strict_entity_protection</span></code>
+                (<code><span title="bool">bool</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.repair_iterations_triggered">repair_iterations_triggered</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.entity_detector_model">entity_detector_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.entity_validator_model">entity_validator_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.entity_augmenter_model">entity_augmenter_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.latent_detector_model">latent_detector_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.replacement_generator_model">replacement_generator_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.domain_classifier_model">domain_classifier_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.disposition_analyzer_model">disposition_analyzer_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.meaning_extractor_model">meaning_extractor_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.qa_generator_model">qa_generator_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.rewriter_model">rewriter_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.evaluator_model">evaluator_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.repairer_model">repairer_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.judge_model">judge_model</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.model_hosts">model_hosts</span></code>
+                (<code><span title="list">list</span>[<span title="str">str</span>]</code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.entity_detection_failure_count">entity_detection_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.latent_detection_failure_count">latent_detection_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.replace_map_generation_failure_count">replace_map_generation_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.rewrite_pipeline_failure_count">rewrite_pipeline_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.rewrite_evaluate_failure_count">rewrite_evaluate_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.rewrite_repair_failure_count">rewrite_repair_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.rewrite_final_judge_failure_count">rewrite_final_judge_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.unknown_step_failure_count">unknown_step_failure_count</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+        </ul>
 
 
 
-        <p>Base error for Anonymizer interface operations.</p>
+
+<div class="doc doc-children">
 
 
 
@@ -1836,7 +2052,7 @@
 
 
 
-
+  </div>
 
     </div>
 
@@ -1846,149 +2062,213 @@
 
 
 
-<h3 id="anonymizer.interface.errors.InvalidInputError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>InvalidInputError</code>
+<h3 id="anonymizer.telemetry.TelemetryHandler" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">TelemetryHandler(*, source_client_version='undefined', session_id='undefined', max_queue_size=50, max_retries=MAX_RETRIES)</code>
 
-
-<a href="#anonymizer.interface.errors.InvalidInputError" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#anonymizer.telemetry.TelemetryHandler" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
 
 
 
-        <p>Raised when input data or configuration is invalid.</p>
-
-
-
-
-
-
-
-
+        <p>Fire-and-flush telemetry handler for Anonymizer.</p>
+<p>Anonymizer runs are short, so we skip DD's background-daemon-thread mode
+entirely. Usage:</p>
+<pre class="highlight"><code>with TelemetryHandler(source_client_version=__version__, session_id=...) as h:
+    h.enqueue(event)
+# on __exit__, queued events are flushed synchronously</code></pre>
+<p>All errors are swallowed; telemetry must never disrupt the pipeline.</p>
 
 
 
 
 
+
+
+
+
+
+
+
+
+                  <details class="mkdocstrings-source">
+                    <summary>Source code in <code>src/anonymizer/telemetry.py</code></summary>
+                    <pre class="highlight"><code class="language-python">def __init__(
+    self,
+    *,
+    source_client_version: str = "undefined",
+    session_id: str = "undefined",
+    max_queue_size: int = 50,
+    max_retries: int = MAX_RETRIES,
+):
+    self._max_queue_size = max_queue_size
+    self._max_retries = max_retries
+    self._events: list[QueuedEvent] = []
+    self._dlq: list[QueuedEvent] = []
+    self._source_client_version = source_client_version
+    prefix = _session_prefix()
+    self._session_id = f"{prefix}{session_id}" if prefix else session_id</code></pre>
+                  </details>
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
 
     </div>
 
 </div>
 
-<div class="doc doc-object doc-class">
+
+<div class="doc doc-object doc-function">
 
 
+<h3 id="anonymizer.telemetry.avg_tokens_per_record" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">avg_tokens_per_record(texts)</code>
 
-<h3 id="anonymizer.interface.errors.InvalidConfigError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>InvalidConfigError</code>
-
-
-<a href="#anonymizer.interface.errors.InvalidConfigError" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#anonymizer.telemetry.avg_tokens_per_record" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
+
+        <p>Mean tiktoken count across the input texts.</p>
+<p>Returns -1 on empty input or tokenizer failure. Telemetry is best-effort.
+Accepts any iterable of strings (list, pd.Series).</p>
 
 
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/telemetry.py</code></summary>
+              <pre class="highlight"><code class="language-python">def avg_tokens_per_record(texts) -&gt; int:
+    """Mean tiktoken count across the input texts.
 
-        <p>Raised when model aliases or semantic configuration are invalid.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    Returns -1 on empty input or tokenizer failure. Telemetry is best-effort.
+    Accepts any iterable of strings (list, pd.Series).
+    """
+    try:
+        tokenizer = _get_tokenizer()
+        counts = [len(tokenizer.encode(str(t), disallowed_special=())) for t in texts]
+        if not counts:
+            return -1
+        return int(sum(counts) / len(counts))
+    except Exception:
+        return -1</code></pre>
+            </details>
     </div>
 
 </div>
 
-<div class="doc doc-object doc-class">
+<div class="doc doc-object doc-function">
 
 
+<h3 id="anonymizer.telemetry.classify_model_host" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">classify_model_host(provider)</code>
 
-<h3 id="anonymizer.interface.errors.AnonymizerIOError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerIOError</code>
-
-
-<a href="#anonymizer.interface.errors.AnonymizerIOError" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#anonymizer.telemetry.classify_model_host" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
+
+        <p>Classify a ModelProvider's endpoint URL into one of the ModelHostEnum values.</p>
+<p>Substring-matches known host fragments against the (lower-cased) endpoint URL.</p>
 
 
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/telemetry.py</code></summary>
+              <pre class="highlight"><code class="language-python">def classify_model_host(provider: ModelProvider | None) -&gt; ModelHostEnum:
+    """Classify a ModelProvider's endpoint URL into one of the ModelHostEnum values.
 
-        <p>Raised when file IO operations fail.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    Substring-matches known host fragments against the (lower-cased) endpoint URL.
+    """
+    if provider is None:
+        return ModelHostEnum.OTHER
+    # ``endpoint`` is a single URL string; the ``in`` checks below are substring
+    # searches against that string (not iteration over characters).
+    endpoint = (getattr(provider, "endpoint", "") or "").lower()
+    if "build.nvidia.com" in endpoint or "integrate.api.nvidia.com" in endpoint:
+        return ModelHostEnum.NVIDIA_BUILD
+    if "inference-api.nvidia.com" in endpoint:
+        return ModelHostEnum.NVIDIA_INTERNAL
+    if "openrouter.ai" in endpoint:
+        return ModelHostEnum.OPENROUTER
+    local_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+    if any(host in endpoint for host in local_hosts):
+        return ModelHostEnum.LOCAL
+    return ModelHostEnum.OTHER</code></pre>
+            </details>
     </div>
 
 </div>
 
-<div class="doc doc-object doc-class">
+<div class="doc doc-object doc-function">
 
 
+<h3 id="anonymizer.telemetry.collect_model_hosts" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">collect_model_hosts(hosts)</code>
 
-<h3 id="anonymizer.interface.errors.AnonymizerWorkflowError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerWorkflowError</code>
-
-
-<a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#anonymizer.telemetry.collect_model_hosts" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
+
+        <p>Sort + dedupe per-provider host classifications into the wire-format list.</p>
+<p>Returns <code>["other"]</code> when no hosts were observed — never an empty list, so the
+telemetry payload always carries at least one host string.</p>
 
 
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/telemetry.py</code></summary>
+              <pre class="highlight"><code class="language-python">def collect_model_hosts(hosts: list[ModelHostEnum]) -&gt; list[str]:
+    """Sort + dedupe per-provider host classifications into the wire-format list.
 
-        <p>Raised when an underlying workflow step (preview, execution, or dataset load) fails.</p>
-<p>The original backend exception is preserved as <code>__cause__</code> via <code>raise ... from exc</code>
-so callers can inspect the exact failure without the anonymizer layer leaking backend
-exception types into its own public error hierarchy.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    Returns ``["other"]`` when no hosts were observed — never an empty list, so the
+    telemetry payload always carries at least one host string.
+    """
+    unique = sorted({h.value for h in hosts if h is not None})
+    return unique or [ModelHostEnum.OTHER.value]</code></pre>
+            </details>
     </div>
 
 </div>
 
+<div class="doc doc-object doc-function">
+
+
+<h3 id="anonymizer.telemetry.sort_join_aliases" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">sort_join_aliases(aliases)</code>
+
+<a href="#anonymizer.telemetry.sort_join_aliases" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Canonical pool serialization: sorted ascending, comma-joined, no spaces.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/telemetry.py</code></summary>
+              <pre class="highlight"><code class="language-python">def sort_join_aliases(aliases: list[str]) -&gt; str:
+    """Canonical pool serialization: sorted ascending, comma-joined, no spaces."""
+    cleaned = [a.strip() for a in aliases if a and a.strip()]
+    if not cleaned:
+        return NOT_APPLICABLE
+    return ",".join(sorted(cleaned))</code></pre>
+            </details>
+    </div>
+
+</div>
 
 
 
@@ -2034,7 +2314,7 @@ exception types into its own public error hierarchy.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../display/" class="md-footer__link md-footer__link--prev" aria-label="Previous: display">
+          <a href="../logging/" class="md-footer__link md-footer__link--prev" aria-label="Previous: logging">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -2044,20 +2324,20 @@ exception types into its own public error hierarchy.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                display
+                logging
               </div>
             </div>
           </a>
         
         
           
-          <a href="../results/" class="md-footer__link md-footer__link--next" aria-label="Next: results">
+          <a href="../../../devnotes/" class="md-footer__link md-footer__link--next" aria-label="Next: Index">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                results
+                Index
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -2094,16 +2374,16 @@ exception types into its own public error hierarchy.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../../../js/mathjax.js"></script>
+        <script src="../../../js/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
-        <script src="../../../../js/toc-toggle.js"></script>
+        <script src="../../../js/toc-toggle.js"></script>
       
     
   </body>

@@ -761,6 +761,8 @@
       
         
       
+        
+      
     
     
     
@@ -1384,6 +1386,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1961,10 +1991,15 @@ Each provider maps a name to an endpoint and API key.</p>
         rewrite_runner: Custom rewrite workflow (advanced/testing).
     """
     _initialize_logging()
+    # Tag DataDesigner telemetry events so they're filterable as anonymizer traffic in
+    # the shared NeMo dashboards. `setdefault` so users (or upstream hosts) can override.
+    os.environ.setdefault("NEMO_SESSION_PREFIX", "anonymizer-")
+    os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "sdk")
     resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
     parsed = parse_model_configs(model_configs)
     self._model_configs = parsed.model_configs
     self._selected_models = parsed.selected_models
+    self._resolved_providers: list[ModelProvider] | None = _resolve_model_providers(model_providers)
     logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
     det = self._selected_models.detection
     logger.info(LOG_INDENT + "🔎 detector:  %s", det.entity_detector)
@@ -1976,7 +2011,7 @@ Each provider maps a name to an endpoint and API key.</p>
     else:
         self._data_designer = DataDesigner(
             artifact_path=resolved_artifact_path,
-            model_providers=_resolve_model_providers(model_providers),
+            model_providers=self._resolved_providers,
         )
         reapply_log_levels()
     self._adapter = NddAdapter(data_designer=self._data_designer)
@@ -2087,7 +2122,29 @@ Each provider maps a name to an endpoint and API key.</p>
     """
     self._validate_preflight_config(config)
     context = read_input(data)
-    return self._run_internal(config=config, data=data, context=context, preview_num_records=None)</code></pre>
+    input_df = context.dataframe
+    t_start = time.perf_counter()
+    status = TaskStatusEnum.COMPLETED
+    result: AnonymizerResult | None = None
+    try:
+        result = self._run_internal(config=config, data=data, context=context, preview_num_records=None)
+        return result
+    except KeyboardInterrupt:
+        status = TaskStatusEnum.CANCELED
+        raise
+    except Exception:
+        status = TaskStatusEnum.ERROR
+        raise
+    finally:
+        self._maybe_emit_telemetry(
+            task=TaskEnum.BATCH,
+            status=status,
+            config=config,
+            data=data,
+            input_df=input_df,
+            result=result,
+            duration_sec=time.perf_counter() - t_start,
+        )</code></pre>
             </details>
     </div>
 
@@ -2198,14 +2255,35 @@ Each provider maps a name to an endpoint and API key.</p>
     """
     self._validate_preflight_config(config)
     context = read_input(data, nrows=num_records)
-    result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
-    return PreviewResult(
-        dataframe=result.dataframe,
-        trace_dataframe=result.trace_dataframe,
-        resolved_text_column=result.resolved_text_column,
-        failed_records=result.failed_records,
-        preview_num_records=num_records,
-    )</code></pre>
+    input_df = context.dataframe
+    t_start = time.perf_counter()
+    status = TaskStatusEnum.COMPLETED
+    result: AnonymizerResult | None = None
+    try:
+        result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
+        return PreviewResult(
+            dataframe=result.dataframe,
+            trace_dataframe=result.trace_dataframe,
+            resolved_text_column=result.resolved_text_column,
+            failed_records=result.failed_records,
+            preview_num_records=num_records,
+        )
+    except KeyboardInterrupt:
+        status = TaskStatusEnum.CANCELED
+        raise
+    except Exception:
+        status = TaskStatusEnum.ERROR
+        raise
+    finally:
+        self._maybe_emit_telemetry(
+            task=TaskEnum.PREVIEW,
+            status=status,
+            config=config,
+            data=data,
+            input_df=input_df,
+            result=result,
+            duration_sec=time.perf_counter() - t_start,
+        )</code></pre>
             </details>
     </div>
 
