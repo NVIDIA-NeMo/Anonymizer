@@ -362,7 +362,7 @@ class TelemetryHandler:
         except RuntimeError:
             loop = None
 
-        if loop and loop.is_running():
+        if loop:
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
