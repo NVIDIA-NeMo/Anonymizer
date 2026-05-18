@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from dataclasses import dataclass
 
 import pandas as pd
@@ -169,19 +170,27 @@ def _filter_replacement_map_to_input_entities(
         filtered.append(replacement.model_dump())
 
     if logger.isEnabledFor(logging.DEBUG):
+        raw_pairs = {(r.original, r.label) for r in parsed_map.replacements}
+        filtered_pairs = {(f["original"], f["label"]) for f in filtered}
+        unrequested_labels = Counter(label for _, label in (raw_pairs - allowed_pairs))
+        unfilled_labels = Counter(label for _, label in (allowed_pairs - filtered_pairs))
         logger.debug(
-            "Replacement map record %s: requested=%s raw=%s filtered=%s",
+            "Replacement map record %s: requested=%d raw=%d filtered=%d%s%s",
             record_id or "<unknown>",
-            sorted(allowed_pairs),
-            [entry.model_dump() for entry in parsed_map.replacements],
-            filtered,
+            len(allowed_pairs),
+            len(parsed_map.replacements),
+            len(filtered),
+            f" unrequested_by_label={dict(unrequested_labels)}" if unrequested_labels else "",
+            f" unfilled_by_label={dict(unfilled_labels)}" if unfilled_labels else "",
         )
-    elif not filtered and allowed_pairs:
+    if not filtered and allowed_pairs:
+        requested_labels = Counter(label for _, label in allowed_pairs)
         logger.warning(
-            "Replacement map empty after filtering for record %s; requested=%s raw=%s",
+            "Replacement map empty after filtering for record %s; requested=%d raw=%d (requested_by_label=%s)",
             record_id or "<unknown>",
-            sorted(allowed_pairs),
-            [entry.model_dump() for entry in parsed_map.replacements],
+            len(allowed_pairs),
+            len(parsed_map.replacements),
+            dict(requested_labels),
         )
     return {"replacements": filtered}
 

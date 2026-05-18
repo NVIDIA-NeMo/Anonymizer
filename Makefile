@@ -129,7 +129,7 @@ convert-notebooks:
 	@echo "Converting Python tutorials to notebooks and executing..."
 	@mkdir -p docs/notebooks
 	uv run --group notebooks python -m ipykernel install --user --name anonymizer-venv
-	uv run --group notebooks --group docs jupytext --to ipynb --execute docs/notebook_source/*.py
+	uv run --group notebooks --group docs jupytext --to ipynb --set-kernel anonymizer-venv --execute docs/notebook_source/*.py
 	mv docs/notebook_source/*.ipynb docs/notebooks/
 	@echo "Notebooks created in docs/notebooks/"
 
