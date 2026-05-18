@@ -211,7 +211,6 @@ def _make_entity(**kwargs) -> dict:
         "sensitivity": "high",
         "entity_label": "first_name",
         "entity_value": "Alice",
-        "needs_protection": True,
         "protection_reason": "Direct identifier that uniquely identifies the individual.",
         "protection_method_suggestion": "replace",
         "combined_risk_level": "high",
@@ -230,7 +229,6 @@ def mixed_disposition() -> SensitivityDispositionSchema:
                     id=2,
                     entity_label="city",
                     entity_value="Portland",
-                    needs_protection=False,
                     protection_method_suggestion="leave_as_is",
                     combined_risk_level="low",
                 ),
@@ -242,17 +240,17 @@ def mixed_disposition() -> SensitivityDispositionSchema:
 # EntityDispositionSchema — protection consistency
 
 
-def test_entity_disposition_invalid_no_protection_but_method_set() -> None:
-    with pytest.raises(ValidationError, match="needs_protection=False"):
+def test_entity_disposition_invalid_low_risk_but_not_leave_as_is() -> None:
+    with pytest.raises(ValidationError, match="combined_risk_level='low'"):
         EntityDispositionSchema.model_validate(
-            _make_entity(needs_protection=False, protection_method_suggestion="replace")
+            _make_entity(combined_risk_level="low", protection_method_suggestion="replace")
         )
 
 
-def test_entity_disposition_invalid_needs_protection_but_leave_as_is() -> None:
-    with pytest.raises(ValidationError, match="needs_protection=True"):
+def test_entity_disposition_invalid_high_risk_but_leave_as_is() -> None:
+    with pytest.raises(ValidationError, match="combined_risk_level='high'"):
         EntityDispositionSchema.model_validate(
-            _make_entity(needs_protection=True, protection_method_suggestion="leave_as_is")
+            _make_entity(combined_risk_level="high", protection_method_suggestion="leave_as_is")
         )
 
 
@@ -323,7 +321,6 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protec
                 _make_entity(
                     id=1,
                     sensitivity="low",
-                    needs_protection=False,
                     protection_method_suggestion="leave_as_is",
                     combined_risk_level="low",
                 ),
@@ -342,7 +339,6 @@ def test_sensitivity_disposition_format_for_rewrite_context_includes_low_when_pr
                     sensitivity="low",
                     entity_label="city",
                     entity_value="Portland",
-                    needs_protection=True,
                     protection_method_suggestion="generalize",
                     combined_risk_level="medium",
                     protection_reason="City combined with other quasi-identifiers enables re-identification",

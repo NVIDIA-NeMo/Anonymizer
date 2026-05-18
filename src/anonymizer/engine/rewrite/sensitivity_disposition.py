@@ -167,11 +167,11 @@ sensitivity and combined_risk_level serve different purposes:
 - sensitivity measures how much damage this entity does if it leaks (feeds leakage scoring)
 - combined_risk_level determines whether to protect it in the first place
 
-The protection decision (needs_protection) follows from combined_risk_level, not sensitivity:
-- combined_risk_level: high → needs_protection: true
-- combined_risk_level: medium → needs_protection: true only if the entity meaningfully
+The protection decision follows from combined_risk_level, not sensitivity:
+- combined_risk_level: high → must be protected (protection_method_suggestion must not be "leave_as_is")
+- combined_risk_level: medium → protect only if the entity meaningfully
   contributes to a dangerous combination that cannot be broken by protecting other entities
-- combined_risk_level: low → needs_protection: false
+- combined_risk_level: low → leave as-is (protection_method_suggestion must be "leave_as_is")
 
 combined_risk_level can exceed sensitivity when context amplifies an otherwise weak entity:
   e.g. male gender (sensitivity: low) becomes combined_risk_level: high if it is the
@@ -209,10 +209,8 @@ narrowing after all high combined_risk_level anchors in this document are suppre
 </protection_principles>
 <output_requirements>
 CONSISTENCY RULES:
-- If needs_protection=false → protection_method_suggestion MUST be "leave_as_is".
-- If needs_protection=true → protection_method_suggestion MUST NOT be "leave_as_is".
-- If combined_risk_level='high' → needs_protection MUST be true.
-- If combined_risk_level='low' → needs_protection MUST be false.
+- If combined_risk_level='low' → protection_method_suggestion MUST be "leave_as_is".
+- If combined_risk_level='high' → protection_method_suggestion MUST NOT be "leave_as_is".
 - For latent entities, "replace" is rarely appropriate (value not in text).
 - For source="tagged": entity_value MUST match tag exactly.
 - For source="latent": entity_label/value MUST match the provided latent entity.
@@ -225,14 +223,14 @@ COVERAGE REQUIREMENTS:
 QUALITY REQUIREMENTS:
 - protection_reason must be specific to this document and must cover:
   (1) what specific combination or narrowing this entity contributes in this document,
-  (2) for needs_protection: false, why the combination is adequately broken without it.
+  (2) for combined_risk_level='low', why the combination is adequately broken without it.
 - combined_risk_level must reflect the entity's risk given other retained entities,
-  and must be the field that drives needs_protection (not sensitivity).
-- combined_risk_level: low requires needs_protection: false unless it is part of a
-  bundle where all elements must be generalized together to break the combination,
-  in which case combined_risk_level must be high, not low.
-- combined_risk_level: medium with needs_protection: true requires protection_reason
-  to name which retained entities form the dangerous combination AND explain why
+  not sensitivity.
+- combined_risk_level: low requires protection_method_suggestion='leave_as_is' unless
+  it is part of a bundle where all elements must be generalized together to break the
+  combination, in which case combined_risk_level must be high, not low.
+- combined_risk_level: medium requires protection_reason to name which retained entities
+  form the dangerous combination AND explain why
   protecting a stronger anchor in this document would not break the combination
   without touching this entity. "Stronger anchors" means all entities with
   combined_risk_level: high being protected in this document — not just names.
