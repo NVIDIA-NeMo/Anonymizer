@@ -434,3 +434,75 @@ class TestContextManager:
         with TelemetryHandler(source_client_version="1.0") as handler:
             pass
         assert handler._events == []
+
+
+# =============================================================================
+# TelemetryHandler — flush in async contexts (notebook regression)
+# =============================================================================
+
+
+class TestFlushFromRunningLoop:
+    """Regression: when flush() is called from a thread that already has a running
+    event loop (Jupyter kernels, async test runners, FastAPI handlers, callers using
+    ``asyncio.run(Anonymizer.run(...))``), the previous ``asyncio.run`` call raised
+    ``RuntimeError`` and the queue was silently dropped. ``_run_sync`` must off-load
+    flush to a worker thread so events still go out.
+    """
+
+    def test_run_sync_uses_thread_when_loop_is_running(self) -> None:
+        sent: list[int] = []
+
+        async def fake_flush(self) -> None:  # noqa: ARG001 - bound-method signature
+            sent.append(1)
+
+        async def driver() -> None:
+            handler = TelemetryHandler(source_client_version="1.0")
+            # Patch _flush_events so we don't actually hit the network; we just
+            # want to prove _run_sync drove the coroutine to completion from
+            # inside a running loop.
+            with patch.object(TelemetryHandler, "_flush_events", new=fake_flush):
+                handler._events.append(QueuedEvent(event=_minimal_event(), timestamp=datetime.now(timezone.utc)))
+                handler.flush()
+
+        asyncio.run(driver())
+        assert sent == [1], "flush() should drive _flush_events to completion even with a running loop"
+
+    def test_context_manager_flushes_from_running_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """End-to-end shape Anonymizer uses: enqueue in a `with` block; the
+        ``__exit__`` calls ``flush()``. From inside an async caller this used
+        to drop everything silently.
+        """
+        monkeypatch.setenv("NEMO_TELEMETRY_ENABLED", "true")
+        sent: list[int] = []
+
+        async def fake_send(self, client, events):  # noqa: ARG001 - mirror real signature
+            sent.append(len(events))
+
+        async def driver() -> None:
+            with patch.object(TelemetryHandler, "_send_events_with_client", new=fake_send):
+                with TelemetryHandler(source_client_version="1.0") as handler:
+                    handler.enqueue(_minimal_event())
+            assert handler._events == []
+
+        asyncio.run(driver())
+        assert sent == [1], "flush() must actually post the queued event from inside a running loop"
+
+    def test_run_sync_propagates_exception_to_flush(self) -> None:
+        """``_run_sync`` is the boundary that must surface failures to ``flush()``
+        so they can be logged at DEBUG. If the worker-thread loop swallowed
+        exceptions, the new logger.debug call would be unreachable.
+        """
+
+        async def boom() -> None:
+            raise RuntimeError("kaboom")
+
+        async def driver() -> RuntimeError | None:
+            try:
+                TelemetryHandler._run_sync(boom())
+            except RuntimeError as e:
+                return e
+            return None
+
+        captured = asyncio.run(driver())
+        assert isinstance(captured, RuntimeError)
+        assert str(captured) == "kaboom"

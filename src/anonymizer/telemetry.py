@@ -22,6 +22,7 @@ Related environment variables (read at runtime, not import time):
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import platform
 from dataclasses import dataclass
@@ -34,6 +35,8 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     import httpx
     from data_designer.config.models import ModelProvider
+
+logger = logging.getLogger("anonymizer")
 
 CLIENT_ID = "184482118588404"
 NEMO_TELEMETRY_VERSION = "nemo-telemetry/1.0"
@@ -334,9 +337,38 @@ class TelemetryHandler:
         if not (self._events or self._dlq):
             return
         try:
-            asyncio.run(self._flush_events())
+            self._run_sync(self._flush_events())
         except Exception:
-            pass  # best-effort
+            # Telemetry is best-effort; never raise into the caller's pipeline.
+            # Logged at DEBUG so it's surfaceable via `logging.getLogger("anonymizer")`
+            # without spamming default-level output.
+            logger.debug("Telemetry flush failed", exc_info=True)
+
+    @staticmethod
+    def _run_sync(coro: Any) -> Any:
+        """Run an awaitable synchronously from any caller context.
+
+        Mirrors DataDesigner's ``TelemetryHandler._run_sync`` (see
+        ``data_designer/engine/models/telemetry.py``). Plain ``asyncio.run`` raises
+        ``RuntimeError`` when called from a thread that already has a running event
+        loop — e.g. a Jupyter kernel, an async test runner, or any caller invoking
+        ``Anonymizer.run()`` from within ``asyncio.run(...)``. In that case the
+        previous implementation swallowed the error and silently dropped every
+        queued event. We instead off-load to a worker thread, which gets its own
+        fresh loop, so flush works identically in sync and async contexts.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result()
+        return asyncio.run(coro)
 
     def __enter__(self) -> TelemetryHandler:
         return self
