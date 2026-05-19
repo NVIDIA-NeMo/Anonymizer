@@ -170,3 +170,4 @@ nav:
   - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md
+      - "Introducing NeMo Anonymizer": devnotes/posts/anonymizer-intro.md
