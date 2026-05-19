@@ -481,3 +481,4 @@ def test_strict_sensitivity_disposition_inherits_id_normalization() -> None:
         }
     )
     assert [e.id for e in schema.sensitivity_disposition] == [1, 2]
+    assert isinstance(schema, SensitivityDispositionSchema)
