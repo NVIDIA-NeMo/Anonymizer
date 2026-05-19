@@ -10,13 +10,11 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/concepts/choosing-a-strategy/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/">
       
       
-        <link rel="prev" href="../rewrite/">
       
-      
-        <link rel="next" href="../../troubleshooting/">
+        <link rel="next" href="../archive/2026/">
       
       
         
@@ -27,7 +25,7 @@
     
     
       
-        <title>Choosing a Strategy - NeMo Anonymizer</title>
+        <title>Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era - NeMo Anonymizer</title>
       
     
     
@@ -84,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#choosing-a-strategy" class="md-skip">
+        <a href="#introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era" class="md-skip">
           Skip to content
         </a>
       
@@ -124,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Choosing a Strategy
+              Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
             
           </span>
         </div>
@@ -233,7 +231,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -296,10 +296,8 @@
       
   
   
-    
   
   
-  
     
     
       
@@ -317,11 +315,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -342,7 +340,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -360,7 +358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../models/" class="md-nav__link">
+      <a href="../../concepts/models/" class="md-nav__link">
         
   
   
@@ -388,7 +386,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../detection/" class="md-nav__link">
+      <a href="../../concepts/detection/" class="md-nav__link">
         
   
   
@@ -416,7 +414,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../replace/" class="md-nav__link">
+      <a href="../../concepts/replace/" class="md-nav__link">
         
   
   
@@ -444,7 +442,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rewrite/" class="md-nav__link">
+      <a href="../../concepts/rewrite/" class="md-nav__link">
         
   
   
@@ -469,37 +467,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Choosing a Strategy
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../concepts/choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -515,198 +486,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#decision-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Decision flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-detection-data_summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. (Detection) data_summary
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-detection-detection-knobs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. (Detection) Detection knobs
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. (Detection) Detection knobs">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#entity_labels" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        entity_labels
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gliner_threshold" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        gliner_threshold
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-replace-vs-rewrite" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Replace vs Rewrite
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-replace-which-strategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. (Replace) Which strategy
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. (Replace) Which strategy">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#writing-substituteinstructions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Writing Substitute.instructions
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-rewrite-privacy-goal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. (Rewrite) Privacy goal
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. (Rewrite) Privacy goal">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#how-to-write-protect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How to write protect
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#how-to-write-preserve" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How to write preserve
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#when-to-set-strict_entity_protectiontrue" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When to set strict_entity_protection=True
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-rewrite-risk-tolerance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. (Rewrite) Risk tolerance
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#goal-starting-config-cheat-sheet" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Goal → starting config cheat sheet
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1532,6 +1311,8 @@
       
   
   
+    
+  
   
   
     
@@ -1549,15 +1330,15 @@
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../devnotes/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -1581,7 +1362,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1598,10 +1379,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1617,6 +1425,170 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-old-playbook-has-a-ceiling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Old Playbook Has a Ceiling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-anonymizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Is Anonymizer?
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What Is Anonymizer?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entity-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replace-detected-entity-transformations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replace: detected-entity transformations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rewrite-full-contextual-anonymization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rewrite: full contextual anonymization
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-innovation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Innovation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The Innovation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-latent-entities-are-the-real-adversary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Latent entities are the real adversary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-privacy-is-contextual-not-categorical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Privacy is contextual, not categorical
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-privacy-without-utility-is-privacy-theater" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Privacy without utility is privacy theater
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's Next
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#try-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Try It
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1682,7 +1654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../devnotes/archive/2026/" class="md-nav__link">
+      <a href="../archive/2026/" class="md-nav__link">
         
   
   
@@ -1726,6 +1698,8 @@
             
             
               
+                
+              
               <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
@@ -1745,10 +1719,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#decision-flow" class="md-nav__link">
+  <a href="#the-old-playbook-has-a-ceiling" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Decision flow
+        The Old Playbook Has a Ceiling
       
     </span>
   </a>
@@ -1756,33 +1730,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-detection-data_summary" class="md-nav__link">
+  <a href="#what-is-anonymizer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. (Detection) data_summary
+        What Is Anonymizer?
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-detection-detection-knobs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. (Detection) Detection knobs
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. (Detection) Detection knobs">
+    <nav class="md-nav" aria-label="What Is Anonymizer?">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#entity_labels" class="md-nav__link">
+  <a href="#entity-detection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        entity_labels
+        Entity detection
       
     </span>
   </a>
@@ -1790,10 +1753,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#gliner_threshold" class="md-nav__link">
+  <a href="#replace-detected-entity-transformations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        gliner_threshold
+        Replace: detected-entity transformations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rewrite-full-contextual-anonymization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rewrite: full contextual anonymization
       
     </span>
   </a>
@@ -1806,33 +1780,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-replace-vs-rewrite" class="md-nav__link">
+  <a href="#the-innovation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Replace vs Rewrite
+        The Innovation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The Innovation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-latent-entities-are-the-real-adversary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Latent entities are the real adversary
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#4-replace-which-strategy" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#2-privacy-is-contextual-not-categorical" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. (Replace) Which strategy
+        2. Privacy is contextual, not categorical
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. (Replace) Which strategy">
-      <ul class="md-nav__list">
+</li>
         
           <li class="md-nav__item">
-  <a href="#writing-substituteinstructions" class="md-nav__link">
+  <a href="#3-privacy-without-utility-is-privacy-theater" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Writing Substitute.instructions
+        3. Privacy without utility is privacy theater
       
     </span>
   </a>
@@ -1845,60 +1830,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-rewrite-privacy-goal" class="md-nav__link">
+  <a href="#whats-next" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. (Rewrite) Privacy goal
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. (Rewrite) Privacy goal">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#how-to-write-protect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How to write protect
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#how-to-write-preserve" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How to write preserve
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#when-to-set-strict_entity_protectiontrue" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When to set strict_entity_protection=True
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-rewrite-risk-tolerance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. (Rewrite) Risk tolerance
+        What's Next
       
     </span>
   </a>
@@ -1906,10 +1841,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#goal-starting-config-cheat-sheet" class="md-nav__link">
+  <a href="#try-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Goal → starting config cheat sheet
+        Try It
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resources
       
     </span>
   </a>
@@ -1925,439 +1871,261 @@
             
           
           
-            <div class="md-content" data-md-component="content">
-              
+  <div class="md-content md-content--post" data-md-component="content">
+    <div class="md-sidebar md-sidebar--post" data-md-component="sidebar" data-md-type="navigation">
+      <div class="md-sidebar__scrollwrap">
+        <div class="md-sidebar__inner md-post">
+          <nav class="md-nav md-nav--primary">
+            <div class="md-post__back">
+              <div class="md-nav__title md-nav__container">
+                <a href="../" class="md-nav__link">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+                  <span class="md-ellipsis">
+                    Back to index
+                  </span>
+                </a>
+              </div>
+            </div>
+            
+              <div class="md-post__authors md-typeset">
                 
-
-
-
-  
-
-
-  <nav class="md-path" aria-label="Navigation" >
-    <ol class="md-path__list">
-      
-        
-  
-  
-    <li class="md-path__item">
-      <a href="../.." class="md-path__link">
-        
-  <span class="md-ellipsis">
-    Home
-  </span>
-
-      </a>
-    </li>
-  
-
-      
-      
-        
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../models/" class="md-path__link">
+                  <div class="md-profile md-post__profile">
+                    <span class="md-author md-author--long">
+                      <img src="https://avatars.githubusercontent.com/u/256168822?v=4" alt="Amy Steier">
+                    </span>
+                    <span class="md-profile__description">
+                      <strong>
+                        
+                          <a href="https://github.com/asteier2026">Amy Steier</a>
+                        
+                      </strong>
+                      <br>
+                      Researcher at NVIDIA
+                    </span>
+                  </div>
+                
+                  <div class="md-profile md-post__profile">
+                    <span class="md-author md-author--long">
+                      <img src="https://avatars.githubusercontent.com/u/31832945?v=4" alt="Lipika Ramaswamy">
+                    </span>
+                    <span class="md-profile__description">
+                      <strong>
+                        
+                          <a href="https://github.com/lipikaramaswamy">Lipika Ramaswamy</a>
+                        
+                      </strong>
+                      <br>
+                      Researcher at NVIDIA
+                    </span>
+                  </div>
+                
+              </div>
+            
+            <ul class="md-post__meta md-nav__list">
+              <li class="md-nav__item md-nav__item--section">
+                <div class="md-post__title">
+                  <span class="md-ellipsis">
+                    Metadata
+                  </span>
+                </div>
+                <nav class="md-nav">
+                  <ul class="md-nav__list">
+                    <li class="md-nav__item">
+                      <div class="md-nav__link">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 19H5V8h14m-3-7v2H8V1H6v2H5c-1.11 0-2 .89-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-1V1m-1 11h-5v5h5z"/></svg>
+                        <time datetime="2026-05-19 00:00:00+00:00" class="md-ellipsis">May 19, 2026</time>
+                      </div>
+                    </li>
+                    
+                    
+                    
+                      
+                      <li class="md-nav__item">
+                        <div class="md-nav__link">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 20a8 8 0 0 0 8-8 8 8 0 0 0-8-8 8 8 0 0 0-8 8 8 8 0 0 0 8 8m0-18a10 10 0 0 1 10 10 10 10 0 0 1-10 10C6.47 22 2 17.5 2 12A10 10 0 0 1 12 2m.5 5v5.25l4.5 2.67-.75 1.23L11 13V7z"/></svg>
+                          <span class="md-ellipsis">
+                            
+                              12 min read
+                            
+                          </span>
+                        </div>
+                      </li>
+                    
+                  </ul>
+                </nav>
+              </li>
+            </ul>
+            
+          </nav>
           
-  <span class="md-ellipsis">
-    Concepts
-  </span>
-
-        </a>
-      </li>
-    
-  
-
+        </div>
+      </div>
+    </div>
+    <article class="md-content__inner md-typeset">
       
-    </ol>
-  </nav>
+        
+  
 
-              
-              <article class="md-content__inner md-typeset">
-                
-                  
 
 
   
   
 
 
+<h1 id="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era"><strong>Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era</strong><a class="headerlink" href="#introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era" title="Permanent link">&para;</a></h1>
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-<h1 id="choosing-a-strategy">Choosing a strategy<a class="headerlink" href="#choosing-a-strategy" title="Permanent link">&para;</a></h1>
-<p>This guide walks through the decisions you make when configuring an <code>AnonymizerConfig</code> for a real dataset. Use it to go from "I have data + a goal" to a concrete starting config in a few minutes.</p>
-<p>It is also the primary reference for AI agents that drive the Anonymizer skill: every decision below is something the agent has to make on the user's behalf.</p>
-<hr />
-<h2 id="decision-flow">Decision flow<a class="headerlink" href="#decision-flow" title="Permanent link">&para;</a></h2>
-<pre class="highlight"><code>1. (Detection) Describe the data?    → AnonymizerInput(data_summary=...)
-2. (Detection) Detection knobs?      → Detect(entity_labels=..., gliner_threshold=...)
-3. Replace or Rewrite?               → AnonymizerConfig(replace=...) vs AnonymizerConfig(rewrite=...)
-4. (Replace) Which strategy?         → Substitute(...) | Redact(...) | Annotate(...) | Hash(...)
-5. (Rewrite) Privacy goal?           → Rewrite(privacy_goal=PrivacyGoal(protect=..., preserve=...))
-6. (Rewrite) Risk tolerance?         → Rewrite(risk_tolerance="minimal" | "low" | "moderate" | "high")</code></pre>
-<p>Steps 1–2 govern the <a href="../detection/">detection</a> stage that runs first in <strong>both</strong> modes — usually the highest-leverage way to improve overall quality on a new dataset. Steps 3–6 shape the mode-specific transformation that follows detection.</p>
-<hr />
-<h2 id="1-detection-data_summary">1. (Detection) <code>data_summary</code><a class="headerlink" href="#1-detection-data_summary" title="Permanent link">&para;</a></h2>
-<p><code>AnonymizerInput.data_summary</code> is an optional one-line description that flows into LLM prompts. It is the single cheapest quality lever you have. It improves <strong>detection</strong> — which runs first in both Replace and Rewrite modes, so it's a precursor to any transformation. In Rewrite mode it additionally provides context on what the data contains, helping the rewriter preserve meaning.</p>
-<pre class="highlight"><code class="language-python">from anonymizer import AnonymizerInput
+<p>Picture this: you ship a year of customer support transcripts to a vendor for model fine-tuning. Names, emails, phone numbers, account IDs — every identifier you can think of — stripped. A week later, the vendor's eval team flags a transcript and identifies the account: the customer who escalated repeatedly after a regional outage last spring, then quietly churned a month later.</p>
+<p>You didn't leak a name.</p>
+<blockquote>
+<p>You leaked a <em>fingerprint</em>.</p>
+</blockquote>
+<p>The escalation pattern, the region, the churn timing — combined, they point to one account. This is the privacy problem that text anonymization actually has to solve in 2026, and it's the problem <strong>NeMo Anonymizer</strong> — <strong>Anonymizer</strong>, for short — is built for.</p>
+<!-- more -->
 
-data = AnonymizerInput(
-    source="patient_notes.csv",
-    text_column="note",
-    data_summary="De-identified inpatient progress notes from a US oncology service",
-)</code></pre>
-<p>What to include:</p>
-<ul>
-<li>The domain (clinical, legal, financial, customer support, etc.)</li>
-<li>The genre (notes, transcripts, opinions, biographies)</li>
-<li>Anything about the source the engine couldn't infer from a single record (e.g. "transcribed phone calls — expect disfluencies")</li>
-<li><code>data_summary</code> is the only way to provide a soft do-not-tag list for the augmenter when <code>entity_labels=None</code> — the augmenter is free to invent labels beyond <code>DEFAULT_ENTITY_LABELS</code>, so use it to tell the LLM what <em>not</em> to tag (e.g. "do not tag generic anatomical terms, medication class names, or job titles as PII").</li>
-</ul>
-<p>What to leave out:</p>
-<ul>
-<li>Lists of entity types <strong>you want detected</strong> (those go in <code>Detect.entity_labels</code>)</li>
-<li>Privacy/utility goals (those go in <code>Rewrite.privacy_goal</code>)</li>
-<li>Substitute behavior instructions (e.g. "names should remain Portuguese", "preserve numeric magnitude") — those go in <code>Substitute(instructions)</code></li>
-<li>Generic phrasing ("text data" adds no signal)</li>
-</ul>
+<div style="text-align: center;">
+<p><img alt="A redacted document on the left, its black bars hiding names and IDs, sits next to a rainbow fingerprint shaped like a human profile — reassembled from the latent clues that slipped past the redaction: Space Needle, ferry, rain, coffee, baseball pennant, map pin." loading="lazy" src="../assets/anonymizer-intro-hero.png" /></p>
+</div>
 <hr />
-<h2 id="2-detection-detection-knobs">2. (Detection) Detection knobs<a class="headerlink" href="#2-detection-detection-knobs" title="Permanent link">&para;</a></h2>
-<p>For most datasets the <a href="../detection/">detection</a> defaults work. The main reason to adjust <code>entity_labels</code> is when your data has <strong>domain-specific entities that can be described in plain English</strong> — GLiNER is zero-shot, so any concept you can name (e.g. <code>"clinical_facility"</code>, <code>"internal_project_codename"</code>) becomes an entity it can find. Match the snake_case convention of <code>DEFAULT_ENTITY_LABELS</code>. If the entities you care about aren't in the default list, write them down and add them. Adjust <code>gliner_threshold</code> only when you see a specific recall or precision problem in preview.</p>
-<h3 id="entity_labels"><code>entity_labels</code><a class="headerlink" href="#entity_labels" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Setting</th>
-<th>Behavior</th>
-<th>Use when</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>None</code> (default)</td>
-<td>Detect all <code>DEFAULT_ENTITY_LABELS</code>; the augmenter LLM can also infer new labels not in the default set</td>
-<td>General-purpose — almost always the right starting point</td>
-</tr>
-<tr>
-<td>Explicit list</td>
-<td><strong>Strict mode</strong> — only the labels you list are detected, augmenter cannot invent new ones</td>
-<td>You have a domain-specific entity that the defaults don't cover, or you want to <em>narrow</em> detection to a known short list</td>
-</tr>
-</tbody>
-</table>
-<p>Common ways to extend the default list:</p>
-<ul>
-<li>Healthcare: <code>clinical_facility</code>, <code>diagnosis_code</code>, <code>medication_name</code>, <code>lab_test_code</code></li>
-<li>Legal: <code>case_number</code>, <code>docket_number</code>, <code>statute_citation</code>, <code>judge_name</code></li>
-<li>Customer support: <code>ticket_id</code>, <code>internal_user_id</code>, <code>transaction_id</code></li>
-<li>Internal: <code>cost_center</code>, <code>internal_project_codename</code>, <code>experiment_id</code></li>
-</ul>
-<pre class="highlight"><code class="language-python">from anonymizer import DEFAULT_ENTITY_LABELS, Detect
-
-detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])</code></pre>
-<h3 id="gliner_threshold"><code>gliner_threshold</code><a class="headerlink" href="#gliner_threshold" title="Permanent link">&para;</a></h3>
-<p>Default <code>0.3</code>. The validator catches false positives downstream, so erring low is safe.</p>
-<table>
-<thead>
-<tr>
-<th>Symptom</th>
-<th>Move</th>
-<th>Try</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Entities are being missed</td>
-<td>Lower</td>
-<td><code>0.2</code> or even <code>0.15</code></td>
-</tr>
-<tr>
-<td>Validator is slow / expensive — it's being handed a huge candidate list</td>
-<td>Raise</td>
-<td><code>0.4</code>–<code>0.5</code></td>
-</tr>
-</tbody>
-</table>
-<p>The trade-off is symmetric. <strong>Lowering</strong> the threshold doesn't hurt accuracy — the validator runs in batches of <code>validation_max_entities_per_call</code> (default <code>100</code>, tunable on <code>Detect</code>), so a long candidate list becomes more validator calls but not a worse validator. The cost of <code>gliner_threshold=0.2</code> is latency and tokens, not precision. <strong>Raising</strong> the threshold trades that cost for <em>recall risk</em>: GLiNER stops surfacing borderline candidates and you're relying on the augmenter LLM alone to fill the gap. Default <code>0.3</code> errs low; raise only when validator cost is hurting you, and verify with an <code>Annotate</code> preview before trusting a high-threshold setup.</p>
+<h2 id="the-old-playbook-has-a-ceiling">The Old Playbook Has a Ceiling<a class="headerlink" href="#the-old-playbook-has-a-ceiling" title="Permanent link">&para;</a></h2>
+<p>For three decades, text anonymization was a relatively bounded problem: find names, addresses, dates, phones, IDs, and a handful of other recognizable identifiers — then redact, hash, or replace them. The toolkit was a list of entity types and a regex library, occasionally with a named entity recognition (NER) model bolted on top.</p>
+<p>It worked — but the limits had been known for a long time, and one of them just stopped being theoretical.</p>
+<p><strong>Inference got cheap, and linkage got easy.</strong> Modern LLMs are unsettlingly good at reading between the lines: even after the obvious identifiers are gone, seemingly harmless details — a job title, a regional reference, a treatment timeline, a family structure — can still narrow a person down. Recent work has shown that LLMs can recover sensitive personal attributes from "clean" text just by reasoning over context.<sup id="fnref:staab2023"><a class="footnote-ref" href="#fn:staab2023">1</a></sup> <sup id="fnref:ma2025"><a class="footnote-ref" href="#fn:ma2025">2</a></sup> And agents now have infinite tools at their beck and call — web search, public records, social graphs, breach corpora — so cross-referencing those inferred attributes against the outside world is no longer a research project. It's a few tool calls.</p>
+<p><strong>Quasi-identifiers do the heavy lifting.</strong> Long before LLMs, Golle's foundational study<sup id="fnref:golle2006"><a class="footnote-ref" href="#fn:golle2006">3</a></sup> showed that <strong>gender, birth date, and 5-digit ZIP code uniquely identify between 63% and 87% of the U.S. population</strong>. No name required. The combinations matter more than any single field.</p>
+<p>The lesson is uncomfortable but simple:</p>
+<blockquote>
+<p>Anonymization is not an entity-masking problem. It's a contextual reasoning problem.</p>
+</blockquote>
+<p>If your adversary can reason, your anonymizer must too.</p>
 <hr />
-<h2 id="3-replace-vs-rewrite">3. Replace vs Rewrite<a class="headerlink" href="#3-replace-vs-rewrite" title="Permanent link">&para;</a></h2>
-<p>Both modes start from the same <a href="../detection/">detection</a> pipeline. The difference is what happens after entities are detected.</p>
+<h2 id="what-is-anonymizer">What Is Anonymizer?<a class="headerlink" href="#what-is-anonymizer" title="Permanent link">&para;</a></h2>
+<p>Anonymizer is a <strong>library for structured text anonymization</strong>. Every input first passes through <strong>hybrid entity detection</strong>, then enters one of two transformation flows: <strong>Replace</strong> or <strong>Rewrite</strong>. Across both flows, the goal is the same — <strong>transform the minimal set of details required to break sensitive inference, while preserving as much useful meaning as possible.</strong> Pick the flow that matches your risk tolerance.</p>
+<h3 id="entity-detection">Entity detection<a class="headerlink" href="#entity-detection" title="Permanent link">&para;</a></h3>
+<p>Before either flow runs, Anonymizer detects sensitive entities using a <strong>hybrid pipeline</strong>: classical/model-based NER for the obvious explicit identifiers, plus LLM contextual for the long tail of implicit references and domain-specific risks the NER model has never seen. Structured detection is fast and consistent; LLM detection is flexible and contextual.</p>
+<p>This step runs before Replace and Rewrite — both pipelines start here.</p>
+<h3 id="replace-detected-entity-transformations">Replace: detected-entity transformations<a class="headerlink" href="#replace-detected-entity-transformations" title="Permanent link">&para;</a></h3>
+<p>Replace operates on detected entities — the specific text <em>spans</em> the system flags as sensitive. You pick one of four treatments on your <code>AnonymizerConfig</code>, and it applies uniformly to every detected entity across every record in the run:</p>
 <table>
 <thead>
 <tr>
-<th>Question</th>
-<th>Replace</th>
-<th>Rewrite</th>
+<th>Strategy</th>
+<th>What it does</th>
+<th>When to use it</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Is the goal "scrub the entities and keep everything else"?</td>
-<td>✅</td>
-<td>—</td>
-</tr>
-<tr>
-<td>Is the goal "produce a privacy-safe version of this text that downstream models can train on"?</td>
-<td>—</td>
-<td>✅</td>
-</tr>
-<tr>
-<td>Are there inferable / latent identifiers that aren't explicitly stated (e.g. "during her third round of chemo" → cancer treatment)?</td>
-<td>❌ leaves them</td>
-<td>✅ removes them</td>
-</tr>
-<tr>
-<td>Additional LLM calls (beyond shared detection)</td>
-<td>~1 (Substitute) or 0 (Redact/Annotate/Hash)</td>
-<td>Many (domain → disposition → QA → rewrite → evaluate → repair → judge)</td>
-</tr>
-<tr>
-<td>Output text length</td>
-<td>≈ same as input</td>
-<td>Often shorter / restructured</td>
-</tr>
-<tr>
-<td>Best for</td>
-<td>Structured records, log scrubbing, known-list redaction</td>
-<td>Free-text data with implicit identifiers (clinical notes, biographies, depositions, support transcripts)</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Picking between them.</strong> If your data has inferable identifiers that survive entity-only scrubbing (clinical notes, biographies, depositions), Rewrite is the right fit. For structured records, logs, or single-cell PII, Replace is faster and preserves shape. If you're unsure, walk through a few sample rows before deciding.</p>
-<hr />
-<h2 id="4-replace-which-strategy">4. (Replace) Which strategy<a class="headerlink" href="#4-replace-which-strategy" title="Permanent link">&para;</a></h2>
-<p>The four strategies are summarised in <a href="../replace/#strategy-comparison">Replace</a>. The decision rule:</p>
-<table>
-<thead>
-<tr>
-<th>You want…</th>
-<th>Use</th>
-<th>Why</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Realistic-looking text safe for sharing or training</td>
 <td><strong>Substitute</strong></td>
-<td>LLM-generated synthetic values preserve readability</td>
+<td>Swaps each entity for a realistic alternative</td>
+<td>You need realistic-looking text for downstream use</td>
 </tr>
 <tr>
-<td>Clear visual marking that an entity was removed</td>
 <td><strong>Redact</strong></td>
-<td><code>[REDACTED_FIRST_NAME]</code> is unambiguous</td>
+<td>Replaces each entity with a tag or mask</td>
+<td>You just need the sensitive content gone</td>
 </tr>
 <tr>
-<td>To inspect what was detected without losing the original</td>
 <td><strong>Annotate</strong></td>
-<td>Original text is preserved next to the label — <strong>not privacy-safe on its own</strong></td>
+<td>Wraps each entity with its label</td>
+<td>You're auditing detections or labeling training data</td>
 </tr>
 <tr>
-<td>Deterministic re-identification across documents (same person → same token)</td>
 <td><strong>Hash</strong></td>
-<td>Same input always produces the same hash digest</td>
+<td>Maps each entity to a stable hashed value</td>
+<td>You need stable joins across records</td>
 </tr>
 </tbody>
 </table>
-<p><strong>If you're not sure which to pick, use <code>Substitute</code>.</strong> It's the most general-purpose choice and matches the bulk of production usage.</p>
-<h3 id="writing-substituteinstructions">Writing <code>Substitute.instructions</code><a class="headerlink" href="#writing-substituteinstructions" title="Permanent link">&para;</a></h3>
-<p><code>Substitute</code> accepts free-form <code>instructions</code> that are passed to the replacement-generator LLM. Use them when the default behavior produces values that don't match your domain or downstream constraints.</p>
-<table>
-<thead>
-<tr>
-<th>Pattern</th>
-<th>When to use</th>
-<th>Example</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Format constraint</td>
-<td>The original has a structural shape that must be preserved</td>
-<td><code>"Replacement IDs must keep the same prefix as the original (e.g. ACME-12345 → ACME-XXXXX)."</code></td>
-</tr>
-<tr>
-<td>Domain hint</td>
-<td>Entities are domain-specific and need plausible domain values</td>
-<td><code>"Replacement names should be plausible Brazilian Portuguese names."</code></td>
-</tr>
-<tr>
-<td>Negative constraint</td>
-<td>Avoid certain values</td>
-<td><code>"Do not use any name that appears in the original text."</code></td>
-</tr>
-</tbody>
-</table>
-<p>Keep instructions short (one or two sentences). Long instructions compete with the per-entity context and degrade quality.</p>
-<div class="admonition note">
-<p class="admonition-title">Substitute is per-row, not per-dataset</p>
-<p>Within a single row, repeated mentions of the same value get one consistent replacement (entities are grouped by value before the LLM call). <strong>Across rows the LLM has no shared memory</strong> — each row is an independent call, so "Alice" in row 1 and "Alice" in row 47 will likely get different replacements. If you need stable cross-row mappings (e.g. to re-join records by an identifier), use <code>Hash</code> instead, or post-process <code>result.trace_dataframe["_replacement_map"]</code>.</p>
-</div>
+<p>When Substitute is selected, replacements need two properties. Each one is <strong>realistic on its own</strong> — a fake name reads like a real name, a fake email like a real email. And the set is <strong>internally consistent</strong> — names match email local-parts, cities match cultural cues, organizations align with job titles, demographics don't contradict. Without that second property, you'd get records like <em>"Maya Chen (j.smith@acme.com), based in Lagos, recently visited the Brandenburg Gate during her trip to Tokyo."</em> — useless for analytics, instantly recognizable as fake.</p>
+<p>If span-level transformation with a coordinated map meets your risk tolerance, this is the path — fast, deterministic, and coherent across entities.</p>
+<h3 id="rewrite-full-contextual-anonymization">Rewrite: full contextual anonymization<a class="headerlink" href="#rewrite-full-contextual-anonymization" title="Permanent link">&para;</a></h3>
+<p>Rewrite is the heavier hammer. Instead of only swapping out detected spans, it reasons over the <em>whole text</em> — explicit identifiers, quasi-identifiers, latent clues, your privacy goal, and the meaning that needs to survive — then generates and <em>evaluates</em> an anonymized version end-to-end.</p>
+<pre class="mermaid"><code>%%{init: {"flowchart": {"useMaxWidth": false}}}%%
+flowchart LR
+    Start([Source Text]):::io --&gt; A[1. Detect&lt;br/&gt;sensitive entities]
+    A --&gt; B[2. Plan consistent&lt;br/&gt;replacements]
+    B --&gt; C[3. Find&lt;br/&gt;latent clues]
+    C --&gt; D[4. Decide what&lt;br/&gt;to protect]
+    D --&gt; E[5. Identify what&lt;br/&gt;must survive]
+    E --&gt; F[6. Build privacy +&lt;br/&gt;quality checks]
+    F --&gt; G[7. Generate&lt;br/&gt;first rewrite]
+    G --&gt; H{8. Attack&lt;br/&gt;the rewrite}
+    H --&gt;|fail| I[9. Repair&lt;br/&gt;what failed]
+    I --&gt; H
+    H --&gt;|pass| J[10. Final&lt;br/&gt;judge]
+    J --&gt; End([Anonymized Text]):::io
+    classDef io fill:#76B900,stroke:#3d6b00,color:#ffffff,font-weight:bold;</code></pre>
+<p><strong>Deciding what to protect (step 4) is goal-aware.</strong> Anonymizer's <em>sensitivity disposition</em> depends on your privacy goal: a text for public release demands more aggressive generalization than one used internally for controlled analytics. The same input yields different rewrites.</p>
+<p><strong>The repair loop (step 9) is feedback-driven, not random.</strong> When a privacy check fails under attack, the failure ships with an adversarial explanation naming <em>which clues</em> still leak the protected fact — and that's what the repair stage acts on, not a "try again" signal.</p>
+<p><strong>The final judge (step 10) is a holistic check, not another attacker.</strong> Once the privacy and quality checks pass their thresholds, an LLM-as-Judge does an end-to-end review for fluency, factual coherence, and obvious leaks the attack questions didn't cover.</p>
 <hr />
-<h2 id="5-rewrite-privacy-goal">5. (Rewrite) Privacy goal<a class="headerlink" href="#5-rewrite-privacy-goal" title="Permanent link">&para;</a></h2>
-<p><code>Rewrite</code> ships with sensible defaults for <code>protect</code> and <code>preserve</code> (auto-populated when you pass <code>Rewrite()</code> with no arguments). Override them when you can be more specific than the generic defaults.</p>
-<h3 id="how-to-write-protect">How to write <code>protect</code><a class="headerlink" href="#how-to-write-protect" title="Permanent link">&para;</a></h3>
-<p><code>protect</code> answers: <strong>"What should not appear in the output, even by inference?"</strong></p>
-<table>
-<thead>
-<tr>
-<th>Pattern</th>
-<th>Example</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Direct identifiers + quasi-identifiers</td>
-<td><code>"All patient names, medical record numbers, dates of birth, and any combinations of attributes that could re-identify an individual"</code></td>
-</tr>
-<tr>
-<td>Explicit category list</td>
-<td><code>"Names, addresses, phone numbers, employer names, and any references to specific institutions"</code></td>
-</tr>
-<tr>
-<td>Inferable signals to suppress</td>
-<td><code>"Direct identifiers and any contextual phrases that could imply a specific medical condition or diagnosis"</code></td>
-</tr>
-<tr>
-<td>Domain-specific identifiers</td>
-<td><code>"Case numbers, court names, judge names, and any geographic identifiers below the state level"</code></td>
-</tr>
-</tbody>
-</table>
-<h3 id="how-to-write-preserve">How to write <code>preserve</code><a class="headerlink" href="#how-to-write-preserve" title="Permanent link">&para;</a></h3>
-<p><code>preserve</code> answers: <strong>"What does the rewritten text need to keep so it's still useful?"</strong></p>
-<table>
-<thead>
-<tr>
-<th>Pattern</th>
-<th>Example</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Domain content</td>
-<td><code>"Clinical findings, treatment plans, and medical terminology"</code></td>
-</tr>
-<tr>
-<td>Structural properties</td>
-<td><code>"The narrative flow, approximate timeline, and emotional tone of the conversation"</code></td>
-</tr>
-<tr>
-<td>Statistical properties</td>
-<td><code>"The age range and approximate location at country level so downstream demographics analysis remains valid"</code></td>
-</tr>
-<tr>
-<td>Task-relevant signals</td>
-<td><code>"Argument structure, citations to legal precedent, and the procedural posture of the case"</code></td>
-</tr>
-</tbody>
-</table>
-<div class="admonition tip">
-<p class="admonition-title">Be specific, but stay short</p>
-<p>Both fields must be 10–1000 characters and at least 3 words. Aim for 1–3 sentences. The more concrete you are, the more reliably the rewriter targets the right things.</p>
-</div>
-<h3 id="when-to-set-strict_entity_protectiontrue">When to set <code>strict_entity_protection=True</code><a class="headerlink" href="#when-to-set-strict_entity_protectiontrue" title="Permanent link">&para;</a></h3>
-<p><strong>Default: <code>False</code>.</strong> Only set <code>True</code> when explicitly required by compliance or audit policy — not just because the data is medical, legal, or financial.</p>
-<p>By default, low-risk quasi-identifiers may be left unchanged when the engine judges them safe in context. Set <code>strict_entity_protection=True</code> to force every detected entity into an active protection method.</p>
-<p>Use it when:</p>
+<h2 id="the-innovation">The Innovation<a class="headerlink" href="#the-innovation" title="Permanent link">&para;</a></h2>
+<h3 id="1-latent-entities-are-the-real-adversary">1. Latent entities are the real adversary<a class="headerlink" href="#1-latent-entities-are-the-real-adversary" title="Permanent link">&para;</a></h3>
+<p>A <strong>latent entity</strong> is an identifying factor that may not be explicitly named, but can still be inferred from surrounding clues. Latent entities exist in the original text. They also get <em>created</em> by naive replacement.</p>
+<p>The canonical example: you replace <code>"Seattle"</code> with <code>"a generic city"</code>. Done? Not even close. The text might still mention the Space Needle, ferries to Bainbridge, a Mariners game, Puget Sound, and persistent rainy weather. Any one of those alone is harmless. Together, they reconstruct <code>Seattle</code> with high confidence.</p>
+<p>Anonymizer doesn't stop at the string that was replaced. It asks: <strong>does the surrounding text or a later reference still reconstruct the protected fact?</strong> If yes, it's not actually anonymized — it just looks like it is.</p>
+<h3 id="2-privacy-is-contextual-not-categorical">2. Privacy is contextual, not categorical<a class="headerlink" href="#2-privacy-is-contextual-not-categorical" title="Permanent link">&para;</a></h3>
+<p>A job role can be harmless in a generic record but uniquely identifying when paired with a rare specialty and a narrow timeline. A drug name is benign in a research paper but identifying in a patient note. <strong>What's sensitive depends on the surrounding text and your privacy goal — not on a fixed list of "PII categories."</strong> Anonymizer treats privacy as contextual, which is why it works across domains — clinical, legal, financial, conversational, technical, biographical, and more — without per-domain retraining.</p>
+<h3 id="3-privacy-without-utility-is-privacy-theater">3. Privacy without utility is privacy theater<a class="headerlink" href="#3-privacy-without-utility-is-privacy-theater" title="Permanent link">&para;</a></h3>
+<p>Most adversarial anonymization frameworks frame the problem as: <em>generate a rewrite, attack it, repeat until protected attributes can no longer be inferred.</em><sup id="fnref:pilan2024"><a class="footnote-ref" href="#fn:pilan2024">8</a></sup> <sup id="fnref:frikha2025"><a class="footnote-ref" href="#fn:frikha2025">9</a></sup> <sup id="fnref:staab2025"><a class="footnote-ref" href="#fn:staab2025">10</a></sup> <sup id="fnref:kim2025"><a class="footnote-ref" href="#fn:kim2025">11</a></sup> Necessary, but not sufficient — if your "anonymized" text is too sanitized to be useful downstream, you simply replaced one problem with another.</p>
+<p>Anonymizer extracts the <strong>meaning units</strong> that should survive (events, relationships, chronology, conclusions, and domain-specific facts), turns them into a <strong>Quality QA</strong> harness, and turns privacy risks into a <strong>Privacy QA</strong> harness. Both run against the anonymized output, and the privacy harness drives iterative refinement.</p>
+<hr />
+<h2 id="whats-next">What's Next<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>
+<p>Text anonymization in the LLM era looks less like find-and-replace and more like a privacy reasoning system: detect the obvious, surface the latent, plan a coherent transformation, attack the result, repair what fails, and validate end-to-end. Anonymizer ships this as a single pipeline you can point at clinical, legal, financial, conversational, biographical, and other text — Replace when span-level transformation with consistent replacements is enough, Rewrite when it isn't.</p>
+<p>Tighter utility-aware repair, broader multilingual coverage, and evaluation against benchmarks like TAB<sup id="fnref:tab2022"><a class="footnote-ref" href="#fn:tab2022">4</a></sup>, NAP²<sup id="fnref:nap2-2024"><a class="footnote-ref" href="#fn:nap2-2024">5</a></sup>, SynthPAI<sup id="fnref:synthpai2024"><a class="footnote-ref" href="#fn:synthpai2024">6</a></sup>, and RAT-Bench<sup id="fnref:ratbench2026"><a class="footnote-ref" href="#fn:ratbench2026">7</a></sup> are all coming soon. The architecture already encodes the innovation at the heart of the library:</p>
+<blockquote>
+<p>Protecting text in the LLM era requires a system that reasons. Not a system that masks.</p>
+</blockquote>
+<hr />
+<h2 id="try-it">Try It<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
+<p>Point Anonymizer at a sample of your own data and start with <code>preview()</code>. The <a href="https://github.com/NVIDIA-NeMo/Anonymizer#readme">README</a> has the quick-start. Prefer to drive it from your favorite coding agent? Install the <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/skills/anonymizer/SKILL.md">Anonymizer skill</a> (<code>npx skills add NVIDIA-NeMo/Anonymizer</code>) and design your workflow with the help of your favorite agent.</p>
+<p>Help us push it further 🚀</p>
+<h2 id="resources">Resources<a class="headerlink" href="#resources" title="Permanent link">&para;</a></h2>
 <ul>
-<li>A documented compliance or audit policy <em>mandates</em> that every detected entity be actively protected (e.g. HIPAA Safe Harbor with strict interpretation, internal "zero unchanged identifiers" rule)</li>
-<li>You're producing data for external sharing where any unchanged identifier is a compliance risk</li>
-<li>Audit requires "every entity was actively protected"</li>
+<li><a href="https://github.com/NVIDIA-NeMo/Anonymizer">NeMo Anonymizer on GitHub</a></li>
+<li><a href="https://nvidia-nemo.github.io/Anonymizer/">Anonymizer Documentation</a></li>
+<li><a href="../../concepts/replace/">Replace</a> and <a href="../../concepts/rewrite/">Rewrite</a> concept docs</li>
+<li><a href="../../tutorials/">Tutorials</a> — your first anonymization, inspecting detected entities, choosing a replacement strategy, and rewriting biographies and legal documents</li>
 </ul>
-<p>Being in a regulated domain (medical / legal / financial) is <strong>not</strong> by itself a reason to set this to <code>True</code> — most regulated-domain processing tolerates the default behavior. Don't use it when utility matters more than blanket protection — it tends to increase modifications and can lower <code>utility_score</code>.</p>
+<div class="footnote">
 <hr />
-<h2 id="6-rewrite-risk-tolerance">6. (Rewrite) Risk tolerance<a class="headerlink" href="#6-rewrite-risk-tolerance" title="Permanent link">&para;</a></h2>
-<p><code>risk_tolerance</code> is a rewrite-only knob — it selects a coherent bundle of repair and review thresholds. The full table is in <a href="../rewrite/#risk-tolerance">Rewrite &gt; Risk tolerance</a>; the choice rule is below.</p>
-<table>
-<thead>
-<tr>
-<th>Goal</th>
-<th>Pick</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>"Medical / legal / financial / external release"</td>
-<td><code>minimal</code></td>
-</tr>
-<tr>
-<td>Default for most privacy-sensitive data</td>
-<td><code>low</code></td>
-</tr>
-<tr>
-<td>"I want utility prioritized, this is internal-only"</td>
-<td><code>moderate</code></td>
-</tr>
-<tr>
-<td>"I just want to see the system run, will fix things by hand"</td>
-<td><code>high</code></td>
-</tr>
-</tbody>
-</table>
-<p>Notes:</p>
-<ul>
-<li><code>minimal</code> and <code>low</code> differ mostly in how aggressively repair triggers. Both auto-repair on any high-sensitivity leak.</li>
-<li><code>high</code> does <strong>not</strong> auto-repair single high-sensitivity leaks. Use only when you have downstream review.</li>
-<li><code>max_repair_iterations</code> (default 3) caps cost. Set to 0 to skip repair entirely while still computing leakage / utility metrics — useful for audits.</li>
-</ul>
-<hr />
-<h2 id="goal-starting-config-cheat-sheet">Goal → starting config cheat sheet<a class="headerlink" href="#goal-starting-config-cheat-sheet" title="Permanent link">&para;</a></h2>
-<p>A starting point for common scenarios. Always run <code>preview</code> and iterate from here.</p>
-<table>
-<thead>
-<tr>
-<th>Goal</th>
-<th>Mode</th>
-<th>Strategy / config</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>"Scrub PII from logs for retention"</td>
-<td>Replace</td>
-<td><code>Redact()</code></td>
-</tr>
-<tr>
-<td>"De-identify clinical notes for research sharing"</td>
-<td>Rewrite</td>
-<td><code>Rewrite(privacy_goal=PrivacyGoal(protect="all PHI and any context that could imply a specific patient or facility", preserve="clinical findings, treatments, and outcomes"), risk_tolerance="minimal", strict_entity_protection=True)</code></td>
-</tr>
-<tr>
-<td>"Produce realistic-looking biographies for demos"</td>
-<td>Replace</td>
-<td><code>Substitute(instructions="Names and locations should remain plausible for the original cultural context.")</code></td>
-</tr>
-<tr>
-<td>"Anonymize survey responses before sharing the dataset"</td>
-<td>Replace</td>
-<td><code>Substitute()</code></td>
-</tr>
-<tr>
-<td>"Anonymize customer support transcripts for fine-tuning a model"</td>
-<td>Replace</td>
-<td><code>Substitute(instructions="Preserve domain-specific terminology and locale.")</code></td>
-</tr>
-<tr>
-<td>"Anonymize legal opinions for an SFT dataset"</td>
-<td>Rewrite</td>
-<td><code>Rewrite(privacy_goal=PrivacyGoal(protect="party names, case numbers, judge names, and locations below the state level", preserve="argument structure and procedural posture"), risk_tolerance="low")</code></td>
-</tr>
-<tr>
-<td>"Allow re-joining records by identifier without keeping the identifier"</td>
-<td>Replace</td>
-<td><code>Hash(algorithm="sha256", digest_length=16)</code></td>
-</tr>
-<tr>
-<td>"I just want to see what the detector finds"</td>
-<td>Replace</td>
-<td><code>Annotate()</code> (preview only — never ship Annotate output as anonymized data)</td>
-</tr>
-</tbody>
-</table>
-<p>Once you have a starting config, run <code>anonymizer validate &lt;config&gt;</code>, then <code>anonymizer preview --num-records 5 &lt;config&gt;</code>, then iterate. See <a href="../../troubleshooting/">Troubleshooting</a> for what to change when preview shows a problem.</p>
+<ol>
+<li id="fn:staab2023">
+<p>Staab et al., 2024. <a href="https://arxiv.org/abs/2310.07298"><em>Beyond Memorization: Violating Privacy via Inference with Large Language Models</em></a>. ICLR 2024.&#160;<a class="footnote-backref" href="#fnref:staab2023" title="Jump back to footnote 1 in the text">&#8617;</a></p>
+</li>
+<li id="fn:ma2025">
+<p>Ma et al., 2025. <a href="https://arxiv.org/abs/2506.23603"><em>SoK: Semantic Privacy in Large Language Models</em></a>.&#160;<a class="footnote-backref" href="#fnref:ma2025" title="Jump back to footnote 2 in the text">&#8617;</a></p>
+</li>
+<li id="fn:golle2006">
+<p>Golle, 2006. <a href="https://crypto.stanford.edu/~pgolle/papers/census.html"><em>Revisiting the Uniqueness of Simple Demographics in the US Population</em></a>. WPES 2006.&#160;<a class="footnote-backref" href="#fnref:golle2006" title="Jump back to footnote 3 in the text">&#8617;</a></p>
+</li>
+<li id="fn:tab2022">
+<p>Pilán et al., 2022. <a href="https://aclanthology.org/2022.cl-4.19/"><em>The Text Anonymization Benchmark (TAB): A Dedicated Corpus and Evaluation Framework for Text Anonymization</em></a>. Computational Linguistics 48(4).&#160;<a class="footnote-backref" href="#fnref:tab2022" title="Jump back to footnote 4 in the text">&#8617;</a></p>
+</li>
+<li id="fn:nap2-2024">
+<p>Huang et al., 2025. <a href="https://arxiv.org/abs/2406.03749"><em>NAP²: A Benchmark for Naturalness and Privacy-Preserving Text Rewriting by Learning from Human</em></a>. EMNLP 2025 Findings.&#160;<a class="footnote-backref" href="#fnref:nap2-2024" title="Jump back to footnote 5 in the text">&#8617;</a></p>
+</li>
+<li id="fn:synthpai2024">
+<p>Yukhymenko et al., 2024. <a href="https://arxiv.org/abs/2406.07217"><em>A Synthetic Dataset for Personal Attribute Inference</em></a>. NeurIPS 2024.&#160;<a class="footnote-backref" href="#fnref:synthpai2024" title="Jump back to footnote 6 in the text">&#8617;</a></p>
+</li>
+<li id="fn:ratbench2026">
+<p>Krco et al., 2026. <a href="https://arxiv.org/abs/2602.12806"><em>RAT-Bench: A Comprehensive Benchmark for Text Anonymization</em></a>.&#160;<a class="footnote-backref" href="#fnref:ratbench2026" title="Jump back to footnote 7 in the text">&#8617;</a></p>
+</li>
+<li id="fn:pilan2024">
+<p>Pilán et al., 2025. <a href="https://arxiv.org/abs/2412.12928"><em>Truthful Text Sanitization Guided by Inference Attacks</em></a>. Applied Soft Computing 2025.&#160;<a class="footnote-backref" href="#fnref:pilan2024" title="Jump back to footnote 8 in the text">&#8617;</a></p>
+</li>
+<li id="fn:frikha2025">
+<p>Frikha et al., 2025. <a href="https://arxiv.org/abs/2407.02956"><em>IncogniText: Privacy-enhancing Conditional Text Anonymization via LLM-based Private Attribute Randomization</em></a>. IJCNLP-AACL 2025.&#160;<a class="footnote-backref" href="#fnref:frikha2025" title="Jump back to footnote 9 in the text">&#8617;</a></p>
+</li>
+<li id="fn:staab2025">
+<p>Staab et al., 2025. <a href="https://arxiv.org/abs/2402.13846"><em>Language Models are Advanced Anonymizers</em></a>. ICLR 2025.&#160;<a class="footnote-backref" href="#fnref:staab2025" title="Jump back to footnote 10 in the text">&#8617;</a></p>
+</li>
+<li id="fn:kim2025">
+<p>Kim et al., 2025. <a href="https://arxiv.org/abs/2506.01420"><em>Self-Refining Language Model Anonymizers via Adversarial Distillation (SEAL)</em></a>. NeurIPS 2025.&#160;<a class="footnote-backref" href="#fnref:kim2025" title="Jump back to footnote 11 in the text">&#8617;</a></p>
+</li>
+</ol>
+</div>
 
 
 
@@ -2365,15 +2133,20 @@ detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "dia
 
 
 
+  
+  
 
 
 
 
+  
 
-                
-              </article>
-            </div>
-          
+
+
+      
+    </article>
+  </div>
+
           
   <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
 
@@ -2392,33 +2165,19 @@ detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "dia
   
     
       
+        
+      
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
-          
-          <a href="../rewrite/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Rewrite">
-            <div class="md-footer__button md-icon">
-              
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
-            </div>
-            <div class="md-footer__title">
-              <span class="md-footer__direction">
-                Previous
-              </span>
-              <div class="md-ellipsis">
-                Rewrite
-              </div>
-            </div>
-          </a>
-        
         
           
-          <a href="../../troubleshooting/" class="md-footer__link md-footer__link--next" aria-label="Next: Troubleshooting">
+          <a href="../archive/2026/" class="md-footer__link md-footer__link--next" aria-label="Next: 2026">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Troubleshooting
+                2026
               </div>
             </div>
             <div class="md-footer__button md-icon">

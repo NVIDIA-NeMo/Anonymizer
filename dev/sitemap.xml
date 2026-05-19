@@ -41,6 +41,10 @@
          <lastmod>2026-05-19</lastmod>
     </url>
     <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/</loc>
+         <lastmod>2026-05-19</lastmod>
+    </url>
+    <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebook_source/01_your_first_anonymization/</loc>
          <lastmod>2026-05-19</lastmod>
     </url>
@@ -130,6 +134,10 @@
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/tutorials/</loc>
+         <lastmod>2026-05-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/archive/2026/</loc>
          <lastmod>2026-05-19</lastmod>
     </url>
 </urlset>
