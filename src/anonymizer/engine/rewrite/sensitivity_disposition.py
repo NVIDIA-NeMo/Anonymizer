@@ -155,8 +155,11 @@ QUASI-IDENTIFIERS — sensitivity: high, medium, or low
 LATENT IDENTIFIERS — sensitivity: high, medium, or low
   Inferred from context rather than explicitly stated.
   Apply the same re-identification risk logic as quasi-identifiers.
-  Mitigation requires paraphrasing, removing supporting details, or generalizing facts.
-  Replace is rarely appropriate since the value is not explicitly in the text.
+  If combined_risk_level is medium or high: mitigation requires paraphrasing, removing
+  supporting details, or generalizing facts (suppress_inference). Replace is rarely
+  appropriate since the value is not explicitly in the text.
+  If combined_risk_level is low: leave_as_is — do NOT use suppress_inference or any
+  other protection method.
 </entity_categories>
 
 <combined_risk_assessment>
