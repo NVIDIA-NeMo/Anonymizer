@@ -417,41 +417,51 @@ def model_latency_probe(recorder: ModelLatencyRecorder) -> Iterator[None]:
         start = time.perf_counter()
         response = None
         error = None
+        ignore_record = False
         try:
             response = original_completion(self, *args, **kwargs)
             return response
         except Exception as exc:
+            if type(exc).__name__ == "SyncClientUnavailableError":
+                ignore_record = True
+                raise
             error = f"{type(exc).__name__}: {exc}"
             raise
         finally:
-            recorder.record(
-                self,
-                modality="chat",
-                latency_seconds=time.perf_counter() - start,
-                success=response is not None,
-                usage=getattr(response, "usage", None),
-                error=error,
-            )
+            if not ignore_record:
+                recorder.record(
+                    self,
+                    modality="chat",
+                    latency_seconds=time.perf_counter() - start,
+                    success=response is not None,
+                    usage=getattr(response, "usage", None),
+                    error=error,
+                )
 
     async def acompletion_with_latency(self: Any, *args: Any, **kwargs: Any) -> Any:
         start = time.perf_counter()
         response = None
         error = None
+        ignore_record = False
         try:
             response = await original_acompletion(self, *args, **kwargs)
             return response
         except Exception as exc:
+            if type(exc).__name__ == "SyncClientUnavailableError":
+                ignore_record = True
+                raise
             error = f"{type(exc).__name__}: {exc}"
             raise
         finally:
-            recorder.record(
-                self,
-                modality="chat",
-                latency_seconds=time.perf_counter() - start,
-                success=response is not None,
-                usage=getattr(response, "usage", None),
-                error=error,
-            )
+            if not ignore_record:
+                recorder.record(
+                    self,
+                    modality="chat",
+                    latency_seconds=time.perf_counter() - start,
+                    success=response is not None,
+                    usage=getattr(response, "usage", None),
+                    error=error,
+                )
 
     ModelFacade.completion = completion_with_latency
     ModelFacade.acompletion = acompletion_with_latency

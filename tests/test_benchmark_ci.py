@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("benchmark_ci", REPO_ROOT / "scripts" / "benchmark_ci.py")
 assert SPEC is not None
@@ -82,3 +84,21 @@ def test_model_latency_recorder_separates_failures() -> None:
         "model_output_tokens": 4,
     }
     assert recorder.aggregate()[0]["failures"] == 1
+
+
+def test_model_latency_probe_ignores_async_bridge_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:
+    from data_designer.engine.models.clients.errors import SyncClientUnavailableError
+    from data_designer.engine.models.facade import ModelFacade
+
+    def raise_sentinel(self: object, *args: object, **kwargs: object) -> None:
+        raise SyncClientUnavailableError("sentinel")
+
+    monkeypatch.setattr(ModelFacade, "completion", raise_sentinel)
+    recorder = benchmark_ci.ModelLatencyRecorder()
+
+    with recorder.experiment("experiment"), benchmark_ci.model_latency_probe(recorder):
+        with pytest.raises(SyncClientUnavailableError):
+            ModelFacade.completion(object())
+
+    assert recorder.experiment_metrics("experiment") == {"model_calls": 0}
+    assert recorder.aggregate() == []
