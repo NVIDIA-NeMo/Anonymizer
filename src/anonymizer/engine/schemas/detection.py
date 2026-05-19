@@ -129,7 +129,6 @@ class AugmentedEntitiesSchema(BaseModel):
 
 class LatentCategory(str, Enum):
     latent_identifier = "latent_identifier"
-    latent_sensitive_attribute = "latent_sensitive_attribute"
 
 
 class LatentConfidence(str, Enum):

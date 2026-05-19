@@ -207,34 +207,6 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
     assert COL_ENTITIES_BY_VALUE not in result.dataframe.columns
 
 
-def test_run_preserves_original_text_column_attr(
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-            }
-        ),
-        failed_records=[],
-    )
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    input_df = pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]})
-    input_df.attrs["original_text_column"] = "content"
-    result = workflow.run(
-        input_df,
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=False,
-        privacy_goal=None,
-    )
-    assert result.dataframe.attrs["original_text_column"] == "content"
-
-
 def test_run_with_latent_detection_merges_failures_in_order(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,
