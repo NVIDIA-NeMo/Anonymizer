@@ -4,6 +4,13 @@
 name: Benchmark CI
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/benchmark-ci.yml"
+      - "scripts/benchmark_ci.py"
+      - "tests/test_benchmark_ci.py"
   workflow_dispatch:
     inputs:
       ref:
@@ -58,8 +65,17 @@ env:
 jobs:
   benchmark:
     name: Benchmark
+    if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'andreatgretel/feat/benchmark-ci' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, anonymizer-evals]
     timeout-minutes: 60
+    env:
+      BENCHMARK_REF: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+      BENCHMARK_NUM_RECORDS: ${{ inputs.num_records || '1' }}
+      BENCHMARK_EXPERIMENTS: ${{ inputs.experiments || 'redact' }}
+      BENCHMARK_SYNC_ASYNC_RECORDS: ${{ inputs.sync_async_records || '20' }}
+      BENCHMARK_SYNC_ASYNC_ITERATIONS: ${{ inputs.sync_async_iterations || '1' }}
+      BENCHMARK_RUN_SYNC_ASYNC: ${{ inputs.run_sync_async || 'false' }}
+      BENCHMARK_DD_TRACE: ${{ inputs.dd_trace || 'none' }}
 
     steps:
       - name: Checkout benchmark harness
@@ -70,7 +86,7 @@ jobs:
       - name: Checkout benchmark target
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ env.BENCHMARK_REF }}
           path: .benchmark-sut
           fetch-depth: "0"
 
@@ -99,23 +115,23 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           SYNC_ASYNC_ARGS=()
-          if [ "${{ inputs.run_sync_async }}" = "true" ]; then
+          if [ "$BENCHMARK_RUN_SYNC_ASYNC" = "true" ]; then
             SYNC_ASYNC_ARGS+=(--run-sync-async)
           fi
 
-          TRACE_ARGS=(--dd-trace "${{ inputs.dd_trace }}")
-          if [ "${{ inputs.dd_trace }}" != "none" ]; then
+          TRACE_ARGS=(--dd-trace "$BENCHMARK_DD_TRACE")
+          if [ "$BENCHMARK_DD_TRACE" != "none" ]; then
             TRACE_ARGS+=(--trace-dir benchmark-results/traces)
           fi
 
           .venv/bin/python scripts/benchmark_ci.py \
             --require-api-key \
-            --sut-ref "${{ inputs.ref }}" \
+            --sut-ref "$BENCHMARK_REF" \
             --sut-commit "${{ steps.target.outputs.commit }}" \
-            --num-records "${{ inputs.num_records }}" \
-            --experiments "${{ inputs.experiments }}" \
-            --sync-async-records "${{ inputs.sync_async_records }}" \
-            --sync-async-iterations "${{ inputs.sync_async_iterations }}" \
+            --num-records "$BENCHMARK_NUM_RECORDS" \
+            --experiments "$BENCHMARK_EXPERIMENTS" \
+            --sync-async-records "$BENCHMARK_SYNC_ASYNC_RECORDS" \
+            --sync-async-iterations "$BENCHMARK_SYNC_ASYNC_ITERATIONS" \
             --out benchmark-results/results.json \
             --summary-out benchmark-results/summary.md \
             "${TRACE_ARGS[@]}" \
