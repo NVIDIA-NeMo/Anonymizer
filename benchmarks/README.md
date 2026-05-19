@@ -2,6 +2,8 @@
 
 `scripts/benchmark_ci.py` reads benchmark experiments from JSON config files. The smoke config is intentionally small and runs one public-safe dataset through the preview pipelines.
 
+See `benchmarks/HANDOFF.md` for the current implementation status and recommended next steps.
+
 Add a benchmark by adding a dataset and experiment to a config:
 
 ```json
