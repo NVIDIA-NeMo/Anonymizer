@@ -4,14 +4,6 @@
 name: Benchmark CI
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/benchmark-ci.yml"
-      - "benchmarks/**"
-      - "scripts/benchmark_ci.py"
-      - "tests/test_benchmark_ci.py"
   workflow_dispatch:
     inputs:
       ref:
@@ -70,18 +62,17 @@ env:
 jobs:
   benchmark:
     name: Benchmark
-    if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'andreatgretel/feat/benchmark-ci' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, anonymizer-evals]
     timeout-minutes: 60
     env:
-      BENCHMARK_REF: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
-      BENCHMARK_CONFIG: ${{ inputs.config || 'benchmarks/configs/smoke.json' }}
-      BENCHMARK_NUM_RECORDS: ${{ inputs.num_records || '1' }}
-      BENCHMARK_EXPERIMENTS: ${{ inputs.experiments || 'redact' }}
-      BENCHMARK_SYNC_ASYNC_RECORDS: ${{ inputs.sync_async_records || '20' }}
-      BENCHMARK_SYNC_ASYNC_ITERATIONS: ${{ inputs.sync_async_iterations || '1' }}
-      BENCHMARK_RUN_SYNC_ASYNC: ${{ inputs.run_sync_async || 'false' }}
-      BENCHMARK_DD_TRACE: ${{ inputs.dd_trace || 'none' }}
+      BENCHMARK_REF: ${{ inputs.ref }}
+      BENCHMARK_CONFIG: ${{ inputs.config }}
+      BENCHMARK_NUM_RECORDS: ${{ inputs.num_records }}
+      BENCHMARK_EXPERIMENTS: ${{ inputs.experiments }}
+      BENCHMARK_SYNC_ASYNC_RECORDS: ${{ inputs.sync_async_records }}
+      BENCHMARK_SYNC_ASYNC_ITERATIONS: ${{ inputs.sync_async_iterations }}
+      BENCHMARK_RUN_SYNC_ASYNC: ${{ inputs.run_sync_async }}
+      BENCHMARK_DD_TRACE: ${{ inputs.dd_trace }}
 
     steps:
       - name: Checkout benchmark harness
