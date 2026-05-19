@@ -14,6 +14,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
+    COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     _jinja,
 )
@@ -72,17 +73,12 @@ Domain-Specific Preservation Requirements:
 </domain_context>
 
 <input_tagged_text>
-The text below has explicit entities tagged inline using this format: ⟦entity_value|entity_label⟧
-
-Example:
-  "A 29-year-old male from Portland" becomes:
-  "A ⟦29-year-old|age⟧ ⟦male|gender⟧ from ⟦Portland|city⟧"
-
-Rules for interpreting tags:
-- The substring BEFORE the "|" is the entity_value (record EXACTLY as shown).
-- The substring AFTER the "|" is the entity_label.
-- Do NOT include the brackets ⟦ ⟧ in entity_value.
-
+The text below contains inline entity tags marking identified entities.
+{% if <<TAG_NOTATION>> == 'bracket' %}Tags use the format [[entity_value|entity_label]] (e.g. [[Portland|city]]). The substring before "|" is the entity_value — record it EXACTLY, without the [[ ]] brackets.
+{% elif <<TAG_NOTATION>> == 'xml' %}Tags use the format <entity_label>entity_value</entity_label> (e.g. <city>Portland</city>). The inner text is the entity_value — record it EXACTLY, without the surrounding tags.
+{% elif <<TAG_NOTATION>> == 'paren' %}Tags use the format ((SENSITIVE:entity_label|entity_value)) (e.g. ((SENSITIVE:city|Portland))). The substring after "|" is the entity_value — record it EXACTLY, without the ((SENSITIVE:...)) wrapper.
+{% elif <<TAG_NOTATION>> == 'sentinel' %}Tags use the format <<SENSITIVE:entity_label>>entity_value<</SENSITIVE:entity_label>> (e.g. <<SENSITIVE:city>>Portland<</SENSITIVE:city>>). The text between the sentinels is the entity_value — record it EXACTLY, without any <<SENSITIVE:...>> markers.
+{% endif %}
 Tagged Text:
 ---
 <<TAGGED_TEXT>>
@@ -247,6 +243,7 @@ QUALITY REQUIREMENTS:
             "<<DOMAIN>>": _jinja(COL_DOMAIN, key="domain"),
             "<<DATA_SUMMARY>>": data_summary_line,
             "<<DOMAIN_SUPPLEMENT>>": _jinja(COL_DOMAIN_SUPPLEMENT_PRIVACY),
+            "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
             "<<FINAL_ENTITIES>>": _jinja(COL_ENTITIES_BY_VALUE),
             "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),

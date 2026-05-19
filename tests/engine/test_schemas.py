@@ -19,7 +19,11 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, StrictEntityDispositionSchema, StrictSensitivityDispositionSchema
+from anonymizer.engine.schemas.rewrite import (
+    EntityDispositionSchema,
+    StrictEntityDispositionSchema,
+    StrictSensitivityDispositionSchema,
+)
 
 
 def test_entities_payload_from_raw_dict() -> None:
