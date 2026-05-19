@@ -148,14 +148,14 @@ Help us push it further 🚀
 - [Replace](../../concepts/replace.md) and [Rewrite](../../concepts/rewrite.md) concept docs
 - [Tutorials](../../tutorials/index.md) — your first anonymization, inspecting detected entities, choosing a replacement strategy, and rewriting biographies and legal documents
 
-[^staab2023]: Staab et al., 2023. [*Beyond Memorization: Violating Privacy via Inference with Large Language Models*](https://arxiv.org/abs/2310.07298). ICLR 2024.
+[^staab2023]: Staab et al., 2024. [*Beyond Memorization: Violating Privacy via Inference with Large Language Models*](https://arxiv.org/abs/2310.07298). ICLR 2024.
 [^ma2025]: Ma et al., 2025. [*SoK: Semantic Privacy in Large Language Models*](https://arxiv.org/abs/2506.23603).
 [^golle2006]: Golle, 2006. [*Revisiting the Uniqueness of Simple Demographics in the US Population*](https://crypto.stanford.edu/~pgolle/papers/census.html). WPES 2006.
 [^tab2022]: Pilán et al., 2022. [*The Text Anonymization Benchmark (TAB): A Dedicated Corpus and Evaluation Framework for Text Anonymization*](https://aclanthology.org/2022.cl-4.19/). Computational Linguistics 48(4).
-[^nap2-2024]: Huang et al., 2024. [*NAP²: A Benchmark for Naturalness and Privacy-Preserving Text Rewriting by Learning from Human*](https://arxiv.org/abs/2406.03749). EMNLP 2025 Findings.
+[^nap2-2024]: Huang et al., 2025. [*NAP²: A Benchmark for Naturalness and Privacy-Preserving Text Rewriting by Learning from Human*](https://arxiv.org/abs/2406.03749). EMNLP 2025 Findings.
 [^synthpai2024]: Yukhymenko et al., 2024. [*A Synthetic Dataset for Personal Attribute Inference*](https://arxiv.org/abs/2406.07217). NeurIPS 2024.
 [^ratbench2026]: Krco et al., 2026. [*RAT-Bench: A Comprehensive Benchmark for Text Anonymization*](https://arxiv.org/abs/2602.12806).
-[^pilan2024]: Pilán et al., 2024. [*Truthful Text Sanitization Guided by Inference Attacks*](https://arxiv.org/abs/2412.12928). Applied Soft Computing 2025.
+[^pilan2024]: Pilán et al., 2025. [*Truthful Text Sanitization Guided by Inference Attacks*](https://arxiv.org/abs/2412.12928). Applied Soft Computing 2025.
 [^frikha2025]: Frikha et al., 2025. [*IncogniText: Privacy-enhancing Conditional Text Anonymization via LLM-based Private Attribute Randomization*](https://arxiv.org/abs/2407.02956). IJCNLP-AACL 2025.
 [^staab2025]: Staab et al., 2025. [*Language Models are Advanced Anonymizers*](https://arxiv.org/abs/2402.13846). ICLR 2025.
 [^kim2025]: Kim et al., 2025. [*Self-Refining Language Model Anonymizers via Adversarial Distillation (SEAL)*](https://arxiv.org/abs/2506.01420). NeurIPS 2025.
