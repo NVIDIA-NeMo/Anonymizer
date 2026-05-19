@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Benchmark CI handoff
 
 This PR adds the first benchmark CI scaffold for Anonymizer. It is intentionally small: the goal is to prove the Brev self-hosted runner, real provider calls, artifact output, and a config-driven benchmark shape that other people can extend.
