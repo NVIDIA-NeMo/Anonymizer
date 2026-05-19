@@ -19,7 +19,7 @@ from anonymizer.engine.schemas import (
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema
+from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, StrictEntityDispositionSchema, StrictSensitivityDispositionSchema
 
 
 def test_entities_payload_from_raw_dict() -> None:
@@ -428,3 +428,56 @@ def test_quality_answers_reject_extra_ids() -> None:
             {"answers": [{"id": 1, "answer": "yes"}, {"id": 2, "answer": "no"}, {"id": 99, "answer": "yes"}]},
             context={"expected_ids": [1, 2]},
         )
+
+
+# ---------------------------------------------------------------------------
+# StrictEntityDispositionSchema / StrictSensitivityDispositionSchema
+# ---------------------------------------------------------------------------
+
+
+def _make_strict_entity(**kwargs) -> dict:
+    """Factory for a valid StrictEntityDispositionSchema dict."""
+    defaults = {
+        "id": 1,
+        "source": "tagged",
+        "category": "direct_identifier",
+        "sensitivity": "high",
+        "entity_label": "first_name",
+        "entity_value": "Alice",
+        "protection_reason": "Direct identifier that uniquely identifies the individual.",
+        "protection_method_suggestion": "replace",
+        "combined_risk_level": "high",
+    }
+    return {**defaults, **kwargs}
+
+
+def test_strict_entity_rejects_leave_as_is() -> None:
+    with pytest.raises(ValidationError):
+        StrictEntityDispositionSchema.model_validate(
+            _make_strict_entity(protection_method_suggestion="leave_as_is", combined_risk_level="medium")
+        )
+
+
+def test_strict_entity_rejects_low_combined_risk_level() -> None:
+    with pytest.raises(ValidationError):
+        StrictEntityDispositionSchema.model_validate(
+            _make_strict_entity(combined_risk_level="low", protection_method_suggestion="replace")
+        )
+
+
+def test_strict_entity_accepts_valid_protected_entity() -> None:
+    entity = StrictEntityDispositionSchema.model_validate(_make_strict_entity())
+    assert entity.needs_protection is True
+    assert entity.combined_risk_level == "high"
+
+
+def test_strict_sensitivity_disposition_inherits_id_normalization() -> None:
+    schema = StrictSensitivityDispositionSchema.model_validate(
+        {
+            "sensitivity_disposition": [
+                _make_strict_entity(id=1),
+                _make_strict_entity(id=5, entity_label="last_name", entity_value="Smith"),
+            ]
+        }
+    )
+    assert [e.id for e in schema.sensitivity_disposition] == [1, 2]
