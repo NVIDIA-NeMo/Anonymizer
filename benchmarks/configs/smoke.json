@@ -1,0 +1,26 @@
+{
+  "name": "smoke",
+  "description": "Small real-provider benchmark smoke test.",
+  "datasets": {
+    "synthetic_bios": {
+      "path": "docs/data/NVIDIA_synthetic_biographies.csv",
+      "sha256": "407efcb6fdc840562b75875862a4b1231b1e44c832f9ed2913f2243314b002ee",
+      "text_column": "biography",
+      "data_summary": "Biographical profiles"
+    }
+  },
+  "experiments": [
+    {
+      "name": "rewrite_preview",
+      "pipeline": "rewrite",
+      "dataset": "synthetic_bios",
+      "num_records": 1
+    },
+    {
+      "name": "redact_preview",
+      "pipeline": "redact",
+      "dataset": "synthetic_bios",
+      "num_records": 1
+    }
+  ]
+}

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
 import json
 import os
 import re
@@ -12,6 +14,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -22,7 +26,7 @@ from typing import Any
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact, Rewrite, __version__, configure_logging
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DATA_PATH = REPO_ROOT / "docs" / "data" / "NVIDIA_synthetic_biographies.csv"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "benchmarks" / "configs" / "smoke.json"
 SYNC_MEAN_RE = re.compile(r"^\s*sync\s+mean:\s+(?P<seconds>[0-9.]+)s", re.MULTILINE)
 ASYNC_MEAN_RE = re.compile(r"^\s*async\s+mean:\s+(?P<seconds>[0-9.]+)s", re.MULTILINE)
 SPEEDUP_RE = re.compile(r"^\s*speedup:\s+(?P<speedup>[0-9.]+)x", re.MULTILINE)
@@ -38,6 +42,28 @@ class ExperimentResult:
     duration_seconds: float
     metrics: dict[str, MetricValue] = field(default_factory=dict)
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class DatasetInput:
+    name: str
+    path: Path
+    source: str
+    text_column: str
+    data_summary: str
+    sha256: str
+    rows: int | None
+
+    def metadata(self) -> dict[str, MetricValue]:
+        return {
+            "name": self.name,
+            "source": self.source,
+            "path": str(self.path),
+            "text_column": self.text_column,
+            "data_summary": self.data_summary,
+            "sha256": self.sha256,
+            "rows": self.rows,
+        }
 
 
 @dataclass(frozen=True)
@@ -187,6 +213,8 @@ def build_markdown_summary(payload: dict[str, Any]) -> str:
         f"- SUT commit: `{payload['meta']['sut_commit']}`",
         f"- SUT version: `{payload['meta']['sut_version']}`",
         f"- Harness commit: `{payload['meta']['harness_commit']}`",
+        f"- Config: `{payload['meta'].get('config_name', 'n/a')}`",
+        f"- Config hash: `{payload['meta'].get('config_sha256', 'n/a')}`",
         f"- DD trace: `{payload['meta']['dd_trace']}`",
         "",
         "| Experiment | Status | Duration | Key metrics |",
@@ -203,6 +231,21 @@ def build_markdown_summary(payload: dict[str, Any]) -> str:
             f"{experiment['duration_seconds']:.2f}s | {metric_text or 'n/a'} |"
         )
     lines.append("")
+    if payload.get("datasets"):
+        lines.extend(
+            [
+                "## Datasets",
+                "",
+                "| Name | Rows | Text column | SHA-256 | Source |",
+                "| --- | ---: | --- | --- | --- |",
+            ]
+        )
+        for dataset in payload["datasets"]:
+            lines.append(
+                f"| `{dataset['name']}` | {dataset['rows'] or 'n/a'} | `{dataset['text_column']}` | "
+                f"`{str(dataset['sha256'])[:12]}` | `{dataset['source']}` |"
+            )
+        lines.append("")
     if payload.get("model_latency", {}).get("summary"):
         lines.extend(
             [
@@ -230,20 +273,137 @@ def format_metric(value: MetricValue) -> str:
     return str(value)
 
 
-def run_rewrite_preview(num_records: int, require_api_key: bool, trace_dir: Path | None) -> ExperimentResult:
+def load_benchmark_config(path: Path) -> dict[str, Any]:
+    config = json.loads(path.read_text())
+    validate_benchmark_config(config)
+    return config
+
+
+def validate_benchmark_config(config: dict[str, Any]) -> None:
+    if not isinstance(config, dict):
+        raise ValueError("Benchmark config must be an object.")
+    if not isinstance(config.get("datasets"), dict) or not config["datasets"]:
+        raise ValueError("Benchmark config must define at least one dataset.")
+    if not isinstance(config.get("experiments"), list) or not config["experiments"]:
+        raise ValueError("Benchmark config must define at least one experiment.")
+
+    for name, dataset in config["datasets"].items():
+        if not isinstance(dataset, dict):
+            raise ValueError(f"Dataset {name!r} must be an object.")
+        has_path = bool(dataset.get("path"))
+        has_url = bool(dataset.get("url"))
+        if has_path == has_url:
+            raise ValueError(f"Dataset {name!r} must define exactly one of path or url.")
+        if has_url and not dataset.get("sha256"):
+            raise ValueError(f"Remote dataset {name!r} must define sha256.")
+        for key in ("text_column", "data_summary"):
+            if not dataset.get(key):
+                raise ValueError(f"Dataset {name!r} must define {key}.")
+
+    dataset_names = set(config["datasets"])
+    for experiment in config["experiments"]:
+        if not isinstance(experiment, dict):
+            raise ValueError("Benchmark experiments must be objects.")
+        for key in ("name", "pipeline", "dataset"):
+            if not experiment.get(key):
+                raise ValueError(f"Benchmark experiment must define {key}.")
+        if experiment["pipeline"] not in {"redact", "rewrite"}:
+            raise ValueError(f"Unsupported pipeline {experiment['pipeline']!r}.")
+        if experiment["dataset"] not in dataset_names:
+            raise ValueError(f"Unknown dataset {experiment['dataset']!r}.")
+
+
+def select_experiment_specs(config: dict[str, Any], experiment_filter: str) -> list[dict[str, Any]]:
+    experiments = config["experiments"]
+    if experiment_filter == "all":
+        return list(experiments)
+    return [experiment for experiment in experiments if experiment["pipeline"] == experiment_filter]
+
+
+def resolve_benchmark_datasets(config: dict[str, Any], cache_dir: Path) -> dict[str, DatasetInput]:
+    return {
+        name: resolve_dataset(name=name, spec=spec, cache_dir=cache_dir)
+        for name, spec in sorted(config["datasets"].items())
+    }
+
+
+def resolve_dataset(name: str, spec: dict[str, Any], cache_dir: Path) -> DatasetInput:
+    if spec.get("url"):
+        path = download_dataset(name=name, url=str(spec["url"]), sha256=str(spec["sha256"]), cache_dir=cache_dir)
+        source = str(spec["url"])
+    else:
+        path = resolve_repo_path(str(spec["path"]))
+        source = str(spec["path"])
+
+    expected_sha256 = spec.get("sha256")
+    actual_sha256 = file_sha256(path)
+    if expected_sha256 and actual_sha256 != expected_sha256:
+        raise ValueError(f"Dataset {name!r} SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}.")
+
+    return DatasetInput(
+        name=name,
+        path=path,
+        source=source,
+        text_column=str(spec["text_column"]),
+        data_summary=str(spec["data_summary"]),
+        sha256=actual_sha256,
+        rows=count_csv_rows(path) if path.suffix == ".csv" else None,
+    )
+
+
+def resolve_repo_path(path: str) -> Path:
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        resolved = REPO_ROOT / resolved
+    if not resolved.exists():
+        raise FileNotFoundError(f"Dataset file does not exist: {resolved}")
+    return resolved
+
+
+def download_dataset(name: str, url: str, sha256: str, cache_dir: Path) -> Path:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(urllib.parse.urlparse(url).path).suffix or ".data"
+    path = cache_dir / f"{name}-{sha256[:12]}{suffix}"
+    if not path.exists():
+        urllib.request.urlretrieve(url, path)
+    return path
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def count_csv_rows(path: Path) -> int:
+    with path.open(newline="") as handle:
+        return sum(1 for _ in csv.DictReader(handle))
+
+
+def run_preview_experiment(
+    *,
+    name: str,
+    pipeline: str,
+    dataset: DatasetInput,
+    num_records: int,
+    require_api_key: bool,
+    trace_dir: Path | None,
+) -> ExperimentResult:
     if not os.getenv("NVIDIA_API_KEY"):
         reason = "NVIDIA_API_KEY is not set"
         if require_api_key:
             raise RuntimeError(reason)
-        return ExperimentResult(name="rewrite_preview", status="skipped", duration_seconds=0.0, reason=reason)
+        return ExperimentResult(name=name, status="skipped", duration_seconds=0.0, reason=reason)
 
     configure_logging()
     input_data = AnonymizerInput(
-        source=str(DATA_PATH),
-        text_column="biography",
-        data_summary="Biographical profiles",
+        source=str(dataset.path),
+        text_column=dataset.text_column,
+        data_summary=dataset.data_summary,
     )
-    config = AnonymizerConfig(rewrite=Rewrite(max_repair_iterations=1))
+    config = build_anonymizer_config(pipeline)
 
     start = time.perf_counter()
     result = Anonymizer().preview(config=config, data=input_data, num_records=num_records)
@@ -251,50 +411,36 @@ def run_rewrite_preview(num_records: int, require_api_key: bool, trace_dir: Path
 
     frame = result.dataframe
     metrics = {
+        "dataset": dataset.name,
         "rows": len(frame),
         "failed_records": len(result.failed_records),
-        "utility_score_mean": mean_column(frame, "utility_score"),
-        "leakage_mass_mean": mean_column(frame, "leakage_mass"),
-        "weighted_leakage_rate_mean": mean_column(frame, "weighted_leakage_rate"),
-        "any_high_leaked": sum_bool_column(frame, "any_high_leaked"),
-        "needs_human_review": sum_bool_column(frame, "needs_human_review"),
     }
-    metrics.update(trace_metrics(result.trace_dataframe, experiment_name="rewrite_preview", trace_dir=trace_dir))
-    return ExperimentResult(name="rewrite_preview", status="completed", duration_seconds=duration, metrics=metrics)
+    if pipeline == "rewrite":
+        metrics.update(
+            {
+                "utility_score_mean": mean_column(frame, "utility_score"),
+                "leakage_mass_mean": mean_column(frame, "leakage_mass"),
+                "weighted_leakage_rate_mean": mean_column(frame, "weighted_leakage_rate"),
+                "any_high_leaked": sum_bool_column(frame, "any_high_leaked"),
+                "needs_human_review": sum_bool_column(frame, "needs_human_review"),
+            }
+        )
+    else:
+        output_column = f"{result.resolved_text_column}_replaced"
+        changed_rows = None
+        if output_column in frame.columns and result.resolved_text_column in frame.columns:
+            changed_rows = int((frame[output_column] != frame[result.resolved_text_column]).sum())
+        metrics["changed_rows"] = changed_rows
+    metrics.update(trace_metrics(result.trace_dataframe, experiment_name=name, trace_dir=trace_dir))
+    return ExperimentResult(name=name, status="completed", duration_seconds=duration, metrics=metrics)
 
 
-def run_redact_preview(num_records: int, require_api_key: bool, trace_dir: Path | None) -> ExperimentResult:
-    if not os.getenv("NVIDIA_API_KEY"):
-        reason = "NVIDIA_API_KEY is not set"
-        if require_api_key:
-            raise RuntimeError(reason)
-        return ExperimentResult(name="redact_preview", status="skipped", duration_seconds=0.0, reason=reason)
-
-    configure_logging()
-    input_data = AnonymizerInput(
-        source=str(DATA_PATH),
-        text_column="biography",
-        data_summary="Biographical profiles",
-    )
-    config = AnonymizerConfig(replace=Redact())
-
-    start = time.perf_counter()
-    result = Anonymizer().preview(config=config, data=input_data, num_records=num_records)
-    duration = time.perf_counter() - start
-
-    frame = result.dataframe
-    output_column = f"{result.resolved_text_column}_replaced"
-    changed_rows = None
-    if output_column in frame.columns and result.resolved_text_column in frame.columns:
-        changed_rows = int((frame[output_column] != frame[result.resolved_text_column]).sum())
-
-    metrics = {
-        "rows": len(frame),
-        "failed_records": len(result.failed_records),
-        "changed_rows": changed_rows,
-    }
-    metrics.update(trace_metrics(result.trace_dataframe, experiment_name="redact_preview", trace_dir=trace_dir))
-    return ExperimentResult(name="redact_preview", status="completed", duration_seconds=duration, metrics=metrics)
+def build_anonymizer_config(pipeline: str) -> AnonymizerConfig:
+    if pipeline == "rewrite":
+        return AnonymizerConfig(rewrite=Rewrite(max_repair_iterations=1))
+    if pipeline == "redact":
+        return AnonymizerConfig(replace=Redact())
+    raise ValueError(f"Unsupported pipeline {pipeline!r}.")
 
 
 def run_sync_async_benchmark(num_records: int, iterations: int, timeout_seconds: int) -> ExperimentResult:
@@ -494,27 +640,29 @@ def capture_experiment(
 
 def build_payload(args: argparse.Namespace, recorder: ModelLatencyRecorder) -> dict[str, Any]:
     started_at = datetime.now(UTC)
+    config = load_benchmark_config(args.config)
+    datasets = resolve_benchmark_datasets(config, args.data_cache_dir)
     experiments = []
-    if args.experiments in {"all", "rewrite"}:
+    experiment_specs = select_experiment_specs(config, args.experiments)
+    if not experiment_specs and not args.run_sync_async:
+        raise ValueError(f"No experiments matched filter {args.experiments!r}.")
+
+    for experiment in experiment_specs:
+        num_records = args.num_records if args.num_records is not None else int(experiment.get("num_records", 1))
+        dataset = datasets[experiment["dataset"]]
+        name = str(experiment["name"])
         experiments.append(
             capture_experiment(
-                "rewrite_preview",
-                lambda: run_rewrite_preview(
-                    num_records=args.num_records,
-                    require_api_key=args.require_api_key,
-                    trace_dir=args.trace_dir,
-                ),
-                recorder,
-            )
-        )
-    if args.experiments in {"all", "redact"}:
-        experiments.append(
-            capture_experiment(
-                "redact_preview",
-                lambda: run_redact_preview(
-                    num_records=args.num_records,
-                    require_api_key=args.require_api_key,
-                    trace_dir=args.trace_dir,
+                name,
+                lambda experiment=experiment, dataset=dataset, name=name, num_records=num_records: (
+                    run_preview_experiment(
+                        name=name,
+                        pipeline=str(experiment["pipeline"]),
+                        dataset=dataset,
+                        num_records=num_records,
+                        require_api_key=args.require_api_key,
+                        trace_dir=args.trace_dir,
+                    )
                 ),
                 recorder,
             )
@@ -542,9 +690,13 @@ def build_payload(args: argparse.Namespace, recorder: ModelLatencyRecorder) -> d
             "harness_commit": git_output(["rev-parse", "HEAD"]),
             "python": sys.version.split()[0],
             "status": status,
+            "config_path": str(args.config),
+            "config_name": str(config.get("name", args.config.stem)),
+            "config_sha256": file_sha256(args.config),
             "dd_trace": args.dd_trace,
             "experiments": args.experiments,
         },
+        "datasets": [dataset.metadata() for dataset in datasets.values()],
         "experiments": [asdict(experiment) for experiment in experiments],
         "model_latency": {
             "summary": recorder.aggregate(),
@@ -555,7 +707,9 @@ def build_payload(args: argparse.Namespace, recorder: ModelLatencyRecorder) -> d
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the benchmark CI scaffold.")
-    parser.add_argument("--num-records", type=int, default=3)
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--data-cache-dir", type=Path, default=Path(".benchmark-data-cache"))
+    parser.add_argument("--num-records", type=int, default=None)
     parser.add_argument("--experiments", choices=["all", "rewrite", "redact"], default="all")
     parser.add_argument("--run-sync-async", action="store_true")
     parser.add_argument("--sync-async-records", type=int, default=20)

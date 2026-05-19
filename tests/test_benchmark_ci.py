@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from data_designer.engine.models.clients.errors import SyncClientUnavailableError
+from data_designer.engine.models.facade import ModelFacade
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("benchmark_ci", REPO_ROOT / "scripts" / "benchmark_ci.py")
@@ -87,9 +90,6 @@ def test_model_latency_recorder_separates_failures() -> None:
 
 
 def test_model_latency_probe_ignores_async_bridge_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:
-    from data_designer.engine.models.clients.errors import SyncClientUnavailableError
-    from data_designer.engine.models.facade import ModelFacade
-
     def raise_sentinel(self: object, *args: object, **kwargs: object) -> None:
         raise SyncClientUnavailableError("sentinel")
 
@@ -102,3 +102,54 @@ def test_model_latency_probe_ignores_async_bridge_sentinel(monkeypatch: pytest.M
 
     assert recorder.experiment_metrics("experiment") == {"model_calls": 0}
     assert recorder.aggregate() == []
+
+
+def test_load_config_and_resolve_local_dataset(tmp_path: Path) -> None:
+    data_path = tmp_path / "data.csv"
+    data_path.write_text("text\nhello\nworld\n")
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "datasets": {
+                    "sample": {
+                        "path": str(data_path),
+                        "sha256": benchmark_ci.file_sha256(data_path),
+                        "text_column": "text",
+                        "data_summary": "Sample rows",
+                    }
+                },
+                "experiments": [
+                    {
+                        "name": "redact_sample",
+                        "pipeline": "redact",
+                        "dataset": "sample",
+                    }
+                ],
+            }
+        )
+    )
+
+    config = benchmark_ci.load_benchmark_config(config_path)
+    datasets = benchmark_ci.resolve_benchmark_datasets(config, tmp_path / "cache")
+
+    assert benchmark_ci.select_experiment_specs(config, "redact")[0]["name"] == "redact_sample"
+    assert datasets["sample"].rows == 2
+    assert datasets["sample"].metadata()["text_column"] == "text"
+
+
+def test_resolve_dataset_rejects_bad_hash(tmp_path: Path) -> None:
+    data_path = tmp_path / "data.csv"
+    data_path.write_text("text\nhello\n")
+
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        benchmark_ci.resolve_dataset(
+            name="sample",
+            spec={
+                "path": str(data_path),
+                "sha256": "0" * 64,
+                "text_column": "text",
+                "data_summary": "Sample rows",
+            },
+            cache_dir=tmp_path / "cache",
+        )

@@ -9,6 +9,7 @@ on:
       - main
     paths:
       - ".github/workflows/benchmark-ci.yml"
+      - "benchmarks/**"
       - "scripts/benchmark_ci.py"
       - "tests/test_benchmark_ci.py"
   workflow_dispatch:
@@ -17,8 +18,12 @@ on:
         description: "Commit SHA, branch, or tag to benchmark"
         required: true
         default: "main"
+      config:
+        description: "Benchmark config path"
+        required: true
+        default: "benchmarks/configs/smoke.json"
       num_records:
-        description: "Rows for the rewrite preview experiment"
+        description: "Rows for each configured preview experiment"
         required: true
         default: "1"
       experiments:
@@ -70,6 +75,7 @@ jobs:
     timeout-minutes: 60
     env:
       BENCHMARK_REF: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+      BENCHMARK_CONFIG: ${{ inputs.config || 'benchmarks/configs/smoke.json' }}
       BENCHMARK_NUM_RECORDS: ${{ inputs.num_records || '1' }}
       BENCHMARK_EXPERIMENTS: ${{ inputs.experiments || 'redact' }}
       BENCHMARK_SYNC_ASYNC_RECORDS: ${{ inputs.sync_async_records || '20' }}
@@ -126,6 +132,7 @@ jobs:
 
           .venv/bin/python scripts/benchmark_ci.py \
             --require-api-key \
+            --config "$BENCHMARK_CONFIG" \
             --sut-ref "$BENCHMARK_REF" \
             --sut-commit "${{ steps.target.outputs.commit }}" \
             --num-records "$BENCHMARK_NUM_RECORDS" \
