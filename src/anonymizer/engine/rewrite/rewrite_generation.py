@@ -128,7 +128,7 @@ Rules:
 
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
-    """Pre-filter and serialize needs_protection=True entities for the rewrite prompt."""
+    """Pre-filter and serialize protected entities (protection_method_suggestion != "leave_as_is") for the rewrite prompt."""
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     block = []
     for e in disposition.sensitivity_disposition:
