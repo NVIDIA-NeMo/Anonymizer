@@ -1,0 +1,136 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Benchmark CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA, branch, or tag to benchmark"
+        required: true
+        default: "main"
+      num_records:
+        description: "Rows for the rewrite preview experiment"
+        required: true
+        default: "1"
+      experiments:
+        description: "Experiments to run"
+        required: true
+        type: choice
+        options:
+          - "all"
+          - "rewrite"
+          - "redact"
+        default: "all"
+      sync_async_records:
+        description: "Rows for the mock sync/async benchmark"
+        required: true
+        default: "20"
+      sync_async_iterations:
+        description: "Iterations for the mock sync/async benchmark"
+        required: true
+        default: "1"
+      run_sync_async:
+        description: "Run the optional mock sync/async benchmark"
+        required: true
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
+      dd_trace:
+        description: "Capture DataDesigner LLM traces"
+        required: true
+        type: choice
+        options:
+          - "none"
+          - "last_message"
+          - "all_messages"
+        default: "none"
+
+permissions:
+  contents: read
+
+env:
+  NEMO_TELEMETRY_ENABLED: "false"
+
+jobs:
+  benchmark:
+    name: Benchmark
+    runs-on: [self-hosted, anonymizer-evals]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout benchmark harness
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
+      - name: Checkout benchmark target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          path: .benchmark-sut
+          fetch-depth: "0"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install benchmark target
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python ./.benchmark-sut
+
+      - name: Resolve benchmark target commit
+        id: target
+        working-directory: .benchmark-sut
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Run benchmark scaffold
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          SYNC_ASYNC_ARGS=()
+          if [ "${{ inputs.run_sync_async }}" = "true" ]; then
+            SYNC_ASYNC_ARGS+=(--run-sync-async)
+          fi
+
+          TRACE_ARGS=(--dd-trace "${{ inputs.dd_trace }}")
+          if [ "${{ inputs.dd_trace }}" != "none" ]; then
+            TRACE_ARGS+=(--trace-dir benchmark-results/traces)
+          fi
+
+          .venv/bin/python scripts/benchmark_ci.py \
+            --require-api-key \
+            --sut-ref "${{ inputs.ref }}" \
+            --sut-commit "${{ steps.target.outputs.commit }}" \
+            --num-records "${{ inputs.num_records }}" \
+            --experiments "${{ inputs.experiments }}" \
+            --sync-async-records "${{ inputs.sync_async_records }}" \
+            --sync-async-iterations "${{ inputs.sync_async_iterations }}" \
+            --out benchmark-results/results.json \
+            --summary-out benchmark-results/summary.md \
+            "${TRACE_ARGS[@]}" \
+            "${SYNC_ASYNC_ARGS[@]}"
+
+      - name: Add summary
+        if: always()
+        run: |
+          if [ -f benchmark-results/summary.md ]; then
+            cat benchmark-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results/
