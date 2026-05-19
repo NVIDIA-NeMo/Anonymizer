@@ -136,26 +136,31 @@ class EntityDispositionSchema(BaseModel):
     sensitivity: SensitivityLevel
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
-    needs_protection: bool
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
     combined_risk_level: CombinedRiskLevel
 
+    @property
+    def needs_protection(self) -> bool:
+        return self.protection_method_suggestion != ProtectionMethod.leave_as_is
+
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
-        if not self.needs_protection and self.protection_method_suggestion != ProtectionMethod.leave_as_is:
+        if (
+            self.combined_risk_level == CombinedRiskLevel.low
+            and self.protection_method_suggestion != ProtectionMethod.leave_as_is
+        ):
             raise ValueError(
-                f"Entity {self.id}: needs_protection=False requires protection_method_suggestion='leave_as_is', "
+                f"Entity {self.id}: combined_risk_level='low' requires protection_method_suggestion='leave_as_is', "
                 f"got '{self.protection_method_suggestion}'"
             )
-        if self.needs_protection and self.protection_method_suggestion == ProtectionMethod.leave_as_is:
+        if (
+            self.combined_risk_level == CombinedRiskLevel.high
+            and self.protection_method_suggestion == ProtectionMethod.leave_as_is
+        ):
             raise ValueError(
-                f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='leave_as_is'"
+                f"Entity {self.id}: combined_risk_level='high' cannot have protection_method_suggestion='leave_as_is'"
             )
-        if self.combined_risk_level == CombinedRiskLevel.high and not self.needs_protection:
-            raise ValueError(f"Entity {self.id}: combined_risk_level='high' requires needs_protection=True")
-        if self.combined_risk_level == CombinedRiskLevel.low and self.needs_protection:
-            raise ValueError(f"Entity {self.id}: combined_risk_level='low' requires needs_protection=False")
         return self
 
 
@@ -163,7 +168,7 @@ class SensitivityDispositionSchema(BaseModel):
     """Complete sensitivity disposition for a document — LLM output schema.
 
     Validates that entity IDs are sequential from 1 and that each entity's
-    ``needs_protection`` flag is consistent with its ``protection_method_suggestion``.
+    ``protection_method_suggestion`` is consistent with its ``combined_risk_level``.
 
     ``sensitivity_disposition`` requires at least one entry (``min_length=1``).
     The orchestrator short-circuits before this step when detection finds no
@@ -226,51 +231,17 @@ class StrictCombinedRiskLevel(str, Enum):
     high = "high"
 
 
-class StrictEntityDispositionSchema(BaseModel):
-    """Strict variant: needs_protection is always True and leave_as_is is excluded."""
+class StrictEntityDispositionSchema(EntityDispositionSchema):
+    """Strict variant: leave_as_is and low combined_risk_level are excluded."""
 
-    model_config = ConfigDict(use_enum_values=True)
-
-    id: int = Field(ge=1)
-    source: EntitySource
-    category: EntityCategory
-    sensitivity: SensitivityLevel
-    entity_label: str = Field(min_length=1)
-    entity_value: str = Field(min_length=1)
-    protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: StrictProtectionMethod
     combined_risk_level: StrictCombinedRiskLevel
 
-    def to_entity_disposition(self) -> EntityDispositionSchema:
-        return EntityDispositionSchema(
-            id=self.id,
-            source=self.source,
-            category=self.category,
-            sensitivity=self.sensitivity,
-            entity_label=self.entity_label,
-            entity_value=self.entity_value,
-            needs_protection=True,
-            protection_reason=self.protection_reason,
-            protection_method_suggestion=self.protection_method_suggestion,
-            combined_risk_level=self.combined_risk_level,
-        )
 
-
-class StrictSensitivityDispositionSchema(BaseModel):
-    """Strict variant container: every entity must have needs_protection=True."""
+class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
+    """Strict variant container: every entity must be protected."""
 
     sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def _normalize_ids(self) -> StrictSensitivityDispositionSchema:
-        for i, entry in enumerate(self.sensitivity_disposition, start=1):
-            entry.id = i
-        return self
-
-    def to_sensitivity_disposition(self) -> SensitivityDispositionSchema:
-        return SensitivityDispositionSchema(
-            sensitivity_disposition=[e.to_entity_disposition() for e in self.sensitivity_disposition]
-        )
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
+    COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     _jinja,
 )
@@ -72,17 +73,12 @@ Domain-Specific Preservation Requirements:
 </domain_context>
 
 <input_tagged_text>
-The text below has explicit entities tagged inline using this format: ⟦entity_value|entity_label⟧
-
-Example:
-  "A 29-year-old male from Portland" becomes:
-  "A ⟦29-year-old|age⟧ ⟦male|gender⟧ from ⟦Portland|city⟧"
-
-Rules for interpreting tags:
-- The substring BEFORE the "|" is the entity_value (record EXACTLY as shown).
-- The substring AFTER the "|" is the entity_label.
-- Do NOT include the brackets ⟦ ⟧ in entity_value.
-
+The text below contains inline entity tags marking identified entities.
+{% if <<TAG_NOTATION>> == 'bracket' %}Tags use the format [[entity_value|entity_label]] (e.g. [[Portland|city]]). The substring before "|" is the entity_value — record it EXACTLY, without the [[ ]] brackets.
+{% elif <<TAG_NOTATION>> == 'xml' %}Tags use the format <entity_label>entity_value</entity_label> (e.g. <city>Portland</city>). The inner text is the entity_value — record it EXACTLY, without the surrounding tags.
+{% elif <<TAG_NOTATION>> == 'paren' %}Tags use the format ((SENSITIVE:entity_label|entity_value)) (e.g. ((SENSITIVE:city|Portland))). The substring after "|" is the entity_value — record it EXACTLY, without the ((SENSITIVE:...)) wrapper.
+{% elif <<TAG_NOTATION>> == 'sentinel' %}Tags use the format <<SENSITIVE:entity_label>>entity_value<</SENSITIVE:entity_label>> (e.g. <<SENSITIVE:city>>Portland<</SENSITIVE:city>>). The text between the sentinels is the entity_value — record it EXACTLY, without any <<SENSITIVE:...>> markers.
+{% endif %}
 Tagged Text:
 ---
 <<TAGGED_TEXT>>
@@ -155,8 +151,11 @@ QUASI-IDENTIFIERS — sensitivity: high, medium, or low
 LATENT IDENTIFIERS — sensitivity: high, medium, or low
   Inferred from context rather than explicitly stated.
   Apply the same re-identification risk logic as quasi-identifiers.
-  Mitigation requires paraphrasing, removing supporting details, or generalizing facts.
-  Replace is rarely appropriate since the value is not explicitly in the text.
+  If combined_risk_level is medium or high: mitigation requires paraphrasing, removing
+  supporting details, or generalizing facts (suppress_inference). Replace is rarely
+  appropriate since the value is not explicitly in the text.
+  If combined_risk_level is low: leave_as_is — do NOT use suppress_inference or any
+  other protection method.
 </entity_categories>
 
 <combined_risk_assessment>
@@ -167,11 +166,11 @@ sensitivity and combined_risk_level serve different purposes:
 - sensitivity measures how much damage this entity does if it leaks (feeds leakage scoring)
 - combined_risk_level determines whether to protect it in the first place
 
-The protection decision (needs_protection) follows from combined_risk_level, not sensitivity:
-- combined_risk_level: high → needs_protection: true
-- combined_risk_level: medium → needs_protection: true only if the entity meaningfully
+The protection decision follows from combined_risk_level, not sensitivity:
+- combined_risk_level: high → must be protected (protection_method_suggestion must not be "leave_as_is")
+- combined_risk_level: medium → protect only if the entity meaningfully
   contributes to a dangerous combination that cannot be broken by protecting other entities
-- combined_risk_level: low → needs_protection: false
+- combined_risk_level: low → leave as-is (protection_method_suggestion must be "leave_as_is")
 
 combined_risk_level can exceed sensitivity when context amplifies an otherwise weak entity:
   e.g. male gender (sensitivity: low) becomes combined_risk_level: high if it is the
@@ -209,10 +208,8 @@ narrowing after all high combined_risk_level anchors in this document are suppre
 </protection_principles>
 <output_requirements>
 CONSISTENCY RULES:
-- If needs_protection=false → protection_method_suggestion MUST be "leave_as_is".
-- If needs_protection=true → protection_method_suggestion MUST NOT be "leave_as_is".
-- If combined_risk_level='high' → needs_protection MUST be true.
-- If combined_risk_level='low' → needs_protection MUST be false.
+- If combined_risk_level='low' → protection_method_suggestion MUST be "leave_as_is".
+- If combined_risk_level='high' → protection_method_suggestion MUST NOT be "leave_as_is".
 - For latent entities, "replace" is rarely appropriate (value not in text).
 - For source="tagged": entity_value MUST match tag exactly.
 - For source="latent": entity_label/value MUST match the provided latent entity.
@@ -225,14 +222,14 @@ COVERAGE REQUIREMENTS:
 QUALITY REQUIREMENTS:
 - protection_reason must be specific to this document and must cover:
   (1) what specific combination or narrowing this entity contributes in this document,
-  (2) for needs_protection: false, why the combination is adequately broken without it.
+  (2) for combined_risk_level='low', why the combination is adequately broken without it.
 - combined_risk_level must reflect the entity's risk given other retained entities,
-  and must be the field that drives needs_protection (not sensitivity).
-- combined_risk_level: low requires needs_protection: false unless it is part of a
-  bundle where all elements must be generalized together to break the combination,
-  in which case combined_risk_level must be high, not low.
-- combined_risk_level: medium with needs_protection: true requires protection_reason
-  to name which retained entities form the dangerous combination AND explain why
+  not sensitivity.
+- combined_risk_level: low requires protection_method_suggestion='leave_as_is' unless
+  it is part of a bundle where all elements must be generalized together to break the
+  combination, in which case combined_risk_level must be high, not low.
+- combined_risk_level: medium requires protection_reason to name which retained entities
+  form the dangerous combination AND explain why
   protecting a stronger anchor in this document would not break the combination
   without touching this entity. "Stronger anchors" means all entities with
   combined_risk_level: high being protected in this document — not just names.
@@ -246,6 +243,7 @@ QUALITY REQUIREMENTS:
             "<<DOMAIN>>": _jinja(COL_DOMAIN, key="domain"),
             "<<DATA_SUMMARY>>": data_summary_line,
             "<<DOMAIN_SUPPLEMENT>>": _jinja(COL_DOMAIN_SUPPLEMENT_PRIVACY),
+            "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
             "<<FINAL_ENTITIES>>": _jinja(COL_ENTITIES_BY_VALUE),
             "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),
