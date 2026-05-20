@@ -2604,7 +2604,63 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=68cc38df">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d545552d">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [1]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+
+<span class="c1"># ---</span>
+<span class="c1"># jupyter:</span>
+<span class="c1">#   jupytext:</span>
+<span class="c1">#     text_representation:</span>
+<span class="c1">#       extension: .py</span>
+<span class="c1">#       format_name: percent</span>
+<span class="c1">#       format_version: '1.3'</span>
+<span class="c1">#   kernelspec:</span>
+<span class="c1">#     display_name: Python 3</span>
+<span class="c1">#     language: python</span>
+<span class="c1">#     name: python3</span>
+<span class="c1"># ---</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-1"># SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#   kernelspec:
+#     display_name: Python 3
+#     language: python
+#     name: python3
+# ---</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8084293f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2630,7 +2686,7 @@ with its label, making it ideal for reviewing detection quality.</p>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a66c7ea6">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=88f2cc08">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2644,21 +2700,21 @@ with its label, making it ideal for reviewing detection quality.</p>
 </li>
 <li>Import the core classes -- this notebook uses <code>Annotate</code> to keep original values visible.</li>
 <li><code>Anonymizer()</code> initializes with the default model provider -- no extra config needed.</li>
-<li><code>Anonymizer.configure_logging()</code> controls verbosity -- switch to <code>Anonymizer.configure_logging(LoggingConfig.debug())</code> when troubleshooting.</li>
+<li><code>configure_logging(LoggingConfig.default())</code> keeps logs at INFO. Switch to <code>LoggingConfig.debug()</code> when troubleshooting.</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2d308717">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d5a3d0cb">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [1]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [2]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2680,7 +2736,7 @@ with its label, making it ideal for reviewing detection quality.</p>
         <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY is required to run these notebooks."</span><span class="p">)</span>
     <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">import getpass
+<div class="clipboard-copy-txt" id="cell-2">import getpass
 import os
 from collections import Counter
 
@@ -2697,39 +2753,12 @@ if not os.getenv("NVIDIA_API_KEY"):
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=db1a2aa2">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=26420ecb">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [2]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-2">from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=646fa6cb">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [3]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
 <clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
@@ -2742,9 +2771,40 @@ if not os.getenv("NVIDIA_API_KEY"):
 </div>
 </clipboard-copy>
 </div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">LoggingConfig</span><span class="p">,</span> <span class="n">configure_logging</span>
+
+<span class="n">configure_logging</span><span class="p">(</span><span class="n">LoggingConfig</span><span class="o">.</span><span class="n">default</span><span class="p">())</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-3">from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, configure_logging
+
+configure_logging(LoggingConfig.default())</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=eb139f7f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [4]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">anonymizer = Anonymizer()</div>
+<div class="clipboard-copy-txt" id="cell-4">anonymizer = Anonymizer()</div>
 </div>
 </div>
 </div>
@@ -2755,29 +2815,29 @@ if not os.getenv("NVIDIA_API_KEY"):
 <div class="jp-OutputArea jp-Cell-outputArea">
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO] 🔧 Anonymizer initialized with 3 model configs
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:16:40] [INFO] 🔧 Anonymizer initialized with 3 model configs
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO]   |-- 🔎 detector:  gliner-pii-detector
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:16:40] [INFO]   |-- 🔎 detector:  gliner-pii-detector
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO]   |-- ✅ validator: gpt-oss-120b
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:16:40] [INFO]   |-- ✅ validator: gpt-oss-120b
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO]   |-- 🧩 augmenter: gpt-oss-120b
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:16:40] [INFO]   |-- 🧩 augmenter: gpt-oss-120b
 </pre>
 </div>
 </div>
@@ -2785,7 +2845,7 @@ if not os.getenv("NVIDIA_API_KEY"):
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=dab1fef2">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=be3b0054">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2800,15 +2860,15 @@ alongside entity labels -- ideal for debugging.</li>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=51a288a9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=62f86d7c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [4]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [5]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2832,7 +2892,7 @@ alongside entity labels -- ideal for debugging.</li>
     <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">config = AnonymizerConfig(replace=Annotate())
+<div class="clipboard-copy-txt" id="cell-5">config = AnonymizerConfig(replace=Annotate())
 
 input_data = AnonymizerInput(
     source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
@@ -2855,64 +2915,57 @@ result = anonymizer.preview(
 <div class="jp-OutputArea jp-Cell-outputArea">
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:16:40] [INFO] 👀 Preview mode: 📂 Loaded 3 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv (column: 'biography')
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO] detection labels in scope: (default: 65 labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:16:40] [INFO] 🔍 Running entity detection on 3 records
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO]   |-- 👀 Preview mode: processing 3 of 25 records
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:16:40] [INFO] detection labels in scope: (default: 65 labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:39:37] [INFO] 🔍 Running entity detection on 3 records
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:17:12] [INFO]   |-- 📋 Detection complete — 77 entities found across 3 records (0 failed) [31.9s]
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:40:17] [INFO]   |-- 📋 Detection complete — 79 entities found across 3 records (0 failed) [40.1s]
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:17:12] [INFO]   |-- labels: first_name=23, organization_name=7, state=6, age=5, occupation=5, city=5, last_name=3, race_ethnicity=3, language=3, company_name=3, political_view=3, education_level=3, street_address=2, degree=1, university=1, date_of_birth=1, field_of_study=1, employment_status=1, religious_belief=1
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:40:17] [INFO]   |-- labels: first_name=22, organization_name=6, age=5, occupation=5, city=4, state=4, degree=4, university=4, field_of_study=4, last_name=3, race_ethnicity=3, political_view=3, language=2, religious_belief=2, street_address=2, education_level=1, age_group=1, place_name=1, date_of_birth=1, employment_status=1, company_name=1
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:17:12] [INFO] 🔄 Running Annotate replacement
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:40:17] [INFO] 🔄 Running Annotate replacement
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:17:12] [INFO]   |-- 📋 Replacement complete (0 failed) [0.0s]
 </pre>
 </div>
 </div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:40:17] [INFO]   |-- 📋 Replacement complete (0 failed) [0.0s]
-</pre>
-</div>
-</div>
-<div class="jp-OutputArea-child">
-<div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>[13:40:17] [INFO] 🎉 Pipeline complete — 3 records processed, 0 total failures
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="application/vnd.jupyter.stderr" tabindex="0">
+<pre>[13:17:12] [INFO] 🎉 Pipeline complete — 3 records processed, 0 total failures
 </pre>
 </div>
 </div>
@@ -2920,7 +2973,7 @@ result = anonymizer.preview(
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0aa7c4ce">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=eea0a736">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -2933,15 +2986,15 @@ result = anonymizer.preview(
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=aa8f74d9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=13296551">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [5]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [6]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -2953,7 +3006,7 @@ result = anonymizer.preview(
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">result.display_record(0)</div>
+<div class="clipboard-copy-txt" id="cell-6">result.display_record(0)</div>
 </div>
 </div>
 </div>
@@ -2973,19 +3026,19 @@ result = anonymizer.preview(
 <div style="padding:16px">
 <div style="margin-bottom:16px">
 <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Original</div>
-<div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.85em;line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;border-radius:6px;opacity:0.85"><span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Bobby<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">Watford<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| last_name</span></span>, a <span style="border:1.5px solid #f97316;padding:1px 4px;border-radius:3px">40<span style="color:#f97316;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| age</span></span>‑year‑old <span style="border:1.5px solid #6366f1;padding:1px 4px;border-radius:3px">Mexican<span style="color:#6366f1;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| race_ethnicity</span></span> <span style="border:1.5px solid #ef4444;padding:1px 4px;border-radius:3px">veterinarian<span style="color:#ef4444;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| occupation</span></span> living in <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">Denver<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| city</span></span>, <span style="border:1.5px solid #6366f1;padding:1px 4px;border-radius:3px">Colorado<span style="color:#6366f1;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| state</span></span>, grew up on the outskirts of the city and developed a love for animals early on. After graduating from <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">Jefferson High<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| education_level</span></span>, he earned his <span style="border:1.5px solid #3b82f6;padding:1px 4px;border-radius:3px">DVM<span style="color:#3b82f6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| degree</span></span> at the <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">University of Colorado Boulder<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| university</span></span>, where he also completed a research stint in <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">wildlife health<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| field_of_study</span></span>. Fluent in <span style="border:1.5px solid #a855f7;padding:1px 4px;border-radius:3px">English<span style="color:#a855f7;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| language</span></span>, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Bobby<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has always described his upbringing as a blend of small‑town curiosity and the vibrant culture of his community, values that continue to shape his compassionate approach to animal care.
+<div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.85em;line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;border-radius:6px;opacity:0.85"><span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Bobby<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> <span style="border:1.5px solid #f97316;padding:1px 4px;border-radius:3px">Watford<span style="color:#f97316;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| last_name</span></span>, a <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">40<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| age</span></span>‑year‑old <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Mexican<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| race_ethnicity</span></span> <span style="border:1.5px solid #8b5cf6;padding:1px 4px;border-radius:3px">veterinarian<span style="color:#8b5cf6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| occupation</span></span> living in <span style="border:1.5px solid #f97316;padding:1px 4px;border-radius:3px">Denver<span style="color:#f97316;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| city</span></span>, <span style="border:1.5px solid #6366f1;padding:1px 4px;border-radius:3px">Colorado<span style="color:#6366f1;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| state</span></span>, grew up on the outskirts of the city and developed a love for animals early on. After graduating from <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Jefferson High<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span>, he earned his <span style="border:1.5px solid #8b5cf6;padding:1px 4px;border-radius:3px">DVM<span style="color:#8b5cf6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| degree</span></span> at the <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">University of Colorado Boulder<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| university</span></span>, where he also completed a research stint in wildlife health. Fluent in <span style="border:1.5px solid #f59e0b;padding:1px 4px;border-radius:3px">English<span style="color:#f59e0b;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| language</span></span>, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Bobby<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has always described his upbringing as a blend of small‑town curiosity and the vibrant culture of his community, values that continue to shape his compassionate approach to animal care.
 
-Since finishing his training, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Bobby<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has worked at <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">VCA Animal Hospital<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span> and later at the <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">Colorado Veterinary Clinic<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span>, where he now leads a busy mixed‑practice team. He identifies as a <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">Christian Democrat<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| political_view</span></span> and often volunteers at local shelters, a habit encouraged by his wife, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Maya<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>, and their two <span style="border:1.5px solid #f59e0b;padding:1px 4px;border-radius:3px">teenage<span style="color:#f59e0b;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| age_group</span></span> children, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Aria and Leo<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>. Outside the clinic, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Bobby<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> enjoys hiking the <span style="border:1.5px solid #8b5cf6;padding:1px 4px;border-radius:3px">Rockies<span style="color:#8b5cf6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| place_name</span></span> with his family and mentoring veterinary students from his alma mater.</div>
+Since finishing his training, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Bobby<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has worked at <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">VCA Animal Hospital<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| company_name</span></span> and later at the <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">Colorado Veterinary Clinic<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span>, where he now leads a busy mixed‑practice team. He identifies as a <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">Christian Democrat<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| political_view</span></span> and often volunteers at local shelters, a habit encouraged by his wife, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Maya<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>, and their two teenage children, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Aria<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> and <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Leo<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>. Outside the clinic, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">Bobby<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> enjoys hiking the Rockies with his family and mentoring veterinary students from his alma mater.</div>
 </div>
 <div style="margin-bottom:16px">
 <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replaced</div>
-<div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.85em;line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;border-radius:6px;opacity:0.85"><span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">&lt;Watford, last_name&gt;<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| last_name</span></span>, a <span style="border:1.5px solid #f97316;padding:1px 4px;border-radius:3px">&lt;40, age&gt;<span style="color:#f97316;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| age</span></span>‑year‑old <span style="border:1.5px solid #6366f1;padding:1px 4px;border-radius:3px">&lt;Mexican, race_ethnicity&gt;<span style="color:#6366f1;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| race_ethnicity</span></span> <span style="border:1.5px solid #ef4444;padding:1px 4px;border-radius:3px">&lt;veterinarian, occupation&gt;<span style="color:#ef4444;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| occupation</span></span> living in <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">&lt;Denver, city&gt;<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| city</span></span>, <span style="border:1.5px solid #6366f1;padding:1px 4px;border-radius:3px">&lt;Colorado, state&gt;<span style="color:#6366f1;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| state</span></span>, grew up on the outskirts of the city and developed a love for animals early on. After graduating from <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">&lt;Jefferson High, education_level&gt;<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| education_level</span></span>, he earned his <span style="border:1.5px solid #3b82f6;padding:1px 4px;border-radius:3px">&lt;DVM, degree&gt;<span style="color:#3b82f6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| degree</span></span> at the <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;University of Colorado Boulder, university&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| university</span></span>, where he also completed a research stint in <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;wildlife health, field_of_study&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| field_of_study</span></span>. Fluent in <span style="border:1.5px solid #a855f7;padding:1px 4px;border-radius:3px">&lt;English, language&gt;<span style="color:#a855f7;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| language</span></span>, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has always described his upbringing as a blend of small‑town curiosity and the vibrant culture of his community, values that continue to shape his compassionate approach to animal care.
+<div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.85em;line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;border-radius:6px;opacity:0.85"><span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> <span style="border:1.5px solid #f97316;padding:1px 4px;border-radius:3px">&lt;Watford, last_name&gt;<span style="color:#f97316;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| last_name</span></span>, a <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">&lt;40, age&gt;<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| age</span></span>‑year‑old <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Mexican, race_ethnicity&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| race_ethnicity</span></span> <span style="border:1.5px solid #8b5cf6;padding:1px 4px;border-radius:3px">&lt;veterinarian, occupation&gt;<span style="color:#8b5cf6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| occupation</span></span> living in <span style="border:1.5px solid #f97316;padding:1px 4px;border-radius:3px">&lt;Denver, city&gt;<span style="color:#f97316;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| city</span></span>, <span style="border:1.5px solid #6366f1;padding:1px 4px;border-radius:3px">&lt;Colorado, state&gt;<span style="color:#6366f1;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| state</span></span>, grew up on the outskirts of the city and developed a love for animals early on. After graduating from <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Jefferson High, organization_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span>, he earned his <span style="border:1.5px solid #8b5cf6;padding:1px 4px;border-radius:3px">&lt;DVM, degree&gt;<span style="color:#8b5cf6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| degree</span></span> at the <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">&lt;University of Colorado Boulder, university&gt;<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| university</span></span>, where he also completed a research stint in wildlife health. Fluent in <span style="border:1.5px solid #f59e0b;padding:1px 4px;border-radius:3px">&lt;English, language&gt;<span style="color:#f59e0b;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| language</span></span>, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has always described his upbringing as a blend of small‑town curiosity and the vibrant culture of his community, values that continue to shape his compassionate approach to animal care.
 
-Since finishing his training, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has worked at <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">&lt;VCA Animal Hospital, organization_name&gt;<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span> and later at the <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">&lt;Colorado Veterinary Clinic, organization_name&gt;<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span>, where he now leads a busy mixed‑practice team. He identifies as a <span style="border:1.5px solid #10b981;padding:1px 4px;border-radius:3px">&lt;Christian Democrat, political_view&gt;<span style="color:#10b981;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| political_view</span></span> and often volunteers at local shelters, a habit encouraged by his wife, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Maya, first_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>, and their two <span style="border:1.5px solid #f59e0b;padding:1px 4px;border-radius:3px">&lt;teenage, age_group&gt;<span style="color:#f59e0b;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| age_group</span></span> children, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Aria and Leo, first_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>. Outside the clinic, <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> enjoys hiking the <span style="border:1.5px solid #8b5cf6;padding:1px 4px;border-radius:3px">&lt;Rockies, place_name&gt;<span style="color:#8b5cf6;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| place_name</span></span> with his family and mentoring veterinary students from his alma mater.</div>
+Since finishing his training, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> has worked at <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;VCA Animal Hospital, company_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| company_name</span></span> and later at the <span style="border:1.5px solid #22c55e;padding:1px 4px;border-radius:3px">&lt;Colorado Veterinary Clinic, organization_name&gt;<span style="color:#22c55e;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| organization_name</span></span>, where he now leads a busy mixed‑practice team. He identifies as a <span style="border:1.5px solid #eab308;padding:1px 4px;border-radius:3px">&lt;Christian Democrat, political_view&gt;<span style="color:#eab308;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| political_view</span></span> and often volunteers at local shelters, a habit encouraged by his wife, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Maya, first_name&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>, and their two teenage children, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Aria, first_name&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> and <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Leo, first_name&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span>. Outside the clinic, <span style="border:1.5px solid #06b6d4;padding:1px 4px;border-radius:3px">&lt;Bobby, first_name&gt;<span style="color:#06b6d4;font-size:0.75em;font-weight:600;margin-left:3px;opacity:0.85">| first_name</span></span> enjoys hiking the Rockies with his family and mentoring veterinary students from his alma mater.</div>
 </div>
 <div>
 <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replacement Map</div>
-<table style="border-collapse:collapse;width:100%;font-size:0.9em"><thead><tr style="border-bottom:2px solid currentColor;text-align:left;opacity:0.7"><th style="padding:6px 12px">Original</th><th style="padding:6px 12px">Label</th><th style="padding:6px 12px">Replacement</th></tr></thead><tbody><tr><td style="padding:6px 12px">Bobby</td><td style="padding:6px 12px"><span style="border:1.5px solid #22c55e;padding:1px 6px;border-radius:3px;font-size:0.85em">first_name</span></td><td style="padding:6px 12px">&lt;Bobby, first_name&gt;</td></tr><tr><td style="padding:6px 12px">Watford</td><td style="padding:6px 12px"><span style="border:1.5px solid #10b981;padding:1px 6px;border-radius:3px;font-size:0.85em">last_name</span></td><td style="padding:6px 12px">&lt;Watford, last_name&gt;</td></tr><tr><td style="padding:6px 12px">40</td><td style="padding:6px 12px"><span style="border:1.5px solid #f97316;padding:1px 6px;border-radius:3px;font-size:0.85em">age</span></td><td style="padding:6px 12px">&lt;40, age&gt;</td></tr><tr><td style="padding:6px 12px">Mexican</td><td style="padding:6px 12px"><span style="border:1.5px solid #6366f1;padding:1px 6px;border-radius:3px;font-size:0.85em">race_ethnicity</span></td><td style="padding:6px 12px">&lt;Mexican, race_ethnicity&gt;</td></tr><tr><td style="padding:6px 12px">veterinarian</td><td style="padding:6px 12px"><span style="border:1.5px solid #ef4444;padding:1px 6px;border-radius:3px;font-size:0.85em">occupation</span></td><td style="padding:6px 12px">&lt;veterinarian, occupation&gt;</td></tr><tr><td style="padding:6px 12px">Denver</td><td style="padding:6px 12px"><span style="border:1.5px solid #eab308;padding:1px 6px;border-radius:3px;font-size:0.85em">city</span></td><td style="padding:6px 12px">&lt;Denver, city&gt;</td></tr><tr><td style="padding:6px 12px">Colorado</td><td style="padding:6px 12px"><span style="border:1.5px solid #6366f1;padding:1px 6px;border-radius:3px;font-size:0.85em">state</span></td><td style="padding:6px 12px">&lt;Colorado, state&gt;</td></tr><tr><td style="padding:6px 12px">Jefferson High</td><td style="padding:6px 12px"><span style="border:1.5px solid #eab308;padding:1px 6px;border-radius:3px;font-size:0.85em">education_level</span></td><td style="padding:6px 12px">&lt;Jefferson High, education_level&gt;</td></tr><tr><td style="padding:6px 12px">DVM</td><td style="padding:6px 12px"><span style="border:1.5px solid #3b82f6;padding:1px 6px;border-radius:3px;font-size:0.85em">degree</span></td><td style="padding:6px 12px">&lt;DVM, degree&gt;</td></tr><tr><td style="padding:6px 12px">University of Colorado Boulder</td><td style="padding:6px 12px"><span style="border:1.5px solid #06b6d4;padding:1px 6px;border-radius:3px;font-size:0.85em">university</span></td><td style="padding:6px 12px">&lt;University of Colorado Boulder, university&gt;</td></tr><tr><td style="padding:6px 12px">wildlife health</td><td style="padding:6px 12px"><span style="border:1.5px solid #22c55e;padding:1px 6px;border-radius:3px;font-size:0.85em">field_of_study</span></td><td style="padding:6px 12px">&lt;wildlife health, field_of_study&gt;</td></tr><tr><td style="padding:6px 12px">English</td><td style="padding:6px 12px"><span style="border:1.5px solid #a855f7;padding:1px 6px;border-radius:3px;font-size:0.85em">language</span></td><td style="padding:6px 12px">&lt;English, language&gt;</td></tr><tr><td style="padding:6px 12px">VCA Animal Hospital</td><td style="padding:6px 12px"><span style="border:1.5px solid #10b981;padding:1px 6px;border-radius:3px;font-size:0.85em">organization_name</span></td><td style="padding:6px 12px">&lt;VCA Animal Hospital, organization_name&gt;</td></tr><tr><td style="padding:6px 12px">Colorado Veterinary Clinic</td><td style="padding:6px 12px"><span style="border:1.5px solid #10b981;padding:1px 6px;border-radius:3px;font-size:0.85em">organization_name</span></td><td style="padding:6px 12px">&lt;Colorado Veterinary Clinic, organization_name&gt;</td></tr><tr><td style="padding:6px 12px">Christian Democrat</td><td style="padding:6px 12px"><span style="border:1.5px solid #10b981;padding:1px 6px;border-radius:3px;font-size:0.85em">political_view</span></td><td style="padding:6px 12px">&lt;Christian Democrat, political_view&gt;</td></tr><tr><td style="padding:6px 12px">Maya</td><td style="padding:6px 12px"><span style="border:1.5px solid #22c55e;padding:1px 6px;border-radius:3px;font-size:0.85em">first_name</span></td><td style="padding:6px 12px">&lt;Maya, first_name&gt;</td></tr><tr><td style="padding:6px 12px">teenage</td><td style="padding:6px 12px"><span style="border:1.5px solid #f59e0b;padding:1px 6px;border-radius:3px;font-size:0.85em">age_group</span></td><td style="padding:6px 12px">&lt;teenage, age_group&gt;</td></tr><tr><td style="padding:6px 12px">Aria and Leo</td><td style="padding:6px 12px"><span style="border:1.5px solid #22c55e;padding:1px 6px;border-radius:3px;font-size:0.85em">first_name</span></td><td style="padding:6px 12px">&lt;Aria and Leo, first_name&gt;</td></tr><tr><td style="padding:6px 12px">Rockies</td><td style="padding:6px 12px"><span style="border:1.5px solid #8b5cf6;padding:1px 6px;border-radius:3px;font-size:0.85em">place_name</span></td><td style="padding:6px 12px">&lt;Rockies, place_name&gt;</td></tr></tbody></table>
+<table style="border-collapse:collapse;width:100%;font-size:0.9em"><thead><tr style="border-bottom:2px solid currentColor;text-align:left;opacity:0.7"><th style="padding:6px 12px">Original</th><th style="padding:6px 12px">Label</th><th style="padding:6px 12px">Replacement</th></tr></thead><tbody><tr><td style="padding:6px 12px">Bobby</td><td style="padding:6px 12px"><span style="border:1.5px solid #06b6d4;padding:1px 6px;border-radius:3px;font-size:0.85em">first_name</span></td><td style="padding:6px 12px">&lt;Bobby, first_name&gt;</td></tr><tr><td style="padding:6px 12px">Watford</td><td style="padding:6px 12px"><span style="border:1.5px solid #f97316;padding:1px 6px;border-radius:3px;font-size:0.85em">last_name</span></td><td style="padding:6px 12px">&lt;Watford, last_name&gt;</td></tr><tr><td style="padding:6px 12px">40</td><td style="padding:6px 12px"><span style="border:1.5px solid #eab308;padding:1px 6px;border-radius:3px;font-size:0.85em">age</span></td><td style="padding:6px 12px">&lt;40, age&gt;</td></tr><tr><td style="padding:6px 12px">Mexican</td><td style="padding:6px 12px"><span style="border:1.5px solid #06b6d4;padding:1px 6px;border-radius:3px;font-size:0.85em">race_ethnicity</span></td><td style="padding:6px 12px">&lt;Mexican, race_ethnicity&gt;</td></tr><tr><td style="padding:6px 12px">veterinarian</td><td style="padding:6px 12px"><span style="border:1.5px solid #8b5cf6;padding:1px 6px;border-radius:3px;font-size:0.85em">occupation</span></td><td style="padding:6px 12px">&lt;veterinarian, occupation&gt;</td></tr><tr><td style="padding:6px 12px">Denver</td><td style="padding:6px 12px"><span style="border:1.5px solid #f97316;padding:1px 6px;border-radius:3px;font-size:0.85em">city</span></td><td style="padding:6px 12px">&lt;Denver, city&gt;</td></tr><tr><td style="padding:6px 12px">Colorado</td><td style="padding:6px 12px"><span style="border:1.5px solid #6366f1;padding:1px 6px;border-radius:3px;font-size:0.85em">state</span></td><td style="padding:6px 12px">&lt;Colorado, state&gt;</td></tr><tr><td style="padding:6px 12px">Jefferson High</td><td style="padding:6px 12px"><span style="border:1.5px solid #22c55e;padding:1px 6px;border-radius:3px;font-size:0.85em">organization_name</span></td><td style="padding:6px 12px">&lt;Jefferson High, organization_name&gt;</td></tr><tr><td style="padding:6px 12px">DVM</td><td style="padding:6px 12px"><span style="border:1.5px solid #8b5cf6;padding:1px 6px;border-radius:3px;font-size:0.85em">degree</span></td><td style="padding:6px 12px">&lt;DVM, degree&gt;</td></tr><tr><td style="padding:6px 12px">University of Colorado Boulder</td><td style="padding:6px 12px"><span style="border:1.5px solid #eab308;padding:1px 6px;border-radius:3px;font-size:0.85em">university</span></td><td style="padding:6px 12px">&lt;University of Colorado Boulder, university&gt;</td></tr><tr><td style="padding:6px 12px">English</td><td style="padding:6px 12px"><span style="border:1.5px solid #f59e0b;padding:1px 6px;border-radius:3px;font-size:0.85em">language</span></td><td style="padding:6px 12px">&lt;English, language&gt;</td></tr><tr><td style="padding:6px 12px">VCA Animal Hospital</td><td style="padding:6px 12px"><span style="border:1.5px solid #22c55e;padding:1px 6px;border-radius:3px;font-size:0.85em">company_name</span></td><td style="padding:6px 12px">&lt;VCA Animal Hospital, company_name&gt;</td></tr><tr><td style="padding:6px 12px">Colorado Veterinary Clinic</td><td style="padding:6px 12px"><span style="border:1.5px solid #22c55e;padding:1px 6px;border-radius:3px;font-size:0.85em">organization_name</span></td><td style="padding:6px 12px">&lt;Colorado Veterinary Clinic, organization_name&gt;</td></tr><tr><td style="padding:6px 12px">Christian Democrat</td><td style="padding:6px 12px"><span style="border:1.5px solid #eab308;padding:1px 6px;border-radius:3px;font-size:0.85em">political_view</span></td><td style="padding:6px 12px">&lt;Christian Democrat, political_view&gt;</td></tr><tr><td style="padding:6px 12px">Maya</td><td style="padding:6px 12px"><span style="border:1.5px solid #06b6d4;padding:1px 6px;border-radius:3px;font-size:0.85em">first_name</span></td><td style="padding:6px 12px">&lt;Maya, first_name&gt;</td></tr><tr><td style="padding:6px 12px">Aria</td><td style="padding:6px 12px"><span style="border:1.5px solid #06b6d4;padding:1px 6px;border-radius:3px;font-size:0.85em">first_name</span></td><td style="padding:6px 12px">&lt;Aria, first_name&gt;</td></tr><tr><td style="padding:6px 12px">Leo</td><td style="padding:6px 12px"><span style="border:1.5px solid #06b6d4;padding:1px 6px;border-radius:3px;font-size:0.85em">first_name</span></td><td style="padding:6px 12px">&lt;Leo, first_name&gt;</td></tr></tbody></table>
 </div>
 </div>
 </div>
@@ -2996,7 +3049,7 @@ Since finishing his training, <span style="border:1.5px solid #22c55e;padding:1p
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=24896f46">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=54073eb9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3010,15 +3063,15 @@ Since finishing his training, <span style="border:1.5px solid #22c55e;padding:1p
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=a2f917a3">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=8cfca376">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [6]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [7]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3032,7 +3085,7 @@ Since finishing his training, <span style="border:1.5px solid #22c55e;padding:1p
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Records: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Columns: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">df = result.trace_dataframe
+<div class="clipboard-copy-txt" id="cell-7">df = result.trace_dataframe
 print(f"Records: {len(df)}")
 print(f"Columns: {list(df.columns)}")</div>
 </div>
@@ -3047,7 +3100,7 @@ print(f"Columns: {list(df.columns)}")</div>
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
 <pre>Records: 3
-Columns: ['biography', '_anonymizer_record_id', '_raw_detected_entities', '_seed_entities', '_initial_tagged_text', '_seed_entities_json', '_tag_notation', '_merged_tagged_text', '_validation_candidates', '_validated_entities', '_augmented_entities', '_merged_entities', '_detected_entities', 'biography_with_spans', 'final_entities', '_entities_by_value', '_replacement_map', 'biography_replaced']
+Columns: ['biography', '_anonymizer_record_id', '_raw_detected_entities', '_seed_entities', '_tag_notation', '_seed_validation_candidates', '_seed_tagged_text', '_validated_entities', '_seed_entities_json', '_initial_tagged_text', '_validated_seed_entities', '_augmented_entities', '_merged_entities', '_merged_tagged_text', '_validation_candidates', '_detected_entities', 'biography_with_spans', 'final_entities', '_entities_by_value', '_replacement_map', 'biography_replaced']
 </pre>
 </div>
 </div>
@@ -3055,7 +3108,7 @@ Columns: ['biography', '_anonymizer_record_id', '_raw_detected_entities', '_seed
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e92471c1">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=62e4dc1f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3069,15 +3122,15 @@ positions, <code>score</code>, and <code>source</code> (detector / augmenter / n
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=cc4b610c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=ea34ef1c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [7]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [8]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3097,7 +3150,7 @@ positions, <code>score</code>, and <code>source</code> (detector / augmenter / n
     <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"value"</span><span class="p">,</span> <span class="s2">"label"</span><span class="p">,</span> <span class="s2">"start_position"</span><span class="p">,</span> <span class="s2">"end_position"</span><span class="p">,</span> <span class="s2">"source"</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">entity_df</span><span class="o">.</span><span class="n">columns</span><span class="p">]</span>
     <span class="nb">print</span><span class="p">(</span><span class="n">entity_df</span><span class="p">[</span><span class="n">cols</span><span class="p">]</span><span class="o">.</span><span class="n">to_string</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">row_idx = 0
+<div class="clipboard-copy-txt" id="cell-8">row_idx = 0
 raw = df.loc[row_idx, "_detected_entities"]
 entities = raw["entities"] if isinstance(raw, dict) else raw
 print(f"Record {row_idx}: {len(entities)} entities detected\n")
@@ -3117,7 +3170,7 @@ if not entity_df.empty:
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>Record 0: 22 entities detected
+<pre>Record 0: 20 entities detected
 
                              value              label  start_position  end_position     source
 0                            Bobby         first_name               0             5   detector
@@ -3127,21 +3180,19 @@ if not entity_df.empty:
 4                     veterinarian         occupation              37            49   detector
 5                           Denver               city              60            66   detector
 6                         Colorado              state              68            76   detector
-7                   Jefferson High    education_level             180           194   detector
+7                   Jefferson High  organization_name             180           194  augmenter
 8                              DVM             degree             210           213   detector
-9   University of Colorado Boulder         university             221           251   detector
-10                 wildlife health     field_of_study             297           312   detector
-11                         English           language             324           331   detector
-12                           Bobby         first_name             333           338   detector
-13                           Bobby         first_name             556           561   detector
-14             VCA Animal Hospital  organization_name             576           595   detector
-15      Colorado Veterinary Clinic  organization_name             613           639   detector
-16              Christian Democrat     political_view             707           725   detector
-17                            Maya         first_name             798           802   detector
-18                         teenage          age_group             818           825  augmenter
-19                    Aria and Leo         first_name             836           848   detector
-20                           Bobby         first_name             870           875   detector
-21                         Rockies         place_name             894           901   detector
+9   University of Colorado Boulder         university             221           251  augmenter
+10                         English           language             324           331   detector
+11                           Bobby         first_name             333           338   detector
+12                           Bobby         first_name             556           561   detector
+13             VCA Animal Hospital       company_name             576           595   detector
+14      Colorado Veterinary Clinic  organization_name             613           639  augmenter
+15              Christian Democrat     political_view             707           725   detector
+16                            Maya         first_name             798           802   detector
+17                            Aria         first_name             836           840  augmenter
+18                             Leo         first_name             845           848  augmenter
+19                           Bobby         first_name             870           875   detector
 </pre>
 </div>
 </div>
@@ -3149,7 +3200,7 @@ if not entity_df.empty:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=36fd7761">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c230e940">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3162,15 +3213,15 @@ if not entity_df.empty:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=f2896ce9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=6adb5a22">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [8]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [9]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3189,7 +3240,7 @@ if not entity_df.empty:
 <span class="k">for</span> <span class="n">label</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">label_counts</span><span class="o">.</span><span class="n">most_common</span><span class="p">():</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">label_counts = Counter()
+<div class="clipboard-copy-txt" id="cell-9">label_counts = Counter()
 for raw in df["_detected_entities"]:
     entity_list = raw["entities"] if isinstance(raw, dict) else raw
     for entity in entity_list:
@@ -3208,27 +3259,25 @@ for label, count in label_counts.most_common():
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>  first_name: 22
-  organization_name: 6
+<pre>  first_name: 23
+  organization_name: 7
+  state: 6
   age: 5
   occupation: 5
-  city: 4
-  state: 4
-  degree: 4
-  university: 4
-  field_of_study: 4
+  city: 5
   last_name: 3
   race_ethnicity: 3
+  language: 3
+  company_name: 3
   political_view: 3
-  language: 2
-  religious_belief: 2
+  education_level: 3
   street_address: 2
-  education_level: 1
-  age_group: 1
-  place_name: 1
+  degree: 1
+  university: 1
   date_of_birth: 1
+  field_of_study: 1
   employment_status: 1
-  company_name: 1
+  religious_belief: 1
 </pre>
 </div>
 </div>
@@ -3236,7 +3285,7 @@ for label, count in label_counts.most_common():
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f7f1352b">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=11a3ee18">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3256,15 +3305,15 @@ for label, count in label_counts.most_common():
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=e56e0bce">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=1db9770e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [9]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [10]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3283,7 +3332,7 @@ for label, count in label_counts.most_common():
 <span class="k">for</span> <span class="n">source</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">source_counts</span><span class="o">.</span><span class="n">most_common</span><span class="p">():</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">source</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">source_counts = Counter()
+<div class="clipboard-copy-txt" id="cell-10">source_counts = Counter()
 for raw in df["_detected_entities"]:
     entity_list = raw["entities"] if isinstance(raw, dict) else raw
     for entity in entity_list:
@@ -3302,8 +3351,8 @@ for source, count in source_counts.most_common():
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>  detector: 78
-  augmenter: 1
+<pre>  detector: 68
+  augmenter: 9
 </pre>
 </div>
 </div>
@@ -3311,7 +3360,7 @@ for source, count in source_counts.most_common():
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=37b42067">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2c9f621a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3325,93 +3374,7 @@ downstream (same name always maps to the same substitute).</li>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=129fe07c">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [10]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">row_idx</span> <span class="o">=</span> <span class="mi">0</span>
-<span class="n">raw_bv</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">row_idx</span><span class="p">,</span> <span class="s2">"_entities_by_value"</span><span class="p">]</span>
-<span class="n">by_value</span> <span class="o">=</span> <span class="n">raw_bv</span><span class="p">[</span><span class="s2">"entities_by_value"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw_bv</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw_bv</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Record </span><span class="si">{</span><span class="n">row_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">by_value</span><span class="p">)</span><span class="si">}</span><span class="s2"> unique entity values</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
-
-<span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">by_value</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="si">!r}</span><span class="s2"> -&gt; labels: </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'labels'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-10">row_idx = 0
-raw_bv = df.loc[row_idx, "_entities_by_value"]
-by_value = raw_bv["entities_by_value"] if isinstance(raw_bv, dict) else raw_bv
-print(f"Record {row_idx}: {len(by_value)} unique entity values\n")
-
-for entry in by_value:
-    print(f"  {entry['value']!r} -&gt; labels: {entry['labels']}")</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell-outputWrapper">
-<div class="jp-Collapser jp-OutputCollapser jp-Cell-outputCollapser">
-</div>
-<div class="jp-OutputArea jp-Cell-outputArea">
-<div class="jp-OutputArea-child">
-<div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
-<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>Record 0: 19 unique entity values
-
-  '40' -&gt; labels: ['age']
-  'Aria and Leo' -&gt; labels: ['first_name']
-  'Bobby' -&gt; labels: ['first_name']
-  'Christian Democrat' -&gt; labels: ['political_view']
-  'Colorado' -&gt; labels: ['state']
-  'Colorado Veterinary Clinic' -&gt; labels: ['organization_name']
-  'DVM' -&gt; labels: ['degree']
-  'Denver' -&gt; labels: ['city']
-  'English' -&gt; labels: ['language']
-  'Jefferson High' -&gt; labels: ['education_level']
-  'Maya' -&gt; labels: ['first_name']
-  'Mexican' -&gt; labels: ['race_ethnicity']
-  'Rockies' -&gt; labels: ['place_name']
-  'University of Colorado Boulder' -&gt; labels: ['university']
-  'VCA Animal Hospital' -&gt; labels: ['organization_name']
-  'Watford' -&gt; labels: ['last_name']
-  'teenage' -&gt; labels: ['age_group']
-  'veterinarian' -&gt; labels: ['occupation']
-  'wildlife health' -&gt; labels: ['field_of_study']
-</pre>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7cad52b1">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="failures">❌ Failures<a class="anchor-link" href="#failures">¶</a></h2><ul>
-<li>Records dropped during detection (LLM timeout, parse error, etc.).</li>
-<li>Check this to understand data loss in your pipeline.</li>
-</ul>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=5cc09572">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=591a29b9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3429,13 +3392,97 @@ for entry in by_value:
 </div>
 </clipboard-copy>
 </div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">row_idx</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">raw_bv</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">row_idx</span><span class="p">,</span> <span class="s2">"_entities_by_value"</span><span class="p">]</span>
+<span class="n">by_value</span> <span class="o">=</span> <span class="n">raw_bv</span><span class="p">[</span><span class="s2">"entities_by_value"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw_bv</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw_bv</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Record </span><span class="si">{</span><span class="n">row_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">by_value</span><span class="p">)</span><span class="si">}</span><span class="s2"> unique entity values</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">by_value</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="si">!r}</span><span class="s2"> -&gt; labels: </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'labels'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-11">row_idx = 0
+raw_bv = df.loc[row_idx, "_entities_by_value"]
+by_value = raw_bv["entities_by_value"] if isinstance(raw_bv, dict) else raw_bv
+print(f"Record {row_idx}: {len(by_value)} unique entity values\n")
+
+for entry in by_value:
+    print(f"  {entry['value']!r} -&gt; labels: {entry['labels']}")</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell-outputWrapper">
+<div class="jp-Collapser jp-OutputCollapser jp-Cell-outputCollapser">
+</div>
+<div class="jp-OutputArea jp-Cell-outputArea">
+<div class="jp-OutputArea-child">
+<div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
+<div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
+<pre>Record 0: 17 unique entity values
+
+  '40' -&gt; labels: ['age']
+  'Aria' -&gt; labels: ['first_name']
+  'Bobby' -&gt; labels: ['first_name']
+  'Christian Democrat' -&gt; labels: ['political_view']
+  'Colorado' -&gt; labels: ['state']
+  'Colorado Veterinary Clinic' -&gt; labels: ['organization_name']
+  'DVM' -&gt; labels: ['degree']
+  'Denver' -&gt; labels: ['city']
+  'English' -&gt; labels: ['language']
+  'Jefferson High' -&gt; labels: ['organization_name']
+  'Leo' -&gt; labels: ['first_name']
+  'Maya' -&gt; labels: ['first_name']
+  'Mexican' -&gt; labels: ['race_ethnicity']
+  'University of Colorado Boulder' -&gt; labels: ['university']
+  'VCA Animal Hospital' -&gt; labels: ['company_name']
+  'Watford' -&gt; labels: ['last_name']
+  'veterinarian' -&gt; labels: ['occupation']
+</pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=aa5a42b8">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="failures">❌ Failures<a class="anchor-link" href="#failures">¶</a></h2><ul>
+<li>Records dropped during detection (LLM timeout, parse error, etc.).</li>
+<li>Check this to understand data loss in your pipeline.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell" id="cell-id=d7ff250e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [12]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">failed_records</span><span class="p">:</span>
     <span class="k">for</span> <span class="n">fr</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">failed_records</span><span class="p">:</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  record_id=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">record_id</span><span class="si">}</span><span class="s2">, step=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">step</span><span class="si">}</span><span class="s2">, reason=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">reason</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="k">else</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">"No failed records."</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">if result.failed_records:
+<div class="clipboard-copy-txt" id="cell-12">if result.failed_records:
     for fr in result.failed_records:
         print(f"  record_id={fr.record_id}, step={fr.step}, reason={fr.reason}")
 else:
@@ -3459,7 +3506,7 @@ else:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7c778bc9">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6018bb1d">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>

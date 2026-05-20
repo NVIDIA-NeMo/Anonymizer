@@ -2574,8 +2574,7 @@ and custom entity labels tailored for legal proceedings.</p>
 </li>
 <li>Import <code>Detect</code> (for custom entity labels), <code>Rewrite</code>, and its config classes.</li>
 <li><code>Anonymizer()</code> initializes with the default model provider -- no extra config needed.</li>
-<li><code>configure_logging(enabled=False)</code> suppresses pipeline logs for cleaner output.
-Switch to <code>configure_logging(LoggingConfig.debug())</code> when troubleshooting.</li>
+<li><code>configure_logging(LoggingConfig.default())</code> keeps logs at INFO. Switch to <code>LoggingConfig.debug()</code> when troubleshooting.</li>
 </ul>
 </div>
 </div>
@@ -2627,7 +2626,7 @@ if not os.getenv("NVIDIA_API_KEY"):
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [2]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
 <clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
@@ -2640,13 +2639,29 @@ if not os.getenv("NVIDIA_API_KEY"):
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">Detect</span><span class="p">,</span> <span class="n">Rewrite</span><span class="p">,</span> <span class="n">configure_logging</span><span class="p">,</span> <span class="n">LoggingConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer.config.rewrite</span><span class="w"> </span><span class="kn">import</span> <span class="n">PrivacyGoal</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Anonymizer</span><span class="p">,</span>
+    <span class="n">AnonymizerConfig</span><span class="p">,</span>
+    <span class="n">AnonymizerInput</span><span class="p">,</span>
+    <span class="n">Detect</span><span class="p">,</span>
+    <span class="n">LoggingConfig</span><span class="p">,</span>
+    <span class="n">PrivacyGoal</span><span class="p">,</span>
+    <span class="n">Rewrite</span><span class="p">,</span>
+    <span class="n">configure_logging</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="n">configure_logging</span><span class="p">(</span><span class="n">LoggingConfig</span><span class="o">.</span><span class="n">default</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Detect, Rewrite, configure_logging, LoggingConfig
-from anonymizer.config.rewrite import PrivacyGoal
+<div class="clipboard-copy-txt" id="cell-2">from anonymizer import (
+    Anonymizer,
+    AnonymizerConfig,
+    AnonymizerInput,
+    Detect,
+    LoggingConfig,
+    PrivacyGoal,
+    Rewrite,
+    configure_logging,
+)
 
 configure_logging(LoggingConfig.default())</div>
 </div>
@@ -2932,7 +2947,6 @@ preview.display_record(0)</div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
 <pre>[16:41:39] [INFO] 📂 Loaded 25 records from https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/TAB_legal_sample25.csv (column: 'text')
 [16:41:39] [INFO] detection labels in scope: ['age', 'application_number', 'case_number', 'city', 'company_name', 'country', 'court_name', 'date', 'date_of_birth', 'date_time', 'email', 'first_name', 'last_name', 'legal_role', 'monetary_amount', 'nationality', 'organization_name', 'phone_number', 'prison_detention_facility', 'sentence_duration', 'ssn', 'state', 'street_address', 'time', 'unique_id']
-[16:41:39] [INFO]   |-- 👀 Preview mode: processing 3 of 25 records
 [16:41:39] [INFO] 🔍 Running entity detection on 3 records
 [16:42:17] [INFO]   |-- 📋 Detection complete — 141 entities found across 3 records (0 failed) [37.8s]
 [16:42:17] [INFO]   |-- labels: date=51, court_name=35, legal_role=10, nationality=7, last_name=7, organization_name=6, country=5, first_name=5, city=5, application_number=3, date_of_birth=3, monetary_amount=2, case_number=1, sentence_duration=1
@@ -3245,13 +3259,11 @@ result.dataframe.head()</div>
 [16:51:28] [INFO]   |-- 📋 Detection complete — 1285 entities found across 25 records (0 failed) [254.7s]
 [16:51:28] [INFO]   |-- labels: date=418, court_name=241, legal_role=167, last_name=84, organization_name=76, first_name=62, city=47, nationality=46, country=43, application_number=26, date_of_birth=25, prison_detention_facility=17, sentence_duration=13, monetary_amount=10, state=4, unique_id=2, case_number=1, age=1, time=1, company_name=1
 [16:51:28] [INFO] ✏️ Running rewrite pipeline
-[17:01:53] [WARNING] Row count mismatch: target=25, source=24; dropping 1 failed row(s).
-[17:05:12] [INFO] Evaluate-repair loop iteration 0: 16/24 rows need repair
-[17:08:02] [INFO] Evaluate-repair loop iteration 1: 9/24 rows need repair
-[17:09:34] [INFO] Evaluate-repair loop iteration 2: 7/24 rows need repair
-[17:11:39] [INFO]   |-- 📋 Rewrite complete (1 failed) [1211.3s]
-[17:11:39] [WARNING] 1 record(s) failed during pipeline processing.
-[17:11:39] [INFO] 🎉 Pipeline complete — 25 records processed, 1 total failures
+[17:05:12] [INFO] Evaluate-repair loop iteration 0: 16/25 rows need repair
+[17:08:02] [INFO] Evaluate-repair loop iteration 1: 9/25 rows need repair
+[17:09:34] [INFO] Evaluate-repair loop iteration 2: 7/25 rows need repair
+[17:11:39] [INFO]   |-- 📋 Rewrite complete (0 failed) [1211.3s]
+[17:11:39] [INFO] 🎉 Pipeline complete — 25 records processed, 0 total failures
 </pre>
 </div>
 </div>
@@ -3530,7 +3542,7 @@ flagged.head()</div>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>7 of 24 records flagged for human review
+<pre>7 of 25 records flagged for human review
 </pre>
 </div>
 </div>

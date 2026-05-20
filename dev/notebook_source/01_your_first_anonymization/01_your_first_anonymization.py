@@ -38,7 +38,7 @@
 #   - Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint for production data and usage.
 # - Import the core Anonymizer classes: `Anonymizer`, `AnonymizerConfig`, `AnonymizerInput`, and `Substitute`.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
-# - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
+# - `configure_logging(LoggingConfig.default())` keeps logs at INFO. Switch to `LoggingConfig.debug()` when troubleshooting.
 
 # %%
 import getpass
@@ -51,7 +51,9 @@ if not os.getenv("NVIDIA_API_KEY"):
     os.environ["NVIDIA_API_KEY"] = key
 
 # %%
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, Substitute, configure_logging
+
+configure_logging(LoggingConfig.default())
 
 # %%
 anonymizer = Anonymizer()
