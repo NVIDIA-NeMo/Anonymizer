@@ -42,8 +42,7 @@ class AttributeCheck(BaseModel):
     attributes_checked: list[str] = Field(
         default_factory=list,
         description=(
-            "Salient within-entity attributes inspected for this triple "
-            "(e.g. ['gender', 'cultural_origin'])."
+            "Salient within-entity attributes inspected for this triple (e.g. ['gender', 'cultural_origin'])."
         ),
     )
     passes: bool = Field(
@@ -53,17 +52,13 @@ class AttributeCheck(BaseModel):
         )
     )
     reasoning: str = Field(
-        description=(
-            "One short sentence naming the attribute(s) and whether they were preserved or changed."
-        )
+        description=("One short sentence naming the attribute(s) and whether they were preserved or changed.")
     )
 
 
 class AttributeFidelityJudgmentSchema(BaseModel):
     all_valid: bool = Field(
-        description=(
-            "True only if every entry in `entities` has passes=true. False if even one fails."
-        )
+        description=("True only if every entry in `entities` has passes=true. False if even one fails.")
     )
     entities: list[AttributeCheck] = Field(
         default_factory=list,
@@ -218,10 +213,7 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
         parsed = EntityReplacementMapSchema.model_validate(raw_map)
     except Exception:
         return []
-    return [
-        {"original": r.original, "label": r.label, "synthetic": r.synthetic}
-        for r in parsed.replacements
-    ]
+    return [{"original": r.original, "label": r.label, "synthetic": r.synthetic} for r in parsed.replacements]
 
 
 def _flatten_judgment(raw: object) -> tuple[bool | None, list[dict[str, object]]]:
@@ -282,16 +274,12 @@ class AttributeFidelityJudgeWorkflow:
         working_df[_REPLACEMENTS_FOR_JUDGE_COL] = replacements_per_row
 
         # Rows with no replacements have nothing to evaluate.
-        with_replacements, passthrough_rows = split_rows(
-            working_df, column=_REPLACEMENTS_FOR_JUDGE_COL, predicate=bool
-        )
+        with_replacements, passthrough_rows = split_rows(working_df, column=_REPLACEMENTS_FOR_JUDGE_COL, predicate=bool)
         passthrough_rows[COL_ATTRIBUTE_FIDELITY_JUDGE] = [
             {"all_valid": True, "entities": []} for _ in range(len(passthrough_rows))
         ]
         passthrough_rows[COL_ATTRIBUTE_FIDELITY_VALID] = True
-        passthrough_rows[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = [
-            [] for _ in range(len(passthrough_rows))
-        ]
+        passthrough_rows[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
 
         if with_replacements.empty:
             combined = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)

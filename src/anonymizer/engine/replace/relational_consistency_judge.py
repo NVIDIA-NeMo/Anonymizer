@@ -39,10 +39,7 @@ _REPLACEMENTS_FOR_JUDGE_COL = "_replacements_for_relational_consistency_judge"
 
 class RelationCheck(BaseModel):
     description: str = Field(
-        description=(
-            "Short label of the relation being verified, e.g. 'city <-> state' or "
-            "'date_of_birth <-> age'."
-        )
+        description=("Short label of the relation being verified, e.g. 'city <-> state' or 'date_of_birth <-> age'.")
     )
     entities: list[str] = Field(
         default_factory=list,
@@ -52,9 +49,7 @@ class RelationCheck(BaseModel):
         ),
     )
     passes: bool = Field(
-        description=(
-            "True if the synthetic replacements preserve the relation; false if they violate it."
-        )
+        description=("True if the synthetic replacements preserve the relation; false if they violate it.")
     )
     reasoning: str = Field(
         description=(
@@ -66,16 +61,11 @@ class RelationCheck(BaseModel):
 
 class RelationalConsistencyJudgmentSchema(BaseModel):
     all_consistent: bool = Field(
-        description=(
-            "True only if every relation in `relations` has passes=true. False if even one fails."
-        )
+        description=("True only if every relation in `relations` has passes=true. False if even one fails.")
     )
     relations: list[RelationCheck] = Field(
         default_factory=list,
-        description=(
-            "Every relation actually checked in this record. Empty when no checkable "
-            "relations exist."
-        ),
+        description=("Every relation actually checked in this record. Empty when no checkable relations exist."),
     )
 
 
@@ -284,10 +274,7 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
         parsed = EntityReplacementMapSchema.model_validate(raw_map)
     except Exception:
         return []
-    return [
-        {"original": r.original, "label": r.label, "synthetic": r.synthetic}
-        for r in parsed.replacements
-    ]
+    return [{"original": r.original, "label": r.label, "synthetic": r.synthetic} for r in parsed.replacements]
 
 
 def _flatten_judgment(raw: object) -> tuple[bool | None, list[dict[str, object]]]:
@@ -357,9 +344,7 @@ class RelationalConsistencyJudgeWorkflow:
             {"all_consistent": True, "relations": []} for _ in range(len(passthrough_rows))
         ]
         passthrough_rows[COL_RELATIONAL_CONSISTENCY_VALID] = True
-        passthrough_rows[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = [
-            [] for _ in range(len(passthrough_rows))
-        ]
+        passthrough_rows[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = [[] for _ in range(len(passthrough_rows))]
 
         if with_relations.empty:
             combined = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)

@@ -21,7 +21,6 @@ from anonymizer.engine.replace.attribute_fidelity_judge import (
     _replacements_for_judge,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt
 # ---------------------------------------------------------------------------

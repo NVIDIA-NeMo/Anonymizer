@@ -41,9 +41,7 @@ class InvalidReplacement(BaseModel):
     original: str = Field(description="Original value taken verbatim from the replacement map.")
     label: str = Field(description="Entity label assigned to the original value.")
     synthetic: str = Field(description="The synthetic value that fails type fidelity.")
-    reasoning: str = Field(
-        description="One short sentence naming the specific class or format violation."
-    )
+    reasoning: str = Field(description="One short sentence naming the specific class or format violation.")
 
 
 class TypeFidelityJudgmentSchema(BaseModel):
@@ -265,10 +263,7 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
         parsed = EntityReplacementMapSchema.model_validate(raw_map)
     except Exception:
         return []
-    return [
-        {"original": r.original, "label": r.label, "synthetic": r.synthetic}
-        for r in parsed.replacements
-    ]
+    return [{"original": r.original, "label": r.label, "synthetic": r.synthetic} for r in parsed.replacements]
 
 
 def _label_examples_for_judge(replacements: list[dict[str, str]]) -> str:
@@ -276,9 +271,7 @@ def _label_examples_for_judge(replacements: list[dict[str, str]]) -> str:
     labels = {entry["label"] for entry in replacements if entry.get("label")}
     if not labels:
         return "{}"
-    examples = {
-        label: _EXAMPLE_LOOKUP.get(label, "(no canonical example available)") for label in sorted(labels)
-    }
+    examples = {label: _EXAMPLE_LOOKUP.get(label, "(no canonical example available)") for label in sorted(labels)}
     return json.dumps(examples, ensure_ascii=True)
 
 
@@ -339,16 +332,12 @@ class TypeFidelityJudgeWorkflow:
         working_df[_EXAMPLES_FOR_JUDGE_COL] = replacements_per_row.apply(_label_examples_for_judge)
 
         # Rows with no replacements trivially pass — skip the LLM call.
-        with_replacements, passthrough_rows = split_rows(
-            working_df, column=_REPLACEMENTS_FOR_JUDGE_COL, predicate=bool
-        )
+        with_replacements, passthrough_rows = split_rows(working_df, column=_REPLACEMENTS_FOR_JUDGE_COL, predicate=bool)
         passthrough_rows[COL_TYPE_FIDELITY_JUDGE] = [
             {"all_valid": True, "invalid_replacements": []} for _ in range(len(passthrough_rows))
         ]
         passthrough_rows[COL_TYPE_FIDELITY_VALID] = True
-        passthrough_rows[COL_TYPE_FIDELITY_INVALID_REPLACEMENTS] = [
-            [] for _ in range(len(passthrough_rows))
-        ]
+        passthrough_rows[COL_TYPE_FIDELITY_INVALID_REPLACEMENTS] = [[] for _ in range(len(passthrough_rows))]
 
         if with_replacements.empty:
             combined = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)

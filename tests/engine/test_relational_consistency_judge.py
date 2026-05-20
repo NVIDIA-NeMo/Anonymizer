@@ -22,7 +22,6 @@ from anonymizer.engine.replace.relational_consistency_judge import (
     _replacements_for_judge,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt
 # ---------------------------------------------------------------------------
@@ -186,9 +185,7 @@ def test_evaluate_short_circuits_when_fewer_than_two_replacements(
     df = pd.DataFrame(
         {
             COL_REPLACED_TEXT: ["Alice"],
-            COL_REPLACEMENT_MAP: [
-                _map_payload([{"original": "Alice", "label": "first_name", "synthetic": "Maya"}])
-            ],
+            COL_REPLACEMENT_MAP: [_map_payload([{"original": "Alice", "label": "first_name", "synthetic": "Maya"}])],
         }
     )
 

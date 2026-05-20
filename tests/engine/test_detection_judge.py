@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 
 from anonymizer.config.models import ReplaceModelSelection
@@ -24,7 +23,6 @@ from anonymizer.engine.replace.detection_judge import (
     _label_examples_for_judge,
 )
 from anonymizer.engine.schemas import EntitiesByValueSchema
-
 
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt
@@ -76,9 +74,7 @@ def test_entities_for_judge_flattens_labels() -> None:
 
 
 def test_label_examples_for_judge_returns_json_keyed_by_label() -> None:
-    parsed = EntitiesByValueSchema.from_raw(
-        {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
-    )
+    parsed = EntitiesByValueSchema.from_raw({"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]})
     examples_json = _label_examples_for_judge(parsed)
     assert "first_name" in examples_json
     assert examples_json.startswith("{")
@@ -194,9 +190,7 @@ def test_evaluate_invokes_adapter_for_rows_with_entities(
             out[COL_DETECTION_JUDGE] = [
                 {
                     "all_valid": False,
-                    "invalid_entities": [
-                        {"value": "Acme", "label": "company_name", "reasoning": "spurious"}
-                    ],
+                    "invalid_entities": [{"value": "Acme", "label": "company_name", "reasoning": "spurious"}],
                 }
             ]
 

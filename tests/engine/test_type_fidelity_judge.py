@@ -22,7 +22,6 @@ from anonymizer.engine.replace.type_fidelity_judge import (
     _replacements_for_judge,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt
 # ---------------------------------------------------------------------------
@@ -81,9 +80,7 @@ def test_replacements_for_judge_flattens_dict_form() -> None:
 
 def test_replacements_for_judge_accepts_json_string() -> None:
     payload = '{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Maya"}]}'
-    assert _replacements_for_judge(payload) == [
-        {"original": "Alice", "label": "first_name", "synthetic": "Maya"}
-    ]
+    assert _replacements_for_judge(payload) == [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]
 
 
 def test_replacements_for_judge_returns_empty_for_malformed() -> None:
@@ -94,9 +91,7 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
 
 
 def test_label_examples_for_judge_only_includes_labels_in_replacements() -> None:
-    examples_json = _label_examples_for_judge(
-        [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]
-    )
+    examples_json = _label_examples_for_judge([{"original": "Alice", "label": "first_name", "synthetic": "Maya"}])
     assert "first_name" in examples_json
     assert "ssn" not in examples_json
 

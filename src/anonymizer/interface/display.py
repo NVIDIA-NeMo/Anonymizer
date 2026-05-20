@@ -602,8 +602,8 @@ def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str
 
     return (
         "<div style='margin-bottom:16px'>"
-        "<div style=\"font-size:0.8em;font-weight:600;text-transform:uppercase;"
-        "letter-spacing:0.05em;margin-bottom:6px;opacity:0.5\">Type Fidelity</div>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Type Fidelity</div>'
         f"{body}"
         "</div>"
     )
@@ -641,8 +641,8 @@ def _render_attribute_fidelity_section(row: pd.Series) -> str:
 
     return (
         "<div style='margin-bottom:16px'>"
-        "<div style=\"font-size:0.8em;font-weight:600;text-transform:uppercase;"
-        "letter-spacing:0.05em;margin-bottom:6px;opacity:0.5\">Attribute Fidelity</div>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Attribute Fidelity</div>'
         f"{body}"
         "</div>"
     )
@@ -779,8 +779,8 @@ def _render_relational_consistency_section(row: pd.Series) -> str:
 
     return (
         "<div style='margin-bottom:16px'>"
-        "<div style=\"font-size:0.8em;font-weight:600;text-transform:uppercase;"
-        "letter-spacing:0.05em;margin-bottom:6px;opacity:0.5\">Relational Consistency</div>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Relational Consistency</div>'
         f"{body}"
         "</div>"
     )
@@ -803,16 +803,12 @@ def _render_relations_table(relations: list[dict[str, object]]) -> str:
             if isinstance(e, str):
                 entity_strs.append(e)
             elif isinstance(e, dict):
-                entity_strs.append(
-                    f"{e.get('original', '')} ({e.get('label', '')}) -> {e.get('synthetic', '')}"
-                )
+                entity_strs.append(f"{e.get('original', '')} ({e.get('label', '')}) -> {e.get('synthetic', '')}")
         entities_str = html.escape(", ".join(entity_strs))
         passes = bool(entry.get("passes", False))
         status_color = "#22c55e" if passes else "#ef4444"
         status_label = "Pass" if passes else "Fail"
-        status_html = (
-            f"<span style='color:{status_color};font-weight:600'>{status_label}</span>"
-        )
+        status_html = f"<span style='color:{status_color};font-weight:600'>{status_label}</span>"
         reasoning = html.escape(str(entry.get("reasoning", "")))
         rows_html.append(
             "<tr>"

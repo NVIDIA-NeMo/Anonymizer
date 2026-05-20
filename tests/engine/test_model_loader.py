@@ -312,7 +312,15 @@ def test_validate_model_alias_references_raises_on_unknown_replace_alias_when_en
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     selected_models = stub_slim_model_selection.model_copy(
-        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias", detection_judge="known", type_fidelity_judge="known", relational_consistency_judge="known", attribute_fidelity_judge="known")}
+        update={
+            "replace": ReplaceModelSelection(
+                replacement_generator="bad-replace-alias",
+                detection_judge="known",
+                type_fidelity_judge="known",
+                relational_consistency_judge="known",
+                attribute_fidelity_judge="known",
+            )
+        }
     )
 
     with pytest.raises(ValueError, match="bad-replace-alias"):
@@ -328,7 +336,15 @@ def test_validate_model_alias_references_skips_replace_alias_when_not_enabled(
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     selected_models = stub_slim_model_selection.model_copy(
-        update={"replace": ReplaceModelSelection(replacement_generator="bad-replace-alias", detection_judge="known", type_fidelity_judge="known", relational_consistency_judge="known", attribute_fidelity_judge="known")}
+        update={
+            "replace": ReplaceModelSelection(
+                replacement_generator="bad-replace-alias",
+                detection_judge="known",
+                type_fidelity_judge="known",
+                relational_consistency_judge="known",
+                attribute_fidelity_judge="known",
+            )
+        }
     )
 
     validate_model_alias_references(

@@ -173,10 +173,7 @@ _EXAMPLE_LOOKUP: dict[str, str] = {
 
 def _entities_for_judge(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:
     """Flatten EntitiesByValueSchema into Jinja-friendly dicts."""
-    return [
-        {"value": e.value, "labels": e.labels, "labels_str": ", ".join(e.labels)}
-        for e in parsed.entities_by_value
-    ]
+    return [{"value": e.value, "labels": e.labels, "labels_str": ", ".join(e.labels)} for e in parsed.entities_by_value]
 
 
 def _label_examples_for_judge(parsed: EntitiesByValueSchema) -> str:
@@ -186,9 +183,7 @@ def _label_examples_for_judge(parsed: EntitiesByValueSchema) -> str:
         labels.update(label for label in entity.labels if label)
     if not labels:
         return "{}"
-    examples = {
-        label: _EXAMPLE_LOOKUP.get(label, "(no canonical example available)") for label in sorted(labels)
-    }
+    examples = {label: _EXAMPLE_LOOKUP.get(label, "(no canonical example available)") for label in sorted(labels)}
     return json.dumps(examples, ensure_ascii=True)
 
 
@@ -249,9 +244,7 @@ class DetectionJudgeWorkflow:
         working_df[_ENTITY_EXAMPLES_FOR_JUDGE_COL] = parsed_entities.apply(_label_examples_for_judge)
 
         # Rows with no detected entities trivially pass — skip the LLM call.
-        entity_rows, passthrough_rows = split_rows(
-            working_df, column=_ENTITIES_FOR_JUDGE_COL, predicate=bool
-        )
+        entity_rows, passthrough_rows = split_rows(working_df, column=_ENTITIES_FOR_JUDGE_COL, predicate=bool)
         passthrough_rows[COL_DETECTION_JUDGE] = [
             {"all_valid": True, "invalid_entities": []} for _ in range(len(passthrough_rows))
         ]
