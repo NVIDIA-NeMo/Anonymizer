@@ -51,7 +51,9 @@ if not os.getenv("NVIDIA_API_KEY"):
     os.environ["NVIDIA_API_KEY"] = key
 
 # %%
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, Substitute, configure_logging
+
+configure_logging(LoggingConfig.default())
 
 # %%
 anonymizer = Anonymizer()
