@@ -75,6 +75,7 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
+        run_replace_evaluation: bool = True,
     ) -> ReplacementResult:
         logger.debug("replacement strategy: %s on %d records", type(replace_method).__name__, len(dataframe))
         is_substitute = isinstance(replace_method, Substitute)
@@ -96,6 +97,10 @@ class ReplacementWorkflow:
             failed_records = list(map_result.failed_records)
         else:
             raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
+
+        if not run_replace_evaluation:
+            logger.info("⏭️  Replace evaluation disabled (run_replace_evaluation=False) — skipping LLM judges")
+            return ReplacementResult(dataframe=local_df, failed_records=failed_records)
 
         judged_df = self._run_detection_judge(
             local_df,

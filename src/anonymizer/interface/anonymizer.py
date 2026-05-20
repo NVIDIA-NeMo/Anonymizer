@@ -126,16 +126,28 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput,
+        run_replace_evaluation: bool = False,
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
+            run_replace_evaluation: When True, run the LLM evaluation judges
+                (Detection, Type Fidelity, Attribute Fidelity, Relational
+                Consistency) over the replace pipeline. Defaults to False on
+                full runs for efficiency — opt in when you need the evaluation
+                signal on the full dataset.
         """
         self._validate_preflight_config(config)
         input_df = read_input(data)
-        return self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=None)
+        return self._run_internal(
+            config=config,
+            data=data,
+            input_df=input_df,
+            preview_num_records=None,
+            run_replace_evaluation=run_replace_evaluation,
+        )
 
     def preview(
         self,
@@ -143,6 +155,7 @@ class Anonymizer:
         config: AnonymizerConfig,
         data: AnonymizerInput,
         num_records: int = 10,
+        run_replace_evaluation: bool = True,
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
 
@@ -150,10 +163,19 @@ class Anonymizer:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
             num_records: Maximum records to process (default 10).
+            run_replace_evaluation: When True (default), run the LLM evaluation
+                judges over the replace pipeline. Pass False to skip them for a
+                faster preview.
         """
         self._validate_preflight_config(config)
         input_df = read_input(data, nrows=num_records)
-        result = self._run_internal(config=config, data=data, input_df=input_df, preview_num_records=num_records)
+        result = self._run_internal(
+            config=config,
+            data=data,
+            input_df=input_df,
+            preview_num_records=num_records,
+            run_replace_evaluation=run_replace_evaluation,
+        )
         return PreviewResult(
             dataframe=result.dataframe,
             trace_dataframe=result.trace_dataframe,
@@ -172,6 +194,7 @@ class Anonymizer:
         data: AnonymizerInput,
         input_df: pd.DataFrame,
         preview_num_records: int | None,
+        run_replace_evaluation: bool = True,
     ) -> AnonymizerResult:
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
@@ -252,6 +275,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
+                run_replace_evaluation=run_replace_evaluation,
             )
             replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe

@@ -12,7 +12,16 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.config.replace_strategies import Hash, Redact, Substitute
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
+from anonymizer.engine.constants import (
+    COL_ATTRIBUTE_FIDELITY_VALID,
+    COL_DETECTION_VALID,
+    COL_FINAL_ENTITIES,
+    COL_RELATIONAL_CONSISTENCY_VALID,
+    COL_REPLACED_TEXT,
+    COL_REPLACEMENT_MAP,
+    COL_TEXT,
+    COL_TYPE_FIDELITY_VALID,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
@@ -114,6 +123,85 @@ def test_substitute_without_workflow_raises(
             model_configs=stub_model_configs,
             selected_models=stub_replace_model_selection,
         )
+
+
+def test_substitute_runner_skips_all_judges_when_evaluation_disabled(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    stub_entities: list[dict],
+) -> None:
+    """run_replace_evaluation=False short-circuits before any LLM judge runs."""
+    llm_workflow = Mock()
+    llm_workflow.generate_map_only.return_value = LlmReplaceResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme"],
+                COL_FINAL_ENTITIES: [{"entities": stub_entities}],
+                COL_REPLACEMENT_MAP: [
+                    {
+                        "replacements": [
+                            {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+                            {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    detection_judge = Mock()
+    type_fidelity_judge = Mock()
+    relational_judge = Mock()
+    attribute_judge = Mock()
+    runner = ReplacementWorkflow(
+        llm_workflow=llm_workflow,
+        detection_judge=detection_judge,
+        type_fidelity_judge=type_fidelity_judge,
+        relational_consistency_judge=relational_judge,
+        attribute_fidelity_judge=attribute_judge,
+    )
+
+    result = runner.run(
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        replace_method=Substitute(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+        run_replace_evaluation=False,
+    )
+
+    detection_judge.evaluate.assert_not_called()
+    type_fidelity_judge.evaluate.assert_not_called()
+    relational_judge.evaluate.assert_not_called()
+    attribute_judge.evaluate.assert_not_called()
+    for col in (
+        COL_DETECTION_VALID,
+        COL_TYPE_FIDELITY_VALID,
+        COL_ATTRIBUTE_FIDELITY_VALID,
+        COL_RELATIONAL_CONSISTENCY_VALID,
+    ):
+        assert col not in result.dataframe.columns
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
+
+
+def test_redact_runner_skips_detection_judge_when_evaluation_disabled(
+    stub_dataframe_with_entities: pd.DataFrame,
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Non-Substitute paths also honour run_replace_evaluation=False."""
+    detection_judge = Mock()
+    runner = ReplacementWorkflow(detection_judge=detection_judge)
+
+    result = runner.run(
+        stub_dataframe_with_entities,
+        replace_method=Redact(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+        run_replace_evaluation=False,
+    )
+
+    detection_judge.evaluate.assert_not_called()
+    assert COL_DETECTION_VALID not in result.dataframe.columns
 
 
 def test_apply_replacement_map_handles_string_map() -> None:
