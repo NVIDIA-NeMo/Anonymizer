@@ -18,7 +18,10 @@
 ## Quick Start
 
 ### 1. Install
-
+```bash
+pip install nemo-anonymizer
+```
+Or install from source: 
 ```bash
 git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
 cd Anonymizer
