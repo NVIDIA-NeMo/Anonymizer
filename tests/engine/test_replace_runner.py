@@ -13,19 +13,28 @@ from data_designer.config.models import ModelConfig
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import (
+    COL_ATTRIBUTE_FIDELITY_JUDGE,
     COL_ATTRIBUTE_FIDELITY_VALID,
+    COL_DETECTION_JUDGE,
     COL_DETECTION_VALID,
+    COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
+    COL_RELATIONAL_CONSISTENCY_JUDGE,
     COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_TEXT,
+    COL_TYPE_FIDELITY_JUDGE,
     COL_TYPE_FIDELITY_VALID,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
+from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
+from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
+from anonymizer.engine.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.replace.strategies import apply_replacement_map
+from anonymizer.engine.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
 
 
@@ -123,6 +132,89 @@ def test_substitute_without_workflow_raises(
             model_configs=stub_model_configs,
             selected_models=stub_replace_model_selection,
         )
+
+
+def test_substitute_runner_uses_merged_dd_workflow_for_judges(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    stub_entities: list[dict],
+) -> None:
+    """When an adapter is wired, all 4 judges run as columns of a SINGLE DD workflow
+    call (DataDesigner parallelizes the columns internally — no Python threads)."""
+
+    llm_workflow = Mock()
+    llm_workflow.generate_map_only.return_value = LlmReplaceResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme"],
+                COL_FINAL_ENTITIES: [{"entities": stub_entities}],
+                COL_REPLACEMENT_MAP: [
+                    {
+                        "replacements": [
+                            {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+                            {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+                        ]
+                    }
+                ],
+                COL_ENTITIES_BY_VALUE: [
+                    {
+                        "entities_by_value": [
+                            {"value": "Alice", "labels": ["first_name"]},
+                            {"value": "Acme", "labels": ["organization"]},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+
+    judge_defaults = {
+        COL_DETECTION_JUDGE: {"all_valid": True, "invalid_entities": []},
+        COL_TYPE_FIDELITY_JUDGE: {"all_valid": True, "invalid_replacements": []},
+        COL_RELATIONAL_CONSISTENCY_JUDGE: {"all_consistent": True, "relations": []},
+        COL_ATTRIBUTE_FIDELITY_JUDGE: {"all_valid": True, "entities": []},
+    }
+
+    def fake_run_workflow(df: pd.DataFrame, *, columns, **_: object) -> WorkflowRunResult:
+        out = df.copy()
+        for column in columns:
+            out[column.name] = [judge_defaults[column.name]] * len(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = fake_run_workflow
+
+    runner = ReplacementWorkflow(
+        llm_workflow=llm_workflow,
+        detection_judge=DetectionJudgeWorkflow(adapter=adapter),
+        type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=adapter),
+        relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=adapter),
+        attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=adapter),
+        adapter=adapter,
+    )
+
+    result = runner.run(
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        replace_method=Substitute(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+
+    # Exactly ONE adapter call for the judges step (proves merge, not 4 separate workflows).
+    assert adapter.run_workflow.call_count == 1
+    call_columns = adapter.run_workflow.call_args.kwargs["columns"]
+    assert {c.name for c in call_columns} == set(judge_defaults)
+
+    # And each judge's VALID column ended up on the result, with True (default payload above).
+    for col in (
+        COL_DETECTION_VALID,
+        COL_TYPE_FIDELITY_VALID,
+        COL_RELATIONAL_CONSISTENCY_VALID,
+        COL_ATTRIBUTE_FIDELITY_VALID,
+    ):
+        assert col in result.dataframe.columns, f"missing column: {col}"
+        assert bool(result.dataframe[col].iloc[0]) is True
 
 
 def test_substitute_runner_skips_all_judges_when_evaluation_disabled(

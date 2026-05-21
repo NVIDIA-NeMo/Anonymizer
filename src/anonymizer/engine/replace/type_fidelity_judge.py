@@ -316,6 +316,50 @@ class TypeFidelityJudgeWorkflow:
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
 
+    def prepare(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        """Add intermediate columns this judge's prompt template references."""
+        working_df = dataframe.copy()
+        replacements_per_row = working_df[COL_REPLACEMENT_MAP].apply(_replacements_for_judge)
+        working_df[_REPLACEMENTS_FOR_JUDGE_COL] = replacements_per_row
+        working_df[_EXAMPLES_FOR_JUDGE_COL] = replacements_per_row.apply(_label_examples_for_judge)
+        return working_df
+
+    def column_config(self, selected_models: ReplaceModelSelection) -> LLMStructuredColumnConfig:
+        return LLMStructuredColumnConfig(
+            name=COL_TYPE_FIDELITY_JUDGE,
+            prompt=_judge_prompt(),
+            model_alias=resolve_model_alias("type_fidelity_judge", selected_models),
+            output_format=TypeFidelityJudgmentSchema,
+        )
+
+    def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        out = dataframe.copy()
+        flattened = (
+            out[COL_TYPE_FIDELITY_JUDGE].apply(_flatten_judgment) if COL_TYPE_FIDELITY_JUDGE in out.columns else None
+        )
+        passthrough_mask = out[_REPLACEMENTS_FOR_JUDGE_COL].apply(lambda items: items is None or len(items) == 0)
+
+        valid: list[bool | None] = []
+        invalid: list[list[dict[str, str]]] = []
+        for idx in out.index:
+            if passthrough_mask.loc[idx]:
+                valid.append(True)
+                invalid.append([])
+            elif flattened is not None:
+                v, inv = flattened.loc[idx]
+                valid.append(v)
+                invalid.append(inv)
+            else:
+                valid.append(None)
+                invalid.append([])
+        out[COL_TYPE_FIDELITY_VALID] = valid
+        out[COL_TYPE_FIDELITY_INVALID_REPLACEMENTS] = invalid
+        if COL_TYPE_FIDELITY_JUDGE in out.columns:
+            out.loc[passthrough_mask, COL_TYPE_FIDELITY_JUDGE] = [
+                {"all_valid": True, "invalid_replacements": []}
+            ] * int(passthrough_mask.sum())
+        return out
+
     def evaluate(
         self,
         dataframe: pd.DataFrame,
@@ -324,14 +368,8 @@ class TypeFidelityJudgeWorkflow:
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
     ) -> TypeFidelityJudgeResult:
-        judge_alias = resolve_model_alias("type_fidelity_judge", selected_models)
+        working_df = self.prepare(dataframe)
 
-        working_df = dataframe.copy()
-        replacements_per_row = working_df[COL_REPLACEMENT_MAP].apply(_replacements_for_judge)
-        working_df[_REPLACEMENTS_FOR_JUDGE_COL] = replacements_per_row
-        working_df[_EXAMPLES_FOR_JUDGE_COL] = replacements_per_row.apply(_label_examples_for_judge)
-
-        # Rows with no replacements trivially pass — skip the LLM call.
         with_replacements, passthrough_rows = split_rows(working_df, column=_REPLACEMENTS_FOR_JUDGE_COL, predicate=bool)
         passthrough_rows[COL_TYPE_FIDELITY_JUDGE] = [
             {"all_valid": True, "invalid_replacements": []} for _ in range(len(passthrough_rows))
@@ -349,14 +387,7 @@ class TypeFidelityJudgeWorkflow:
         run_result = self._adapter.run_workflow(
             with_replacements,
             model_configs=model_configs,
-            columns=[
-                LLMStructuredColumnConfig(
-                    name=COL_TYPE_FIDELITY_JUDGE,
-                    prompt=_judge_prompt(),
-                    model_alias=judge_alias,
-                    output_format=TypeFidelityJudgmentSchema,
-                )
-            ],
+            columns=[self.column_config(selected_models)],
             workflow_name="replace-type-fidelity-judge",
             preview_num_records=effective_preview_num_records,
         )

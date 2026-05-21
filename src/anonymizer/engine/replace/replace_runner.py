@@ -31,7 +31,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_JUDGE,
     COL_TYPE_FIDELITY_VALID,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -60,12 +60,14 @@ class ReplacementWorkflow:
         type_fidelity_judge: TypeFidelityJudgeWorkflow | None = None,
         relational_consistency_judge: RelationalConsistencyJudgeWorkflow | None = None,
         attribute_fidelity_judge: AttributeFidelityJudgeWorkflow | None = None,
+        adapter: NddAdapter | None = None,
     ) -> None:
         self._llm_workflow = llm_workflow
         self._detection_judge = detection_judge
         self._type_fidelity_judge = type_fidelity_judge
         self._relational_consistency_judge = relational_consistency_judge
         self._attribute_fidelity_judge = attribute_fidelity_judge
+        self._adapter = adapter
 
     def run(
         self,
@@ -102,6 +104,21 @@ class ReplacementWorkflow:
             logger.info("⏭️  Replace evaluation disabled (run_replace_evaluation=False) — skipping LLM judges")
             return ReplacementResult(dataframe=local_df, failed_records=failed_records)
 
+        # Production path: single DD workflow with all active judge columns. DD
+        # parallelizes the columns internally, so the 4 LLM calls run concurrently
+        # without us reaching for threads. Falls back to per-judge serial dispatch
+        # when no adapter is wired up (kept for the mock-based unit tests).
+        if self._adapter is not None:
+            judged_df = self._run_merged_judges(
+                local_df,
+                is_substitute=is_substitute,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+                failed_records=failed_records,
+            )
+            return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
+
         judged_df = self._run_detection_judge(
             local_df,
             model_configs=model_configs,
@@ -132,6 +149,68 @@ class ReplacementWorkflow:
                 failed_records=failed_records,
             )
         return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
+
+    # ---------------------------------------------------------------------------
+    # Merged-judge dispatch (DataDesigner parallelizes the columns internally)
+    # ---------------------------------------------------------------------------
+
+    def _run_merged_judges(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        is_substitute: bool,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        preview_num_records: int | None,
+        failed_records: list[FailedRecord],
+    ) -> pd.DataFrame:
+        """Run all active replace judges as columns of a single DD workflow.
+
+        Each judge owns its own ``prepare()`` (adds intermediate columns),
+        ``column_config()`` (the DD column spec), and ``postprocess()`` (flatten
+        + apply passthrough defaults). The adapter sees one workflow with N
+        columns and lets DD schedule them in parallel.
+        """
+        active = [j for j in [self._detection_judge] if j is not None]
+        if is_substitute:
+            active.extend(
+                j
+                for j in [
+                    self._type_fidelity_judge,
+                    self._relational_consistency_judge,
+                    self._attribute_fidelity_judge,
+                ]
+                if j is not None
+            )
+        if not active:
+            return dataframe
+
+        prepared = dataframe
+        for judge in active:
+            prepared = judge.prepare(prepared)
+
+        try:
+            run_result = self._adapter.run_workflow(  # type: ignore[union-attr]
+                prepared,
+                model_configs=model_configs,
+                columns=[judge.column_config(selected_models) for judge in active],
+                workflow_name="replace-judges",
+                preview_num_records=preview_num_records,
+            )
+            failed_records.extend(run_result.failed_records)
+            judged_df = run_result.dataframe
+        except Exception:
+            logger.warning(
+                "Replace judges workflow failed; populating defaults for all judges", exc_info=True
+            )
+            judged_df = prepared
+
+        for judge in active:
+            judged_df = judge.postprocess(judged_df)
+        # Preserve the caller's dataframe metadata (notably ``original_text_column``),
+        # which downstream column-renaming relies on. DataDesigner's output loses it.
+        judged_df.attrs = {**judged_df.attrs, **dataframe.attrs}
+        return judged_df
 
     # ---------------------------------------------------------------------------
     # Detection judge (non-critical)

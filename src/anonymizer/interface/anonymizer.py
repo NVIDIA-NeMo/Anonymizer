@@ -118,6 +118,7 @@ class Anonymizer:
             type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=self._adapter),
             relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=self._adapter),
             attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=self._adapter),
+            adapter=self._adapter,
         )
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
 
