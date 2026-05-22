@@ -127,18 +127,15 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput,
-        run_replace_evaluation: bool = False,
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
+
+        No LLM evaluation judges run here — call :meth:`evaluate_replace` on the
+        result's ``trace_dataframe`` when you want the LLM alignment scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
-            run_replace_evaluation: When True, run the LLM evaluation judges
-                (Detection, Type Fidelity, Attribute Fidelity, Relational
-                Consistency) over the replace pipeline. Defaults to False on
-                full runs for efficiency — opt in when you need the evaluation
-                signal on the full dataset.
         """
         self._validate_preflight_config(config)
         input_df = read_input(data)
@@ -147,7 +144,6 @@ class Anonymizer:
             data=data,
             input_df=input_df,
             preview_num_records=None,
-            run_replace_evaluation=run_replace_evaluation,
         )
 
     def preview(
@@ -156,17 +152,16 @@ class Anonymizer:
         config: AnonymizerConfig,
         data: AnonymizerInput,
         num_records: int = 10,
-        run_replace_evaluation: bool = True,
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
+
+        No LLM evaluation judges run here — call :meth:`evaluate_replace` on the
+        result's ``trace_dataframe`` when you want the LLM alignment scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
             num_records: Maximum records to process (default 10).
-            run_replace_evaluation: When True (default), run the LLM evaluation
-                judges over the replace pipeline. Pass False to skip them for a
-                faster preview.
         """
         self._validate_preflight_config(config)
         input_df = read_input(data, nrows=num_records)
@@ -175,13 +170,56 @@ class Anonymizer:
             data=data,
             input_df=input_df,
             preview_num_records=num_records,
-            run_replace_evaluation=run_replace_evaluation,
         )
         return PreviewResult(
             dataframe=result.dataframe,
             trace_dataframe=result.trace_dataframe,
             failed_records=result.failed_records,
             preview_num_records=num_records,
+        )
+
+    def evaluate_replace(
+        self,
+        *,
+        config: AnonymizerConfig,
+        dataframe: pd.DataFrame,
+    ) -> AnonymizerResult:
+        """Run the LLM evaluation judges on an already-replaced dataframe.
+
+        Use this to score (or re-score) an anonymization run without paying the
+        detection + replacement cost again. Typical flow::
+
+            result = anonymizer.preview(config=cfg, data=src, num_records=15)
+            evaluated = anonymizer.evaluate_replace(config=cfg, dataframe=result.trace_dataframe)
+            evaluated.display_record(0)
+
+        Args:
+            config: Same config used to produce the dataframe (needed to know
+                the replace strategy — Substitute triggers all 4 judges; other
+                strategies trigger detection only).
+            dataframe: A trace dataframe from a prior ``preview()`` or ``run()``
+                call. Must include ``_entities_by_value`` and, for Substitute,
+                ``_replacement_map``.
+        """
+        self._validate_preflight_config(config)
+        if config.replace is None:
+            raise ValueError("evaluate_replace() requires config.replace to be set.")
+        # trace_dataframe from a previous preview/run is in user-facing form
+        # (e.g., 'biography' instead of '__nemo_anonymizer_text_input__'). The
+        # judge prompts reference the internal names, so reverse the rename
+        # before the merged DD call, then re-apply it on the result.
+        internal_df = _unrename_output_columns(dataframe)
+        replace_result = self._replace_runner.evaluate(
+            internal_df,
+            replace_method=config.replace,
+            model_configs=self._model_configs,
+            selected_models=self._selected_models.replace,
+        )
+        renamed_trace = _rename_output_columns(replace_result.dataframe)
+        return AnonymizerResult(
+            dataframe=_build_user_dataframe(renamed_trace),
+            trace_dataframe=renamed_trace,
+            failed_records=replace_result.failed_records,
         )
 
     def validate_config(self, config: AnonymizerConfig) -> None:
@@ -195,7 +233,6 @@ class Anonymizer:
         data: AnonymizerInput,
         input_df: pd.DataFrame,
         preview_num_records: int | None,
-        run_replace_evaluation: bool = True,
     ) -> AnonymizerResult:
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
@@ -276,7 +313,6 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
-                run_replace_evaluation=run_replace_evaluation,
             )
             replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe
@@ -411,6 +447,39 @@ def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     renamed = df.rename(columns=rename_map)
     renamed.attrs = dict(df.attrs)
     return renamed
+
+
+def _unrename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Reverse of :func:`_rename_output_columns`.
+
+    Converts user-facing column names (``biography``, ``biography_replaced``, …)
+    back to the internal names (``__nemo_anonymizer_text_input__``, …) that the
+    judges' prompt templates reference. No-op if the dataframe is already in
+    internal form.
+    """
+    if COL_TEXT in df.columns:
+        return df
+    if "original_text_column" not in df.attrs:
+        raise ValueError(
+            "dataframe.attrs['original_text_column'] is missing — the dataframe must "
+            "preserve metadata from the original preview()/run() call. Pickle round-trips "
+            "preserve attrs; parquet does not."
+        )
+    original = str(df.attrs["original_text_column"])
+    rename_map: dict[str, str] = {}
+    if original in df.columns:
+        rename_map[original] = COL_TEXT
+    if f"{original}_replaced" in df.columns:
+        rename_map[f"{original}_replaced"] = COL_REPLACED_TEXT
+    if f"{original}_with_spans" in df.columns:
+        rename_map[f"{original}_with_spans"] = COL_TAGGED_TEXT
+    if f"{original}_rewritten" in df.columns:
+        rename_map[f"{original}_rewritten"] = COL_REWRITTEN_TEXT
+    if not rename_map:
+        return df
+    unrenamed = df.rename(columns=rename_map)
+    unrenamed.attrs = dict(df.attrs)
+    return unrenamed
 
 
 def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:

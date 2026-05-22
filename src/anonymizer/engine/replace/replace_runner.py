@@ -18,18 +18,8 @@ from anonymizer.config.replace_strategies import (
     Substitute,
 )
 from anonymizer.engine.constants import (
-    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
-    COL_ATTRIBUTE_FIDELITY_JUDGE,
-    COL_ATTRIBUTE_FIDELITY_VALID,
-    COL_DETECTION_INVALID_ENTITIES,
-    COL_DETECTION_JUDGE,
-    COL_DETECTION_VALID,
-    COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
-    COL_RELATIONAL_CONSISTENCY_JUDGE,
-    COL_RELATIONAL_CONSISTENCY_VALID,
-    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
-    COL_TYPE_FIDELITY_JUDGE,
-    COL_TYPE_FIDELITY_VALID,
+    COL_ENTITIES_BY_VALUE,
+    COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -77,15 +67,18 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
-        run_replace_evaluation: bool = True,
     ) -> ReplacementResult:
+        """Apply the replacement strategy (no LLM judges).
+
+        Evaluation is a separate concern — call ``evaluate()`` on the resulting
+        dataframe when you want the LLM alignment scores.
+        """
         logger.debug("replacement strategy: %s on %d records", type(replace_method).__name__, len(dataframe))
-        is_substitute = isinstance(replace_method, Substitute)
 
         if isinstance(replace_method, (Annotate, Redact, Hash)):
             local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
             failed_records: list[FailedRecord] = []
-        elif is_substitute:
+        elif isinstance(replace_method, Substitute):
             if self._llm_workflow is None:
                 raise ValueError("Substitute requires an llm_workflow, but none was provided.")
             map_result = self._llm_workflow.generate_map_only(
@@ -100,54 +93,51 @@ class ReplacementWorkflow:
         else:
             raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-        if not run_replace_evaluation:
-            logger.info("⏭️  Replace evaluation disabled (run_replace_evaluation=False) — skipping LLM judges")
-            return ReplacementResult(dataframe=local_df, failed_records=failed_records)
+        return ReplacementResult(dataframe=local_df, failed_records=failed_records)
 
-        # Production path: single DD workflow with all active judge columns. DD
-        # parallelizes the columns internally, so the 4 LLM calls run concurrently
-        # without us reaching for threads. Falls back to per-judge serial dispatch
-        # when no adapter is wired up (kept for the mock-based unit tests).
-        if self._adapter is not None:
-            judged_df = self._run_merged_judges(
-                local_df,
-                is_substitute=is_substitute,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-                failed_records=failed_records,
+    def evaluate(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        replace_method: ReplaceMethod,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        preview_num_records: int | None = None,
+    ) -> ReplacementResult:
+        """Run the LLM evaluation judges on an already-replaced dataframe.
+
+        For Substitute, runs all 4 judges (detection + type fidelity + relational
+        consistency + attribute fidelity) as columns of a single DataDesigner
+        workflow. For other strategies, runs the detection judge only.
+
+        Raises ``ValueError`` if the workflow has no adapter wired up or if the
+        dataframe is missing the columns the judges read.
+        """
+        if self._adapter is None:
+            raise ValueError(
+                "ReplacementWorkflow.evaluate() requires an adapter; construct "
+                "ReplacementWorkflow(..., adapter=NddAdapter(...))."
             )
-            return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
-
-        judged_df = self._run_detection_judge(
-            local_df,
+        is_substitute = isinstance(replace_method, Substitute)
+        required = {COL_ENTITIES_BY_VALUE}
+        if is_substitute:
+            required.add(COL_REPLACEMENT_MAP)
+        missing = required - set(dataframe.columns)
+        if missing:
+            raise ValueError(
+                f"evaluate() requires the dataframe to contain {sorted(required)}; "
+                f"missing: {sorted(missing)}. Pass the trace_dataframe from a "
+                f"previous preview()/run() call."
+            )
+        failed_records: list[FailedRecord] = []
+        judged_df = self._run_merged_judges(
+            dataframe,
+            is_substitute=is_substitute,
             model_configs=model_configs,
             selected_models=selected_models,
             preview_num_records=preview_num_records,
             failed_records=failed_records,
         )
-        if is_substitute:
-            judged_df = self._run_type_fidelity_judge(
-                judged_df,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-                failed_records=failed_records,
-            )
-            judged_df = self._run_relational_consistency_judge(
-                judged_df,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-                failed_records=failed_records,
-            )
-            judged_df = self._run_attribute_fidelity_judge(
-                judged_df,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-                failed_records=failed_records,
-            )
         return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
 
     # ---------------------------------------------------------------------------
@@ -212,126 +202,3 @@ class ReplacementWorkflow:
         judged_df.attrs = {**judged_df.attrs, **dataframe.attrs}
         return judged_df
 
-    # ---------------------------------------------------------------------------
-    # Detection judge (non-critical)
-    # ---------------------------------------------------------------------------
-
-    def _run_detection_judge(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
-        preview_num_records: int | None,
-        failed_records: list[FailedRecord],
-    ) -> pd.DataFrame:
-        if self._detection_judge is None:
-            return dataframe
-        try:
-            judge_result = self._detection_judge.evaluate(
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-            )
-            failed_records.extend(judge_result.failed_records)
-            return judge_result.dataframe
-        except Exception:
-            logger.warning("Detection judge step failed; populating defaults", exc_info=True)
-            dataframe[COL_DETECTION_JUDGE] = None
-            dataframe[COL_DETECTION_VALID] = None
-            dataframe[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(dataframe))]
-            return dataframe
-
-    # ---------------------------------------------------------------------------
-    # Type-fidelity judge (Substitute only, non-critical)
-    # ---------------------------------------------------------------------------
-
-    def _run_type_fidelity_judge(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
-        preview_num_records: int | None,
-        failed_records: list[FailedRecord],
-    ) -> pd.DataFrame:
-        if self._type_fidelity_judge is None:
-            return dataframe
-        try:
-            judge_result = self._type_fidelity_judge.evaluate(
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-            )
-            failed_records.extend(judge_result.failed_records)
-            return judge_result.dataframe
-        except Exception:
-            logger.warning("Type-fidelity judge step failed; populating defaults", exc_info=True)
-            dataframe[COL_TYPE_FIDELITY_JUDGE] = None
-            dataframe[COL_TYPE_FIDELITY_VALID] = None
-            dataframe[COL_TYPE_FIDELITY_INVALID_REPLACEMENTS] = [[] for _ in range(len(dataframe))]
-            return dataframe
-
-    # ---------------------------------------------------------------------------
-    # Relational-consistency judge (Substitute only, non-critical)
-    # ---------------------------------------------------------------------------
-
-    def _run_relational_consistency_judge(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
-        preview_num_records: int | None,
-        failed_records: list[FailedRecord],
-    ) -> pd.DataFrame:
-        if self._relational_consistency_judge is None:
-            return dataframe
-        try:
-            judge_result = self._relational_consistency_judge.evaluate(
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-            )
-            failed_records.extend(judge_result.failed_records)
-            return judge_result.dataframe
-        except Exception:
-            logger.warning("Relational-consistency judge step failed; populating defaults", exc_info=True)
-            dataframe[COL_RELATIONAL_CONSISTENCY_JUDGE] = None
-            dataframe[COL_RELATIONAL_CONSISTENCY_VALID] = None
-            dataframe[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = [[] for _ in range(len(dataframe))]
-            return dataframe
-
-    # ---------------------------------------------------------------------------
-    # Attribute-fidelity judge (Substitute only, non-critical)
-    # ---------------------------------------------------------------------------
-
-    def _run_attribute_fidelity_judge(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
-        preview_num_records: int | None,
-        failed_records: list[FailedRecord],
-    ) -> pd.DataFrame:
-        if self._attribute_fidelity_judge is None:
-            return dataframe
-        try:
-            judge_result = self._attribute_fidelity_judge.evaluate(
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-            )
-            failed_records.extend(judge_result.failed_records)
-            return judge_result.dataframe
-        except Exception:
-            logger.warning("Attribute-fidelity judge step failed; populating defaults", exc_info=True)
-            dataframe[COL_ATTRIBUTE_FIDELITY_JUDGE] = None
-            dataframe[COL_ATTRIBUTE_FIDELITY_VALID] = None
-            dataframe[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = [[] for _ in range(len(dataframe))]
-            return dataframe

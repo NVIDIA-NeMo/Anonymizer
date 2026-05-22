@@ -134,39 +134,36 @@ def test_substitute_without_workflow_raises(
         )
 
 
-def test_substitute_runner_uses_merged_dd_workflow_for_judges(
+def test_evaluate_uses_merged_dd_workflow_for_judges(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
-    stub_entities: list[dict],
 ) -> None:
-    """When an adapter is wired, all 4 judges run as columns of a SINGLE DD workflow
-    call (DataDesigner parallelizes the columns internally — no Python threads)."""
+    """``evaluate()`` runs all 4 judges as columns of a SINGLE DD workflow call
+    (DataDesigner parallelizes the columns internally — no Python threads)."""
 
-    llm_workflow = Mock()
-    llm_workflow.generate_map_only.return_value = LlmReplaceResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works at Acme"],
-                COL_FINAL_ENTITIES: [{"entities": stub_entities}],
-                COL_REPLACEMENT_MAP: [
-                    {
-                        "replacements": [
-                            {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
-                            {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
-                        ]
-                    }
-                ],
-                COL_ENTITIES_BY_VALUE: [
-                    {
-                        "entities_by_value": [
-                            {"value": "Alice", "labels": ["first_name"]},
-                            {"value": "Acme", "labels": ["organization"]},
-                        ]
-                    }
-                ],
-            }
-        ),
-        failed_records=[],
+    # Trace-shaped input: simulates a dataframe returned by a prior ``run()``.
+    saved_trace = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_FINAL_ENTITIES: [{"entities": []}],
+            COL_REPLACED_TEXT: ["Maya works at NovaCorp"],
+            COL_REPLACEMENT_MAP: [
+                {
+                    "replacements": [
+                        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+                        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+                    ]
+                }
+            ],
+            COL_ENTITIES_BY_VALUE: [
+                {
+                    "entities_by_value": [
+                        {"value": "Alice", "labels": ["first_name"]},
+                        {"value": "Acme", "labels": ["organization"]},
+                    ]
+                }
+            ],
+        }
     )
 
     judge_defaults = {
@@ -186,7 +183,6 @@ def test_substitute_runner_uses_merged_dd_workflow_for_judges(
     adapter.run_workflow.side_effect = fake_run_workflow
 
     runner = ReplacementWorkflow(
-        llm_workflow=llm_workflow,
         detection_judge=DetectionJudgeWorkflow(adapter=adapter),
         type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=adapter),
         relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=adapter),
@@ -194,8 +190,8 @@ def test_substitute_runner_uses_merged_dd_workflow_for_judges(
         adapter=adapter,
     )
 
-    result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+    result = runner.evaluate(
+        saved_trace,
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -217,12 +213,15 @@ def test_substitute_runner_uses_merged_dd_workflow_for_judges(
         assert bool(result.dataframe[col].iloc[0]) is True
 
 
-def test_substitute_runner_skips_all_judges_when_evaluation_disabled(
+def test_runner_does_not_invoke_judges(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
     stub_entities: list[dict],
 ) -> None:
-    """run_replace_evaluation=False short-circuits before any LLM judge runs."""
+    """``ReplacementWorkflow.run()`` only does the replace step — never the judges.
+
+    The judges live behind a separate ``evaluate()`` call.
+    """
     llm_workflow = Mock()
     llm_workflow.generate_map_only.return_value = LlmReplaceResult(
         dataframe=pd.DataFrame(
@@ -245,12 +244,14 @@ def test_substitute_runner_skips_all_judges_when_evaluation_disabled(
     type_fidelity_judge = Mock()
     relational_judge = Mock()
     attribute_judge = Mock()
+    adapter = Mock()
     runner = ReplacementWorkflow(
         llm_workflow=llm_workflow,
         detection_judge=detection_judge,
         type_fidelity_judge=type_fidelity_judge,
         relational_consistency_judge=relational_judge,
         attribute_fidelity_judge=attribute_judge,
+        adapter=adapter,
     )
 
     result = runner.run(
@@ -258,13 +259,13 @@ def test_substitute_runner_skips_all_judges_when_evaluation_disabled(
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
-        run_replace_evaluation=False,
     )
 
     detection_judge.evaluate.assert_not_called()
     type_fidelity_judge.evaluate.assert_not_called()
     relational_judge.evaluate.assert_not_called()
     attribute_judge.evaluate.assert_not_called()
+    adapter.run_workflow.assert_not_called()
     for col in (
         COL_DETECTION_VALID,
         COL_TYPE_FIDELITY_VALID,
@@ -275,25 +276,27 @@ def test_substitute_runner_skips_all_judges_when_evaluation_disabled(
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
 
 
-def test_redact_runner_skips_detection_judge_when_evaluation_disabled(
-    stub_dataframe_with_entities: pd.DataFrame,
+def test_evaluate_raises_on_missing_required_columns(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    """Non-Substitute paths also honour run_replace_evaluation=False."""
-    detection_judge = Mock()
-    runner = ReplacementWorkflow(detection_judge=detection_judge)
-
-    result = runner.run(
-        stub_dataframe_with_entities,
-        replace_method=Redact(),
-        model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
-        run_replace_evaluation=False,
+    """``evaluate()`` rejects dataframes lacking the columns the judges need,
+    with a message that hints at the trace_dataframe workflow."""
+    runner = ReplacementWorkflow(
+        detection_judge=DetectionJudgeWorkflow(adapter=Mock()),
+        type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=Mock()),
+        relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=Mock()),
+        attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=Mock()),
+        adapter=Mock(),
     )
-
-    detection_judge.evaluate.assert_not_called()
-    assert COL_DETECTION_VALID not in result.dataframe.columns
+    bare_df = pd.DataFrame({COL_TEXT: ["Alice"]})  # missing _entities_by_value and _replacement_map
+    with pytest.raises(ValueError, match="trace_dataframe"):
+        runner.evaluate(
+            bare_df,
+            replace_method=Substitute(),
+            model_configs=stub_model_configs,
+            selected_models=stub_replace_model_selection,
+        )
 
 
 def test_apply_replacement_map_handles_string_map() -> None:
