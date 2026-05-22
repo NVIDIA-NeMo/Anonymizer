@@ -134,6 +134,42 @@ Access the full pipeline trace with all internal columns.
 preview.trace_dataframe
 ```
 ---
+## Telemetry and Privacy
+
+NeMo Anonymizer includes an optional function to share anonymous run-level telemetry with NVIDIA for product improvement. One event is emitted per `Anonymizer.run()` / `Anonymizer.preview()` invocation and contains only technical metadata:
+
+- **Run outcome** — final task status (`completed` / `error` / `canceled`) and wall-clock duration
+- **Pipeline configuration** — transformation type (`annotate`, `redact`, `hash`, `substitute`, `rewrite`), whether `data_summary` / `privacy_goal` / `Substitute(instructions=...)` were customized, `max_repair_iterations`, `strict_entity_protection`
+- **Models used per step** — model aliases for the detector, validator, augmenter, rewriter, etc. (whichever steps ran in this mode)
+- **Model hosts** — coarse classification of the inference endpoints used (`nvidia-build`, `nvidia-internal`, `openrouter`, `local`, `other`)
+- **Aggregate counts** — number of input records, success and failure counts, average tokens per record (estimated with `tiktoken cl100k_base`), and failure attribution by pipeline workflow
+- **Deployment type** — `sdk` or `cli`
+
+**No user data, record contents, prompts, model outputs, or device information are collected.** Aggregate usage data (such as which models are most popular) will be shared back with the community; it is not used to track any individual user behavior.
+
+You may opt out of telemetry collection at any time. Opting out applies only to data collection by NeMo Anonymizer itself.
+
+To disable telemetry in the SDK, set `emit_telemetry=False` on `AnonymizerConfig`:
+
+```python
+config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+```
+
+To disable telemetry for one CLI invocation, pass `--no-emit-telemetry`:
+
+```bash
+uv run anonymizer run --source data.csv --text-column text --replace redact --no-emit-telemetry
+```
+
+To disable telemetry for the current shell, set `NEMO_TELEMETRY_ENABLED=false` (other accepted disabling values: `0`, `no`) in your environment before running:
+
+```bash
+export NEMO_TELEMETRY_ENABLED=false
+```
+
+**Use of third-party endpoints, including NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [build.nvidia.com](https://build.nvidia.com), [OpenRouter](https://openrouter.ai), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
+
+---
 ## Next up
 
 <div class="grid cards" markdown>

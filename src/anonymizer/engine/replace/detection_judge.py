@@ -313,7 +313,7 @@ class DetectionJudgeWorkflow:
         passthrough_rows[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
 
         if entity_rows.empty:
-            combined = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            combined = merge_and_reorder(passthrough_rows)
             return DetectionJudgeResult(dataframe=combined, failed_records=[])
 
         effective_preview_num_records = (
@@ -332,7 +332,5 @@ class DetectionJudgeWorkflow:
         judged_df[COL_DETECTION_VALID] = flattened.apply(lambda pair: pair[0])
         judged_df[COL_DETECTION_INVALID_ENTITIES] = flattened.apply(lambda pair: pair[1])
 
-        combined = merge_and_reorder(
-            judged_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
-        )
+        combined = merge_and_reorder(judged_df, passthrough_rows)
         return DetectionJudgeResult(dataframe=combined, failed_records=run_result.failed_records)

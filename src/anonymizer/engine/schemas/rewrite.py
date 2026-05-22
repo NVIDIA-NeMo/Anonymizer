@@ -48,31 +48,33 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validat
 
 
 class Domain(str, Enum):
-    """Valid domain types for domain classification and meaning unit extraction."""
+    """Valid domain types for domain classification and meaning unit extraction.
 
-    BIOGRAPHY = "BIOGRAPHY"
-    CHAT_EMAIL_CSAT = "CHAT_EMAIL_CSAT"
-    PRODUCT_REVIEW = "PRODUCT_REVIEW"
-    NEWS_JOURNALISM = "NEWS_JOURNALISM"
-    MARKETING_ADVERTISING = "MARKETING_ADVERTISING"
-    TECHNICAL_ENGINEERING_SOFTWARE = "TECHNICAL_ENGINEERING_SOFTWARE"
-    SCIENTIFIC_ACADEMIC = "SCIENTIFIC_ACADEMIC"
+    Adding a value here also requires a matching entry in ``DOMAIN_METADATA``
+    (``anonymizer.engine.rewrite.domain_classification``); that module fails
+    to import if the two drift.
+    """
+
+    BIOGRAPHY_PROFILE = "BIOGRAPHY_PROFILE"
+    INSURANCE = "INSURANCE"
+    GOVERNMENT_PUBLIC_RECORDS = "GOVERNMENT_PUBLIC_RECORDS"
+    NEWS_PUBLIC_AFFAIRS = "NEWS_PUBLIC_AFFAIRS"
+    MARKETING_COMMERCIAL = "MARKETING_COMMERCIAL"
+    TECHNICAL_SOFTWARE_ENGINEERING = "TECHNICAL_SOFTWARE_ENGINEERING"
+    RESEARCH_SCIENTIFIC = "RESEARCH_SCIENTIFIC"
     SECURITY_INFOSEC = "SECURITY_INFOSEC"
     FINANCIAL = "FINANCIAL"
-    ECONOMIC = "ECONOMIC"
-    POLICY_REGULATORY_COMPLIANCE = "POLICY_REGULATORY_COMPLIANCE"
+    ECONOMIC_ANALYSIS = "ECONOMIC_ANALYSIS"
+    POLICY_REGULATORY = "POLICY_REGULATORY"
     LEGAL = "LEGAL"
-    HR_PEOPLE_OPS = "HR_PEOPLE_OPS"
-    MANAGEMENT_OPERATIONS = "MANAGEMENT_OPERATIONS"
-    CLINICAL_EHR_MEDICAL = "CLINICAL_EHR_MEDICAL"
-    EDUCATIONAL_PEDAGOGICAL = "EDUCATIONAL_PEDAGOGICAL"
-    FICTION_CREATIVE = "FICTION_CREATIVE"
+    HR_EMPLOYMENT = "HR_EMPLOYMENT"
+    BUSINESS_OPERATIONS = "BUSINESS_OPERATIONS"
+    MEDICAL_CLINICAL = "MEDICAL_CLINICAL"
+    EDUCATION = "EDUCATION"
+    CREATIVE_FICTION = "CREATIVE_FICTION"
     ENTERTAINMENT_MEDIA = "ENTERTAINMENT_MEDIA"
-    SOCIAL_CULTURAL_OPED = "SOCIAL_CULTURAL_OPED"
-    PROCEDURAL_INSTRUCTIONAL = "PROCEDURAL_INSTRUCTIONAL"
+    SOCIAL_COMMENTARY = "SOCIAL_COMMENTARY"
     META_TEXT = "META_TEXT"
-    SOCIAL_MEDIA = "SOCIAL_MEDIA"
-    TRANSCRIPTS_INTERVIEWS = "TRANSCRIPTS_INTERVIEWS"
     OTHER = "OTHER"
 
 
@@ -96,7 +98,6 @@ class EntitySource(str, Enum):
 class EntityCategory(str, Enum):
     direct_identifier = "direct_identifier"
     quasi_identifier = "quasi_identifier"
-    sensitive_attribute = "sensitive_attribute"
     latent_identifier = "latent_identifier"
 
 
@@ -135,21 +136,30 @@ class EntityDispositionSchema(BaseModel):
     sensitivity: SensitivityLevel
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
-    needs_protection: bool
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
     combined_risk_level: CombinedRiskLevel
 
+    @property
+    def needs_protection(self) -> bool:
+        return self.protection_method_suggestion != ProtectionMethod.leave_as_is
+
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
-        if not self.needs_protection and self.protection_method_suggestion != ProtectionMethod.leave_as_is:
+        if (
+            self.combined_risk_level == CombinedRiskLevel.low
+            and self.protection_method_suggestion != ProtectionMethod.leave_as_is
+        ):
             raise ValueError(
-                f"Entity {self.id}: needs_protection=False requires protection_method_suggestion='leave_as_is', "
+                f"Entity {self.id}: combined_risk_level='low' requires protection_method_suggestion='leave_as_is', "
                 f"got '{self.protection_method_suggestion}'"
             )
-        if self.needs_protection and self.protection_method_suggestion == ProtectionMethod.leave_as_is:
+        if (
+            self.combined_risk_level == CombinedRiskLevel.high
+            and self.protection_method_suggestion == ProtectionMethod.leave_as_is
+        ):
             raise ValueError(
-                f"Entity {self.id}: needs_protection=True cannot have protection_method_suggestion='leave_as_is'"
+                f"Entity {self.id}: combined_risk_level='high' cannot have protection_method_suggestion='leave_as_is'"
             )
         return self
 
@@ -158,7 +168,7 @@ class SensitivityDispositionSchema(BaseModel):
     """Complete sensitivity disposition for a document — LLM output schema.
 
     Validates that entity IDs are sequential from 1 and that each entity's
-    ``needs_protection`` flag is consistent with its ``protection_method_suggestion``.
+    ``protection_method_suggestion`` is consistent with its ``combined_risk_level``.
 
     ``sensitivity_disposition`` requires at least one entry (``min_length=1``).
     The orchestrator short-circuits before this step when detection finds no
@@ -216,51 +226,22 @@ class StrictProtectionMethod(str, Enum):
     suppress_inference = "suppress_inference"
 
 
-class StrictEntityDispositionSchema(BaseModel):
-    """Strict variant: needs_protection is always True and leave_as_is is excluded."""
+class StrictCombinedRiskLevel(str, Enum):
+    medium = "medium"
+    high = "high"
 
-    model_config = ConfigDict(use_enum_values=True)
 
-    id: int = Field(ge=1)
-    source: EntitySource
-    category: EntityCategory
-    sensitivity: SensitivityLevel
-    entity_label: str = Field(min_length=1)
-    entity_value: str = Field(min_length=1)
-    protection_reason: str = Field(min_length=10, max_length=500)
+class StrictEntityDispositionSchema(EntityDispositionSchema):
+    """Strict variant: leave_as_is and low combined_risk_level are excluded."""
+
     protection_method_suggestion: StrictProtectionMethod
-    combined_risk_level: CombinedRiskLevel
-
-    def to_entity_disposition(self) -> EntityDispositionSchema:
-        return EntityDispositionSchema(
-            id=self.id,
-            source=self.source,
-            category=self.category,
-            sensitivity=self.sensitivity,
-            entity_label=self.entity_label,
-            entity_value=self.entity_value,
-            needs_protection=True,
-            protection_reason=self.protection_reason,
-            protection_method_suggestion=self.protection_method_suggestion,
-            combined_risk_level=self.combined_risk_level,
-        )
+    combined_risk_level: StrictCombinedRiskLevel
 
 
-class StrictSensitivityDispositionSchema(BaseModel):
-    """Strict variant container: every entity must have needs_protection=True."""
+class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
+    """Strict variant container: every entity must be protected."""
 
     sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def _normalize_ids(self) -> StrictSensitivityDispositionSchema:
-        for i, entry in enumerate(self.sensitivity_disposition, start=1):
-            entry.id = i
-        return self
-
-    def to_sensitivity_disposition(self) -> SensitivityDispositionSchema:
-        return SensitivityDispositionSchema(
-            sensitivity_disposition=[e.to_entity_disposition() for e in self.sensitivity_disposition]
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +268,16 @@ class MeaningUnitAspect(str, Enum):
     RIGHTS_IMPACT = "rights_impact"
 
 
+class MeaningUnitImportance(str, Enum):
+    critical = "critical"
+    important = "important"
+
+
 class MeaningUnitSchema(BaseModel):
     id: int = Field(ge=1)
     aspect: MeaningUnitAspect
     unit: str = Field(min_length=1)
+    importance: MeaningUnitImportance
 
 
 class MeaningUnitsSchema(BaseModel):
@@ -308,6 +295,7 @@ class MeaningUnitsSchema(BaseModel):
 class QualityQAItemSchema(BaseModel):
     id: int
     aspect: str
+    importance: MeaningUnitImportance
     question: str
     reference_answer: str
 

@@ -79,13 +79,15 @@ def test_parse_privacy_answers_normalizes_numpy_array_payload() -> None:
 
 
 def test_parse_quality_qa_from_dict() -> None:
-    raw = {"items": [{"id": 1, "aspect": "role", "question": "What?", "reference_answer": "X"}]}
+    raw = {
+        "items": [{"id": 1, "aspect": "role", "question": "What?", "reference_answer": "X", "importance": "critical"}]
+    }
     assert len(parse_quality_qa(raw).items) == 1
 
 
 def test_parse_quality_qa_from_schema() -> None:
     schema = QualityQAPairsSchema.model_validate(
-        {"items": [{"id": 1, "aspect": "role", "question": "What?", "reference_answer": "X"}]}
+        {"items": [{"id": 1, "aspect": "role", "question": "What?", "reference_answer": "X", "importance": "critical"}]}
     )
     assert len(parse_quality_qa(schema).items) == 1
 
@@ -173,7 +175,6 @@ def test_parse_sensitivity_disposition_from_dict() -> None:
                 "sensitivity": "high",
                 "entity_label": "name",
                 "entity_value": "Alice",
-                "needs_protection": True,
                 "protection_reason": "Direct identifier that enables re-identification",
                 "protection_method_suggestion": "replace",
                 "combined_risk_level": "high",
@@ -199,7 +200,6 @@ def test_parse_sensitivity_disposition_normalizes_numpy_array_payload() -> None:
                     "sensitivity": "high",
                     "entity_label": "name",
                     "entity_value": "Alice",
-                    "needs_protection": True,
                     "protection_reason": "Direct identifier that enables re-identification",
                     "protection_method_suggestion": "replace",
                     "combined_risk_level": "high",

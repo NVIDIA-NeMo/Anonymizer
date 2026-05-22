@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 
 import pandas as pd
 import pyarrow as pa
@@ -21,13 +20,14 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
+from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
 logger = logging.getLogger("anonymizer")
 
 
-def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.DataFrame:
-    """Load input into a normalized dataframe with canonical internal text column.
+def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> ResolvedInput:
+    """Load input into a :class:`ResolvedInput` with the canonical internal text column.
 
     Args:
         input_data: Input source definition.
@@ -39,9 +39,8 @@ def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.D
         raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
     _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
     resolved = _resolve_output_column_collisions(dataframe, selected_text_column=selected_text_column)
-    dataframe = resolved.dataframe.rename(columns={resolved.selected_text_column: COL_TEXT})
-    dataframe.attrs["original_text_column"] = resolved.selected_text_column
-    return dataframe
+    renamed = resolved.dataframe.rename(columns={resolved.resolved_text_column: COL_TEXT})
+    return resolved.with_dataframe(renamed)
 
 
 # Suffixes appended to the user's text column to form per-mode output columns
@@ -64,18 +63,6 @@ _STATIC_OUTPUT_COLUMNS: tuple[str, ...] = (
 _INPUT_RENAME_SUFFIX = "__input"
 
 
-@dataclass(frozen=True)
-class ResolvedInputColumns:
-    """Result of resolving input/output column name collisions.
-
-    ``selected_text_column`` reflects the (possibly renamed) identifier that
-    downstream steps should treat as the user's text column.
-    """
-
-    dataframe: pd.DataFrame
-    selected_text_column: str
-
-
 def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_text_column: str) -> None:
     """Hard-error if the user's input contains the reserved internal text column."""
     if COL_TEXT in dataframe.columns and selected_text_column != COL_TEXT:
@@ -85,7 +72,7 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
         )
 
 
-def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_column: str) -> ResolvedInputColumns:
+def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_column: str) -> ResolvedInput:
     """Rename input columns whose names collide with Anonymizer output columns.
 
     The pipeline writes a known set of output columns derived from the text
@@ -93,29 +80,55 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
     ``final_entities``. If the input already contains any of those names the
     output would silently overwrite the user's data, so we rename the input
     column in place by appending ``__input`` (with a numeric suffix if needed
-    to avoid a secondary collision) and emit a warning. This matches how
-    pandas disambiguates duplicate column names on read and keeps the
-    pipeline runnable without forcing the user to edit their input file.
+    to avoid a secondary collision) and emit a warning.
 
-    The selected text column itself is not special-cased: if the user picked a
-    text column whose name matches a fixed output column (e.g.
-    ``text_column='final_entities'``) it is renamed the same way, and
-    ``ResolvedInputColumns.selected_text_column`` reflects its new name so
-    downstream rename steps use the non-colliding identifier.
+    Resolution is a fixed-point loop: when the selected text column itself
+    collides with a fixed output name (e.g. ``text_column='final_entities'``)
+    it is renamed the same way, AND the derived candidate names (e.g.
+    ``final_entities__input_replaced``) are re-checked against the remaining
+    user columns. That second pass is necessary — without it, an input column
+    that matches a *post-rename* derived name (``final_entities__input_replaced``)
+    would never be reserved, and ``_rename_output_columns`` would later
+    overwrite it, producing duplicate user-facing labels.
+
+    The returned ``ResolvedInput.resolved_text_column`` reflects the final
+    non-colliding identifier; ``requested_text_column`` retains what the user
+    asked for.
     """
-    candidate_output_columns: list[str] = [f"{selected_text_column}{suffix}" for suffix in _OUTPUT_COLUMN_SUFFIXES]
-    candidate_output_columns.extend(_STATIC_OUTPUT_COLUMNS)
-
-    existing_columns: set[str] = set(dataframe.columns)
-    collisions: list[str] = [name for name in candidate_output_columns if name in existing_columns]
-    if not collisions:
-        return ResolvedInputColumns(dataframe=dataframe, selected_text_column=selected_text_column)
-
     rename_map: dict[str, str] = {}
-    for original_name in collisions:
-        new_name = _next_available_name(f"{original_name}{_INPUT_RENAME_SUFFIX}", existing_columns)
-        rename_map[original_name] = new_name
-        existing_columns.add(new_name)
+    resolved_text_column = selected_text_column
+    original_columns: set[str] = set(dataframe.columns)
+
+    # Iterate until no new collisions surface. If the selected text column is
+    # renamed, the derived output names change too, so the loop re-checks those
+    # post-rename names before returning.
+    while True:
+        effective_columns = (original_columns - set(rename_map.keys())) | set(rename_map.values())
+
+        candidate_outputs: set[str] = {f"{resolved_text_column}{suffix}" for suffix in _OUTPUT_COLUMN_SUFFIXES}
+        candidate_outputs.update(_STATIC_OUTPUT_COLUMNS)
+
+        new_collisions = sorted(name for name in candidate_outputs if name in effective_columns)
+        if not new_collisions:
+            break
+
+        for original_name in new_collisions:
+            new_name = _next_available_name(
+                f"{original_name}{_INPUT_RENAME_SUFFIX}",
+                effective_columns | set(rename_map.values()),
+            )
+            rename_map[original_name] = new_name
+            effective_columns.add(new_name)
+
+        if resolved_text_column in rename_map:
+            resolved_text_column = rename_map[resolved_text_column]
+
+    if not rename_map:
+        return ResolvedInput(
+            dataframe=dataframe,
+            requested_text_column=selected_text_column,
+            resolved_text_column=selected_text_column,
+        )
 
     formatted = ", ".join(f"{old!r} -> {new!r}" for old, new in rename_map.items())
     logger.warning(
@@ -123,10 +136,10 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
         "Update your input schema to remove this warning.",
         formatted,
     )
-    new_selected_text_column = rename_map.get(selected_text_column, selected_text_column)
-    return ResolvedInputColumns(
+    return ResolvedInput(
         dataframe=dataframe.rename(columns=rename_map),
-        selected_text_column=new_selected_text_column,
+        requested_text_column=selected_text_column,
+        resolved_text_column=resolved_text_column,
     )
 
 

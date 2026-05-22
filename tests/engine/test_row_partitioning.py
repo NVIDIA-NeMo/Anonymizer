@@ -62,30 +62,22 @@ def test_split_rows_custom_predicate() -> None:
 def test_merge_and_reorder_restores_order() -> None:
     df = pd.DataFrame({"val": _MIXED_VALUES})
     matching, non_matching = split_rows(df, column="val", predicate=bool)
-    combined = merge_and_reorder(matching, non_matching, attrs={})
+    combined = merge_and_reorder(matching, non_matching)
 
     assert list(combined["val"]) == _MIXED_VALUES
     assert ROW_ORDER_COL not in combined.columns
     assert list(combined.index) == list(range(len(combined)))
 
 
-def test_merge_and_reorder_propagates_attrs() -> None:
-    df = pd.DataFrame({"val": _MIXED_VALUES})
-    matching, non_matching = split_rows(df, column="val", predicate=bool)
-    attrs = {"key": "value", "nested": {"a": 1}}
-    combined = merge_and_reorder(matching, non_matching, attrs=attrs)
-    assert combined.attrs == attrs
-
-
 def test_merge_and_reorder_raises_on_empty_parts() -> None:
     with pytest.raises(ValueError, match="at least one partition"):
-        merge_and_reorder(attrs={})
+        merge_and_reorder()
 
 
 def test_merge_and_reorder_single_partition() -> None:
     df = pd.DataFrame({"val": [1, 2, 3]})
     matching, _ = split_rows(df, column="val", predicate=bool)
-    combined = merge_and_reorder(matching, attrs={})
+    combined = merge_and_reorder(matching)
     assert list(combined["val"]) == [1, 2, 3]
 
 
@@ -96,6 +88,6 @@ def test_roundtrip_preserves_columns_added_after_split() -> None:
     matching["extra"] = "processed"
     non_matching["extra"] = "skipped"
 
-    combined = merge_and_reorder(matching, non_matching, attrs={})
+    combined = merge_and_reorder(matching, non_matching)
     assert list(combined["val"]) == [1, 0, 3]
     assert list(combined["extra"]) == ["processed", "skipped", "processed"]

@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import time
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,7 +37,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.io.reader import read_input
-from anonymizer.engine.ndd.adapter import NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
@@ -42,10 +45,23 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
+from anonymizer.telemetry import (
+    NOT_APPLICABLE,
+    AnonymizerEvent,
+    TaskEnum,
+    TaskStatusEnum,
+    TelemetryHandler,
+    _telemetry_enabled,
+    avg_tokens_per_record,
+    classify_model_host,
+    collect_model_hosts,
+    sort_join_aliases,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -92,10 +108,15 @@ class Anonymizer:
             rewrite_runner: Custom rewrite workflow (advanced/testing).
         """
         _initialize_logging()
+        # Tag DataDesigner telemetry events so they're filterable as anonymizer traffic in
+        # the shared NeMo dashboards. `setdefault` so users (or upstream hosts) can override.
+        os.environ.setdefault("NEMO_SESSION_PREFIX", "anonymizer-")
+        os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "sdk")
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
         parsed = parse_model_configs(model_configs)
         self._model_configs = parsed.model_configs
         self._selected_models = parsed.selected_models
+        self._resolved_providers: list[ModelProvider] | None = _resolve_model_providers(model_providers)
         logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
         det = self._selected_models.detection
         logger.info(LOG_INDENT + "🔎 detector:  %s", det.entity_detector)
@@ -107,7 +128,7 @@ class Anonymizer:
         else:
             self._data_designer = DataDesigner(
                 artifact_path=resolved_artifact_path,
-                model_providers=_resolve_model_providers(model_providers),
+                model_providers=self._resolved_providers,
             )
             reapply_log_levels()
         self._adapter = NddAdapter(data_designer=self._data_designer)
@@ -138,13 +159,30 @@ class Anonymizer:
             data: Input source with file path, text column, and optional data summary.
         """
         self._validate_preflight_config(config)
-        input_df = read_input(data)
-        return self._run_internal(
-            config=config,
-            data=data,
-            input_df=input_df,
-            preview_num_records=None,
-        )
+        context = read_input(data)
+        input_df = context.dataframe
+        t_start = time.perf_counter()
+        status = TaskStatusEnum.COMPLETED
+        result: AnonymizerResult | None = None
+        try:
+            result = self._run_internal(config=config, data=data, context=context, preview_num_records=None)
+            return result
+        except KeyboardInterrupt:
+            status = TaskStatusEnum.CANCELED
+            raise
+        except Exception:
+            status = TaskStatusEnum.ERROR
+            raise
+        finally:
+            self._maybe_emit_telemetry(
+                task=TaskEnum.BATCH,
+                status=status,
+                config=config,
+                data=data,
+                input_df=input_df,
+                result=result,
+                duration_sec=time.perf_counter() - t_start,
+            )
 
     def preview(
         self,
@@ -164,25 +202,43 @@ class Anonymizer:
             num_records: Maximum records to process (default 10).
         """
         self._validate_preflight_config(config)
-        input_df = read_input(data, nrows=num_records)
-        result = self._run_internal(
-            config=config,
-            data=data,
-            input_df=input_df,
-            preview_num_records=num_records,
-        )
-        return PreviewResult(
-            dataframe=result.dataframe,
-            trace_dataframe=result.trace_dataframe,
-            failed_records=result.failed_records,
-            preview_num_records=num_records,
-        )
+        context = read_input(data, nrows=num_records)
+        input_df = context.dataframe
+        t_start = time.perf_counter()
+        status = TaskStatusEnum.COMPLETED
+        result: AnonymizerResult | None = None
+        try:
+            result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
+            return PreviewResult(
+                dataframe=result.dataframe,
+                trace_dataframe=result.trace_dataframe,
+                resolved_text_column=result.resolved_text_column,
+                failed_records=result.failed_records,
+                preview_num_records=num_records,
+            )
+        except KeyboardInterrupt:
+            status = TaskStatusEnum.CANCELED
+            raise
+        except Exception:
+            status = TaskStatusEnum.ERROR
+            raise
+        finally:
+            self._maybe_emit_telemetry(
+                task=TaskEnum.PREVIEW,
+                status=status,
+                config=config,
+                data=data,
+                input_df=input_df,
+                result=result,
+                duration_sec=time.perf_counter() - t_start,
+            )
 
     def evaluate_replace(
         self,
         *,
         config: AnonymizerConfig,
         dataframe: pd.DataFrame,
+        text_column: str,
     ) -> AnonymizerResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.
 
@@ -190,7 +246,11 @@ class Anonymizer:
         detection + replacement cost again. Typical flow::
 
             result = anonymizer.preview(config=cfg, data=src, num_records=15)
-            evaluated = anonymizer.evaluate_replace(config=cfg, dataframe=result.trace_dataframe)
+            evaluated = anonymizer.evaluate_replace(
+                config=cfg,
+                dataframe=result.trace_dataframe,
+                text_column=result.resolved_text_column,
+            )
             evaluated.display_record(0)
 
         Args:
@@ -200,6 +260,9 @@ class Anonymizer:
             dataframe: A trace dataframe from a prior ``preview()`` or ``run()``
                 call. Must include ``_entities_by_value`` and, for Substitute,
                 ``_replacement_map``.
+            text_column: The resolved text column name on the trace dataframe
+                — pass ``result.resolved_text_column`` from the original
+                preview/run.
         """
         self._validate_preflight_config(config)
         if config.replace is None:
@@ -208,17 +271,18 @@ class Anonymizer:
         # (e.g., 'biography' instead of '__nemo_anonymizer_text_input__'). The
         # judge prompts reference the internal names, so reverse the rename
         # before the merged DD call, then re-apply it on the result.
-        internal_df = _unrename_output_columns(dataframe)
+        internal_df = _unrename_output_columns(dataframe, resolved_text_column=text_column)
         replace_result = self._replace_runner.evaluate(
             internal_df,
             replace_method=config.replace,
             model_configs=self._model_configs,
             selected_models=self._selected_models.replace,
         )
-        renamed_trace = _rename_output_columns(replace_result.dataframe)
+        renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace),
+            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
             trace_dataframe=renamed_trace,
+            resolved_text_column=text_column,
             failed_records=replace_result.failed_records,
         )
 
@@ -231,9 +295,10 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput,
-        input_df: pd.DataFrame,
+        context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
+        input_df = context.dataframe
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
             effective_records = min(preview_num_records, num_records)
@@ -353,11 +418,13 @@ class Anonymizer:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
-        renamed_trace = _rename_output_columns(final_df)
+        text_col = context.resolved_text_column
+        renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace),
+            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
             trace_dataframe=renamed_trace,
+            resolved_text_column=text_col,
             failed_records=all_failures,
         )
 
@@ -372,6 +439,123 @@ class Anonymizer:
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
+
+    # ------------------------------------------------------------------ telemetry
+
+    def _maybe_emit_telemetry(
+        self,
+        *,
+        task: TaskEnum,
+        status: TaskStatusEnum,
+        config: AnonymizerConfig,
+        data: AnonymizerInput,
+        input_df: pd.DataFrame,
+        result: AnonymizerResult | None,
+        duration_sec: float,
+    ) -> None:
+        """Build and fire-and-flush a single telemetry event.
+
+        Telemetry is best-effort: any exception here is swallowed so that a
+        broken telemetry path can never disrupt the anonymization pipeline.
+        """
+        try:
+            if not getattr(config, "emit_telemetry", True):
+                return
+            # Short-circuit before _build_telemetry_event so we don't pay the
+            # tiktoken cost on every record when telemetry is globally disabled
+            # via NEMO_TELEMETRY_ENABLED=false.
+            if not _telemetry_enabled():
+                return
+            event = self._build_telemetry_event(
+                task=task,
+                status=status,
+                config=config,
+                data=data,
+                input_df=input_df,
+                result=result,
+                duration_sec=duration_sec,
+            )
+            from anonymizer import __version__ as _anonymizer_version
+
+            with TelemetryHandler(
+                source_client_version=_anonymizer_version,
+                session_id=uuid.uuid4().hex,
+            ) as handler:
+                handler.enqueue(event)
+        except Exception:  # noqa: BLE001 - best-effort
+            logger.debug("Failed to emit telemetry event", exc_info=True)
+
+    def _build_telemetry_event(
+        self,
+        *,
+        task: TaskEnum,
+        status: TaskStatusEnum,
+        config: AnonymizerConfig,
+        data: AnonymizerInput,
+        input_df: pd.DataFrame,
+        result: AnonymizerResult | None,
+        duration_sec: float,
+    ) -> AnonymizerEvent:
+        """Construct an AnonymizerEvent from the current pipeline state."""
+        total_records = int(len(input_df))
+        failed = list(result.failed_records) if result is not None else []
+        failure_count = len(failed)
+        success_count = max(total_records - failure_count, 0)
+
+        avg_tokens = -1
+        if total_records > 0 and COL_TEXT in input_df.columns:
+            avg_tokens = avg_tokens_per_record(input_df[COL_TEXT].astype(str))
+
+        transformation_type = _transformation_type_string(config)
+        rewrite = config.rewrite
+        substitute = config.replace if isinstance(config.replace, Substitute) else None
+
+        models = _collect_step_models(
+            selected=self._selected_models,
+            has_substitute=substitute is not None,
+            has_rewrite=rewrite is not None,
+        )
+        failure_counts = _collect_failure_counts(failed)
+        hosts = _resolve_model_hosts(self._resolved_providers)
+
+        return AnonymizerEvent(
+            task=task,
+            task_status=status,
+            job_duration_sec=duration_sec,
+            num_input_records=total_records,
+            num_success_records=success_count,
+            num_failure_records=failure_count,
+            avg_tokens_per_record=avg_tokens,
+            transformation_type=transformation_type,
+            custom_data_summary_provided=bool(data.data_summary),
+            custom_privacy_goal_provided=_custom_privacy_goal_provided(rewrite),
+            custom_substitute_instructions_provided=bool(substitute is not None and substitute.instructions),
+            max_repair_iterations=(rewrite.max_repair_iterations if rewrite is not None else -1),
+            strict_entity_protection=(rewrite.strict_entity_protection if rewrite is not None else False),
+            repair_iterations_triggered=_repair_iterations_triggered(failed, rewrite is not None),
+            entity_detector_model=models["entity_detector"],
+            entity_validator_model=models["entity_validator"],
+            entity_augmenter_model=models["entity_augmenter"],
+            latent_detector_model=models["latent_detector"],
+            replacement_generator_model=models["replacement_generator"],
+            domain_classifier_model=models["domain_classifier"],
+            disposition_analyzer_model=models["disposition_analyzer"],
+            meaning_extractor_model=models["meaning_extractor"],
+            qa_generator_model=models["qa_generator"],
+            rewriter_model=models["rewriter"],
+            evaluator_model=models["evaluator"],
+            repairer_model=models["repairer"],
+            judge_model=models["judge"],
+            model_hosts=hosts,
+            entity_detection_failure_count=failure_counts["entity_detection"],
+            latent_detection_failure_count=failure_counts["latent_detection"],
+            replace_map_generation_failure_count=failure_counts["replace_map_generation"],
+            rewrite_pipeline_failure_count=failure_counts["rewrite_pipeline"],
+            rewrite_evaluate_failure_count=failure_counts["rewrite_evaluate"],
+            rewrite_repair_failure_count=failure_counts["rewrite_repair"],
+            rewrite_final_judge_failure_count=failure_counts["rewrite_final_judge"],
+            unknown_step_failure_count=failure_counts["unknown"],
+        )
 
 
 def _unwrap_entities(raw: object) -> list:
@@ -430,59 +614,47 @@ def _resolve_model_providers(
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
 
-def _rename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename internal column names to user-facing names based on the original text column."""
-    original_text_column = str(df.attrs["original_text_column"])
+def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
+    """Rename internal column names to user-facing names."""
     rename_map: dict[str, str] = {}
     if COL_TEXT in df.columns:
-        rename_map[COL_TEXT] = original_text_column
+        rename_map[COL_TEXT] = resolved_text_column
     if COL_REPLACED_TEXT in df.columns:
-        rename_map[COL_REPLACED_TEXT] = f"{original_text_column}_replaced"
+        rename_map[COL_REPLACED_TEXT] = f"{resolved_text_column}_replaced"
     if COL_TAGGED_TEXT in df.columns:
-        rename_map[COL_TAGGED_TEXT] = f"{original_text_column}_with_spans"
+        rename_map[COL_TAGGED_TEXT] = f"{resolved_text_column}_with_spans"
     if COL_REWRITTEN_TEXT in df.columns:
-        rename_map[COL_REWRITTEN_TEXT] = f"{original_text_column}_rewritten"
+        rename_map[COL_REWRITTEN_TEXT] = f"{resolved_text_column}_rewritten"
     if not rename_map:
         return df
-    renamed = df.rename(columns=rename_map)
-    renamed.attrs = dict(df.attrs)
-    return renamed
+    return df.rename(columns=rename_map)
 
 
-def _unrename_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _unrename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Reverse of :func:`_rename_output_columns`.
 
     Converts user-facing column names (``biography``, ``biography_replaced``, …)
     back to the internal names (``__nemo_anonymizer_text_input__``, …) that the
     judges' prompt templates reference. No-op if the dataframe is already in
-    internal form.
+    internal form (``COL_TEXT`` already present).
     """
     if COL_TEXT in df.columns:
         return df
-    if "original_text_column" not in df.attrs:
-        raise ValueError(
-            "dataframe.attrs['original_text_column'] is missing — the dataframe must "
-            "preserve metadata from the original preview()/run() call. Pickle round-trips "
-            "preserve attrs; parquet does not."
-        )
-    original = str(df.attrs["original_text_column"])
     rename_map: dict[str, str] = {}
-    if original in df.columns:
-        rename_map[original] = COL_TEXT
-    if f"{original}_replaced" in df.columns:
-        rename_map[f"{original}_replaced"] = COL_REPLACED_TEXT
-    if f"{original}_with_spans" in df.columns:
-        rename_map[f"{original}_with_spans"] = COL_TAGGED_TEXT
-    if f"{original}_rewritten" in df.columns:
-        rename_map[f"{original}_rewritten"] = COL_REWRITTEN_TEXT
+    if resolved_text_column in df.columns:
+        rename_map[resolved_text_column] = COL_TEXT
+    if f"{resolved_text_column}_replaced" in df.columns:
+        rename_map[f"{resolved_text_column}_replaced"] = COL_REPLACED_TEXT
+    if f"{resolved_text_column}_with_spans" in df.columns:
+        rename_map[f"{resolved_text_column}_with_spans"] = COL_TAGGED_TEXT
+    if f"{resolved_text_column}_rewritten" in df.columns:
+        rename_map[f"{resolved_text_column}_rewritten"] = COL_REWRITTEN_TEXT
     if not rename_map:
         return df
-    unrenamed = df.rename(columns=rename_map)
-    unrenamed.attrs = dict(df.attrs)
-    return unrenamed
+    return df.rename(columns=rename_map)
 
 
-def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
+def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities
@@ -491,7 +663,7 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
     """
     t = trace_dataframe
-    text_col = str(t.attrs["original_text_column"])
+    text_col = resolved_text_column
 
     if f"{text_col}_rewritten" in t.columns:
         allowed = {
@@ -517,7 +689,138 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
             COL_FINAL_ENTITIES,
         }
 
-    user_columns = [col for col in t.columns if col in allowed]
-    user_dataframe = t[user_columns].copy()
-    user_dataframe.attrs = dict(t.attrs)
-    return user_dataframe
+    return t[[col for col in t.columns if col in allowed]].copy()
+
+
+# ----------------------------------------------------------------- telemetry helpers
+
+
+_REWRITE_REPAIR_RE = re.compile(r"^rewrite-repair-(\d+)$")
+_REWRITE_EVALUATE_RE = re.compile(r"^rewrite-evaluate-(\d+)$")
+
+
+def _transformation_type_string(config: AnonymizerConfig) -> str:
+    """Map AnonymizerConfig to the schema's transformationType value.
+
+    Schema accepts exactly one of: ``annotate``, ``redact``, ``hash``,
+    ``substitute``, ``rewrite``. AnonymizerConfig's validator enforces exactly one
+    of replace/rewrite, so one of these branches always fires.
+    """
+    if config.rewrite is not None:
+        return "rewrite"
+    # The four ReplaceMethodBase subclasses (Annotate, Redact, Hash, Substitute)
+    # lowercase directly to their schema values.
+    return type(config.replace).__name__.lower()
+
+
+def _custom_privacy_goal_provided(rewrite: object | None) -> bool:
+    """Detect whether the user supplied a non-default privacy_goal.
+
+    ``Rewrite.populate_default_privacy_goal`` always populates a default if the
+    user passed None, so we treat the default protect/preserve text as "not custom".
+    """
+    if rewrite is None or rewrite.privacy_goal is None:  # type: ignore[union-attr]
+        return False
+    from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT
+
+    goal = rewrite.privacy_goal  # type: ignore[union-attr]
+    return goal.protect != DEFAULT_PROTECT_TEXT or goal.preserve != DEFAULT_PRESERVE_TEXT
+
+
+def _collect_step_models(
+    *,
+    selected,  # ModelSelection
+    has_substitute: bool,
+    has_rewrite: bool,
+) -> dict[str, str]:
+    """Project the user's model selection into the schema's step-keyed shape."""
+    det = selected.detection
+    rewrite = selected.rewrite
+    replace = selected.replace
+    return {
+        "entity_detector": det.entity_detector or NOT_APPLICABLE,
+        "entity_validator": sort_join_aliases(det.entity_validator or []),
+        "entity_augmenter": det.entity_augmenter or NOT_APPLICABLE,
+        # latent_detector only runs in rewrite mode
+        "latent_detector": (det.latent_detector or NOT_APPLICABLE) if has_rewrite else NOT_APPLICABLE,
+        # replacement_generator only runs in Substitute mode
+        "replacement_generator": replace.replacement_generator if has_substitute else NOT_APPLICABLE,
+        # All rewrite-only roles
+        "domain_classifier": rewrite.domain_classifier if has_rewrite else NOT_APPLICABLE,
+        "disposition_analyzer": rewrite.disposition_analyzer if has_rewrite else NOT_APPLICABLE,
+        "meaning_extractor": rewrite.meaning_extractor if has_rewrite else NOT_APPLICABLE,
+        "qa_generator": rewrite.qa_generator if has_rewrite else NOT_APPLICABLE,
+        "rewriter": rewrite.rewriter if has_rewrite else NOT_APPLICABLE,
+        "evaluator": rewrite.evaluator if has_rewrite else NOT_APPLICABLE,
+        "repairer": rewrite.repairer if has_rewrite else NOT_APPLICABLE,
+        "judge": rewrite.judge if has_rewrite else NOT_APPLICABLE,
+    }
+
+
+def _step_to_field(step: str) -> str:
+    """Map a FailedRecord.step (workflow_name) to a schema failure-count field key."""
+    match step:
+        case "entity-detection":
+            return "entity_detection"
+        case "latent-entity-detection":
+            return "latent_detection"
+        case "replace-map-generation":
+            return "replace_map_generation"
+        case "rewrite-pipeline":
+            return "rewrite_pipeline"
+        case "rewrite-final-judge":
+            return "rewrite_final_judge"
+        case _ if _REWRITE_EVALUATE_RE.match(step):
+            return "rewrite_evaluate"
+        case _ if _REWRITE_REPAIR_RE.match(step):
+            return "rewrite_repair"
+        case _:
+            return "unknown"
+
+
+def _collect_failure_counts(failed: list[FailedRecord]) -> dict[str, int]:
+    """Aggregate FailedRecord.step values into per-workflow failure counts."""
+    counts = {
+        "entity_detection": 0,
+        "latent_detection": 0,
+        "replace_map_generation": 0,
+        "rewrite_pipeline": 0,
+        "rewrite_evaluate": 0,
+        "rewrite_repair": 0,
+        "rewrite_final_judge": 0,
+        "unknown": 0,
+    }
+    for fr in failed:
+        counts[_step_to_field(fr.step)] += 1
+    return counts
+
+
+def _repair_iterations_triggered(failed: list[FailedRecord], is_rewrite: bool) -> int:
+    """Count distinct repair iterations observed in FailedRecord step names.
+
+    Falls back to -1 when the run wasn't a rewrite. Returns 0 when rewrite ran
+    but no failures surfaced from repair iterations — note that this undercounts
+    repair iterations that completed without producing FailedRecord entries. A
+    follow-up could plumb a richer signal up from the rewrite workflow.
+    """
+    if not is_rewrite:
+        return -1
+    iterations: set[int] = set()
+    for fr in failed:
+        m = _REWRITE_REPAIR_RE.match(fr.step)
+        if m:
+            iterations.add(int(m.group(1)))
+    return len(iterations)
+
+
+def _resolve_model_hosts(providers: list[ModelProvider] | None) -> list[str]:
+    """Sorted, deduplicated list of provider host classifications.
+
+    Returns ``["nvidia-build"]`` when no custom providers are configured —
+    anonymizer's defaults route through build.nvidia.com.
+    """
+    if not providers:
+        from anonymizer.telemetry import ModelHostEnum as _MH
+
+        return [_MH.NVIDIA_BUILD.value]
+    return collect_model_hosts([classify_model_host(p) for p in providers])

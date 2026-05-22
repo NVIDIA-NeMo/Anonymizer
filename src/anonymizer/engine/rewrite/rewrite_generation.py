@@ -103,7 +103,7 @@ Apply each protection method as follows:
 Rules:
 1. ALL entity tags (as described above) must be removed. Output must be plain text.
 2. Apply changes consistently — the same entity value must be treated the same way everywhere it appears.
-3. Entities with needs_protection=false should be retained verbatim (tags removed only).
+3. Entities with protection_method_suggestion="leave_as_is" should be retained verbatim (tags removed only).
 4. The rewritten text must flow naturally and preserve the meaning and narrative structure of the original.
 5. Do not introduce new identifying details not present in the original.
 </output_requirements>"""
@@ -128,7 +128,7 @@ Rules:
 
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
-    """Pre-filter and serialize needs_protection=True entities for the rewrite prompt."""
+    """Pre-filter and serialize protected entities (protection_method_suggestion != "leave_as_is") for the rewrite prompt."""
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     block = []
     for e in disposition.sensitivity_disposition:

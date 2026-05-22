@@ -378,7 +378,7 @@ class TypeFidelityJudgeWorkflow:
         passthrough_rows[COL_TYPE_FIDELITY_INVALID_REPLACEMENTS] = [[] for _ in range(len(passthrough_rows))]
 
         if with_replacements.empty:
-            combined = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            combined = merge_and_reorder(passthrough_rows)
             return TypeFidelityJudgeResult(dataframe=combined, failed_records=[])
 
         effective_preview_num_records = (
@@ -397,7 +397,5 @@ class TypeFidelityJudgeWorkflow:
         judged_df[COL_TYPE_FIDELITY_VALID] = flattened.apply(lambda pair: pair[0])
         judged_df[COL_TYPE_FIDELITY_INVALID_REPLACEMENTS] = flattened.apply(lambda pair: pair[1])
 
-        combined = merge_and_reorder(
-            judged_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
-        )
+        combined = merge_and_reorder(judged_df, passthrough_rows)
         return TypeFidelityJudgeResult(dataframe=combined, failed_records=run_result.failed_records)

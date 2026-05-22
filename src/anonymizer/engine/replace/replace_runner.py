@@ -197,8 +197,5 @@ class ReplacementWorkflow:
 
         for judge in active:
             judged_df = judge.postprocess(judged_df)
-        # Preserve the caller's dataframe metadata (notably ``original_text_column``),
-        # which downstream column-renaming relies on. DataDesigner's output loses it.
-        judged_df.attrs = {**judged_df.attrs, **dataframe.attrs}
         return judged_df
 

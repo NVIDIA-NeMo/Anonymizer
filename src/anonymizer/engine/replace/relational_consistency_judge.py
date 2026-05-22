@@ -387,7 +387,7 @@ class RelationalConsistencyJudgeWorkflow:
         passthrough_rows[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = [[] for _ in range(len(passthrough_rows))]
 
         if with_relations.empty:
-            combined = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            combined = merge_and_reorder(passthrough_rows)
             return RelationalConsistencyJudgeResult(dataframe=combined, failed_records=[])
 
         effective_preview_num_records = (
@@ -406,7 +406,5 @@ class RelationalConsistencyJudgeWorkflow:
         judged_df[COL_RELATIONAL_CONSISTENCY_VALID] = flattened.apply(lambda pair: pair[0])
         judged_df[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = flattened.apply(lambda pair: pair[1])
 
-        combined = merge_and_reorder(
-            judged_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
-        )
+        combined = merge_and_reorder(judged_df, passthrough_rows)
         return RelationalConsistencyJudgeResult(dataframe=combined, failed_records=run_result.failed_records)

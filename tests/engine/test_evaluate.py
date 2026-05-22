@@ -170,6 +170,22 @@ class TestComputeUtilityScore:
     def test_single_score(self) -> None:
         assert compute_utility_score([0.5]) == 0.5
 
+    def test_weighted_critical_scores_higher(self) -> None:
+        # critical unit scored 1.0, important scored 0.0 → (2.0 + 0.0) / 3.0
+        assert compute_utility_score([1.0, 0.0], ["critical", "important"]) == pytest.approx(2 / 3)
+
+    def test_weighted_order_matters(self) -> None:
+        # reversed scores, same importances → different results
+        assert compute_utility_score([0.0, 1.0], ["critical", "important"]) != compute_utility_score(
+            [1.0, 0.0], ["critical", "important"]
+        )
+
+    def test_mismatched_importance_falls_back_to_flat_mean(self) -> None:
+        assert compute_utility_score([0.0, 1.0], ["critical"]) == pytest.approx(0.5)
+
+    def test_none_importance_falls_back_to_flat_mean(self) -> None:
+        assert compute_utility_score([0.0, 1.0], None) == pytest.approx(0.5)
+
 
 # ---------------------------------------------------------------------------
 # determine_repair_needs

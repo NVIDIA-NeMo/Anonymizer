@@ -31,6 +31,21 @@ def _caplog_for_anonymizer(caplog: pytest.LogCaptureFixture) -> Generator[None]:
     anon_logger.removeHandler(caplog.handler)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep telemetry quiet and deterministic in unit tests.
+
+    - Disable emission by default. Tests that exercise the emit path can opt in
+      by setting NEMO_TELEMETRY_ENABLED=true via their own monkeypatch.
+    - Clear NEMO_DEPLOYMENT_TYPE, NEMO_SESSION_PREFIX, and NEMO_TELEMETRY_ENDPOINT
+      so tests don't inherit values from the developer's shell.
+    """
+    monkeypatch.setenv("NEMO_TELEMETRY_ENABLED", "false")
+    monkeypatch.delenv("NEMO_DEPLOYMENT_TYPE", raising=False)
+    monkeypatch.delenv("NEMO_SESSION_PREFIX", raising=False)
+    monkeypatch.delenv("NEMO_TELEMETRY_ENDPOINT", raising=False)
+
+
 @pytest.fixture
 def stub_detector_model_configs() -> list[ModelConfig]:
     """Model configs with the GLiNER PII detector alias."""

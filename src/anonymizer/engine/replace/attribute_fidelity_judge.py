@@ -320,7 +320,7 @@ class AttributeFidelityJudgeWorkflow:
         passthrough_rows[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
 
         if with_replacements.empty:
-            combined = merge_and_reorder(passthrough_rows, attrs=dataframe.attrs)
+            combined = merge_and_reorder(passthrough_rows)
             return AttributeFidelityJudgeResult(dataframe=combined, failed_records=[])
 
         effective_preview_num_records = (
@@ -339,7 +339,5 @@ class AttributeFidelityJudgeWorkflow:
         judged_df[COL_ATTRIBUTE_FIDELITY_VALID] = flattened.apply(lambda pair: pair[0])
         judged_df[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = flattened.apply(lambda pair: pair[1])
 
-        combined = merge_and_reorder(
-            judged_df, passthrough_rows, attrs={**run_result.dataframe.attrs, **dataframe.attrs}
-        )
+        combined = merge_and_reorder(judged_df, passthrough_rows)
         return AttributeFidelityJudgeResult(dataframe=combined, failed_records=run_result.failed_records)
