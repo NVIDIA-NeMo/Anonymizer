@@ -25,12 +25,20 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_DETECTED_ENTITIES,
     COL_FINAL_ENTITIES,
+    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
+    COL_ATTRIBUTE_FIDELITY_VALID,
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_VALID,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+    COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACED_TEXT,
     COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+    COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
@@ -664,7 +672,8 @@ def _unrename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> 
 def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
-    Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities
+    Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
+                 optional judge verdict columns when available
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
@@ -688,6 +697,14 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             f"{text_col}_replaced",
             f"{text_col}_with_spans",
             COL_FINAL_ENTITIES,
+            COL_DETECTION_VALID,
+            COL_DETECTION_INVALID_ENTITIES,
+            COL_TYPE_FIDELITY_VALID,
+            COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+            COL_RELATIONAL_CONSISTENCY_VALID,
+            COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+            COL_ATTRIBUTE_FIDELITY_VALID,
+            COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
         }
     else:
         allowed = {

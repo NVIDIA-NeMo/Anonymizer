@@ -23,6 +23,7 @@ from anonymizer.interface.display import (
     _build_replaced_entities,
     _normalize_replacement_map,
     _render_highlighted_text,
+    _verdict_badge,
     render_record_html,
 )
 from anonymizer.interface.results import PreviewResult
@@ -146,6 +147,33 @@ def test_normalize_replacement_map_invalid_json_returns_empty() -> None:
 
 def test_normalize_replacement_map_non_dict_returns_empty() -> None:
     assert _normalize_replacement_map([1, 2, 3]) == []
+
+
+def test_verdict_badge_satisfied_when_all_correct_and_valid_true() -> None:
+    badge, rate = _verdict_badge(valid=True, correct=10, total=10)
+    assert "Satisfied" in badge and "Not" not in badge
+    assert "10/10" in rate
+
+
+def test_verdict_badge_partial_for_mixed_count() -> None:
+    badge, _ = _verdict_badge(valid=False, correct=8, total=10)
+    assert "Partially Satisfied" in badge
+
+
+def test_verdict_badge_unavailable_when_valid_none() -> None:
+    badge, rate = _verdict_badge(valid=None, correct=0, total=0)
+    assert "Unavailable" in badge
+    assert rate == ""
+
+
+def test_verdict_badge_not_satisfied_when_valid_false_without_enumerated_failures() -> None:
+    """``valid is False`` with ``correct == total`` is an inconsistent LLM response
+    (the judge said it's invalid but didn't list specifics). The explicit boolean
+    must override the count so we don't render a misleading green badge."""
+    badge, rate = _verdict_badge(valid=False, correct=10, total=10)
+    assert "Not Satisfied" in badge
+    assert "Satisfied" not in badge.replace("Not Satisfied", "")
+    assert "10/10" in rate
 
 
 @pytest.mark.parametrize(

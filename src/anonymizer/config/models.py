@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +78,24 @@ class ReplaceModelSelection(BaseModel):
     """Model aliases for the replacement pipeline."""
 
     replacement_generator: str
-    detection_judge: str
-    type_fidelity_judge: str
-    relational_consistency_judge: str
-    attribute_fidelity_judge: str
+    detection_judge: str | None = None
+    type_fidelity_judge: str | None = None
+    relational_consistency_judge: str | None = None
+    attribute_fidelity_judge: str | None = None
+
+    @model_validator(mode="after")
+    def populate_judge_defaults(self) -> "ReplaceModelSelection":
+        """Backfill missing judge aliases with the replacement generator."""
+        fallback = self.replacement_generator
+        for field in (
+            "detection_judge",
+            "type_fidelity_judge",
+            "relational_consistency_judge",
+            "attribute_fidelity_judge",
+        ):
+            if getattr(self, field) is None:
+                setattr(self, field, fallback)
+        return self
 
 
 class RewriteModelSelection(BaseModel):

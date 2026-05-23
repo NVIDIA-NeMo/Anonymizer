@@ -476,17 +476,27 @@ def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
 def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
     """Return (badge_html, rate_html) for the tri-state verdict.
 
-    - ``valid is None``        -> Unavailable (gray, no rate).
-    - ``total == 0``           -> Satisfied (green, no rate).
-    - ``correct == total``     -> Satisfied (green, with rate).
-    - ``correct == 0``         -> Not Satisfied (red, with rate).
-    - otherwise                -> Partially Satisfied (amber, with rate).
+    - ``valid is None``                       -> Unavailable (gray, no rate).
+    - ``total == 0``                          -> Satisfied (green, no rate).
+    - ``valid is False`` and ``correct == total``
+                                              -> Not Satisfied (red, with rate).
+      The judge said the row is invalid but didn't enumerate specifics; trust
+      the explicit boolean over the count rather than rendering a misleading
+      green badge.
+    - ``correct == total``                    -> Satisfied (green, with rate).
+    - ``correct == 0``                        -> Not Satisfied (red, with rate).
+    - otherwise                               -> Partially Satisfied (amber, with rate).
     """
     if valid is None:
         return "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>", ""
     if total == 0:
         return "<span style='color:#22c55e;font-weight:600'>Satisfied</span>", ""
-    if correct >= total:
+    # Explicit boolean wins when it contradicts the count: a "False" verdict with
+    # no enumerated failures means the LLM said the row is invalid but didn't
+    # point at which entries — don't render that green.
+    if valid is False and correct == total:
+        verdict, color = "Not Satisfied", "#ef4444"
+    elif correct >= total:
         verdict, color = "Satisfied", "#22c55e"
     elif correct == 0:
         verdict, color = "Not Satisfied", "#ef4444"
