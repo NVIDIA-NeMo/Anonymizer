@@ -23,12 +23,12 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
-    COL_DETECTED_ENTITIES,
-    COL_FINAL_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_VALID,
+    COL_DETECTED_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
+    COL_FINAL_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
