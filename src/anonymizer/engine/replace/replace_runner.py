@@ -190,12 +190,9 @@ class ReplacementWorkflow:
             failed_records.extend(run_result.failed_records)
             judged_df = run_result.dataframe
         except Exception:
-            logger.warning(
-                "Replace judges workflow failed; populating defaults for all judges", exc_info=True
-            )
+            logger.warning("Replace judges workflow failed; populating defaults for all judges", exc_info=True)
             judged_df = prepared
 
         for judge in active:
             judged_df = judge.postprocess(judged_df)
         return judged_df
-

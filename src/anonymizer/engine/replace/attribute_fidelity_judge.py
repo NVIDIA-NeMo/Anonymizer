@@ -297,9 +297,9 @@ class AttributeFidelityJudgeWorkflow:
         out[COL_ATTRIBUTE_FIDELITY_VALID] = valid
         out[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = invalid
         if COL_ATTRIBUTE_FIDELITY_JUDGE in out.columns:
-            out.loc[passthrough_mask, COL_ATTRIBUTE_FIDELITY_JUDGE] = [
-                {"all_valid": True, "entities": []}
-            ] * int(passthrough_mask.sum())
+            out.loc[passthrough_mask, COL_ATTRIBUTE_FIDELITY_JUDGE] = [{"all_valid": True, "entities": []}] * int(
+                passthrough_mask.sum()
+            )
         return out
 
     def evaluate(

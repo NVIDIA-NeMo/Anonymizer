@@ -285,9 +285,9 @@ class DetectionJudgeWorkflow:
         out[COL_DETECTION_INVALID_ENTITIES] = invalid
         # Stamp passthrough rows with the default raw judge payload so display logic stays consistent.
         if COL_DETECTION_JUDGE in out.columns:
-            out.loc[passthrough_mask, COL_DETECTION_JUDGE] = [
-                {"all_valid": True, "invalid_entities": []}
-            ] * int(passthrough_mask.sum())
+            out.loc[passthrough_mask, COL_DETECTION_JUDGE] = [{"all_valid": True, "invalid_entities": []}] * int(
+                passthrough_mask.sum()
+            )
         return out
 
     # ------------------------------------------------------------------------
