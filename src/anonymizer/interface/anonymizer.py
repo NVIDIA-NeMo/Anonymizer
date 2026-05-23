@@ -237,41 +237,48 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        dataframe: pd.DataFrame,
-        text_column: str,
+        result: AnonymizerResult | PreviewResult,
     ) -> AnonymizerResult:
-        """Run the LLM evaluation judges on an already-replaced dataframe.
+        """Run the LLM evaluation judges on an already-replaced result.
 
         Use this to score (or re-score) an anonymization run without paying the
-        detection + replacement cost again. Typical flow::
+        detection + replacement cost again. The text-column name is taken from
+        ``result.resolved_text_column`` — you don't need to pass it again.
+
+        Typical flow::
 
             result = anonymizer.preview(config=cfg, data=src, num_records=15)
-            evaluated = anonymizer.evaluate_replace(
-                config=cfg,
-                dataframe=result.trace_dataframe,
-                text_column=result.resolved_text_column,
-            )
+            evaluated = anonymizer.evaluate_replace(config=cfg, result=result)
             evaluated.display_record(0)
 
+        Save/reload across sessions::
+
+            import pickle
+
+            with open("/tmp/run.pkl", "wb") as f:
+                pickle.dump(result, f)
+            # … later …
+            with open("/tmp/run.pkl", "rb") as f:
+                loaded = pickle.load(f)
+            evaluated = anonymizer.evaluate_replace(config=cfg, result=loaded)
+
         Args:
-            config: Same config used to produce the dataframe (needed to know
+            config: Same config used to produce the result (needed to know
                 the replace strategy — Substitute triggers all 4 judges; other
                 strategies trigger detection only).
-            dataframe: A trace dataframe from a prior ``preview()`` or ``run()``
-                call. Must include ``_entities_by_value`` and, for Substitute,
-                ``_replacement_map``.
-            text_column: The resolved text column name on the trace dataframe
-                — pass ``result.resolved_text_column`` from the original
-                preview/run.
+            result: An :class:`AnonymizerResult` or :class:`PreviewResult` from
+                a prior ``preview()`` / ``run()``. Carries the trace dataframe
+                *and* the resolved text-column name.
         """
         self._validate_preflight_config(config)
         if config.replace is None:
             raise ValueError("evaluate_replace() requires config.replace to be set.")
-        # trace_dataframe from a previous preview/run is in user-facing form
-        # (e.g., 'biography' instead of '__nemo_anonymizer_text_input__'). The
-        # judge prompts reference the internal names, so reverse the rename
-        # before the merged DD call, then re-apply it on the result.
-        internal_df = _unrename_output_columns(dataframe, resolved_text_column=text_column)
+        text_column = result.resolved_text_column
+        # trace_dataframe is in user-facing form (e.g., 'biography' instead of
+        # '__nemo_anonymizer_text_input__'). The judge prompts reference the
+        # internal names, so reverse the rename before the DD call and re-apply
+        # it on the result.
+        internal_df = _unrename_output_columns(result.trace_dataframe, resolved_text_column=text_column)
         replace_result = self._replace_runner.evaluate(
             internal_df,
             replace_method=config.replace,
