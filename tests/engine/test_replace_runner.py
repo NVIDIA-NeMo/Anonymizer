@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
 
-from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_JUDGE,
@@ -136,7 +136,7 @@ def test_substitute_without_workflow_raises(
 
 def test_evaluate_uses_merged_dd_workflow_for_judges(
     stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     """``evaluate()`` runs all 4 judges as columns of a SINGLE DD workflow call
     (DataDesigner parallelizes the columns internally — no Python threads)."""
@@ -202,7 +202,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         saved_trace,
         replace_method=Substitute(),
         model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
+        selected_models=stub_evaluate_model_selection,
     )
 
     # Exactly ONE adapter call for the judges step (proves merge, not 4 separate workflows).
@@ -223,7 +223,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
 
 def test_evaluate_preserves_all_rows_when_llm_drops_some(
     stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     """Evaluation is non-critical: rows the LLM drops (parse error, timeout,
     etc.) must still appear in the result with *_valid=None ("Unavailable"),
@@ -293,7 +293,7 @@ def test_evaluate_preserves_all_rows_when_llm_drops_some(
         saved_trace,
         replace_method=Substitute(),
         model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
+        selected_models=stub_evaluate_model_selection,
     )
 
     # Row count is preserved end-to-end.
@@ -375,7 +375,7 @@ def test_runner_does_not_invoke_judges(
 
 def test_evaluate_raises_on_missing_required_columns(
     stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     """``evaluate()`` rejects dataframes lacking the columns the judges need,
     with a message that hints at the trace_dataframe workflow."""
@@ -392,7 +392,7 @@ def test_evaluate_raises_on_missing_required_columns(
             bare_df,
             replace_method=Substitute(),
             model_configs=stub_model_configs,
-            selected_models=stub_replace_model_selection,
+            selected_models=stub_evaluate_model_selection,
         )
 
 

@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Model aliases for the LLM-as-judge evaluation step (Anonymizer.evaluate).
+# These roles are NOT needed at anonymization time — preview() / run() do not
+# consume them. They are only resolved when the user opts into evaluation.
+
+selected_models:
+  detection_validity_judge: gpt-oss-120b
+  replace_type_fidelity_judge: gpt-oss-120b
+  replace_relational_consistency_judge: gpt-oss-120b
+  replace_attribute_fidelity_judge: gpt-oss-120b

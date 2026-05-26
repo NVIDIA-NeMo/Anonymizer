@@ -13,6 +13,7 @@ from data_designer.config.models import ModelConfig
 from anonymizer.config.anonymizer_config import AnonymizerConfig
 from anonymizer.config.models import (
     DetectionModelSelection,
+    EvaluateModelSelection,
     ModelSelection,
     ReplaceModelSelection,
     RewriteModelSelection,
@@ -80,6 +81,11 @@ def stub_rewrite_model_selection() -> RewriteModelSelection:
 
 
 @pytest.fixture
+def stub_evaluate_model_selection() -> EvaluateModelSelection:
+    return load_default_model_selection().evaluate
+
+
+@pytest.fixture
 def stub_slim_model_selection() -> ModelSelection:
     """Selection model where every role points to the same known alias."""
     return ModelSelection(
@@ -89,13 +95,7 @@ def stub_slim_model_selection() -> ModelSelection:
             entity_augmenter="known",
             latent_detector="known",
         ),
-        replace=ReplaceModelSelection(
-            replacement_generator="known",
-            detection_judge="known",
-            type_fidelity_judge="known",
-            relational_consistency_judge="known",
-            attribute_fidelity_judge="known",
-        ),
+        replace=ReplaceModelSelection(replacement_generator="known"),
         rewrite=RewriteModelSelection(
             domain_classifier="known",
             disposition_analyzer="known",
@@ -105,6 +105,12 @@ def stub_slim_model_selection() -> ModelSelection:
             evaluator="known",
             repairer="known",
             judge="known",
+        ),
+        evaluate=EvaluateModelSelection(
+            detection_validity_judge="known",
+            replace_type_fidelity_judge="known",
+            replace_relational_consistency_judge="known",
+            replace_attribute_fidelity_judge="known",
         ),
     )
 

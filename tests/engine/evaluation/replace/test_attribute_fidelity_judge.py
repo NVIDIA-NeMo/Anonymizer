@@ -6,7 +6,7 @@ from __future__ import annotations
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 
-from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_JUDGE,
@@ -160,7 +160,7 @@ def _map_payload(items: list[dict]) -> dict:
 
 
 def test_evaluate_short_circuits_when_no_replacements(
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     df = pd.DataFrame({COL_REPLACEMENT_MAP: [_map_payload([])]})
 
@@ -169,14 +169,14 @@ def test_evaluate_short_circuits_when_no_replacements(
             raise AssertionError("run_workflow should not be called when there are no replacements")
 
     wf = AttributeFidelityJudgeWorkflow(adapter=_UnusedAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_replace_model_selection)
+    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
     assert result.failed_records == []
     assert bool(result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[0]) is True
     assert result.dataframe[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES].iloc[0] == []
 
 
 def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     df = pd.DataFrame(
         {
@@ -229,13 +229,13 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
             return _Result()
 
     wf = AttributeFidelityJudgeWorkflow(adapter=_StubAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_replace_model_selection)
+    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
 
     assert captured["workflow_name"] == "replace-attribute-fidelity-judge"
     col = captured["columns"][0]
     assert isinstance(col, LLMStructuredColumnConfig)
     assert col.name == COL_ATTRIBUTE_FIDELITY_JUDGE
-    assert col.model_alias == stub_replace_model_selection.attribute_fidelity_judge
+    assert col.model_alias == stub_evaluate_model_selection.replace_attribute_fidelity_judge
     assert col.output_format == AttributeFidelityJudgmentSchema.model_json_schema()
 
     assert bool(result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[0]) is False
@@ -245,7 +245,7 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
 
 
 def test_evaluate_marks_unavailable_for_malformed_payload(
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     df = pd.DataFrame(
         {COL_REPLACEMENT_MAP: [_map_payload([{"original": "Sarah", "label": "first_name", "synthetic": "Maria"}])]}
@@ -263,7 +263,7 @@ def test_evaluate_marks_unavailable_for_malformed_payload(
             return _Result()
 
     wf = AttributeFidelityJudgeWorkflow(adapter=_StubAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_replace_model_selection)
+    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
 
     assert result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[0] is None
     assert result.dataframe[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES].iloc[0] == []

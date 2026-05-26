@@ -6,7 +6,7 @@ from __future__ import annotations
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 
-from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_JUDGE,
@@ -141,7 +141,7 @@ def _entities_payload(entities: list[dict]) -> dict:
 
 
 def test_evaluate_short_circuits_when_no_entities(
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     """Rows with no detected entities skip the LLM call and pass trivially."""
     df = pd.DataFrame(
@@ -156,14 +156,14 @@ def test_evaluate_short_circuits_when_no_entities(
             raise AssertionError("run_workflow should not be called for empty-entity rows")
 
     wf = DetectionJudgeWorkflow(adapter=_UnusedAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_replace_model_selection)
+    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
     assert result.failed_records == []
     assert bool(result.dataframe[COL_DETECTION_VALID].iloc[0]) is True
     assert result.dataframe[COL_DETECTION_INVALID_ENTITIES].iloc[0] == []
 
 
 def test_evaluate_invokes_adapter_for_rows_with_entities(
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     """Rows with entities get a structured-column workflow keyed on detection_judge."""
     df = pd.DataFrame(
@@ -201,14 +201,14 @@ def test_evaluate_invokes_adapter_for_rows_with_entities(
             return _Result()
 
     wf = DetectionJudgeWorkflow(adapter=_StubAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_replace_model_selection)
+    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
 
     assert captured["workflow_name"] == "replace-detection-judge"
     assert len(captured["columns"]) == 1
     col = captured["columns"][0]
     assert isinstance(col, LLMStructuredColumnConfig)
     assert col.name == COL_DETECTION_JUDGE
-    assert col.model_alias == stub_replace_model_selection.detection_judge
+    assert col.model_alias == stub_evaluate_model_selection.detection_validity_judge
     assert col.output_format == DetectionJudgmentSchema.model_json_schema()
 
     assert bool(result.dataframe[COL_DETECTION_VALID].iloc[0]) is False
@@ -217,7 +217,7 @@ def test_evaluate_invokes_adapter_for_rows_with_entities(
 
 
 def test_evaluate_merges_entity_and_empty_rows_in_order(
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     """Rows are returned in their original order, even when one bypasses the LLM."""
     df = pd.DataFrame(
@@ -242,14 +242,14 @@ def test_evaluate_merges_entity_and_empty_rows_in_order(
             return _Result()
 
     wf = DetectionJudgeWorkflow(adapter=_StubAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_replace_model_selection)
+    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
 
     assert list(result.dataframe[COL_TEXT]) == ["no entities here", "Alice was here"]
     assert [bool(v) for v in result.dataframe[COL_DETECTION_VALID]] == [True, True]
 
 
 def test_evaluate_marks_judge_unavailable_for_malformed_payload(
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     """Malformed judge output leaves detection_valid=None rather than fabricating a verdict."""
     df = pd.DataFrame(
@@ -271,7 +271,7 @@ def test_evaluate_marks_judge_unavailable_for_malformed_payload(
             return _Result()
 
     wf = DetectionJudgeWorkflow(adapter=_StubAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_replace_model_selection)
+    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
 
     assert result.dataframe[COL_DETECTION_VALID].iloc[0] is None
     assert result.dataframe[COL_DETECTION_INVALID_ENTITIES].iloc[0] == []

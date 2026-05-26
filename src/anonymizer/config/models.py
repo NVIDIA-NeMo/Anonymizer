@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -78,24 +78,6 @@ class ReplaceModelSelection(BaseModel):
     """Model aliases for the replacement pipeline."""
 
     replacement_generator: str
-    detection_judge: str | None = None
-    type_fidelity_judge: str | None = None
-    relational_consistency_judge: str | None = None
-    attribute_fidelity_judge: str | None = None
-
-    @model_validator(mode="after")
-    def populate_judge_defaults(self) -> "ReplaceModelSelection":
-        """Backfill missing judge aliases with the replacement generator."""
-        fallback = self.replacement_generator
-        for field in (
-            "detection_judge",
-            "type_fidelity_judge",
-            "relational_consistency_judge",
-            "attribute_fidelity_judge",
-        ):
-            if getattr(self, field) is None:
-                setattr(self, field, fallback)
-        return self
 
 
 class RewriteModelSelection(BaseModel):
@@ -111,9 +93,25 @@ class RewriteModelSelection(BaseModel):
     judge: str
 
 
+class EvaluateModelSelection(BaseModel):
+    """Model aliases for the LLM-as-judge evaluation step.
+
+    These roles are only consumed by :meth:`Anonymizer.evaluate` — they are not
+    needed at anonymization time. Keeping them in their own section lets
+    ``preview()`` / ``run()`` validate only the roles that produce anonymized
+    output, while ``evaluate(...)`` validates the roles that score it.
+    """
+
+    detection_validity_judge: str
+    replace_type_fidelity_judge: str
+    replace_relational_consistency_judge: str
+    replace_attribute_fidelity_judge: str
+
+
 class ModelSelection(BaseModel):
     """Model alias selections for all pipelines, loaded from YAML defaults via ``load_default_model_selection()``."""
 
     detection: DetectionModelSelection
     replace: ReplaceModelSelection
     rewrite: RewriteModelSelection
+    evaluate: EvaluateModelSelection

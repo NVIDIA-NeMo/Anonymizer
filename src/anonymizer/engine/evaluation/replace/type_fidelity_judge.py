@@ -12,7 +12,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
-from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
@@ -324,11 +324,11 @@ class TypeFidelityJudgeWorkflow:
         working_df[_EXAMPLES_FOR_JUDGE_COL] = replacements_per_row.apply(_label_examples_for_judge)
         return working_df
 
-    def column_config(self, selected_models: ReplaceModelSelection) -> LLMStructuredColumnConfig:
+    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
         return LLMStructuredColumnConfig(
             name=COL_TYPE_FIDELITY_JUDGE,
             prompt=_judge_prompt(),
-            model_alias=resolve_model_alias("type_fidelity_judge", selected_models),
+            model_alias=resolve_model_alias("replace_type_fidelity_judge", selected_models),
             output_format=TypeFidelityJudgmentSchema,
         )
 
@@ -365,7 +365,7 @@ class TypeFidelityJudgeWorkflow:
         dataframe: pd.DataFrame,
         *,
         model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
+        selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> TypeFidelityJudgeResult:
         working_df = self.prepare(dataframe)

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pandas as pd
 from data_designer.config.models import ModelConfig
 
-from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -101,7 +101,7 @@ class ReplacementWorkflow:
         *,
         replace_method: ReplaceMethod,
         model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
+        selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> ReplacementResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.
@@ -150,7 +150,7 @@ class ReplacementWorkflow:
         *,
         is_substitute: bool,
         model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
+        selected_models: EvaluateModelSelection,
         preview_num_records: int | None,
         failed_records: list[FailedRecord],
     ) -> pd.DataFrame:

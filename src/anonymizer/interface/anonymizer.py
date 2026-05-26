@@ -295,6 +295,7 @@ class Anonymizer:
                 self._selected_models,
                 check_substitute=isinstance(replace_method, Substitute),
                 check_rewrite=False,
+                check_evaluate=True,
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
@@ -308,7 +309,7 @@ class Anonymizer:
             internal_df,
             replace_method=replace_method,
             model_configs=self._model_configs,
-            selected_models=self._selected_models.replace,
+            selected_models=self._selected_models.evaluate,
         )
         renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
         return AnonymizerResult(

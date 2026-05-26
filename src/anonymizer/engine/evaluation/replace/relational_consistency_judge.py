@@ -12,7 +12,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
-from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_JUDGE,
@@ -325,11 +325,11 @@ class RelationalConsistencyJudgeWorkflow:
         working_df[_REPLACEMENTS_FOR_JUDGE_COL] = working_df[COL_REPLACEMENT_MAP].apply(_replacements_for_judge)
         return working_df
 
-    def column_config(self, selected_models: ReplaceModelSelection) -> LLMStructuredColumnConfig:
+    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
         return LLMStructuredColumnConfig(
             name=COL_RELATIONAL_CONSISTENCY_JUDGE,
             prompt=_judge_prompt(),
-            model_alias=resolve_model_alias("relational_consistency_judge", selected_models),
+            model_alias=resolve_model_alias("replace_relational_consistency_judge", selected_models),
             output_format=RelationalConsistencyJudgmentSchema,
         )
 
@@ -370,7 +370,7 @@ class RelationalConsistencyJudgeWorkflow:
         dataframe: pd.DataFrame,
         *,
         model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
+        selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> RelationalConsistencyJudgeResult:
         working_df = self.prepare(dataframe)

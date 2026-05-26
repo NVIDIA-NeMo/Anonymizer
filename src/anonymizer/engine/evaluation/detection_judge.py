@@ -12,7 +12,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
-from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_JUDGE,
@@ -249,12 +249,12 @@ class DetectionJudgeWorkflow:
         working_df[_ENTITY_EXAMPLES_FOR_JUDGE_COL] = parsed.apply(_label_examples_for_judge)
         return working_df
 
-    def column_config(self, selected_models: ReplaceModelSelection) -> LLMStructuredColumnConfig:
+    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
         """The DD column config — name, prompt, model alias, structured-output schema."""
         return LLMStructuredColumnConfig(
             name=COL_DETECTION_JUDGE,
             prompt=_judge_prompt(),
-            model_alias=resolve_model_alias("detection_judge", selected_models),
+            model_alias=resolve_model_alias("detection_validity_judge", selected_models),
             output_format=DetectionJudgmentSchema,
         )
 
@@ -299,7 +299,7 @@ class DetectionJudgeWorkflow:
         dataframe: pd.DataFrame,
         *,
         model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
+        selected_models: EvaluateModelSelection,
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
     ) -> DetectionJudgeResult:
