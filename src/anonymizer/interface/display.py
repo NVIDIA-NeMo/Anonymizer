@@ -527,37 +527,44 @@ def _render_detection_judge_section(row: pd.Series) -> str:
         "</div>"
     )
 
-    if not invalid_entries:
-        return header
-
-    rows_html: list[str] = []
-    for entry in invalid_entries:
-        value = html.escape(str(entry.get("value", "")))
-        label = html.escape(str(entry.get("label", "")))
-        reasoning = html.escape(str(entry.get("reasoning", "")))
-        rows_html.append(
-            "<tr>"
-            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{value}</td>"
-            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
-            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
-            "</tr>"
+    body = header
+    if invalid_entries:
+        rows_html: list[str] = []
+        for entry in invalid_entries:
+            value = html.escape(str(entry.get("value", "")))
+            label = html.escape(str(entry.get("label", "")))
+            reasoning = html.escape(str(entry.get("reasoning", "")))
+            rows_html.append(
+                "<tr>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{value}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+                "</tr>"
+            )
+        body += (
+            "<details style='margin-top:8px'>"
+            f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(invalid_entries)} flagged "
+            "entity(ies)</summary>"
+            "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+            "<thead><tr>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Value</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows_html)}</tbody>"
+            "</table>"
+            "</details>"
         )
 
-    detail = (
-        "<details style='margin-top:8px'>"
-        f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(invalid_entries)} flagged "
-        "entity(ies)</summary>"
-        "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
-        "<thead><tr>"
-        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Value</th>"
-        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
-        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
-        "</details>"
+    # Wrap the content in the section heading here (not in the outer template) so
+    # the whole "Detection Judge" block is omitted when the judge hasn't run.
+    return (
+        "<div style='margin-bottom:16px'>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Detection Judge</div>'
+        f"{body}"
+        "</div>"
     )
-    return header + detail
 
 
 def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str, str]]) -> str:
@@ -1032,11 +1039,7 @@ letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replaced</div>
 line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;\
 border-radius:6px;opacity:0.85">{replaced_html}</div>
       </div>
-      <div style="margin-bottom:16px">
-        <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
-letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Detection Judge</div>
-        {detection_judge_html}
-      </div>
+      {detection_judge_html}
       {type_fidelity_section}
       {attribute_fidelity_section}
       {relational_consistency_section}

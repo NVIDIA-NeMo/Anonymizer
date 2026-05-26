@@ -255,6 +255,23 @@ def test_render_record_html_without_replacement_map() -> None:
     assert "No replacement map available" in result
 
 
+def test_render_record_html_omits_detection_judge_section_when_judge_did_not_run() -> None:
+    """A preview/run without evaluation must not render an empty 'Detection Judge'
+    heading. The wrapper lives inside ``_render_detection_judge_section`` so the
+    whole block is omitted when ``COL_DETECTION_VALID`` is absent."""
+    row = pd.Series(
+        {
+            "text": "Alice works here",
+            "text_replaced": "Bob works here",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            COL_REPLACEMENT_MAP: {},
+        }
+    )
+    result = render_record_html(row)
+    assert "Detection Judge" not in result
+    assert "Detection Validity" not in result
+
+
 def _make_preview(rows: int = 2) -> PreviewResult:
     df = pd.DataFrame(
         {
