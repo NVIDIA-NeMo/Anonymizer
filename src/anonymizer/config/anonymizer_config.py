@@ -197,3 +197,20 @@ class AnonymizerConfig(BaseModel):
                 " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
             )
         return self
+
+
+class EvaluateConfig(BaseModel):
+    """Optional knobs for :meth:`Anonymizer.evaluate`.
+
+    Reserved for genuinely evaluation-specific configuration — metric selection,
+    per-judge model/prompt overrides, scoring thresholds, etc. The anonymization
+    mode is **not** here: it travels on the ``AnonymizerResult`` /
+    ``PreviewResult`` produced by ``run()`` / ``preview()`` and is read directly
+    by ``evaluate()``, so users don't restate it and can't mis-state it.
+
+    Today this is an empty placeholder; fields will be added as evaluation
+    knobs are introduced.
+    """
+
+    # Intentionally empty for now. New fields land here as evaluation
+    # configurability is introduced.
