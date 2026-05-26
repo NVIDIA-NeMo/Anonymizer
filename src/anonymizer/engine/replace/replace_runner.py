@@ -21,7 +21,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_REPLACEMENT_MAP,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -178,6 +178,12 @@ class ReplacementWorkflow:
         prepared = dataframe
         for judge in active:
             prepared = judge.prepare(prepared)
+        # Attach record IDs upfront so we can join (possibly row-shrunken) judge
+        # output back onto the full prepared frame. The adapter would attach
+        # these itself; doing it here lets us treat evaluation as non-critical:
+        # rows the LLM drops still appear in the result with "Unavailable"
+        # verdicts instead of disappearing from a previously successful run.
+        prepared = self._adapter._attach_record_ids(prepared)  # type: ignore[union-attr]
 
         try:
             run_result = self._adapter.run_workflow(  # type: ignore[union-attr]
@@ -188,7 +194,19 @@ class ReplacementWorkflow:
                 preview_num_records=preview_num_records,
             )
             failed_records.extend(run_result.failed_records)
-            judged_df = run_result.dataframe
+            # Left-join the judge output columns onto the full prepared frame.
+            # Rows missing from run_result.dataframe (LLM parse failures,
+            # timeouts, etc.) keep NaN for the raw judge columns; each judge's
+            # postprocess() converts that to *_valid=None ("Unavailable").
+            new_cols = [c for c in run_result.dataframe.columns if c not in prepared.columns]
+            if new_cols:
+                judged_df = prepared.merge(
+                    run_result.dataframe[[RECORD_ID_COLUMN, *new_cols]],
+                    on=RECORD_ID_COLUMN,
+                    how="left",
+                )
+            else:
+                judged_df = prepared
         except Exception:
             logger.warning("Replace judges workflow failed; populating defaults for all judges", exc_info=True)
             judged_df = prepared

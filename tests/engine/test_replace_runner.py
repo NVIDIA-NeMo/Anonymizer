@@ -27,7 +27,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_JUDGE,
     COL_TYPE_FIDELITY_VALID,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
 from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
@@ -179,8 +179,16 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
             out[column.name] = [judge_defaults[column.name]] * len(out)
         return WorkflowRunResult(dataframe=out, failed_records=[])
 
+    def fake_attach_ids(df: pd.DataFrame) -> pd.DataFrame:
+        if RECORD_ID_COLUMN in df.columns:
+            return df.copy()
+        out = df.copy()
+        out[RECORD_ID_COLUMN] = [f"id-{i}" for i in range(len(out))]
+        return out
+
     adapter = Mock()
     adapter.run_workflow.side_effect = fake_run_workflow
+    adapter._attach_record_ids.side_effect = fake_attach_ids
 
     runner = ReplacementWorkflow(
         detection_judge=DetectionJudgeWorkflow(adapter=adapter),
@@ -211,6 +219,95 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
     ):
         assert col in result.dataframe.columns, f"missing column: {col}"
         assert bool(result.dataframe[col].iloc[0]) is True
+
+
+def test_evaluate_preserves_all_rows_when_llm_drops_some(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Evaluation is non-critical: rows the LLM drops (parse error, timeout,
+    etc.) must still appear in the result with *_valid=None ("Unavailable"),
+    not vanish from a previously successful preview/run.
+    """
+    saved_trace = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme", "Bob works at Globex"],
+            COL_FINAL_ENTITIES: [{"entities": []}, {"entities": []}],
+            COL_REPLACED_TEXT: ["Maya works at NovaCorp", "Carl works at Initech"],
+            COL_REPLACEMENT_MAP: [
+                {
+                    "replacements": [
+                        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+                        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+                    ]
+                },
+                {
+                    "replacements": [
+                        {"original": "Bob", "label": "first_name", "synthetic": "Carl"},
+                        {"original": "Globex", "label": "organization", "synthetic": "Initech"},
+                    ]
+                },
+            ],
+            COL_ENTITIES_BY_VALUE: [
+                {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]},
+                {"entities_by_value": [{"value": "Bob", "labels": ["first_name"]}]},
+            ],
+        }
+    )
+
+    judge_payload = {
+        COL_DETECTION_JUDGE: {"all_valid": True, "invalid_entities": []},
+        COL_TYPE_FIDELITY_JUDGE: {"all_valid": True, "invalid_replacements": []},
+        COL_RELATIONAL_CONSISTENCY_JUDGE: {"all_consistent": True, "relations": []},
+        COL_ATTRIBUTE_FIDELITY_JUDGE: {"all_valid": True, "entities": []},
+    }
+
+    def fake_attach_ids(df: pd.DataFrame) -> pd.DataFrame:
+        if RECORD_ID_COLUMN in df.columns:
+            return df.copy()
+        out = df.copy()
+        out[RECORD_ID_COLUMN] = [f"id-{i}" for i in range(len(out))]
+        return out
+
+    def fake_run_workflow(df: pd.DataFrame, *, columns, **_: object) -> WorkflowRunResult:
+        # Simulate the LLM successfully judging only the first row;
+        # the second row got dropped during the workflow.
+        kept = df.iloc[:1].copy()
+        for column in columns:
+            kept[column.name] = [judge_payload[column.name]] * len(kept)
+        dropped = FailedRecord(record_id="id-1", step="replace-judges", reason="parse error")
+        return WorkflowRunResult(dataframe=kept, failed_records=[dropped])
+
+    adapter = Mock()
+    adapter._attach_record_ids.side_effect = fake_attach_ids
+    adapter.run_workflow.side_effect = fake_run_workflow
+
+    runner = ReplacementWorkflow(
+        detection_judge=DetectionJudgeWorkflow(adapter=adapter),
+        type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=adapter),
+        relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=adapter),
+        attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=adapter),
+        adapter=adapter,
+    )
+    result = runner.evaluate(
+        saved_trace,
+        replace_method=Substitute(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+
+    # Row count is preserved end-to-end.
+    assert len(result.dataframe) == 2
+    # First row got a real verdict.
+    assert bool(result.dataframe[COL_DETECTION_VALID].iloc[0]) is True
+    # Second row (LLM-dropped) is surfaced as Unavailable, not dropped.
+    assert result.dataframe[COL_DETECTION_VALID].iloc[1] is None
+    assert result.dataframe[COL_TYPE_FIDELITY_VALID].iloc[1] is None
+    assert result.dataframe[COL_RELATIONAL_CONSISTENCY_VALID].iloc[1] is None
+    assert result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[1] is None
+    # The drop is still visible via failed_records for downstream observability.
+    assert len(result.failed_records) == 1
+    assert result.failed_records[0].record_id == "id-1"
 
 
 def test_runner_does_not_invoke_judges(
