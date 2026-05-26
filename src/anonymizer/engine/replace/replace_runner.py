@@ -21,13 +21,13 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_REPLACEMENT_MAP,
 )
+from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
+from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
+from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
-from anonymizer.engine.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
-from anonymizer.engine.replace.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
-from anonymizer.engine.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 
 logger = logging.getLogger("anonymizer.replace")
 

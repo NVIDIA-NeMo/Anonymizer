@@ -13,7 +13,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_JUDGE,
     COL_TYPE_FIDELITY_VALID,
 )
-from anonymizer.engine.replace.type_fidelity_judge import (
+from anonymizer.engine.evaluation.replace.type_fidelity_judge import (
     TypeFidelityJudgeWorkflow,
     TypeFidelityJudgmentSchema,
     _flatten_judgment,

@@ -13,7 +13,7 @@ from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_VALID,
     COL_REPLACEMENT_MAP,
 )
-from anonymizer.engine.replace.attribute_fidelity_judge import (
+from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import (
     AttributeFidelityJudgeWorkflow,
     AttributeFidelityJudgmentSchema,
     _flatten_judgment,

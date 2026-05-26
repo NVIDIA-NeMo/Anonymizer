@@ -14,7 +14,7 @@ from anonymizer.engine.constants import (
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
 )
-from anonymizer.engine.replace.relational_consistency_judge import (
+from anonymizer.engine.evaluation.replace.relational_consistency_judge import (
     RelationalConsistencyJudgeWorkflow,
     RelationalConsistencyJudgmentSchema,
     _flatten_judgment,

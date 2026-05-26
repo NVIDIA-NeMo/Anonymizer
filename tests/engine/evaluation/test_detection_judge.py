@@ -14,7 +14,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_TEXT,
 )
-from anonymizer.engine.replace.detection_judge import (
+from anonymizer.engine.evaluation.detection_judge import (
     DetectionJudgeWorkflow,
     DetectionJudgmentSchema,
     _entities_for_judge,
