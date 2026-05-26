@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
@@ -54,12 +55,17 @@ class AnonymizerResult(_DisplayMixin):
             to avoid colliding with an Anonymizer output column, in which case
             it is the post-rename identifier (e.g. ``"final_entities__input"``).
         failed_records: Records that failed during pipeline processing.
+        replace_method: The replace strategy that produced this result. Set by
+            ``run()`` / ``preview()``; consumed by ``evaluate()`` to dispatch the
+            right judges. ``None`` on results that were constructed by hand or
+            loaded from a pre-strategy-tracking format.
     """
 
     dataframe: pd.DataFrame
     trace_dataframe: pd.DataFrame
     resolved_text_column: str
     failed_records: list[FailedRecord]
+    replace_method: ReplaceMethod | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -86,6 +92,10 @@ class PreviewResult(_DisplayMixin):
             it is the post-rename identifier (e.g. ``"final_entities__input"``).
         failed_records: Records that failed during pipeline processing.
         preview_num_records: Number of records requested for the preview.
+        replace_method: The replace strategy that produced this preview. Set by
+            ``preview()``; consumed by ``evaluate()`` to dispatch the right
+            judges. ``None`` on results that were constructed by hand or loaded
+            from a pre-strategy-tracking format.
     """
 
     dataframe: pd.DataFrame
@@ -93,6 +103,7 @@ class PreviewResult(_DisplayMixin):
     resolved_text_column: str
     failed_records: list[FailedRecord]
     preview_num_records: int
+    replace_method: ReplaceMethod | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:

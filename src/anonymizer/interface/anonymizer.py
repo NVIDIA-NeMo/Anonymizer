@@ -224,6 +224,7 @@ class Anonymizer:
                 resolved_text_column=result.resolved_text_column,
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
+                replace_method=config.replace,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -244,75 +245,68 @@ class Anonymizer:
 
     def evaluate(
         self,
+        output: AnonymizerResult | PreviewResult,
         *,
-        config: EvaluateConfig,
-        result: AnonymizerResult | PreviewResult,
+        config: EvaluateConfig | None = None,
     ) -> AnonymizerResult:
-        """Run LLM-as-judge evaluation on a prior ``preview()`` / ``run()`` result.
+        """Run LLM-as-judge evaluation on a prior ``preview()`` / ``run()`` output.
 
-        :class:`EvaluateConfig` mirrors :class:`AnonymizerConfig` — pass the same
-        mode object that produced the result (e.g.
-        ``EvaluateConfig(replace=Substitute())``). The text-column name is read
-        from ``result.resolved_text_column``; you don't pass it again.
+        The anonymization strategy is read from ``output.replace_method`` (set
+        when ``run()`` / ``preview()`` produced the result), so users don't
+        restate it and can't mis-state it.
 
         Typical flow::
 
             preview = anonymizer.preview(config=cfg, data=src, num_records=15)
-            evaluated = anonymizer.evaluate(
-                config=EvaluateConfig(replace=cfg.replace),
-                result=preview,
-            )
+            evaluated = anonymizer.evaluate(preview)
             evaluated.display_record(0)
 
         Save/reload across sessions::
 
             import pickle
 
-            with open("/tmp/run.pkl", "wb") as f:
+            with open("/tmp/preview.pkl", "wb") as f:
                 pickle.dump(preview, f)
             # … later …
-            with open("/tmp/run.pkl", "rb") as f:
+            with open("/tmp/preview.pkl", "rb") as f:
                 loaded = pickle.load(f)
-            evaluated = anonymizer.evaluate(
-                config=EvaluateConfig(replace=cfg.replace),
-                result=loaded,
-            )
+            evaluated = anonymizer.evaluate(loaded)
 
         Args:
-            config: Mode(s) to evaluate. ``replace=`` triggers replace-pipeline
-                judges (Substitute → all 4 metrics; Redact/Annotate/Hash →
-                Detection Validity only). ``rewrite=`` is a forward-looking
-                slot and currently raises ``NotImplementedError``.
-            result: An :class:`AnonymizerResult` or :class:`PreviewResult` from
-                a prior ``preview()`` / ``run()``. Carries the trace dataframe
-                *and* the resolved text-column name.
+            output: An :class:`AnonymizerResult` or :class:`PreviewResult` from
+                a prior ``preview()`` / ``run()``. Carries the trace dataframe,
+                the resolved text-column name, and the replace strategy.
+            config: Optional :class:`EvaluateConfig` for evaluation-specific
+                knobs (placeholder today; reserved for metric selection,
+                per-judge model/prompt overrides, etc.).
         """
-        if config.rewrite is not None:
-            raise NotImplementedError(
-                "Evaluation for the rewrite pipeline is not yet implemented. "
-                "Only EvaluateConfig(replace=...) is supported today."
+        _ = config  # placeholder; no knobs to read yet
+        replace_method = output.replace_method
+        if replace_method is None:
+            raise ValueError(
+                "Cannot evaluate this output — it has no associated replace strategy. "
+                "Pass an AnonymizerResult / PreviewResult produced by run() / preview() "
+                "on this branch (the strategy is recorded then). Hand-built or legacy "
+                "results need their `replace_method` attribute set before calling evaluate()."
             )
-        # The EvaluateConfig validator guarantees at least one mode is set, and
-        # rewrite is rejected above, so replace must be set here.
-        assert config.replace is not None
         try:
             validate_model_alias_references(
                 self._model_configs,
                 self._selected_models,
-                check_substitute=isinstance(config.replace, Substitute),
+                check_substitute=isinstance(replace_method, Substitute),
                 check_rewrite=False,
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
-        text_column = result.resolved_text_column
+        text_column = output.resolved_text_column
         # trace_dataframe is in user-facing form (e.g., 'biography' instead of
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
         # internal names, so reverse the rename before the DD call and re-apply
         # it on the result.
-        internal_df = _unrename_output_columns(result.trace_dataframe, resolved_text_column=text_column)
+        internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
         replace_result = self._replace_runner.evaluate(
             internal_df,
-            replace_method=config.replace,
+            replace_method=replace_method,
             model_configs=self._model_configs,
             selected_models=self._selected_models.replace,
         )
@@ -322,6 +316,7 @@ class Anonymizer:
             trace_dataframe=renamed_trace,
             resolved_text_column=text_column,
             failed_records=replace_result.failed_records,
+            replace_method=replace_method,
         )
 
     def validate_config(self, config: AnonymizerConfig) -> None:
@@ -464,6 +459,7 @@ class Anonymizer:
             trace_dataframe=renamed_trace,
             resolved_text_column=text_col,
             failed_records=all_failures,
+            replace_method=config.replace,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
