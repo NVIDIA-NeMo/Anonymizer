@@ -197,3 +197,40 @@ class AnonymizerConfig(BaseModel):
                 " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
             )
         return self
+
+
+class EvaluateConfig(BaseModel):
+    """User-facing config for the evaluation step.
+
+    Mirrors :class:`AnonymizerConfig` so the same mode object (e.g.
+    ``Substitute()``) can be passed back into ``Anonymizer.evaluate(...)``.
+    At least one mode must be set; only the modes whose pipeline produced the
+    result you're evaluating need to be filled.
+    """
+
+    replace: ReplaceMethod | None = Field(
+        default=None,
+        description=(
+            "Replacement strategy that produced the result being evaluated. "
+            "Substitute() runs all 4 LLM-as-judge metrics (Detection, Type Fidelity, "
+            "Relational Consistency, Attribute Fidelity); Redact/Annotate/Hash run "
+            "only Detection Validity (the others need a replacement map)."
+        ),
+    )
+    rewrite: Rewrite | None = Field(
+        default=None,
+        description=(
+            "Forward-looking slot for evaluating the rewrite pipeline output. "
+            "Not yet implemented — passing this raises NotImplementedError."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_at_least_one_mode(self) -> EvaluateConfig:
+        if self.replace is None and self.rewrite is None:
+            raise ValueError(
+                "EvaluateConfig requires at least one of replace= or rewrite= to be set. "
+                "Pass the same mode object you used to produce the result (e.g. "
+                "EvaluateConfig(replace=Substitute()))."
+            )
+        return self

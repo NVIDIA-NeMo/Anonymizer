@@ -19,6 +19,7 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    EvaluateConfig,
 )
 from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
@@ -159,7 +160,7 @@ class Anonymizer:
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
-        No LLM evaluation judges run here — call :meth:`evaluate_replace` on the
+        No LLM evaluation judges run here — call :meth:`evaluate` on the
         result's ``trace_dataframe`` when you want the LLM alignment scores.
 
         Args:
@@ -201,7 +202,7 @@ class Anonymizer:
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
 
-        No LLM evaluation judges run here — call :meth:`evaluate_replace` on the
+        No LLM evaluation judges run here — call :meth:`evaluate` on the
         result's ``trace_dataframe`` when you want the LLM alignment scores.
 
         Args:
@@ -241,22 +242,26 @@ class Anonymizer:
                 duration_sec=time.perf_counter() - t_start,
             )
 
-    def evaluate_replace(
+    def evaluate(
         self,
         *,
-        config: AnonymizerConfig,
+        config: EvaluateConfig,
         result: AnonymizerResult | PreviewResult,
     ) -> AnonymizerResult:
-        """Run the LLM evaluation judges on an already-replaced result.
+        """Run LLM-as-judge evaluation on a prior ``preview()`` / ``run()`` result.
 
-        Use this to score (or re-score) an anonymization run without paying the
-        detection + replacement cost again. The text-column name is taken from
-        ``result.resolved_text_column`` — you don't need to pass it again.
+        :class:`EvaluateConfig` mirrors :class:`AnonymizerConfig` — pass the same
+        mode object that produced the result (e.g.
+        ``EvaluateConfig(replace=Substitute())``). The text-column name is read
+        from ``result.resolved_text_column``; you don't pass it again.
 
         Typical flow::
 
-            result = anonymizer.preview(config=cfg, data=src, num_records=15)
-            evaluated = anonymizer.evaluate_replace(config=cfg, result=result)
+            preview = anonymizer.preview(config=cfg, data=src, num_records=15)
+            evaluated = anonymizer.evaluate(
+                config=EvaluateConfig(replace=cfg.replace),
+                result=preview,
+            )
             evaluated.display_record(0)
 
         Save/reload across sessions::
@@ -264,23 +269,41 @@ class Anonymizer:
             import pickle
 
             with open("/tmp/run.pkl", "wb") as f:
-                pickle.dump(result, f)
+                pickle.dump(preview, f)
             # … later …
             with open("/tmp/run.pkl", "rb") as f:
                 loaded = pickle.load(f)
-            evaluated = anonymizer.evaluate_replace(config=cfg, result=loaded)
+            evaluated = anonymizer.evaluate(
+                config=EvaluateConfig(replace=cfg.replace),
+                result=loaded,
+            )
 
         Args:
-            config: Same config used to produce the result (needed to know
-                the replace strategy — Substitute triggers all 4 judges; other
-                strategies trigger detection only).
+            config: Mode(s) to evaluate. ``replace=`` triggers replace-pipeline
+                judges (Substitute → all 4 metrics; Redact/Annotate/Hash →
+                Detection Validity only). ``rewrite=`` is a forward-looking
+                slot and currently raises ``NotImplementedError``.
             result: An :class:`AnonymizerResult` or :class:`PreviewResult` from
                 a prior ``preview()`` / ``run()``. Carries the trace dataframe
                 *and* the resolved text-column name.
         """
-        self._validate_preflight_config(config)
-        if config.replace is None:
-            raise ValueError("evaluate_replace() requires config.replace to be set.")
+        if config.rewrite is not None:
+            raise NotImplementedError(
+                "Evaluation for the rewrite pipeline is not yet implemented. "
+                "Only EvaluateConfig(replace=...) is supported today."
+            )
+        # The EvaluateConfig validator guarantees at least one mode is set, and
+        # rewrite is rejected above, so replace must be set here.
+        assert config.replace is not None
+        try:
+            validate_model_alias_references(
+                self._model_configs,
+                self._selected_models,
+                check_substitute=isinstance(config.replace, Substitute),
+                check_rewrite=False,
+            )
+        except ValueError as exc:
+            raise InvalidConfigError(str(exc)) from exc
         text_column = result.resolved_text_column
         # trace_dataframe is in user-facing form (e.g., 'biography' instead of
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
