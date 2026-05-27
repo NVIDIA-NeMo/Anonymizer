@@ -116,6 +116,17 @@ print(result)
 result.dataframe.head()
 
 # %% [markdown]
+# ## 📊 (Optional) Evaluate replacement quality
+#
+# - `evaluate()` is a separate, opt-in step that scores the output with LLM-as-judge metrics.
+# - For Substitute, all four metrics run: **Detection Validity**, **Type Fidelity**, **Relational Consistency**, **Attribute Fidelity**.
+# - Skip it for routine runs; call it when you want LLM-side confidence on the output. Costs LLM calls per record, so try it on `preview` first.
+
+# %%
+evaluated = anonymizer.evaluate(preview)
+evaluated.display_record(0)
+
+# %% [markdown]
 # ## ⏭️ Next steps
 #
 # - **[🔍 Inspecting Detected Entities](../02_inspecting_detected_entities/)** --
