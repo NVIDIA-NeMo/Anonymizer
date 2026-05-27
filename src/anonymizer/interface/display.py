@@ -489,7 +489,7 @@ def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
     """
     if valid is None:
         return "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>", ""
-    if total == 0:
+    if total == 0 and valid is not False:
         return "<span style='color:#22c55e;font-weight:600'>Satisfied</span>", ""
     # Explicit boolean wins when it contradicts the count: a "False" verdict with
     # no enumerated failures means the LLM said the row is invalid but didn't
