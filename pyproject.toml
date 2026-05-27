@@ -66,6 +66,7 @@ package = true
 
 override-dependencies = [
   "grpcio>=1.68.0",  # forcing to a higher version since litellm is constraining it, to avoid CVE-2024-11407
+  "urllib3>=2.7.0",  # forcing to a higher version since it is pulled in transitively, to avoid CVE-2026-44432
 ]
 
 [tool.pytest.ini_options]
