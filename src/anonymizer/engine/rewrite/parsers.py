@@ -111,10 +111,40 @@ def parse_privacy_qa(raw: Any) -> PrivacyQAPairsSchema:
     raise TypeError(f"Expected PrivacyQAPairsSchema or dict, got {type(raw).__name__}")
 
 
+def _correct_disposition_consistency(raw: dict) -> dict:
+    """Auto-correct LLM consistency violations before strict schema validation.
+
+    Handles: combined_risk_level='low' + protection_method_suggestion != 'leave_as_is'.
+    The prompt rule is clear, but LLMs occasionally violate it. The semantically correct
+    fix is to force 'leave_as_is': if the combined risk is low, no protection is needed.
+    Logs a warning for each corrected entity so the LLM miscalibration is visible.
+    """
+    entities = raw.get("sensitivity_disposition", [])
+    if not isinstance(entities, list):
+        return raw
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        if entity.get("combined_risk_level") == "low" and entity.get("protection_method_suggestion") not in (
+            "leave_as_is",
+            None,
+        ):
+            logger.debug(
+                "Auto-correcting entity %s: combined_risk_level='low' + "
+                "protection_method_suggestion='%s' → 'leave_as_is'",
+                entity.get("id"),
+                entity.get("protection_method_suggestion"),
+            )
+            entity["protection_method_suggestion"] = "leave_as_is"
+            entity["generalization_suggestion"] = "N/A"
+    return raw
+
+
 def parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema:
     raw = normalize_payload(raw)
     if isinstance(raw, SensitivityDispositionSchema):  # catches StrictSensitivityDispositionSchema too
         return raw
     if isinstance(raw, dict):
+        raw = _correct_disposition_consistency(raw)
         return SensitivityDispositionSchema.model_validate(raw)
     raise ValueError(f"Cannot parse sensitivity disposition from {type(raw)}")

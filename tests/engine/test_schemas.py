@@ -218,6 +218,7 @@ def _make_entity(**kwargs) -> dict:
         "protection_reason": "Direct identifier that uniquely identifies the individual.",
         "protection_method_suggestion": "replace",
         "combined_risk_level": "high",
+        "generalization_suggestion": "N/A",
     }
     return {**defaults, **kwargs}
 
@@ -346,6 +347,7 @@ def test_sensitivity_disposition_format_for_rewrite_context_includes_low_when_pr
                     protection_method_suggestion="generalize",
                     combined_risk_level="medium",
                     protection_reason="City combined with other quasi-identifiers enables re-identification",
+                    generalization_suggestion="a city in the Pacific Northwest",
                 ),
             ]
         }
@@ -451,6 +453,7 @@ def _make_strict_entity(**kwargs) -> dict:
         "protection_reason": "Direct identifier that uniquely identifies the individual.",
         "protection_method_suggestion": "replace",
         "combined_risk_level": "high",
+        "generalization_suggestion": "N/A",
     }
     return {**defaults, **kwargs}
 

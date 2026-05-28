@@ -75,11 +75,32 @@ def _render_quality_reanswer_prompt(row: dict[str, Any]) -> str:
 
     prompt = """You are taking a reading comprehension exam. You will answer each question about the text.
 
+The text is an anonymized rewrite of an original document. This means:
+- identifying details may have been removed,
+- dates or locations may be generalized,
+- specific entities may be replaced with broader categories,
+- and information may be paraphrased or expressed more abstractly.
+
+Your task is to recover the BEST SEMANTIC ANSWER supported by the rewritten text,
+not merely to extract exact wording.
+
+PREFER GENERALIZED BUT SUPPORTED ANSWERS OVER "UNKNOWN". Use "unknown" ONLY if the
+rewritten text does not contain enough information to reasonably determine the answer,
+even through paraphrase, abstraction, or semantic inference.
+
 <rules>
-- If the text does not state the answer, use "unknown"
-- Keep answers concise and factual
-- Do not invent details
-- You MUST provide an answer for EVERY item in the template below
+- Keep answers concise and factual.
+- Do not invent details that are not supported by the text.
+- The answer may appear:
+  - in generalized form,
+  - at a broader level of abstraction,
+  - paraphrased,
+  - distributed across multiple sentences,
+  - or with identifying details removed.
+- Use semantic understanding, not exact wording overlap.
+- If the rewritten text clearly preserves the meaning needed to answer the question,
+  answer using that preserved meaning.
+- You MUST provide an answer for EVERY item in the template below.
 </rules>
 
 <text>
@@ -87,7 +108,8 @@ def _render_quality_reanswer_prompt(row: dict[str, Any]) -> str:
 </text>
 
 <task>
-Fill in the "answer" field for each item. Do not add or remove items.
+Fill in the "answer" field for each item.
+Do not add or remove items.
 </task>
 <answer_template>
 <<SKELETON>>
@@ -186,28 +208,52 @@ def _render_quality_compare_prompt(row: dict[str, Any]) -> str:
         for item in qa.items
     ]
 
-    prompt = """A student took a reading comprehension exam.
+    prompt = """A student took a reading comprehension exam. The text the student read was an anonymized
+rewrite of the original — so abstraction shifts are the EXPECTED and INTENDED result, not errors.
 
 <scoring_rubric>
 Compare the student's answer to the reference answer and grade each on a 0.0-1.0 scale:
-* 1.0 = Perfect match (semantically equivalent)
-* 0.7-0.9 = Mostly correct (minor details missing/different)
-* 0.4-0.6 = Partially correct (some key info present)
+* 1.0 = Core meaning preserved (including abstraction that preserves functional meaning)
+* 0.7-0.9 = Mostly correct (minor details missing, or meaning preserved at a broader level)
+* 0.4-0.6 = Partially correct (some key info present but meaningful content lost)
 * 0.1-0.3 = Minimal match (tangentially related)
 * 0.0 = No match (wrong, "unknown", or contradictory)
 </scoring_rubric>
 
 <grading_rules>
-* No credit for invented or contradictory information
-* Semantically equivalent answers get full credit
-* "unknown" answers get 0.0 score
-* A generalized or abstracted answer that preserves core semantic meaning is NOT wrong —
-  score it on whether the meaning survives, not on whether specific details are retained.
-  Example: "a state university" matching "a public university in New Jersey" scores ≥ 0.7
-  if the institutional type is what matters.
-* For "important" units: if the answer is correct at a higher level of abstraction,
-  score ≥ 0.7 even if specific details are omitted.
-* For "critical" units: hold to a stricter standard — core meaning must be present.
+* No credit for invented or contradictory information.
+* Semantically equivalent answers get full credit.
+* "unknown" answers get 0.0 score.
+* Do NOT penalize removal of identifying specificity unless that specificity is
+  central to the meaning of the question.
+
+ABSTRACTION TOLERANCE — this is the most important rule:
+The student's text was anonymized, so answers may legitimately use broader,
+safer, or less identifying language than the reference answer.
+
+Score based on whether the CORE FUNCTIONAL MEANING survives,
+not on whether the same level of specificity is preserved.
+
+A broader or more abstract answer may still deserve high credit if it preserves:
+- the same role or relationship,
+- the same event or outcome,
+- the same procedural or causal meaning,
+- the same type of activity or allegation,
+- or the same substantive point relevant to the question.
+
+Do NOT penalize answers merely because they are:
+- less specific,
+- less localized,
+- less temporally precise,
+- or less uniquely identifying.
+
+Reduce score only when the abstraction removes information that is central
+to answering the question itself.
+
+* For "critical" units: core functional meaning must survive, but abstraction that
+  preserves the functional meaning still scores ≥ 0.7.
+* For "important" units: abstraction that preserves the functional meaning scores ≥ 0.7;
+  broader abstraction that preserves the gist scores ≥ 0.5.
 </grading_rules>
 
 <task>
