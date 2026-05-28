@@ -42,9 +42,7 @@ class AttributeCheck(BaseModel):
     synthetic: str = Field(description="Synthetic value that replaced the original.")
     attributes_checked: list[str] = Field(
         default_factory=list,
-        description=(
-            "Salient within-entity attributes inspected for this triple (e.g. ['gender', 'age_bucket'])."
-        ),
+        description=("Salient within-entity attributes inspected for this triple (e.g. ['gender', 'age_bucket'])."),
     )
     passes: bool = Field(
         description=(
