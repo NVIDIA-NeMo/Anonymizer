@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -25,7 +26,7 @@ from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntityReplacementMapSchema
 
-logger = logging.getLogger("anonymizer.replace.attribute_fidelity_judge")
+logger = logging.getLogger("anonymizer.evaluation.replace.attribute_fidelity_judge")
 
 _REPLACEMENTS_FOR_JUDGE_COL = "_replacements_for_attribute_fidelity_judge"
 
@@ -42,7 +43,7 @@ class AttributeCheck(BaseModel):
     attributes_checked: list[str] = Field(
         default_factory=list,
         description=(
-            "Salient within-entity attributes inspected for this triple (e.g. ['gender', 'cultural_origin'])."
+            "Salient within-entity attributes inspected for this triple (e.g. ['gender', 'age_bucket'])."
         ),
     )
     passes: bool = Field(
@@ -149,7 +150,7 @@ This metric checks ONLY TWO attributes. Do not check anything else.
    - Buckets: child (0-12), teen (13-19), young adult (20-29), adult (30-44), \
      middle-aged (45-64), senior (65+). It's fine if the years are +/- 1 year of the original.
    - For `age`, the bucket comes from the numeric value directly. For `date_of_birth`, \
-     compute age = current_year - dob_year, then map to a bucket.
+     compute age = <<CURRENT_YEAR>> - dob_year, then map to a bucket.
    - The check: does the synthetic land in the SAME bucket as the original (or an \
      ADJACENT bucket — adjacent counts as preserved; only flag clear bucket flips like \
      adult -> child)?
@@ -187,6 +188,7 @@ outside the JSON object. Your entire response must be a single valid JSON object
         prompt,
         {
             "<<REPLACEMENTS_COLUMN>>": _REPLACEMENTS_FOR_JUDGE_COL,
+            "<<CURRENT_YEAR>>": str(datetime.now().year),
         },
     )
 

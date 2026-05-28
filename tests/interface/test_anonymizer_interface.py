@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pandas as pd
@@ -690,3 +691,17 @@ def test_validate_config_raises_on_unknown_replace_alias_in_rewrite_mode(
 
     with pytest.raises(InvalidConfigError, match="bad-replace-alias"):
         anonymizer.validate_config(AnonymizerConfig(rewrite=Rewrite()))
+
+
+def test_evaluate_raises_value_error_on_legacy_result_without_replace_method() -> None:
+    """A pickled result from before `replace_method` existed should surface the
+    actionable ValueError, not an AttributeError from the missing attribute."""
+    anonymizer, _, _, _ = _make_anonymizer()
+    legacy_result = SimpleNamespace(
+        dataframe=pd.DataFrame(),
+        trace_dataframe=pd.DataFrame(),
+        resolved_text_column="text",
+    )
+
+    with pytest.raises(ValueError, match="replace_method"):
+        anonymizer.evaluate(legacy_result)  # type: ignore[arg-type]

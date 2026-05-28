@@ -45,7 +45,7 @@ def test_judge_prompt_iterates_detected_entities() -> None:
     prompt = _judge_prompt()
     assert "for entity in _entities_for_detection_judge" in prompt
     assert "entity.value" in prompt
-    assert "entity.labels_str" in prompt
+    assert "entity.label" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -64,12 +64,9 @@ def test_entities_for_judge_flattens_labels() -> None:
     )
     rows = _entities_for_judge(parsed)
     assert rows == [
-        {"value": "Alice", "labels": ["first_name"], "labels_str": "first_name"},
-        {
-            "value": "Acme",
-            "labels": ["company_name", "organization_name"],
-            "labels_str": "company_name, organization_name",
-        },
+        {"value": "Alice", "label": "first_name"},
+        {"value": "Acme", "label": "company_name"},
+        {"value": "Acme", "label": "organization_name"},
     ]
 
 

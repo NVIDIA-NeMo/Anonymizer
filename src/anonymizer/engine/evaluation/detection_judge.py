@@ -28,7 +28,7 @@ from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema
 
-logger = logging.getLogger("anonymizer.replace.detection_judge")
+logger = logging.getLogger("anonymizer.evaluation.detection_judge")
 
 _ENTITIES_FOR_JUDGE_COL = "_entities_for_detection_judge"
 _ENTITY_EXAMPLES_FOR_JUDGE_COL = "_entity_examples_for_detection_judge"
@@ -82,7 +82,7 @@ def _judge_prompt() -> str:
 
 <detected_entities>
 {%- for entity in <<ENTITIES_COLUMN>> %}
-- "{{ entity.value }}" -> {{ entity.labels_str }}
+- value="{{ entity.value }}" | label={{ entity.label }}
 {%- endfor %}
 </detected_entities>
 
@@ -171,9 +171,14 @@ _EXAMPLE_LOOKUP: dict[str, str] = {
 }
 
 
-def _entities_for_judge(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:
-    """Flatten EntitiesByValueSchema into Jinja-friendly dicts."""
-    return [{"value": e.value, "labels": e.labels, "labels_str": ", ".join(e.labels)} for e in parsed.entities_by_value]
+def _entities_for_judge(parsed: EntitiesByValueSchema) -> list[dict[str, str]]:
+    """Flatten EntitiesByValueSchema into one (value, label) row per pair.
+
+    The judge schema and the display denominator both work at (value, label)
+    granularity, so the prompt input mirrors that shape instead of grouping
+    labels under a single value.
+    """
+    return [{"value": e.value, "label": label} for e in parsed.entities_by_value for label in e.labels]
 
 
 def _label_examples_for_judge(parsed: EntitiesByValueSchema) -> str:

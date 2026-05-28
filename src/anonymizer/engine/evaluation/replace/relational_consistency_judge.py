@@ -27,7 +27,7 @@ from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntityReplacementMapSchema
 
-logger = logging.getLogger("anonymizer.replace.relational_consistency_judge")
+logger = logging.getLogger("anonymizer.evaluation.replace.relational_consistency_judge")
 
 _REPLACEMENTS_FOR_JUDGE_COL = "_replacements_for_relational_consistency_judge"
 

@@ -281,7 +281,7 @@ class Anonymizer:
                 per-judge model/prompt overrides, etc.).
         """
         _ = config  # placeholder; no knobs to read yet
-        replace_method = output.replace_method
+        replace_method = getattr(output, "replace_method", None)
         if replace_method is None:
             raise ValueError(
                 "Cannot evaluate this output — it has no associated replace strategy. "
