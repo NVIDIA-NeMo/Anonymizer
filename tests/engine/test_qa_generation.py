@@ -11,6 +11,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
+    COL_LATENT_ENTITIES,
     COL_MEANING_UNITS,
     COL_MEANING_UNITS_SERIALIZED,
     COL_PRIVACY_QA,
@@ -56,6 +57,7 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             protection_reason="Full name directly identifies the individual.",
             protection_method_suggestion=ProtectionMethod.replace,
             combined_risk_level="high",
+            generalization_suggestion="N/A",
         ),
         EntityDispositionSchema(
             id=2,
@@ -67,6 +69,7 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             protection_reason="City alone does not create meaningful re-identification risk here.",
             protection_method_suggestion=ProtectionMethod.leave_as_is,
             combined_risk_level="low",
+            generalization_suggestion="N/A",
         ),
     ]
 )
@@ -121,23 +124,65 @@ def test_qa_generator_alias_used(
 
 
 def test_format_disposition_block_produces_valid_json() -> None:
-    row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION}
+    row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION, COL_LATENT_ENTITIES: {}}
     result = _format_disposition_block(row)
     block = json.loads(result[COL_SENSITIVITY_DISPOSITION_BLOCK])
     assert len(block) == 2
     assert block[0]["entity_value"] == "Alice"
     assert block[0]["does_need_protection"] is True
     assert block[0]["protection_method_suggestion"] == "replace"
+    assert block[0]["generalization_suggestion"] == "N/A"
     assert block[1]["entity_value"] == "Portland"
     assert block[1]["does_need_protection"] is False
 
 
 def test_format_disposition_block_accepts_dict_payload() -> None:
-    row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION.model_dump(mode="python")}
+    row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION.model_dump(mode="python"), COL_LATENT_ENTITIES: {}}
     result = _format_disposition_block(row)
     block = json.loads(result[COL_SENSITIVITY_DISPOSITION_BLOCK])
     assert len(block) == 2
     assert block[0]["entity_value"] == "Alice"
+
+
+def test_format_disposition_block_includes_evidence_for_suppress_inference() -> None:
+    disposition = SensitivityDispositionSchema(
+        sensitivity_disposition=[
+            EntityDispositionSchema(
+                id=1,
+                source=EntitySource.tagged,
+                category=EntityCategory.direct_identifier,
+                sensitivity=SensitivityLevel.high,
+                entity_label="detention_duration",
+                entity_value="approximately 29 months",
+                protection_reason="Distinctive detention period aids re-identification.",
+                protection_method_suggestion=ProtectionMethod.suppress_inference,
+                combined_risk_level="high",
+                generalization_suggestion="N/A",
+            )
+        ]
+    )
+    latent_entities = {
+        "latent_entities": [
+            {
+                "label": "detention_duration",
+                "value": "approximately 29 months",
+                "evidence": ["On 8 June 2004 he was arrested", "on 20 November 2006 he was released"],
+            }
+        ]
+    }
+    row = {COL_SENSITIVITY_DISPOSITION: disposition, COL_LATENT_ENTITIES: latent_entities}
+    result = _format_disposition_block(row)
+    block = json.loads(result[COL_SENSITIVITY_DISPOSITION_BLOCK])
+    assert block[0]["protection_method_suggestion"] == "suppress_inference"
+    assert block[0]["evidence"] == ["On 8 June 2004 he was arrested", "on 20 November 2006 he was released"]
+
+
+def test_format_disposition_block_omits_evidence_for_non_suppress_inference() -> None:
+    row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION, COL_LATENT_ENTITIES: {}}
+    result = _format_disposition_block(row)
+    block = json.loads(result[COL_SENSITIVITY_DISPOSITION_BLOCK])
+    assert "evidence" not in block[0]
+    assert "evidence" not in block[1]
 
 
 def test_serialize_meaning_units_produces_valid_json() -> None:
@@ -190,6 +235,7 @@ def test_generate_privacy_qa_column_no_protected_entities() -> None:
                 protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
                 combined_risk_level="low",
+                generalization_suggestion="N/A",
             )
         ]
     )
@@ -220,6 +266,7 @@ def test_generate_privacy_qa_from_disposition_empty_when_nothing_to_protect() ->
                 protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
                 combined_risk_level="low",
+                generalization_suggestion="N/A",
             )
         ]
     )
@@ -239,6 +286,7 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
                 combined_risk_level="high",
+                generalization_suggestion="N/A",
             ),
             EntityDispositionSchema(
                 id=2,
@@ -250,6 +298,7 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
                 combined_risk_level="high",
+                generalization_suggestion="N/A",
             ),
         ]
     )
@@ -269,7 +318,8 @@ def test_meaning_unit_prompt_preserves_gitlab_protection_branches() -> None:
     prompt = _get_meaning_unit_extraction_prompt()
     assert "does_need_protection = True" in prompt
     assert 'protection_method_suggestion is "replace" OR "remove"' in prompt
-    assert 'protection_method_suggestion is "generalize" OR "suppress_inference"' in prompt
+    assert 'protection_method_suggestion is "generalize"' in prompt
+    assert 'protection_method_suggestion is "suppress_inference"' in prompt
     assert "does_need_protection = False" in prompt
 
 

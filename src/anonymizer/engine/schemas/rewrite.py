@@ -139,6 +139,7 @@ class EntityDispositionSchema(BaseModel):
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
     combined_risk_level: CombinedRiskLevel
+    generalization_suggestion: str
 
     @property
     def needs_protection(self) -> bool:

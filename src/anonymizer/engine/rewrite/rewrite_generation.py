@@ -95,7 +95,8 @@ Synthetic replacement values for entities with protection_method "replace":
 Apply each protection method as follows:
 - "replace": Substitute the entity value with the corresponding synthetic value from the replacement map.
   Use the synthetic value consistently for every occurrence.
-- "generalize": Replace with a broader category or range
+- "generalize": Replace with the provided generalization_suggestion when present.
+  If no suggestion is provided, replace with a broader category or range
   (e.g., a specific city → "a city in the Pacific Northwest", exact age → "in their late 30s").
 - "remove": Omit the detail entirely. Rewrite the surrounding sentence so it reads naturally without it.
 - "suppress_inference": Modify the text so the attribute cannot be reliably inferred by a motivated reader.
@@ -135,15 +136,16 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
         if not e.needs_protection:
             continue
         d = e.model_dump(mode="json")
-        block.append(
-            {
-                "entity_label": d["entity_label"],
-                "entity_value": d["entity_value"],
-                "sensitivity": d["sensitivity"],
-                "protection_method_suggestion": d["protection_method_suggestion"],
-                "protection_reason": d["protection_reason"],
-            }
-        )
+        entry = {
+            "entity_label": d["entity_label"],
+            "entity_value": d["entity_value"],
+            "sensitivity": d["sensitivity"],
+            "protection_method_suggestion": d["protection_method_suggestion"],
+            "protection_reason": d["protection_reason"],
+        }
+        if d["protection_method_suggestion"] == "generalize":
+            entry["generalization_suggestion"] = d["generalization_suggestion"]
+        block.append(entry)
     row[COL_REWRITE_DISPOSITION_BLOCK] = block
     return row
 

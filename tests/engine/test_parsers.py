@@ -178,6 +178,7 @@ def test_parse_sensitivity_disposition_from_dict() -> None:
                 "protection_reason": "Direct identifier that enables re-identification",
                 "protection_method_suggestion": "replace",
                 "combined_risk_level": "high",
+                "generalization_suggestion": "N/A",
             }
         ]
     }
@@ -187,6 +188,52 @@ def test_parse_sensitivity_disposition_from_dict() -> None:
 def test_parse_sensitivity_disposition_invalid_type() -> None:
     with pytest.raises(ValueError):
         parse_sensitivity_disposition("bad")
+
+
+def test_parse_sensitivity_disposition_corrects_low_with_generalize() -> None:
+    """LLM sometimes emits combined_risk_level='low' + protection_method_suggestion='generalize'.
+    The parser should auto-correct to 'leave_as_is' rather than dropping the record."""
+    raw = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "quasi_identifier",
+                "sensitivity": "low",
+                "entity_label": "nationality",
+                "entity_value": "French",
+                "protection_reason": "Nationality adds little narrowing in this context",
+                "protection_method_suggestion": "generalize",
+                "combined_risk_level": "low",
+                "generalization_suggestion": "a European nationality",
+            }
+        ]
+    }
+    result = parse_sensitivity_disposition(raw)
+    entity = result.sensitivity_disposition[0]
+    assert entity.protection_method_suggestion == "leave_as_is"
+    assert entity.generalization_suggestion == "N/A"
+
+
+def test_parse_sensitivity_disposition_corrects_low_with_suppress_inference() -> None:
+    raw = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "latent",
+                "category": "latent_identifier",
+                "sensitivity": "low",
+                "entity_label": "religion",
+                "entity_value": "Catholic",
+                "protection_reason": "Inferable but low combined risk",
+                "protection_method_suggestion": "suppress_inference",
+                "combined_risk_level": "low",
+                "generalization_suggestion": "N/A",
+            }
+        ]
+    }
+    result = parse_sensitivity_disposition(raw)
+    assert result.sensitivity_disposition[0].protection_method_suggestion == "leave_as_is"
 
 
 def test_parse_sensitivity_disposition_normalizes_numpy_array_payload() -> None:
@@ -203,6 +250,7 @@ def test_parse_sensitivity_disposition_normalizes_numpy_array_payload() -> None:
                     "protection_reason": "Direct identifier that enables re-identification",
                     "protection_method_suggestion": "replace",
                     "combined_risk_level": "high",
+                    "generalization_suggestion": "N/A",
                 }
             ],
             dtype=object,

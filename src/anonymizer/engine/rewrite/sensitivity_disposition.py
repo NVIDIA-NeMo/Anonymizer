@@ -213,6 +213,10 @@ CONSISTENCY RULES:
 - For latent entities, "replace" is rarely appropriate (value not in text).
 - For source="tagged": entity_value MUST match tag exactly.
 - For source="latent": entity_label/value MUST match the provided latent entity.
+- generalization_suggestion: if protection_method_suggestion is "generalize", provide a
+  concise phrase showing exactly how this entity should be generalized in the rewritten text
+  (e.g., "a city in the Pacific Northwest", "late 1970s", "a public university").
+  Set to "N/A" for all other protection methods.
 
 COVERAGE REQUIREMENTS:
 - Include ONE entry for EVERY unique listed entity

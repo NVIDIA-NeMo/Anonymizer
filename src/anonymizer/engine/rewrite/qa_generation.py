@@ -14,6 +14,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
+    COL_LATENT_ENTITIES,
     COL_MEANING_UNITS,
     COL_MEANING_UNITS_SERIALIZED,
     COL_PRIVACY_QA,
@@ -25,7 +26,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
+from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     Domain,
     DomainClassificationSchema,
@@ -51,19 +52,30 @@ if _DOMAIN_KEY is None:
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
+@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_LATENT_ENTITIES])
 def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Serialize sensitivity disposition into a JSON block for the meaning unit extraction prompt."""
     disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
-    block = [
-        {
+
+    raw_latent = normalize_payload(row.get(COL_LATENT_ENTITIES)) or {}
+    latent_list = raw_latent.get("latent_entities", []) if isinstance(raw_latent, dict) else []
+    evidence_by_label_value: dict[tuple[str, str], list[str]] = {
+        (e["label"], e["value"]): e.get("evidence", []) for e in latent_list if isinstance(e, dict)
+    }
+
+    block = []
+    for e in disposition.sensitivity_disposition:
+        entry: dict[str, Any] = {
             "entity_value": e.entity_value,
             "does_need_protection": e.needs_protection,
             "protection_method_suggestion": e.protection_method_suggestion,
+            "generalization_suggestion": e.generalization_suggestion,
             "category": e.category,
         }
-        for e in disposition.sensitivity_disposition
-    ]
+        if e.protection_method_suggestion == "suppress_inference":
+            entry["evidence"] = evidence_by_label_value.get((e.entity_label, e.entity_value), [])
+        block.append(entry)
+
     row[COL_SENSITIVITY_DISPOSITION_BLOCK] = json.dumps(block, ensure_ascii=False)
     return row
 
@@ -108,23 +120,30 @@ Then treat its entity_value as a BANNED SURFACE FORM:
     (roles, relationships, high-level descriptions).
   - If it cannot be expressed safely without carrying identifying detail, DROP the unit.
 
-B) TRANSFORM-ALLOWED (allowed only if generalized/suppress_inference)
-If an entry has:
-  - does_need_protection = True
-  AND protection_method_suggestion is "generalize" OR "suppress_inference"
-Then you MAY still capture the meaning, BUT you must NOT use the entity_value itself.
-Instead: preserve the semantic role while moving to a broader, less identifying level of abstraction.
-This may include:
+B) TRANSFORM-ALLOWED, WITH DIFFERENT RULES FOR GENERALIZE VS SUPPRESS_INFERENCE
 
-  • Geographic hierarchy: city → state → region → country
-  • Institutional hierarchy: named organization → organization type
-  • Role hierarchy: specific specialty → broader profession
-  • Temporal abstraction: exact date → approximate period
-  • Quantitative abstraction: exact number → rough scale
-  • Named program/product → generic descriptive category
+If protection_method_suggestion is "generalize":
+  - You MAY preserve the fact as a meaning unit.
+  - Do NOT use entity_value itself.
+  - Use generalization_suggestion as the abstraction level.
 
-The generalized phrasing must prevent recovery or lookup of the original entity_value while
-still preserving the meaning needed for usefulness.
+If protection_method_suggestion is "suppress_inference":
+  - Do NOT create a meaning unit whose purpose is to preserve that inferred entity.
+  - Do NOT treat the latent inference itself as utility-bearing merely because it is inferable.
+  - suppress_inference applies not only to the abstract inferred attribute, but also to
+    explicit details whose primary semantic role is to enable reconstruction of that attribute.
+  - The evidence field identifies text spans that support the inference. Treat these as
+    potentially sensitive reconstruction clues.
+  - Avoid preserving these clues verbatim, through close paraphrases, or in combinations
+    that would materially reconstruct the suppressed inference.
+  - If an explicit fact has substantial independent utility beyond the suppressed inference,
+    preserve it only at the broadest abstraction that retains that utility without
+    reconstructing the inference.
+  - If a fact's primary value is only to support the suppressed inference, DROP it.
+  - Evaluate meaning units collectively as well as individually. Multiple generalized facts
+    may still reconstruct a suppressed inference when combined.
+  - When in doubt, prefer preserving the single most utility-bearing generalized clue rather
+    than multiple supporting details.
 
 C) SAFE / LEFT-AS-IS (no special avoidance required)
 If an entry has:

@@ -55,6 +55,7 @@ def stub_sensitivity_disposition() -> dict:
                 "protection_reason": "Full name uniquely identifies the subject",
                 "protection_method_suggestion": "replace",
                 "combined_risk_level": "high",
+                "generalization_suggestion": "N/A",
             }
         ]
     }
@@ -93,6 +94,7 @@ def test_format_rewrite_disposition_block_excludes_unprotected_entities() -> Non
                 "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
                 "combined_risk_level": "low",
+                "generalization_suggestion": "N/A",
             }
         ]
     }
@@ -117,6 +119,39 @@ def test_format_rewrite_disposition_block_serializes_required_fields(
     }
 
 
+def test_format_rewrite_disposition_block_includes_generalization_suggestion_for_generalize() -> None:
+    disposition = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "quasi_identifier",
+                "sensitivity": "medium",
+                "entity_label": "city",
+                "entity_value": "Portland",
+                "protection_reason": "City combined with other quasi-identifiers enables re-identification",
+                "protection_method_suggestion": "generalize",
+                "combined_risk_level": "medium",
+                "generalization_suggestion": "a city in the Pacific Northwest",
+            }
+        ]
+    }
+    row = {COL_SENSITIVITY_DISPOSITION: disposition}
+    result = _format_rewrite_disposition_block(row)
+    block = result[COL_REWRITE_DISPOSITION_BLOCK]
+    assert len(block) == 1
+    assert block[0]["generalization_suggestion"] == "a city in the Pacific Northwest"
+
+
+def test_format_rewrite_disposition_block_omits_generalization_suggestion_for_non_generalize(
+    stub_sensitivity_disposition: dict,
+) -> None:
+    row = {COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition}
+    result = _format_rewrite_disposition_block(row)
+    block = result[COL_REWRITE_DISPOSITION_BLOCK]
+    assert "generalization_suggestion" not in block[0]
+
+
 def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> None:
     disposition = {
         "sensitivity_disposition": [
@@ -130,6 +165,7 @@ def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> 
                 "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
                 "combined_risk_level": "low",
+                "generalization_suggestion": "N/A",
             }
         ]
     }
