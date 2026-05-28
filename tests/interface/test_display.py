@@ -583,6 +583,7 @@ def test_render_record_html_rewrite_mode_with_disposition() -> None:
                 protection_reason="Direct identifier that uniquely identifies the subject.",
                 protection_method_suggestion="replace",
                 combined_risk_level="high",
+                generalization_suggestion="N/A",
             ),
         ]
     ).model_dump()
