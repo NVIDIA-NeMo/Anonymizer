@@ -69,9 +69,10 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
             "entity_value": e.entity_value,
             "does_need_protection": e.needs_protection,
             "protection_method_suggestion": e.protection_method_suggestion,
-            "generalization_suggestion": e.generalization_suggestion,
             "category": e.category,
         }
+        if e.protection_method_suggestion == "generalize":
+            entry["generalization_suggestion"] = e.generalization_suggestion
         if e.protection_method_suggestion == "suppress_inference":
             entry["evidence"] = evidence_by_label_value.get((e.entity_label, e.entity_value), [])
         block.append(entry)

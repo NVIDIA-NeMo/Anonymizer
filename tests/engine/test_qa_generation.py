@@ -131,9 +131,10 @@ def test_format_disposition_block_produces_valid_json() -> None:
     assert block[0]["entity_value"] == "Alice"
     assert block[0]["does_need_protection"] is True
     assert block[0]["protection_method_suggestion"] == "replace"
-    assert block[0]["generalization_suggestion"] == "N/A"
+    assert "generalization_suggestion" not in block[0]
     assert block[1]["entity_value"] == "Portland"
     assert block[1]["does_need_protection"] is False
+    assert "generalization_suggestion" not in block[1]
 
 
 def test_format_disposition_block_accepts_dict_payload() -> None:
