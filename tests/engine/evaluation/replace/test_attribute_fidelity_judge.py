@@ -16,10 +16,11 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import (
     AttributeFidelityJudgeWorkflow,
     AttributeFidelityJudgmentSchema,
-    _flatten_judgment,
     _judge_prompt,
     _replacements_for_judge,
 )
+
+_flatten_judgment = AttributeFidelityJudgeWorkflow._flatten_judgment
 
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt

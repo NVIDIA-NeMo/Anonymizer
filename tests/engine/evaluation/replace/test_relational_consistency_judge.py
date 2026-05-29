@@ -17,10 +17,11 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import (
     RelationalConsistencyJudgeWorkflow,
     RelationalConsistencyJudgmentSchema,
-    _flatten_judgment,
     _judge_prompt,
     _replacements_for_judge,
 )
+
+_flatten_judgment = RelationalConsistencyJudgeWorkflow._flatten_judgment
 
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt

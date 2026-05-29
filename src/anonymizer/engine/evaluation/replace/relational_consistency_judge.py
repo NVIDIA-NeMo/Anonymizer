@@ -5,14 +5,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from typing import ClassVar
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
-from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
-from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_JUDGE,
@@ -21,10 +18,8 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     _jinja,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.evaluation.replace.relational_consistency_judge")
@@ -67,17 +62,6 @@ class RelationalConsistencyJudgmentSchema(BaseModel):
         default_factory=list,
         description=("Every relation actually checked in this record. Empty when no checkable relations exist."),
     )
-
-
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RelationalConsistencyJudgeResult:
-    dataframe: pd.DataFrame
-    failed_records: list[FailedRecord]
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +238,7 @@ outside the JSON object. Your entire response must be a single valid JSON object
 
 
 def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
-    """Flatten COL_REPLACEMENT_MAP into Jinja-friendly dicts.
-
-    Mirrors the type-fidelity helper but kept local so the two judges remain
-    independent — if one changes its prompt shape, the other is unaffected.
-    """
+    """Flatten COL_REPLACEMENT_MAP into Jinja-friendly dicts."""
     if raw_map is None:
         return []
     if hasattr(raw_map, "model_dump"):
@@ -277,37 +257,12 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
     return [{"original": r.original, "label": r.label, "synthetic": r.synthetic} for r in parsed.replacements]
 
 
-def _flatten_judgment(raw: object) -> tuple[bool | None, list[dict[str, object]]]:
-    """Normalize an LLM judge output into (all_consistent, invalid_relations).
-
-    Returns ``(None, [])`` for any malformed or missing payload so downstream
-    display renders "judge unavailable" rather than fabricating a verdict.
-    """
-    if raw is None:
-        return None, []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return None, []
-    if not isinstance(raw, dict):
-        return None, []
-    try:
-        parsed = RelationalConsistencyJudgmentSchema.model_validate(raw)
-    except Exception:
-        return None, []
-    invalid = [r.model_dump() for r in parsed.relations if not r.passes]
-    return parsed.all_consistent, invalid
-
-
 # ---------------------------------------------------------------------------
 # Workflow
 # ---------------------------------------------------------------------------
 
 
-class RelationalConsistencyJudgeWorkflow:
+class RelationalConsistencyJudgeWorkflow(_BaseJudgeWorkflow):
     """LLM-as-judge evaluator that checks cross-entity coherence within a record.
 
     Runs after Substitute generates the replacement map. Output columns:
@@ -317,94 +272,28 @@ class RelationalConsistencyJudgeWorkflow:
     display can derive the success-rate denominator from the full relations list).
     """
 
-    def __init__(self, adapter: NddAdapter) -> None:
-        self._adapter = adapter
+    RAW_COL: ClassVar[str] = COL_RELATIONAL_CONSISTENCY_JUDGE
+    VALID_COL: ClassVar[str] = COL_RELATIONAL_CONSISTENCY_VALID
+    INVALID_COL: ClassVar[str] = COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS
+    SCHEMA: ClassVar[type[BaseModel]] = RelationalConsistencyJudgmentSchema
+    VERDICT_FIELD: ClassVar[str] = "all_consistent"
+    DEFAULT_PAYLOAD: ClassVar[dict] = {"all_consistent": True, "relations": []}
+    MODEL_ROLE: ClassVar[str] = "replace_relational_consistency_judge"
+    WORKFLOW_NAME: ClassVar[str] = "replace-relational-consistency-judge"
 
     def prepare(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         working_df = dataframe.copy()
         working_df[_REPLACEMENTS_FOR_JUDGE_COL] = working_df[COL_REPLACEMENT_MAP].apply(_replacements_for_judge)
         return working_df
 
-    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
-        return LLMStructuredColumnConfig(
-            name=COL_RELATIONAL_CONSISTENCY_JUDGE,
-            prompt=_judge_prompt(),
-            model_alias=resolve_model_alias("replace_relational_consistency_judge", selected_models),
-            output_format=RelationalConsistencyJudgmentSchema,
-        )
+    def _passthrough_mask(self, dataframe: pd.DataFrame) -> pd.Series:
+        # Fewer than 2 replacements => no checkable relations.
+        return dataframe[_REPLACEMENTS_FOR_JUDGE_COL].apply(lambda items: items is None or len(items) < 2)
 
-    def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        out = dataframe.copy()
-        flattened = (
-            out[COL_RELATIONAL_CONSISTENCY_JUDGE].apply(_flatten_judgment)
-            if COL_RELATIONAL_CONSISTENCY_JUDGE in out.columns
-            else None
-        )
-        # Passthrough: fewer than 2 replacements => no checkable relations.
-        # `items` may be a numpy array after a parquet round-trip via DD.
-        passthrough_mask = out[_REPLACEMENTS_FOR_JUDGE_COL].apply(lambda items: items is None or len(items) < 2)
+    @classmethod
+    def _build_prompt(cls) -> str:
+        return _judge_prompt()
 
-        valid: list[bool | None] = []
-        invalid: list[list[dict[str, str]]] = []
-        for idx in out.index:
-            if passthrough_mask.loc[idx]:
-                valid.append(True)
-                invalid.append([])
-            elif flattened is not None:
-                v, inv = flattened.loc[idx]
-                valid.append(v)
-                invalid.append(inv)
-            else:
-                valid.append(None)
-                invalid.append([])
-        out[COL_RELATIONAL_CONSISTENCY_VALID] = valid
-        out[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = invalid
-        if COL_RELATIONAL_CONSISTENCY_JUDGE in out.columns:
-            out.loc[passthrough_mask, COL_RELATIONAL_CONSISTENCY_JUDGE] = [
-                {"all_consistent": True, "relations": []}
-            ] * int(passthrough_mask.sum())
-        return out
-
-    def evaluate(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: EvaluateModelSelection,
-        preview_num_records: int | None = None,
-    ) -> RelationalConsistencyJudgeResult:
-        working_df = self.prepare(dataframe)
-
-        with_relations, passthrough_rows = split_rows(
-            working_df,
-            column=_REPLACEMENTS_FOR_JUDGE_COL,
-            predicate=lambda items: bool(items) and len(items) >= 2,
-        )
-        passthrough_rows[COL_RELATIONAL_CONSISTENCY_JUDGE] = [
-            {"all_consistent": True, "relations": []} for _ in range(len(passthrough_rows))
-        ]
-        passthrough_rows[COL_RELATIONAL_CONSISTENCY_VALID] = True
-        passthrough_rows[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = [[] for _ in range(len(passthrough_rows))]
-
-        if with_relations.empty:
-            combined = merge_and_reorder(passthrough_rows)
-            return RelationalConsistencyJudgeResult(dataframe=combined, failed_records=[])
-
-        effective_preview_num_records = (
-            min(preview_num_records, len(with_relations)) if preview_num_records is not None else None
-        )
-        run_result = self._adapter.run_workflow(
-            with_relations,
-            model_configs=model_configs,
-            columns=[self.column_config(selected_models)],
-            workflow_name="replace-relational-consistency-judge",
-            preview_num_records=effective_preview_num_records,
-        )
-
-        judged_df = run_result.dataframe.copy()
-        flattened = judged_df[COL_RELATIONAL_CONSISTENCY_JUDGE].apply(_flatten_judgment)
-        judged_df[COL_RELATIONAL_CONSISTENCY_VALID] = flattened.apply(lambda pair: pair[0])
-        judged_df[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS] = flattened.apply(lambda pair: pair[1])
-
-        combined = merge_and_reorder(judged_df, passthrough_rows)
-        return RelationalConsistencyJudgeResult(dataframe=combined, failed_records=run_result.failed_records)
+    @classmethod
+    def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
+        return [r.model_dump() for r in parsed.relations if not r.passes]

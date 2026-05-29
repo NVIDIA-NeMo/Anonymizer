@@ -18,10 +18,11 @@ from anonymizer.engine.evaluation.detection_judge import (
     DetectionJudgeWorkflow,
     DetectionJudgmentSchema,
     _entities_for_judge,
-    _flatten_judgment,
     _judge_prompt,
     _label_examples_for_judge,
 )
+
+_flatten_judgment = DetectionJudgeWorkflow._flatten_judgment
 from anonymizer.engine.schemas import EntitiesByValueSchema
 
 # ---------------------------------------------------------------------------
