@@ -219,6 +219,19 @@ hash_custom_preview.display_record(0)
 
 
 # %% [markdown]
+# ## 📊 (Optional) Evaluate each strategy
+#
+# - `evaluate()` is a separate, opt-in step that scores the output with LLM-as-judge metrics. Which metrics fire depends on the strategy:
+#   - **Substitute** → 4 metrics (Detection Validity + Type Fidelity + Relational Consistency + Attribute Fidelity).
+#   - **Redact / Annotate / Hash** → Detection Validity only (no replacement map to score type/relational/attribute against).
+# - Below shows it on the Substitute preview to surface all four; the same call works on `redact_preview`, `annotate_preview`, or `hash_preview`.
+
+# %%
+substitute_evaluated = anonymizer.evaluate(substitute_preview)
+substitute_evaluated.display_record(0)
+
+
+# %% [markdown]
 # ## ⏭️ Next steps
 #
 # - **[🕵️ Inspecting Detected Entities](../02_inspecting_detected_entities/)** --

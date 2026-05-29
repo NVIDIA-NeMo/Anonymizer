@@ -59,6 +59,28 @@ COL_LATENT_ENTITIES = "_latent_entities"
 # Final output
 COL_FINAL_ENTITIES = "final_entities"
 
+# Replace evaluation: detection-validity judge
+COL_DETECTION_JUDGE = "_detection_judge"  # raw judge output, internal
+COL_DETECTION_VALID = "detection_valid"  # user-facing bool (None if judge unavailable)
+COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"  # user-facing list of {value, label, reasoning}
+
+# Replace evaluation: type-fidelity judge (Substitute only)
+COL_TYPE_FIDELITY_JUDGE = "_type_fidelity_judge"  # raw judge output, internal
+COL_TYPE_FIDELITY_VALID = "type_fidelity_valid"  # user-facing bool (None if judge unavailable)
+COL_TYPE_FIDELITY_INVALID_REPLACEMENTS = (
+    "type_fidelity_invalid_replacements"  # list of {original, label, synthetic, reasoning}
+)
+
+# Replace evaluation: relational-consistency judge (Substitute only)
+COL_RELATIONAL_CONSISTENCY_JUDGE = "_relational_consistency_judge"  # raw judge output (kept for display denominator)
+COL_RELATIONAL_CONSISTENCY_VALID = "relational_consistency_valid"  # user-facing bool (None if judge unavailable)
+COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS = "relational_consistency_invalid_relations"  # list of failing relations
+
+# Replace evaluation: attribute-fidelity judge (Substitute only)
+COL_ATTRIBUTE_FIDELITY_JUDGE = "_attribute_fidelity_judge"  # raw judge output (kept for display denominator)
+COL_ATTRIBUTE_FIDELITY_VALID = "attribute_fidelity_valid"  # user-facing bool (None if judge unavailable)
+COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES = "attribute_fidelity_invalid_entities"  # list of failing per-entity checks
+
 # ---------------------------------------------------------------------------
 # Rewrite pipeline
 # ---------------------------------------------------------------------------

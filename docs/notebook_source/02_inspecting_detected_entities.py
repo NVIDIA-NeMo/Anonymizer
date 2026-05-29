@@ -189,6 +189,16 @@ else:
     print("No failed records.")
 
 # %% [markdown]
+# ## 📊 (Optional) Score the detections with an LLM judge
+#
+# - `evaluate()` is a separate, opt-in step that runs LLM-as-judge metrics on the output.
+# - This notebook uses Annotate, so only **Detection Validity** runs — it flags entities the detector got wrong (false positives, mislabels, boundary errors). Substitute would also enable Type Fidelity, Relational Consistency, and Attribute Fidelity.
+
+# %%
+evaluated = anonymizer.evaluate(result)
+evaluated.display_record(0)
+
+# %% [markdown]
 # ## ⏭️ Next steps
 #
 # - **[🕵️ Your First Anonymization](../01_your_first_anonymization/)** --

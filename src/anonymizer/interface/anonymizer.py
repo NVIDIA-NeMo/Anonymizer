@@ -19,23 +19,36 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    EvaluateConfig,
 )
 from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
+    COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_VALID,
     COL_FINAL_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+    COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACED_TEXT,
     COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+    COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
+from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
+from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
@@ -130,7 +143,12 @@ class Anonymizer:
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
         self._replace_runner = replace_runner or ReplacementWorkflow(
-            llm_workflow=LlmReplaceWorkflow(adapter=self._adapter)
+            llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
+            detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
+            type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=self._adapter),
+            relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=self._adapter),
+            attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=self._adapter),
+            adapter=self._adapter,
         )
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
 
@@ -141,6 +159,9 @@ class Anonymizer:
         data: AnonymizerInput,
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
+
+        No LLM evaluation judges run here — call :meth:`evaluate` on the
+        result's ``trace_dataframe`` when you want the LLM alignment scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -181,6 +202,9 @@ class Anonymizer:
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
 
+        No LLM evaluation judges run here — call :meth:`evaluate` on the
+        result's ``trace_dataframe`` when you want the LLM alignment scores.
+
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
@@ -200,6 +224,7 @@ class Anonymizer:
                 resolved_text_column=result.resolved_text_column,
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
+                replace_method=config.replace,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -217,6 +242,83 @@ class Anonymizer:
                 result=result,
                 duration_sec=time.perf_counter() - t_start,
             )
+
+    def evaluate(
+        self,
+        output: AnonymizerResult | PreviewResult,
+        *,
+        config: EvaluateConfig | None = None,
+    ) -> AnonymizerResult:
+        """Run LLM-as-judge evaluation on a prior ``preview()`` / ``run()`` output.
+
+        The anonymization strategy is read from ``output.replace_method`` (set
+        when ``run()`` / ``preview()`` produced the result), so users don't
+        restate it and can't mis-state it.
+
+        Typical flow::
+
+            preview = anonymizer.preview(config=cfg, data=src, num_records=15)
+            evaluated = anonymizer.evaluate(preview)
+            evaluated.display_record(0)
+
+        Save/reload across sessions::
+
+            import pickle
+
+            with open("/tmp/preview.pkl", "wb") as f:
+                pickle.dump(preview, f)
+            # … later …
+            with open("/tmp/preview.pkl", "rb") as f:
+                loaded = pickle.load(f)
+            evaluated = anonymizer.evaluate(loaded)
+
+        Args:
+            output: An :class:`AnonymizerResult` or :class:`PreviewResult` from
+                a prior ``preview()`` / ``run()``. Carries the trace dataframe,
+                the resolved text-column name, and the replace strategy.
+            config: Optional :class:`EvaluateConfig` for evaluation-specific
+                knobs (placeholder today; reserved for metric selection,
+                per-judge model/prompt overrides, etc.).
+        """
+        _ = config  # placeholder; no knobs to read yet
+        replace_method = getattr(output, "replace_method", None)
+        if replace_method is None:
+            raise ValueError(
+                "Cannot evaluate this output — it has no associated replace strategy. "
+                "Pass an AnonymizerResult / PreviewResult produced by run() / preview() "
+                "on this branch (the strategy is recorded then). Hand-built or legacy "
+                "results need their `replace_method` attribute set before calling evaluate()."
+            )
+        try:
+            validate_model_alias_references(
+                self._model_configs,
+                self._selected_models,
+                check_substitute=isinstance(replace_method, Substitute),
+                check_rewrite=False,
+                check_evaluate=True,
+            )
+        except ValueError as exc:
+            raise InvalidConfigError(str(exc)) from exc
+        text_column = output.resolved_text_column
+        # trace_dataframe is in user-facing form (e.g., 'biography' instead of
+        # '__nemo_anonymizer_text_input__'). The judge prompts reference the
+        # internal names, so reverse the rename before the DD call and re-apply
+        # it on the result.
+        internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+        replace_result = self._replace_runner.evaluate(
+            internal_df,
+            replace_method=replace_method,
+            model_configs=self._model_configs,
+            selected_models=self._selected_models.evaluate,
+        )
+        renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
+        return AnonymizerResult(
+            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
+            trace_dataframe=renamed_trace,
+            resolved_text_column=text_column,
+            failed_records=replace_result.failed_records,
+            replace_method=replace_method,
+        )
 
     def validate_config(self, config: AnonymizerConfig) -> None:
         """Validate that the active workflow config is compatible with model selections."""
@@ -358,6 +460,7 @@ class Anonymizer:
             trace_dataframe=renamed_trace,
             resolved_text_column=text_col,
             failed_records=all_failures,
+            replace_method=config.replace,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
@@ -562,10 +665,35 @@ def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd
     return df.rename(columns=rename_map)
 
 
+def _unrename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
+    """Reverse of :func:`_rename_output_columns`.
+
+    Converts user-facing column names (``biography``, ``biography_replaced``, …)
+    back to the internal names (``__nemo_anonymizer_text_input__``, …) that the
+    judges' prompt templates reference. No-op if the dataframe is already in
+    internal form (``COL_TEXT`` already present).
+    """
+    if COL_TEXT in df.columns:
+        return df
+    rename_map: dict[str, str] = {}
+    if resolved_text_column in df.columns:
+        rename_map[resolved_text_column] = COL_TEXT
+    if f"{resolved_text_column}_replaced" in df.columns:
+        rename_map[f"{resolved_text_column}_replaced"] = COL_REPLACED_TEXT
+    if f"{resolved_text_column}_with_spans" in df.columns:
+        rename_map[f"{resolved_text_column}_with_spans"] = COL_TAGGED_TEXT
+    if f"{resolved_text_column}_rewritten" in df.columns:
+        rename_map[f"{resolved_text_column}_rewritten"] = COL_REWRITTEN_TEXT
+    if not rename_map:
+        return df
+    return df.rename(columns=rename_map)
+
+
 def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
-    Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities
+    Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
+                 optional judge verdict columns when available
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
@@ -589,6 +717,14 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             f"{text_col}_replaced",
             f"{text_col}_with_spans",
             COL_FINAL_ENTITIES,
+            COL_DETECTION_VALID,
+            COL_DETECTION_INVALID_ENTITIES,
+            COL_TYPE_FIDELITY_VALID,
+            COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+            COL_RELATIONAL_CONSISTENCY_VALID,
+            COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+            COL_ATTRIBUTE_FIDELITY_VALID,
+            COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
         }
     else:
         allowed = {

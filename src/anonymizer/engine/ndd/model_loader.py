@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from anonymizer.config.models import (
     DetectionModelSelection,
+    EvaluateModelSelection,
     ModelSelection,
     ReplaceModelSelection,
     RewriteModelSelection,
@@ -26,6 +27,7 @@ class WorkflowName(str, Enum):
     detection = "detection"
     replace = "replace"
     rewrite = "rewrite"
+    evaluate = "evaluate"
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ def load_default_model_selection(config_dir: Path | None = None) -> ModelSelecti
         detection=DetectionModelSelection(**load_workflow_selections(WorkflowName.detection, resolved_dir)),
         replace=ReplaceModelSelection(**load_workflow_selections(WorkflowName.replace, resolved_dir)),
         rewrite=RewriteModelSelection(**load_workflow_selections(WorkflowName.rewrite, resolved_dir)),
+        evaluate=EvaluateModelSelection(**load_workflow_selections(WorkflowName.evaluate, resolved_dir)),
     )
 
 
@@ -154,7 +157,7 @@ def get_model_alias(workflow_name: WorkflowName, role: str, config_dir: Path | N
 
 def resolve_model_alias(
     role: str,
-    selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection,
+    selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection | EvaluateModelSelection,
 ) -> str:
     """Read a scalar model alias directly from the selection model.
 
@@ -172,7 +175,7 @@ def resolve_model_alias(
 
 def resolve_model_aliases(
     role: str,
-    selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection,
+    selection_model: DetectionModelSelection | ReplaceModelSelection | RewriteModelSelection | EvaluateModelSelection,
 ) -> list[str]:
     """Read model aliases from the selection model as a list.
 
@@ -209,11 +212,13 @@ def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> Mode
     detection_overrides = user_selections.get(WorkflowName.detection.value, {})
     replace_overrides = user_selections.get(WorkflowName.replace.value, {})
     rewrite_overrides = user_selections.get(WorkflowName.rewrite.value, {})
+    evaluate_overrides = user_selections.get(WorkflowName.evaluate.value, {})
 
     return ModelSelection(
         detection=_merge(defaults.detection, detection_overrides),
         replace=_merge(defaults.replace, replace_overrides),
         rewrite=_merge(defaults.rewrite, rewrite_overrides),
+        evaluate=_merge(defaults.evaluate, evaluate_overrides),
     )
 
 
@@ -223,8 +228,15 @@ def validate_model_alias_references(
     *,
     check_substitute: bool = False,
     check_rewrite: bool = False,
+    check_evaluate: bool = False,
 ) -> None:
-    """Validate that active workflow model aliases exist in the model pool."""
+    """Validate that active workflow model aliases exist in the model pool.
+
+    ``check_evaluate`` validates the evaluation roles. ``detection_validity_judge``
+    is always checked when evaluation is on; the three ``replace_*_judge`` roles
+    are additionally checked when ``check_substitute`` is also True (those only
+    fire on the Substitute replace strategy).
+    """
     known_aliases = {model_config.alias for model_config in model_configs}
     detection_roles = selected_models.detection.model_dump()
 
@@ -238,6 +250,16 @@ def validate_model_alias_references(
     if check_substitute:
         for role, alias in selected_models.replace.model_dump().items():
             _collect_role(roles_to_check, f"replace.{role}", alias)
+    if check_evaluate:
+        evaluate_roles = selected_models.evaluate.model_dump()
+        _collect_role(roles_to_check, "evaluate.detection_validity_judge", evaluate_roles["detection_validity_judge"])
+        if check_substitute:
+            for role in (
+                "replace_type_fidelity_judge",
+                "replace_relational_consistency_judge",
+                "replace_attribute_fidelity_judge",
+            ):
+                _collect_role(roles_to_check, f"evaluate.{role}", evaluate_roles[role])
 
     unknown = {path: alias for path, alias in roles_to_check.items() if alias not in known_aliases}
     if unknown:
