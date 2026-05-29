@@ -1203,6 +1203,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.EvaluateConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;EvaluateConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.anonymizer_config.is_remote_input_source" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2163,6 +2174,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.EvaluateConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;EvaluateConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.anonymizer_config.is_remote_input_source" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2375,6 +2397,19 @@
             <td>
               <div class="doc-md-description">
                 <p>Primary user-facing config for anonymization behavior.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="            EvaluateConfig
+
+
+  
+      pydantic-model
+   (anonymizer.config.anonymizer_config.EvaluateConfig)" href="#anonymizer.config.anonymizer_config.EvaluateConfig">EvaluateConfig</a></code></td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional knobs for :meth:<code>Anonymizer.evaluate</code>.</p>
               </div>
             </td>
           </tr>
@@ -3217,6 +3252,42 @@ user-facing <code>Rewrite</code>.</p>
 
 
   </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="anonymizer.config.anonymizer_config.EvaluateConfig" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>EvaluateConfig</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-model"><code>pydantic-model</code></small>
+  </span>
+
+<a href="#anonymizer.config.anonymizer_config.EvaluateConfig" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+        <p>Optional knobs for :meth:<code>Anonymizer.evaluate</code>.</p>
+<p>Reserved for genuinely evaluation-specific configuration — metric selection,
+per-judge model/prompt overrides, scoring thresholds, etc. The anonymization
+mode is <strong>not</strong> here: it travels on the <code>AnonymizerResult</code> /
+<code>PreviewResult</code> produced by <code>run()</code> / <code>preview()</code> and is read directly
+by <code>evaluate()</code>, so users don't restate it and can't mis-state it.</p>
+<p>Today this is an empty placeholder; fields will be added as evaluation
+knobs are introduced.</p>
+
+    
+
+
 
     </div>
 

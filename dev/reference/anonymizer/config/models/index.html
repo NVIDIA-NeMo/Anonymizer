@@ -1015,6 +1015,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.models.EvaluateModelSelection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;EvaluateModelSelection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.models.ModelSelection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1709,6 +1720,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.models.EvaluateModelSelection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;EvaluateModelSelection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.models.ModelSelection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1886,6 +1908,19 @@
             <td>
               <div class="doc-md-description">
                 <p>Model aliases for the rewrite pipeline.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="            EvaluateModelSelection
+
+
+  
+      pydantic-model
+   (anonymizer.config.models.EvaluateModelSelection)" href="#anonymizer.config.models.EvaluateModelSelection">EvaluateModelSelection</a></code></td>
+            <td>
+              <div class="doc-md-description">
+                <p>Model aliases for the LLM-as-judge evaluation step.</p>
               </div>
             </td>
           </tr>
@@ -2225,6 +2260,75 @@ def normalize_entity_validator(cls, value: Any) -&gt; list[str]:
 
 
 
+<h3 id="anonymizer.config.models.EvaluateModelSelection" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>EvaluateModelSelection</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-model"><code>pydantic-model</code></small>
+  </span>
+
+<a href="#anonymizer.config.models.EvaluateModelSelection" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+        <p>Model aliases for the LLM-as-judge evaluation step.</p>
+<p>These roles are only consumed by :meth:<code>Anonymizer.evaluate</code> — they are not
+needed at anonymization time. Keeping them in their own section lets
+<code>preview()</code> / <code>run()</code> validate only the roles that produce anonymized
+output, while <code>evaluate(...)</code> validates the roles that score it.</p>
+
+    
+
+        <p>Fields:</p>
+        <ul>
+            <li>
+              <code><span title="anonymizer.config.models.EvaluateModelSelection.detection_validity_judge">detection_validity_judge</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.config.models.EvaluateModelSelection.replace_type_fidelity_judge">replace_type_fidelity_judge</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.config.models.EvaluateModelSelection.replace_relational_consistency_judge">replace_relational_consistency_judge</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.config.models.EvaluateModelSelection.replace_attribute_fidelity_judge">replace_attribute_fidelity_judge</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+        </ul>
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
 <h3 id="anonymizer.config.models.ModelSelection" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ModelSelection</code>
 
@@ -2272,6 +2376,15 @@ def normalize_entity_validator(cls, value: Any) -&gt; list[str]:
   
       pydantic-model
    (anonymizer.config.models.RewriteModelSelection)" href="#anonymizer.config.models.RewriteModelSelection">RewriteModelSelection</a></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.config.models.ModelSelection.evaluate">evaluate</span></code>
+                (<code><a class="autorefs autorefs-internal" title="            EvaluateModelSelection
+
+
+  
+      pydantic-model
+   (anonymizer.config.models.EvaluateModelSelection)" href="#anonymizer.config.models.EvaluateModelSelection">EvaluateModelSelection</a></code>)
             </li>
         </ul>
 

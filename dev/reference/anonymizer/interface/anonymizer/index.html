@@ -1150,6 +1150,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.interface.anonymizer.Anonymizer.evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;evaluate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.interface.anonymizer.Anonymizer.validate_config" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1682,6 +1693,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.interface.anonymizer.Anonymizer.evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;evaluate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.interface.anonymizer.Anonymizer.validate_config" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2041,6 +2063,14 @@ Each provider maps a name to an endpoint and API key.</p>
               </td>
             </tr>
             <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            evaluate(output, *, config=None) (anonymizer.interface.anonymizer.Anonymizer.evaluate)" href="#anonymizer.interface.anonymizer.Anonymizer.evaluate">evaluate</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Run LLM-as-judge evaluation on a prior <code>preview()</code> / <code>run()</code> output.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
               <td><code><a class="autorefs autorefs-internal" title="            validate_config(config) (anonymizer.interface.anonymizer.Anonymizer.validate_config)" href="#anonymizer.interface.anonymizer.Anonymizer.validate_config">validate_config</a></code></td>
               <td>
                 <div class="doc-md-description">
@@ -2108,7 +2138,12 @@ Each provider maps a name to an endpoint and API key.</p>
     self._adapter = NddAdapter(data_designer=self._data_designer)
     self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
     self._replace_runner = replace_runner or ReplacementWorkflow(
-        llm_workflow=LlmReplaceWorkflow(adapter=self._adapter)
+        llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
+        detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
+        type_fidelity_judge=TypeFidelityJudgeWorkflow(adapter=self._adapter),
+        relational_consistency_judge=RelationalConsistencyJudgeWorkflow(adapter=self._adapter),
+        attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=self._adapter),
+        adapter=self._adapter,
     )
     self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)</code></pre>
                   </details>
@@ -2138,6 +2173,8 @@ Each provider maps a name to an endpoint and API key.</p>
     <div class="doc doc-contents ">
 
         <p>Run the full anonymization pipeline (detection + replacement).</p>
+<p>No LLM evaluation judges run here — call :meth:<code>evaluate</code> on the
+result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -2207,6 +2244,9 @@ Each provider maps a name to an endpoint and API key.</p>
 ) -&gt; AnonymizerResult:
     """Run the full anonymization pipeline (detection + replacement).
 
+    No LLM evaluation judges run here — call :meth:`evaluate` on the
+    result's ``trace_dataframe`` when you want the LLM alignment scores.
+
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
         data: Input source with file path, text column, and optional data summary.
@@ -2253,6 +2293,8 @@ Each provider maps a name to an endpoint and API key.</p>
     <div class="doc doc-contents ">
 
         <p>Run the pipeline on a subset of records for quick inspection.</p>
+<p>No LLM evaluation judges run here — call :meth:<code>evaluate</code> on the
+result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -2339,6 +2381,9 @@ Each provider maps a name to an endpoint and API key.</p>
 ) -&gt; PreviewResult:
     """Run the pipeline on a subset of records for quick inspection.
 
+    No LLM evaluation judges run here — call :meth:`evaluate` on the
+    result's ``trace_dataframe`` when you want the LLM alignment scores.
+
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
         data: Input source with file path, text column, and optional data summary.
@@ -2358,6 +2403,7 @@ Each provider maps a name to an endpoint and API key.</p>
             resolved_text_column=result.resolved_text_column,
             failed_records=result.failed_records,
             preview_num_records=num_records,
+            replace_method=config.replace,
         )
     except KeyboardInterrupt:
         status = TaskStatusEnum.CANCELED
@@ -2375,6 +2421,183 @@ Each provider maps a name to an endpoint and API key.</p>
             result=result,
             duration_sec=time.perf_counter() - t_start,
         )</code></pre>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="anonymizer.interface.anonymizer.Anonymizer.evaluate" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python">evaluate(output, *, config=None)</code>
+
+<a href="#anonymizer.interface.anonymizer.Anonymizer.evaluate" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Run LLM-as-judge evaluation on a prior <code>preview()</code> / <code>run()</code> output.</p>
+<p>The anonymization strategy is read from <code>output.replace_method</code> (set
+when <code>run()</code> / <code>preview()</code> produced the result), so users don't
+restate it and can't mis-state it.</p>
+<p>Typical flow::</p>
+<pre class="highlight"><code>preview = anonymizer.preview(config=cfg, data=src, num_records=15)
+evaluated = anonymizer.evaluate(preview)
+evaluated.display_record(0)</code></pre>
+<p>Save/reload across sessions::</p>
+<pre class="highlight"><code>import pickle
+
+with open("/tmp/preview.pkl", "wb") as f:
+    pickle.dump(preview, f)
+# … later …
+with open("/tmp/preview.pkl", "rb") as f:
+    loaded = pickle.load(f)
+evaluated = anonymizer.evaluate(loaded)</code></pre>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>output</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None)
+
+  
+      dataclass
+   (anonymizer.interface.results.AnonymizerResult)" href="../results/#anonymizer.interface.results.AnonymizerResult">AnonymizerResult</a> | <a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None)
+
+  
+      dataclass
+   (anonymizer.interface.results.PreviewResult)" href="../results/#anonymizer.interface.results.PreviewResult">PreviewResult</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>An :class:<code>AnonymizerResult</code> or :class:<code>PreviewResult</code> from
+a prior <code>preview()</code> / <code>run()</code>. Carries the trace dataframe,
+the resolved text-column name, and the replace strategy.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>config</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="            EvaluateConfig
+
+
+  
+      pydantic-model
+   (anonymizer.config.anonymizer_config.EvaluateConfig)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.EvaluateConfig">EvaluateConfig</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional :class:<code>EvaluateConfig</code> for evaluation-specific
+knobs (placeholder today; reserved for metric selection,
+per-judge model/prompt overrides, etc.).</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/interface/anonymizer.py</code></summary>
+              <pre class="highlight"><code class="language-python">def evaluate(
+    self,
+    output: AnonymizerResult | PreviewResult,
+    *,
+    config: EvaluateConfig | None = None,
+) -&gt; AnonymizerResult:
+    """Run LLM-as-judge evaluation on a prior ``preview()`` / ``run()`` output.
+
+    The anonymization strategy is read from ``output.replace_method`` (set
+    when ``run()`` / ``preview()`` produced the result), so users don't
+    restate it and can't mis-state it.
+
+    Typical flow::
+
+        preview = anonymizer.preview(config=cfg, data=src, num_records=15)
+        evaluated = anonymizer.evaluate(preview)
+        evaluated.display_record(0)
+
+    Save/reload across sessions::
+
+        import pickle
+
+        with open("/tmp/preview.pkl", "wb") as f:
+            pickle.dump(preview, f)
+        # … later …
+        with open("/tmp/preview.pkl", "rb") as f:
+            loaded = pickle.load(f)
+        evaluated = anonymizer.evaluate(loaded)
+
+    Args:
+        output: An :class:`AnonymizerResult` or :class:`PreviewResult` from
+            a prior ``preview()`` / ``run()``. Carries the trace dataframe,
+            the resolved text-column name, and the replace strategy.
+        config: Optional :class:`EvaluateConfig` for evaluation-specific
+            knobs (placeholder today; reserved for metric selection,
+            per-judge model/prompt overrides, etc.).
+    """
+    _ = config  # placeholder; no knobs to read yet
+    replace_method = getattr(output, "replace_method", None)
+    if replace_method is None:
+        raise ValueError(
+            "Cannot evaluate this output — it has no associated replace strategy. "
+            "Pass an AnonymizerResult / PreviewResult produced by run() / preview() "
+            "on this branch (the strategy is recorded then). Hand-built or legacy "
+            "results need their `replace_method` attribute set before calling evaluate()."
+        )
+    try:
+        validate_model_alias_references(
+            self._model_configs,
+            self._selected_models,
+            check_substitute=isinstance(replace_method, Substitute),
+            check_rewrite=False,
+            check_evaluate=True,
+        )
+    except ValueError as exc:
+        raise InvalidConfigError(str(exc)) from exc
+    text_column = output.resolved_text_column
+    # trace_dataframe is in user-facing form (e.g., 'biography' instead of
+    # '__nemo_anonymizer_text_input__'). The judge prompts reference the
+    # internal names, so reverse the rename before the DD call and re-apply
+    # it on the result.
+    internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+    replace_result = self._replace_runner.evaluate(
+        internal_df,
+        replace_method=replace_method,
+        model_configs=self._model_configs,
+        selected_models=self._selected_models.evaluate,
+    )
+    renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
+    return AnonymizerResult(
+        dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
+        trace_dataframe=renamed_trace,
+        resolved_text_column=text_column,
+        failed_records=replace_result.failed_records,
+        replace_method=replace_method,
+    )</code></pre>
             </details>
     </div>
 
