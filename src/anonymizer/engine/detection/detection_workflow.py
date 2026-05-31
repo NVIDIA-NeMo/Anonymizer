@@ -37,6 +37,10 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
+from anonymizer.engine.detection.chunked_augmentation import (
+    ChunkedAugmentationParams,
+    make_chunked_augmentation_generator,
+)
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     make_chunked_validation_generator,
@@ -71,6 +75,9 @@ _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL: int = AnonymizerDetectConfig.model_fi
 _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fields[
     "validation_excerpt_window_chars"
 ].default
+_DEFAULT_AUGMENTATION_CHUNK_TOKENS: int | None = AnonymizerDetectConfig.model_fields[
+    "augmentation_chunk_tokens"
+].default
 
 
 @dataclass(frozen=True)
@@ -94,6 +101,7 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        augmentation_chunk_tokens: int | None = _DEFAULT_AUGMENTATION_CHUNK_TOKENS,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
@@ -146,6 +154,35 @@ class EntityDetectionWorkflow:
             prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
         )
 
+        augment_prompt = _get_augment_prompt(
+            data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+        )
+        if augmentation_chunk_tokens is None:
+            # Single-shot augmentation: the LLM sees the full tagged text in one call.
+            augmenter_column = LLMStructuredColumnConfig(
+                name=COL_AUGMENTED_ENTITIES,
+                prompt=augment_prompt,
+                model_alias=augmenter_alias,
+                output_format=AugmentedEntitiesSchema,
+            )
+        else:
+            # Chunked augmentation: split text at line boundaries, run the augmenter
+            # on each chunk, merge values back. Mitigates long-payload recall cliff.
+            logger.debug(
+                "chunked augmentation enabled: chunk_tokens=%d, alias=%s",
+                augmentation_chunk_tokens,
+                augmenter_alias,
+            )
+            augmenter_column = CustomColumnConfig(
+                name=COL_AUGMENTED_ENTITIES,
+                generator_function=make_chunked_augmentation_generator(augmenter_alias),
+                generator_params=ChunkedAugmentationParams(
+                    alias=augmenter_alias,
+                    chunk_tokens=augmentation_chunk_tokens,
+                    prompt_template=augment_prompt,
+                ),
+            )
+
         detection_result = self._adapter.run_workflow(
             dataframe,
             model_configs=workflow_model_configs,
@@ -177,14 +214,7 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES_JSON,
                     generator_function=apply_validation_to_seed_entities,
                 ),
-                LLMStructuredColumnConfig(
-                    name=COL_AUGMENTED_ENTITIES,
-                    prompt=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
-                    ),
-                    model_alias=augmenter_alias,
-                    output_format=AugmentedEntitiesSchema,
-                ),
+                augmenter_column,
                 CustomColumnConfig(
                     name=COL_MERGED_ENTITIES,
                     generator_function=merge_and_build_candidates,
@@ -253,6 +283,7 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        augmentation_chunk_tokens: int | None = _DEFAULT_AUGMENTATION_CHUNK_TOKENS,
         entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
@@ -277,6 +308,7 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
+            augmentation_chunk_tokens=augmentation_chunk_tokens,
             entity_labels=entity_labels,
             data_summary=data_summary,
             preview_num_records=preview_num_records,

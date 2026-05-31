@@ -100,6 +100,18 @@ class Detect(BaseModel):
             "validator sees per chunk; it is NOT the LLM's context window limit."
         ),
     )
+    augmentation_chunk_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "If set, the LLM augmenter is run on text chunks of at most this many cl100k "
+            "tokens, split at line boundaries; entity values from each chunk are merged and "
+            "located in the original text by string search. Mitigates the long-payload "
+            "recall cliff where the augmenter's attention dilutes over long inputs. "
+            "None (default) = single-shot augmentation on the full text. Typical useful "
+            "values: 500-1500 for noisy / dense inputs."
+        ),
+    )
 
     @field_validator("entity_labels")
     @classmethod

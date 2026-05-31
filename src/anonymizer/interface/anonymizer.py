@@ -380,6 +380,7 @@ class Anonymizer:
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+            augmentation_chunk_tokens=config.detect.augmentation_chunk_tokens,
             entity_labels=config.detect.entity_labels,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
