@@ -187,6 +187,10 @@ class ValidationDecisionSchema(BaseModel):
         default="keep",
         description='one of: "keep" | "reclass" | "drop"',
     )
+    # Annotated str | None (not str) so DataDesigner's jsonschema pre-check
+    # accepts a literal null from a drifted model; _coerce_proposed_label below
+    # always normalizes None -> "" so the runtime value is in practice always a
+    # str. Downstream code does not need to guard against None here.
     proposed_label: str | None = Field(
         default="",
         description="Correct label when decision is 'reclass', otherwise empty",
