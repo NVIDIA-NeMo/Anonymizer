@@ -119,3 +119,16 @@ class TestLatentEntityDrift:
             {"label": "x", "value": "y", "confidence": "very-high", "rationale": "ok"}
         )
         assert result.confidence == "medium"
+
+    def test_sensitive_category_drift_normalizes_to_latent_identifier(self) -> None:
+        """A category string containing "sensitive" must normalize to the lone
+        LatentCategory member rather than raising AttributeError (sensitive
+        attributes were folded into quasi_identifier on the rewrite side)."""
+        result = LatentEntitySchema.model_validate(
+            {"label": "x", "value": "y", "category": "latent_sensitive_attribute"}
+        )
+        assert result.category == "latent_identifier"
+
+    def test_unknown_category_drift_normalizes_to_latent_identifier(self) -> None:
+        result = LatentEntitySchema.model_validate({"label": "x", "value": "y", "category": "some-novel-bucket"})
+        assert result.category == "latent_identifier"

@@ -702,6 +702,11 @@ def _pad_empty_latent_column(df: pd.DataFrame) -> pd.DataFrame:
     sentinel = [LatentEntitySchema().model_dump()]
 
     def _fix(cell):
+        # Preserve each cell's existing shape: the column is uniformly the
+        # struct/dict shape ({"latent_entities": [...]}) from LatentEntitiesSchema
+        # in the normal DD path (dict branch), but tolerate a bare-list cell from
+        # alternate paths. The downstream reader (_coerce_entity_list) accepts
+        # either shape, so we never mix dict and list within one column.
         if isinstance(cell, dict):
             if not cell.get("latent_entities"):
                 return {**cell, "latent_entities": sentinel}

@@ -275,7 +275,7 @@ class LatentEntitySchema(BaseModel):
 
     category: str = Field(
         default="",
-        description=("one of: latent_identifier | latent_sensitive_attribute (see LatentCategory enum)"),
+        description="Must be: latent_identifier",
     )
     label: str = Field(
         default="",
@@ -310,8 +310,9 @@ class LatentEntitySchema(BaseModel):
         allowed = {c.value for c in LatentCategory}
         if cleaned in allowed:
             return cleaned
-        if "sensitive" in cleaned:
-            return LatentCategory.latent_sensitive_attribute.value
+        # LatentCategory has a single member (latent_identifier); sensitive
+        # attributes were folded into quasi_identifier on the rewrite side, so
+        # any non-canonical drift normalizes to the lone latent category.
         return LatentCategory.latent_identifier.value
 
     @field_validator("confidence", mode="before")
