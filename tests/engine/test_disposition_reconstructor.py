@@ -345,6 +345,24 @@ class TestPessimisticFallback:
         item = result.sensitivity_disposition[0]
         assert item.category == "quasi_identifier"
 
+    def test_empty_context_returns_valid_noop_instead_of_raising(self) -> None:
+        """Empty context (a pipeline-invariant violation) must not raise on the
+        SensitivityDispositionSchema min_length=1 tripwire and drop the row;
+        the fallback emits a single no-op (leave_as_is/low) disposition."""
+        result = _pessimistic_fallback_disposition([], [])
+        assert len(result.sensitivity_disposition) == 1
+        item = result.sensitivity_disposition[0]
+        assert item.protection_method_suggestion == "leave_as_is"
+        assert item.combined_risk_level == "low"
+        assert result.protected_entities == []  # no-op never reaches the rewrite
+
+    def test_all_blank_slots_returns_valid_noop(self) -> None:
+        """Slots whose label/value strip to empty are skipped; if that empties
+        the disposition, the no-op guarantee still holds (no raise/no drop)."""
+        result = _pessimistic_fallback_disposition([{"value": "", "labels": [""]}], [])
+        assert len(result.sensitivity_disposition) == 1
+        assert result.sensitivity_disposition[0].protection_method_suggestion == "leave_as_is"
+
 
 # ---------------------------------------------------------------------------
 # _reconstruct_full_disposition_column (workflow glue)
@@ -393,6 +411,16 @@ class TestReconstructionColumn:
         assert len(items) == 1
         assert items[0]["entity_label"] == "first_name"
         assert items[0]["protection_method_suggestion"] == "replace"
+
+    def test_empty_simple_and_empty_context_does_not_drop_row(self) -> None:
+        """Both unguarded fallback call-sites: empty simple output AND empty
+        entity context must still yield a valid row (the column generator must
+        never raise out and drop the record)."""
+        row = self._row({"sensitivity_disposition": []}, ebv=[], latent=[])
+        out = _reconstruct_full_disposition_column(row)
+        items = out[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]
+        assert len(items) == 1
+        assert items[0]["protection_method_suggestion"] == "leave_as_is"
 
     def test_invalid_simple_payload_falls_back(self) -> None:
         """If ``SimpleDispositionResult.model_validate`` raises, fall back

@@ -120,6 +120,18 @@ class TestSimpleDispositionDrift:
         assert item.entity_label == ""
         assert item.category == ""
 
+    def test_container_values_in_str_fields_coerce_to_empty(self) -> None:
+        """A model emitting a list/dict for a scalar str field must not fail the
+        whole item (which would discard every disposition for the row); coerce
+        to "" and let the reconstructor recover from trusted context."""
+        result = SimpleDispositionResult.model_validate(
+            [{"id": 1, "entity_label": ["first", "name"], "category": {"x": 1}, "entity_value": "Alice"}]
+        )
+        item = result.sensitivity_disposition[0]
+        assert item.entity_label == ""
+        assert item.category == ""
+        assert item.entity_value == "Alice"
+
 
 # ---------------------------------------------------------------------------
 # MeaningUnits — bare list, aspect normalize, importance default, id renumber

@@ -465,9 +465,14 @@ class SimpleDispositionItem(BaseModel):
     def _coerce_scalar_to_str(cls, v: object) -> str:
         if v is None:
             return ""
+        if isinstance(v, str):
+            return v
         if isinstance(v, (int, float, bool)):
             return str(v)
-        return v
+        # Unexpected container (list/dict) from a drifted response: coerce to ""
+        # rather than letting pydantic raise on the whole SimpleDispositionItem.
+        # The reconstructor recovers the true value from trusted entity context.
+        return ""
 
 
 class SimpleDispositionResult(BaseModel):

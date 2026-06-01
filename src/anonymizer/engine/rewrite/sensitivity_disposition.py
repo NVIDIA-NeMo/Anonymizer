@@ -335,11 +335,32 @@ def _pessimistic_fallback_disposition(
             )
         )
     if not items:
-        # Genuinely no entities at all in context — the orchestrator should
-        # have short-circuited before this step. Still better to raise here
-        # than to silently emit garbage; SensitivityDispositionSchema's
-        # min_length=1 invariant will surface the bug.
-        return SensitivityDispositionSchema(sensitivity_disposition=items)
+        # Genuinely no entities at all in context. The orchestrator should have
+        # short-circuited rows with no detected entities before this step, so
+        # this is a pipeline-invariant violation — but this is the last-resort
+        # path whose contract is "never drop the row." Emitting an empty list
+        # would raise on SensitivityDispositionSchema's (and the downstream
+        # parser's) min_length=1 invariant and drop the record, so we log loudly
+        # and emit a single no-op (leave_as_is/low) disposition instead. It is
+        # excluded from protected_entities, so it never reaches the rewrite.
+        logger.error(
+            "pessimistic fallback: empty entity context at the disposition step "
+            "(orchestrator should have short-circuited entity-free rows); emitting "
+            "a single no-op disposition so the row is not dropped"
+        )
+        items.append(
+            EntityDispositionSchema(
+                id=1,
+                source="tagged",
+                category="quasi_identifier",
+                sensitivity="low",
+                entity_label="",
+                entity_value="",
+                protection_method_suggestion="leave_as_is",
+                combined_risk_level=derive_combined_risk_level("quasi_identifier", "leave_as_is", "low"),
+                protection_reason=template_protection_reason("quasi_identifier", "leave_as_is", "low"),
+            )
+        )
     return SensitivityDispositionSchema(sensitivity_disposition=items)
 
 
