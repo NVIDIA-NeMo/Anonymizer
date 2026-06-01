@@ -39,12 +39,18 @@ from anonymizer.engine.schemas import (
 )
 
 # Derived from the schema so the Jinja key stays in sync with the field name.
+# Prefer an annotation-typed lookup (strict-mode contract); fall back to a
+# name-based lookup so wire-loose typing of ``domain`` (str instead of Domain
+# enum) still resolves to the same field. The Domain enum hint is preserved
+# in the field description and the ``_normalize_domain`` before-validator.
 _DOMAIN_KEY = next(
     (name for name, info in DomainClassificationSchema.model_fields.items() if info.annotation is Domain),
     None,
 )
+if _DOMAIN_KEY is None and "domain" in DomainClassificationSchema.model_fields:
+    _DOMAIN_KEY = "domain"
 if _DOMAIN_KEY is None:
-    raise RuntimeError("DomainClassificationSchema must define a field annotated with Domain")
+    raise RuntimeError("DomainClassificationSchema must define a 'domain' field")
 
 # ---------------------------------------------------------------------------
 # Stage 1 pre-step: format disposition → disposition block

@@ -91,6 +91,7 @@ COL_DOMAIN = "_domain"
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_DOMAIN_SUPPLEMENT_PRIVACY = "_domain_supplement_privacy"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
+COL_SIMPLE_DISPOSITION = "_simple_disposition"  # internal hand-off: loose LLM wire output
 COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
