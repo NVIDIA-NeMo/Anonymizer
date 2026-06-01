@@ -285,8 +285,14 @@ class TestMergeChunkDecisions:
         by_id = {d["id"]: d for d in merged["decisions"]}
         assert by_id["a"]["decision"] == "keep"
         assert by_id["b"]["decision"] == "drop"
-        assert by_id["a"]["value"] == "Alice"  # enriched from candidate
-        assert by_id["a"]["label"] == "first_name"
+        # ``value`` and ``label`` were dropped from the wire-layer
+        # ``ValidationDecisionSchema`` to remove a small-model drift surface;
+        # ``ValidationDecisionsSchema.model_validate`` in
+        # ``merge_chunk_decisions`` strips them. They are re-filled from
+        # ``candidate_lookup`` by ``enrich_validation_decisions`` further
+        # downstream — covered by the end-to-end test below.
+        assert "value" not in by_id["a"]
+        assert "label" not in by_id["a"]
 
     def test_drops_decisions_without_verdict(self) -> None:
         """A decision with ``decision=None`` is equivalent to 'no answer' and must not leak through.
@@ -311,11 +317,12 @@ class TestMergeChunkDecisions:
         chunk_one = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": None}]})
         chunk_two = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": "keep"}]})
         merged = merge_chunk_decisions([chunk_one, chunk_two], candidates)
+        # value/label are stripped at merge time (post-#130 wire-loose
+        # ValidationDecisionSchema drops them) and re-filled later by
+        # enrich_validation_decisions from candidate_lookup.
         assert merged["decisions"] == [
             {
                 "id": "a",
-                "value": "Alice",
-                "label": "first_name",
                 "decision": "keep",
                 "proposed_label": "",
                 "reason": None,
