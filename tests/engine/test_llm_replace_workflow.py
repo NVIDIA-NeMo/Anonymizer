@@ -356,3 +356,42 @@ def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     assert "first_name" in caplog.text
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
     assert result == {"replacements": []}
+
+
+# ---------------------------------------------------------------------------
+# Small-model drift: a single bad entry must not fail the whole map / drop the
+# record. EntityReplacementSchema dropped min_length on original/label/synthetic.
+# ---------------------------------------------------------------------------
+
+
+def test_empty_synthetic_does_not_fail_validation_and_survives_filter() -> None:
+    """A blank synthetic used to fail ``min_length=1`` and drop the whole map.
+    Now the entry validates; it keys on (original, label) so it survives the
+    requested-entity filter and is applied as a deletion (privacy-safe)."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    )
+    raw_map = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": ""}]}
+
+    result = _filter_replacement_map_to_input_entities(raw_map=raw_map, parsed_entities=parsed_entities)
+
+    assert result == {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": ""}]}
+
+
+def test_empty_original_or_label_entry_is_filtered_without_dropping_record() -> None:
+    """Empty original/label cannot match a requested entity, so the drifted
+    entry is dropped while the valid sibling entry is preserved (the whole map
+    no longer fails validation on the empty fields)."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    )
+    raw_map = {
+        "replacements": [
+            {"original": "", "label": "", "synthetic": "junk"},
+            {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+        ]
+    }
+
+    result = _filter_replacement_map_to_input_entities(raw_map=raw_map, parsed_entities=parsed_entities)
+
+    assert result == {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
