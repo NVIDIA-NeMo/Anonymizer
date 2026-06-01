@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -12,6 +12,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
+    COL_SIMPLE_DISPOSITION,
     COL_TAGGED_TEXT,
     _jinja,
 )
@@ -26,17 +27,35 @@ _STUB_PRIVACY_GOAL = PrivacyGoal(
 )
 
 
-def test_columns_uses_disposition_analyzer_alias(
+def test_columns_emits_two_step_pipeline(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
+    """Post-#130: the disposition workflow emits a 2-step pipeline — a
+    ``SimpleDispositionResult`` LLM column (loose wire, dropped from preview)
+    + a deterministic CustomColumnConfig that reconstructs the strict
+    ``SensitivityDispositionSchema`` server-side."""
     cols = SensitivityDispositionWorkflow().columns(
         selected_models=stub_rewrite_model_selection,
         privacy_goal=_STUB_PRIVACY_GOAL,
     )
-    assert len(cols) == 1
-    assert isinstance(cols[0], LLMStructuredColumnConfig)
-    assert cols[0].model_alias == stub_rewrite_model_selection.disposition_analyzer
-    assert cols[0].name == COL_SENSITIVITY_DISPOSITION
+    assert len(cols) == 2
+
+    llm_col, recon_col = cols
+    assert isinstance(llm_col, LLMStructuredColumnConfig)
+    assert llm_col.name == COL_SIMPLE_DISPOSITION
+    assert llm_col.model_alias == stub_rewrite_model_selection.disposition_analyzer
+    # DataDesigner serializes ``output_format`` to its JSON schema at
+    # construction time, so we assert on the schema's ``$defs`` rather than
+    # identity. Looking for ``SimpleDispositionItem`` (the loose wire item)
+    # is a tighter check than just "some schema is set" — it confirms we
+    # are passing the loose wrapper and not the strict
+    # ``SensitivityDispositionSchema``.
+    assert isinstance(llm_col.output_format, dict)
+    assert "SimpleDispositionItem" in llm_col.output_format.get("$defs", {})
+    assert llm_col.drop is True
+
+    assert isinstance(recon_col, CustomColumnConfig)
+    assert recon_col.name == COL_SENSITIVITY_DISPOSITION
 
 
 def test_privacy_goal_interpolated_into_prompt() -> None:

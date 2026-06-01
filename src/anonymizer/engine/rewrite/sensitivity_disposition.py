@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+import logging
+from typing import Any
+
+from data_designer.config import custom_column_generator
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from pydantic import ValidationError
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -14,13 +19,27 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
+    COL_SIMPLE_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.schemas import SensitivityDispositionSchema, StrictSensitivityDispositionSchema
+from anonymizer.engine.rewrite.disposition_derivation import (
+    _flatten_context,
+    derive_combined_risk_level,
+    reconstruct_full_disposition,
+    template_protection_reason,
+)
+from anonymizer.engine.schemas import (
+    EntityDispositionSchema,
+    SensitivityDispositionSchema,
+    SimpleDispositionResult,
+)
+from anonymizer.engine.schemas.rewrite import _ENTITY_LABEL_TO_CATEGORY
+
+logger = logging.getLogger(__name__)
 
 
 def _get_sensitivity_disposition_prompt(
@@ -257,6 +276,165 @@ QUALITY REQUIREMENTS:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Pessimistic fallback when reconstruction yields nothing
+# ---------------------------------------------------------------------------
+
+
+def _pessimistic_fallback_disposition(
+    entities_by_value: object,
+    latent_entities: object,
+) -> SensitivityDispositionSchema:
+    """Build a worst-case disposition from the entity context alone.
+
+    Used when ``reconstruct_full_disposition`` returns an empty list — e.g.
+    every ``SimpleDispositionItem`` was an orphan, or the LLM emitted no
+    items at all. Without this fallback, downstream
+    ``parse_sensitivity_disposition`` raises ``ValidationError`` on
+    ``min_length=1`` and the row drops, defeating the whole loose-wire +
+    server-reconstruction architecture this PR exists to add.
+
+    Policy (per Lipika/Andre's review on PR #130, addressing the
+    record-drop concern):
+      * ``direct_identifier`` -> ``replace`` (high risk, must be masked).
+      * everything else -> ``generalize`` (medium risk, mask but keep
+        rough semantics for utility).
+
+    Categories come from the per-entity ``entity_label`` via the
+    ``_ENTITY_LABEL_TO_CATEGORY`` map (the same source of truth the
+    reconstructor uses for entity-label-stuffed-into-category drift);
+    unmapped labels fall back to ``quasi_identifier``.
+    """
+    flat = _flatten_context(entities_by_value, latent_entities)
+    items: list[EntityDispositionSchema] = []
+    for idx, slot in enumerate(flat, start=1):
+        label = (slot.get("entity_label") or "").strip()
+        value = (slot.get("entity_value") or "").strip()
+        source = slot.get("source") or "tagged"
+        if not label or not value:
+            continue
+        if source == "latent":
+            category = "latent_identifier"
+        else:
+            category = _ENTITY_LABEL_TO_CATEGORY.get(label, "quasi_identifier")
+        method = "replace" if category == "direct_identifier" else "generalize"
+        sensitivity = "high" if category == "direct_identifier" else "medium"
+        combined_risk = derive_combined_risk_level(category, method, sensitivity)
+        reason = template_protection_reason(category, method, sensitivity)
+        items.append(
+            EntityDispositionSchema(
+                id=idx,
+                source=source,
+                category=category,
+                sensitivity=sensitivity,
+                entity_label=label,
+                entity_value=value,
+                protection_method_suggestion=method,
+                combined_risk_level=combined_risk,
+                protection_reason=reason,
+            )
+        )
+    if not items:
+        # Genuinely no entities at all in context. The orchestrator should have
+        # short-circuited rows with no detected entities before this step, so
+        # this is a pipeline-invariant violation — but this is the last-resort
+        # path whose contract is "never drop the row." Emitting an empty list
+        # would raise on SensitivityDispositionSchema's (and the downstream
+        # parser's) min_length=1 invariant and drop the record, so we log loudly
+        # and emit a single no-op (leave_as_is/low) disposition instead. It is
+        # excluded from protected_entities, so it never reaches the rewrite.
+        logger.error(
+            "pessimistic fallback: empty entity context at the disposition step "
+            "(orchestrator should have short-circuited entity-free rows); emitting "
+            "a single no-op disposition so the row is not dropped"
+        )
+        items.append(
+            EntityDispositionSchema(
+                id=1,
+                source="tagged",
+                category="quasi_identifier",
+                sensitivity="low",
+                entity_label="",
+                entity_value="",
+                protection_method_suggestion="leave_as_is",
+                combined_risk_level=derive_combined_risk_level("quasi_identifier", "leave_as_is", "low"),
+                protection_reason=template_protection_reason("quasi_identifier", "leave_as_is", "low"),
+            )
+        )
+    return SensitivityDispositionSchema(sensitivity_disposition=items)
+
+
+# ---------------------------------------------------------------------------
+# Reconstruction column
+# ---------------------------------------------------------------------------
+
+
+@custom_column_generator(required_columns=[COL_SIMPLE_DISPOSITION, COL_ENTITIES_BY_VALUE, COL_LATENT_ENTITIES])
+def _reconstruct_full_disposition_column(row: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the strict EntityDispositionSchema list from the loose LLM
+    output in ``COL_SIMPLE_DISPOSITION`` plus the entity context columns.
+
+    Writes ``COL_SENSITIVITY_DISPOSITION`` so every downstream consumer
+    reads the same column name / shape as before this refactor.
+
+    Empty-result fallback: when the model returns nothing usable (every
+    item is an orphan, or the LLM omitted the field entirely), build a
+    pessimistic disposition from the entity context (direct identifiers
+    -> replace, everything else -> generalize). This addresses the
+    record-drop concern Lipika and Andre raised on PR #130 — emitting an
+    empty disposition would have failed downstream
+    ``parse_sensitivity_disposition``'s ``min_length=1`` check anyway.
+    """
+    simple_raw = row.get(COL_SIMPLE_DISPOSITION, {}) or {}
+    if isinstance(simple_raw, SimpleDispositionResult):
+        simple = simple_raw
+    else:
+        if isinstance(simple_raw, str):
+            import json as _json
+
+            try:
+                simple_raw = _json.loads(simple_raw)
+            except Exception:
+                simple_raw = {}
+        try:
+            simple = SimpleDispositionResult.model_validate(simple_raw)
+        except ValidationError as exc:
+            logger.warning(
+                "reconstruct: SimpleDispositionResult failed to validate (%s); "
+                "falling back to pessimistic disposition from entity context",
+                str(exc)[:200],
+            )
+            simple = SimpleDispositionResult()
+
+    entities_by_value = row.get(COL_ENTITIES_BY_VALUE)
+    latent_entities = row.get(COL_LATENT_ENTITIES)
+
+    if not simple.sensitivity_disposition:
+        logger.warning(
+            "reconstruct: empty SimpleDispositionResult for row; "
+            "falling back to pessimistic disposition from entity context"
+        )
+        full = _pessimistic_fallback_disposition(entities_by_value, latent_entities)
+    else:
+        try:
+            full = reconstruct_full_disposition(simple, entities_by_value, latent_entities)
+        except ValidationError as exc:
+            logger.warning(
+                "reconstruct: ValidationError after orphan-skipping (likely all items out of context range); "
+                "falling back to pessimistic disposition. detail=%s",
+                str(exc)[:200],
+            )
+            full = _pessimistic_fallback_disposition(entities_by_value, latent_entities)
+
+    row[COL_SENSITIVITY_DISPOSITION] = full.model_dump()
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Workflow
+# ---------------------------------------------------------------------------
+
+
 class SensitivityDispositionWorkflow:
     def columns(
         self,
@@ -266,17 +444,46 @@ class SensitivityDispositionWorkflow:
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
     ) -> list[ColumnConfigT]:
+        """Two-step pipeline for small-model robustness:
+
+        1. LLM column emits the loose ``SimpleDispositionResult`` to a
+           hidden ``COL_SIMPLE_DISPOSITION`` column. The wire schema has
+           no enum/required/minLength constraints, so DataDesigner's
+           jsonschema pre-validate gate accepts drifted small-model
+           output that strict ``SensitivityDispositionSchema`` would
+           reject. ``drop=True`` keeps this internal hand-off out of the
+           user-facing preview DataFrame.
+        2. Pure-python reconstruction column rebuilds the strict
+           ``SensitivityDispositionSchema`` from the loose wire output
+           plus the entity-context columns. No LLM call; deterministic;
+           handles id pairing, category/method drift normalization,
+           ``combined_risk_level`` derivation, and pessimistic fallback
+           when the LLM produces nothing usable.
+
+        ``strict_entity_protection`` continues to flow into the prompt's
+        ``<strict_entity_protection>`` block — the contract is enforced
+        at prompt time. The output_format selection between
+        ``SensitivityDispositionSchema`` and
+        ``StrictSensitivityDispositionSchema`` is no longer needed
+        because we always emit ``SimpleDispositionResult`` on the wire
+        and reconstruct into the canonical (non-strict) schema, which
+        downstream consumers already accept.
+        """
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
-        output_schema = StrictSensitivityDispositionSchema if strict_entity_protection else SensitivityDispositionSchema
         return [
             LLMStructuredColumnConfig(
-                name=COL_SENSITIVITY_DISPOSITION,
+                name=COL_SIMPLE_DISPOSITION,
                 prompt=_get_sensitivity_disposition_prompt(
                     privacy_goal,
                     data_summary,
                     strict_entity_protection=strict_entity_protection,
                 ),
                 model_alias=disposition_alias,
-                output_format=output_schema,
+                output_format=SimpleDispositionResult,
+                drop=True,
+            ),
+            CustomColumnConfig(
+                name=COL_SENSITIVITY_DISPOSITION,
+                generator_function=_reconstruct_full_disposition_column,
             ),
         ]
