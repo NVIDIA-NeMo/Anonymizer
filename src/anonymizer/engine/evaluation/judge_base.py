@@ -159,9 +159,10 @@ class _BaseJudgeWorkflow(ABC):
         that want to run one judge in isolation do.
         """
         working_df = self.prepare(dataframe)
-        # Track input row order so merge_and_reorder can restore it after the
-        # passthrough and LLM-judged partitions are processed independently.
-        working_df = working_df.copy()
+        # `prepare()` returns a fresh copy (per its contract), so we can stamp
+        # the row-order column directly. ROW_ORDER_COL lets merge_and_reorder
+        # restore input order after the passthrough and LLM-judged partitions
+        # are processed independently.
         working_df[ROW_ORDER_COL] = range(len(working_df))
         passthrough_mask = self._passthrough_mask(working_df)
         passthrough_rows = working_df[passthrough_mask].copy()

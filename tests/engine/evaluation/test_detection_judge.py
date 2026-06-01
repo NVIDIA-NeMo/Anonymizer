@@ -21,9 +21,9 @@ from anonymizer.engine.evaluation.detection_judge import (
     _judge_prompt,
     _label_examples_for_judge,
 )
+from anonymizer.engine.schemas import EntitiesByValueSchema
 
 _flatten_judgment = DetectionJudgeWorkflow._flatten_judgment
-from anonymizer.engine.schemas import EntitiesByValueSchema
 
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt
