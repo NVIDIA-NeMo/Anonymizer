@@ -707,6 +707,11 @@ def _pad_empty_latent_column(df: pd.DataFrame) -> pd.DataFrame:
         # in the normal DD path (dict branch), but tolerate a bare-list cell from
         # alternate paths. The downstream reader (_coerce_entity_list) accepts
         # either shape, so we never mix dict and list within one column.
+        # None / NaN (e.g. a row absent from a partial-failure fallback merge,
+        # reintroduced by a pandas reindex) normalizes to the canonical struct
+        # so the column stays parquet-writable.
+        if cell is None or (not isinstance(cell, (dict, list)) and pd.isna(cell)):
+            return {"latent_entities": sentinel}
         if isinstance(cell, dict):
             if not cell.get("latent_entities"):
                 return {**cell, "latent_entities": sentinel}
