@@ -150,11 +150,14 @@ def _remove_subset_entities(entities: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def _dedupe_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    best: dict[tuple[str, str], dict[str, Any]] = {}
+    """Collapse duplicate spans from overlapping chunks, not repeated text elsewhere."""
+    best: dict[tuple[str, str, int, int], dict[str, Any]] = {}
     for entity in entities:
         label = str(entity.get("label", ""))
         text = str(entity.get("text", ""))
-        key = (label, text.strip().lower())
+        start = int(entity.get("start", 0))
+        end = int(entity.get("end", 0))
+        key = (label, text.strip().lower(), start, end)
         score = float(entity.get("score", 0.0))
         if key not in best or score > float(best[key].get("score", 0.0)):
             best[key] = entity
