@@ -10,10 +10,9 @@ a JSON string of shape ``{"entities": [...]}`` as expected by
 Run:
     python tools/serve_gliner.py    # binds 0.0.0.0:8001
 
-Uses GPU when ``torch.cuda.is_available()`` returns True; otherwise CPU.
-Batch mode coalesces concurrent requests (typical when Anonymizer/DataDesigner
-runs with ``max_parallel_requests`` > 1) and uses GLiNER's batched ``inference()``
-with optional sequence packing for chunk throughput.
+Chunk batching and entity deduplication are implemented for robust local
+inference. This file adds the Anonymizer chat-completion adapter and optional request
+coalescing when DataDesigner runs with ``max_parallel_requests`` > 1.
 
 See ``docs/concepts/self-hosting-gliner.md`` for full usage.
 """
@@ -32,18 +31,12 @@ from typing import Any
 
 import torch
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from gliner import GLiNER
-
-try:
-    from gliner import InferencePackingConfig
-except ImportError:  # pragma: no cover - older gliner releases
-    InferencePackingConfig = None  # type: ignore[misc, assignment]
 
 MODEL_NAME = "nvidia/gliner-pii"
 HOST = "0.0.0.0"
 PORT = 8001
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_CHUNK_LENGTH = 384
 DEFAULT_OVERLAP = 128
 DEFAULT_FLAT_NER = False
@@ -52,22 +45,31 @@ DEFAULT_INFERENCE_BATCH_SIZE = 8
 BATCH_MODE = os.getenv("GLINER_BATCH_MODE", "true").lower() not in {"0", "false", "no"}
 MAX_BATCH_REQUESTS = int(os.getenv("GLINER_MAX_BATCH_REQUESTS", "32"))
 BATCH_WAIT_MS = float(os.getenv("GLINER_BATCH_WAIT_MS", "10")) / 1000.0
-ENABLE_PACKING = os.getenv("GLINER_ENABLE_PACKING", "true").lower() not in {"0", "false", "no"}
-PACKING_STREAMS = int(os.getenv("GLINER_PACKING_STREAMS", "4"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("gliner-server")
 
 app = FastAPI()
-log.info("loading %s on %s", MODEL_NAME, DEVICE)
-model = GLiNER.from_pretrained(MODEL_NAME).to(DEVICE)
-if ENABLE_PACKING and InferencePackingConfig is not None:
-    model.configure_inference_packing(
-        InferencePackingConfig(max_length=DEFAULT_CHUNK_LENGTH, streams_per_batch=PACKING_STREAMS)
-    )
-    log.info("sequence packing enabled (max_length=%d streams=%d)", DEFAULT_CHUNK_LENGTH, PACKING_STREAMS)
-elif ENABLE_PACKING:
-    log.warning("GLINER_ENABLE_PACKING=true but InferencePackingConfig is unavailable; skipping packing")
+model: GLiNER | None = None
+_device = "cpu"
+
+
+def _resolve_device() -> str:
+    device_env = os.getenv("DEVICE", "auto")
+    if device_env != "auto":
+        return device_env
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+def _load_model() -> None:
+    global model, _device
+    _device = _resolve_device()
+    log.info("loading %s on %s", MODEL_NAME, _device)
+    model = GLiNER.from_pretrained(MODEL_NAME, map_location=_device)
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,15 @@ def _extract_text(messages: list[dict[str, Any]]) -> str:
     return str(content)
 
 
+def _validate_chunk_params(chunk_length: int, overlap: int) -> None:
+    if chunk_length < 1:
+        raise HTTPException(status_code=422, detail="chunk_length must be >= 1")
+    if overlap < 0:
+        raise HTTPException(status_code=422, detail="overlap must be >= 0")
+    if overlap >= chunk_length:
+        raise HTTPException(status_code=422, detail="overlap must be less than chunk_length")
+
+
 def _create_text_chunks(text: str, chunk_length: int, overlap: int) -> tuple[list[str], list[int]]:
     chunks: list[str] = []
     offsets: list[int] = []
@@ -116,6 +127,26 @@ def _shift_offsets(entities: list[dict[str, Any]], offset: int) -> None:
     for entity in entities:
         entity["start"] = int(entity["start"]) + offset
         entity["end"] = int(entity["end"]) + offset
+
+
+def _remove_subset_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop spans fully contained in another span (dedup step for nested NER)."""
+    if not entities:
+        return []
+
+    kept = list(entities)
+    to_delete: list[int] = []
+    for idx, ent in enumerate(kept):
+        has_superset = any(
+            i != idx and i not in to_delete and other["start"] <= ent["start"] and other["end"] >= ent["end"]
+            for i, other in enumerate(kept)
+        )
+        if has_superset:
+            to_delete.append(idx)
+
+    for idx in sorted(to_delete, reverse=True):
+        del kept[idx]
+    return kept
 
 
 def _dedupe_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -143,6 +174,16 @@ def _format_entities(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _finalize_entities(entities: list[dict[str, Any]], *, flat_ner: bool) -> list[dict[str, Any]]:
+    if not entities:
+        return []
+    if flat_ner:
+        processed = entities
+    else:
+        processed = _remove_subset_entities([dict(entity) for entity in entities])
+    return _format_entities(_dedupe_entities(processed))
+
+
 def _run_chunk_inference(
     chunks: list[str],
     *,
@@ -151,9 +192,12 @@ def _run_chunk_inference(
     flat_ner: bool,
     inference_batch_size: int,
 ) -> list[list[dict[str, Any]]]:
+    if model is None:
+        raise RuntimeError("GLiNER model is not loaded")
     if not chunks:
         return []
-    batch = model.inference(
+
+    batch_entities = model.inference(
         texts=chunks,
         labels=labels,
         threshold=threshold,
@@ -161,9 +205,9 @@ def _run_chunk_inference(
         relations=[],
         batch_size=inference_batch_size,
     )
-    if not isinstance(batch, list) or (batch and not isinstance(batch[0], list)):
+    if not isinstance(batch_entities, list) or (batch_entities and not isinstance(batch_entities[0], list)):
         raise ValueError("unexpected GLiNER inference batch shape")
-    return batch
+    return batch_entities
 
 
 def _detect_entities_for_text(
@@ -194,7 +238,7 @@ def _detect_entities_for_text(
         _shift_offsets(adjusted, offset)
         merged.extend(adjusted)
 
-    return _format_entities(_dedupe_entities(merged))
+    return _finalize_entities(merged, flat_ner=flat_ner)
 
 
 def _detect_entities_for_texts(
@@ -236,7 +280,7 @@ def _detect_entities_for_texts(
         _shift_offsets(adjusted, offset)
         per_text[text_idx].extend(adjusted)
 
-    return [_format_entities(_dedupe_entities(entities)) for entities in per_text]
+    return [_finalize_entities(entities, flat_ner=flat_ner) for entities in per_text]
 
 
 class BatchDetector:
@@ -258,8 +302,8 @@ class BatchDetector:
         self._executor.shutdown(wait=True)
 
     async def detect(self, text: str, params: DetectParams) -> list[dict[str, Any]]:
+        loop = asyncio.get_running_loop()
         if not BATCH_MODE:
-            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
                 self._executor,
                 lambda: _detect_entities_for_text(
@@ -273,7 +317,6 @@ class BatchDetector:
                 ),
             )
 
-        loop = asyncio.get_running_loop()
         future: asyncio.Future[list[dict[str, Any]]] = loop.create_future()
         await self._queue.put(DetectJob(text=text, params=params, future=future))
         return await future
@@ -338,8 +381,10 @@ detector = BatchDetector()
 
 @app.on_event("startup")
 async def startup() -> None:
+    await asyncio.to_thread(_load_model)
     log.info(
-        "batch mode=%s max_requests=%d wait_ms=%.0f inference_batch_size default=%d",
+        "device=%s batch_mode=%s max_requests=%d wait_ms=%.0f inference_batch_size=%d",
+        _device,
         BATCH_MODE,
         MAX_BATCH_REQUESTS,
         BATCH_WAIT_MS * 1000,
@@ -360,6 +405,9 @@ def list_models() -> dict[str, Any]:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> dict[str, Any]:
+    if model is None:
+        raise HTTPException(status_code=503, detail="GLiNER model is not loaded")
+
     body = await request.json()
     text = _extract_text(body.get("messages", []))
     labels = body.get("labels") or []
@@ -368,6 +416,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     overlap = int(body.get("overlap", DEFAULT_OVERLAP))
     flat_ner = bool(body.get("flat_ner", DEFAULT_FLAT_NER))
     inference_batch_size = int(body.get("batch_size", DEFAULT_INFERENCE_BATCH_SIZE))
+    _validate_chunk_params(chunk_length, overlap)
 
     params = DetectParams(
         labels=tuple(labels),

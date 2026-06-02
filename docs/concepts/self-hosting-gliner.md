@@ -41,13 +41,16 @@ The server must respond with the chat-completion JSON shape, where `message.cont
 
 Each entity has `text`, `label`, `start`, `end`, `score`. The request fields above come from `anonymizer.engine.detection.detection_workflow._inject_detector_params` (`labels`, `threshold`, `chunk_length`, `overlap`, `flat_ner`); the response is parsed by `anonymizer.engine.detection.postprocess.parse_raw_entities`.
 
-Long inputs are split into overlapping chunks before inference. A self-hosted server should honor `chunk_length` and `overlap` so detection matches the hosted `build.nvidia.com` path. The [Guardrails GLiNER server](https://github.com/NVIDIA-NeMo/Guardrails/blob/a5c765899d3a407bf076f0226d9b784324e86eda/examples/deployment/gliner_server/src/gliner_server/server.py) is a useful reference for chunking and deduplication, but Anonymizer expects the chat-completion adapter shown here.
+Long inputs are split into overlapping chunks before inference. A self-hosted server should honor `chunk_length` and `overlap` so detection matches the hosted `build.nvidia.com` path, while keeping the chat-completion adapter expected by Anonymizer.
 
 ---
 
 ## Reference implementation
 
-A minimal FastAPI reference server that implements the contract above is included in the repo at `tools/serve_gliner.py`. It uses the `gliner` Python package directly, loads `nvidia/gliner-pii`, chunks long text with overlap, **batches concurrent requests**, and exposes the required endpoints on `0.0.0.0:8001`.
+A minimal FastAPI reference server at `tools/serve_gliner.py` implements the contract above. It loads `nvidia/gliner-pii`, exposes `POST /v1/chat/completions` (and `GET /v1/models`), and uses two levels of batching:
+
+1. **Chunk batching** — long text is split into overlapping windows; all chunks are passed to one `model.inference(...)` call.
+2. **Request coalescing** (optional, on by default) — concurrent HTTP requests from DataDesigner are grouped briefly, then all their chunks are inferred together.
 
 ```python title="tools/serve_gliner.py (excerpt)"
 @app.post("/v1/chat/completions")
@@ -66,17 +69,16 @@ async def chat_completions(request: Request):
     ...
 ```
 
-Batch mode is **on by default**. When Anonymizer/DataDesigner sends several detector calls in parallel (via `max_parallel_requests` on the model config), the server coalesces them for up to 10 ms and runs one shared GLiNER `inference()` pass per parameter set. Long texts are still split into overlapping chunks first; all chunks from the coalesced requests are flattened into a single batched forward pass.
+When `flat_ner` is `false` (Anonymizer's default), the server removes nested subset spans before score-based deduplication across chunk overlaps.
 
 | Environment variable | Default | Purpose |
 |---|---|---|
+| `DEVICE` | `auto` | `auto`, `cuda`, `cpu`, or `mps` (Apple Silicon GPU) |
 | `GLINER_BATCH_MODE` | `true` | Coalesce concurrent HTTP requests before inference |
 | `GLINER_MAX_BATCH_REQUESTS` | `32` | Max requests per coalesced batch |
 | `GLINER_BATCH_WAIT_MS` | `10` | Max wait time to fill a batch (milliseconds) |
-| `GLINER_ENABLE_PACKING` | `true` | Enable GLiNER sequence packing for chunk batches |
-| `GLINER_PACKING_STREAMS` | `4` | Packed streams per inference batch |
 
-Set `GLINER_BATCH_MODE=false` to disable request coalescing and process each HTTP call independently.
+Set `GLINER_BATCH_MODE=false` to disable request coalescing; chunk batching still runs per request.
 
 ---
 
@@ -97,6 +99,9 @@ On first launch the `gliner` package will download `nvidia/gliner-pii` from Hugg
 ```bash
 python tools/serve_gliner.py
 # INFO     Uvicorn running on http://0.0.0.0:8001
+
+# Optional: pick device explicitly (auto prefers mps, then cuda, then cpu)
+DEVICE=cuda python tools/serve_gliner.py
 ```
 
 Verify the server is reachable:
@@ -167,6 +172,6 @@ Set `skip_health_check: true`: Anonymizer's default probe sends `prompt="Hello!"
 - **Batch mode**: The reference server coalesces concurrent detector requests by default. Pair it with a higher `max_parallel_requests` on the `gliner-pii-detector` alias (see YAML above) so DataDesigner sends multiple rows at once and the server fills GPU batches efficiently.
 - On CPU, detection of a ~1000-character note with ~30 candidate labels takes **5–20 ms** per request on a modern x86 core. For typical Anonymizer workflows this is a rounding error compared to the LLM roles that follow, and keeping GLiNER on CPU frees GPU memory for the LLM.
 - On GPU the same request drops to roughly **1–3 ms** — worth it when you're processing tens of thousands of documents in a batch workflow, or when the host has spare GPU memory next to the LLM.
-- Choose device by passing `device="cuda"` / `"cpu"` to `GLiNER.from_pretrained(...)` or calling `.to("cuda")` after load. The reference server auto-selects GPU when `torch.cuda.is_available()` returns `True`.
+- Choose device with the `DEVICE` environment variable (`auto`, `cuda`, `mps`, `cpu`). `auto` prefers Apple Silicon GPU (MPS), then NVIDIA CUDA, then CPU.
 - The default GLiNER threshold is `0.3`. Lower values detect more spans (higher recall, more false positives); higher values improve precision but miss edge cases. Tune via `Detect(gliner_threshold=...)`.
 - Each request loads the FULL list of candidate labels passed from `Detect.entity_labels`. If you only need a subset (e.g. a clinical-only deployment), narrowing that list materially speeds up detection.
