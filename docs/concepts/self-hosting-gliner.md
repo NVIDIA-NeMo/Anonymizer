@@ -114,14 +114,19 @@ On first launch the `gliner` package will download `nvidia/gliner-pii` from Hugg
 
 ```bash
 python tools/serve_gliner.py
-# INFO     Uvicorn running on http://0.0.0.0:8001
+# INFO     Uvicorn running on http://127.0.0.1:8001
 
-# Optional: override bind address or port (defaults: 0.0.0.0:8001)
-python tools/serve_gliner.py --host 127.0.0.1 --port 9000
+# Optional: override port (default: 8001)
+python tools/serve_gliner.py --port 9000
+
+# Optional: listen on all interfaces — no auth; use only on trusted networks
+python tools/serve_gliner.py --host 0.0.0.0
 
 # Optional: pick device explicitly (auto prefers mps, then cuda, then cpu)
 DEVICE=cuda python tools/serve_gliner.py
 ```
+
+The reference server has **no authentication**. The default bind address is `127.0.0.1` so detection traffic stays on localhost. Use `--host 0.0.0.0` only when Anonymizer runs on another host in a trusted environment.
 
 Verify the server is reachable:
 

@@ -8,8 +8,9 @@ a JSON string of shape ``{"entities": [...]}`` as expected by
 ``anonymizer.engine.detection.postprocess.parse_raw_entities``.
 
 Run:
-    python tools/serve_gliner.py              # binds 0.0.0.0:8001 (default)
+    python tools/serve_gliner.py              # binds 127.0.0.1:8001 (default)
     python tools/serve_gliner.py --port 9000  # override listen port
+    python tools/serve_gliner.py --host 0.0.0.0  # all interfaces (no auth)
 
 Chunk batching and entity deduplication are implemented for robust local
 inference. This file adds the Anonymizer chat-completion adapter and optional request
@@ -37,7 +38,7 @@ from fastapi import FastAPI, HTTPException, Request
 from gliner import GLiNER
 
 MODEL_NAME = "nvidia/gliner-pii"
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8001
 DEFAULT_CHUNK_LENGTH = 384
 DEFAULT_OVERLAP = 128
