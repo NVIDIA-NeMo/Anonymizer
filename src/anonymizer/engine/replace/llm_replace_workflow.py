@@ -229,7 +229,7 @@ Entities to replace:
 - "{{ entity.value }}" ({{ entity.labels_str }})
 {%- endfor %}
 
-Examples: {{ <<ENTITY_EXAMPLES_COLUMN>> }}
+Per-label type references (generate a NEW realistic value of that kind; do not reuse these example values, and never copy this reference text literally): {{ <<ENTITY_EXAMPLES_COLUMN>> }}
 
 Rules:
 1. Related entities must stay consistent:
@@ -275,5 +275,5 @@ Before generating replacements, verify:
 
 
 _EXAMPLE_LOOKUP: dict[str, str] = {
-    label: f"(e.g. {', '.join(examples)})" for label, examples in ENTITY_LABEL_EXAMPLES.items()
+    label: f"such as {', '.join(examples)}" for label, examples in ENTITY_LABEL_EXAMPLES.items()
 }
