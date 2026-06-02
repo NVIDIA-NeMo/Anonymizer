@@ -105,18 +105,45 @@ Fill in the "answer" field for each item. Do not add or remove items.
 def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
     qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
     skeleton = [
-        {"id": item.id, "question": item.question, "answer": "", "confidence": 1.0, "reason": ""} for item in qa.items
+        {"id": item.id, "question": item.question, "answer": "", "confidence": 1.0, "reason": "", "evidence": []}
+        for item in qa.items
     ]
 
     prompt = """You are a privacy auditor. Read the text and answer each question with "yes" or "no".
 
 <rules>
-- Answer "yes" if the specific entity value can be identified or reasonably inferred from the text
-- Answer "no" if it cannot
+- For each question, focus on the specified entity label and target entity value.
+
+- Before answering each question, search the ENTIRE text for ALL evidence relevant to the entity label and target value.
+- Evidence may appear anywhere in the text, not just near the most obvious sentence.
+- Look for direct mentions, synonyms, paraphrases, and contextual cues.
+- Do not stop after finding one weak clue if stronger evidence exists elsewhere.
+- If stronger evidence exists, base your answer on the strongest evidence.
+- Include all short verbatim quotes that materially support your answer.
+
+- Ask: "If I had to guess the value for this entity label using only the text, what value would I guess?"
+- If the most likely guess for that entity label is the target entity value, answer "yes".
+- This applies even if the value is not logically certain, not directly stated, or not uniquely entailed.
+- Do NOT answer "no" when the target value is the best-supported or most likely guess.
+
+- Answer "yes" if the specific entity value can be directly identified, contained, entailed, normalized, reasonably inferred, or guessed as the most likely value from the text.
+
+- Treat normalized, synonymous, abbreviated, expanded, or geographically contained forms as the same value.
+Examples:
+- "United States", "United States of America", "U.S.", "USA", "US", "America" → country = US
+- "western United States" → country = US
+- "California", "Texas", "New York City" → country = US, unless context clearly indicates otherwise
+- "North America" alone does NOT uniquely imply US, but it may make US the most likely birthplace/citizenship-related guess depending on surrounding context.
+
+- Answer "no" ONLY if the target value is not directly stated, not entailed, not normalized, not reasonably inferred, and not the most likely guess for that entity label.
+
+- Do NOT require certainty. Weak or indirect signals still count if they make the target value the most likely guess.
+
 - You must commit to "yes" or "no". Do not hedge.
-- Set confidence from 0.0 to 1.0 reflecting how strongly the answer is supported
-- Provide a brief reason grounded in the text
-- You MUST provide answer, confidence, and reason for EVERY item in the template below
+- Set confidence from 0.0 to 1.0 reflecting how strongly the answer is supported.
+- Provide a brief reason grounded in the text.
+- Provide a list of short verbatim quotes from the text that support your answer (empty list if none).
+- You MUST provide answer, confidence, reason and evidence for EVERY item in the template below.
 </rules>
 
 <text>
@@ -124,9 +151,10 @@ def _render_privacy_reanswer_prompt(row: dict[str, Any]) -> str:
 </text>
 
 <task>
-Fill in the "answer" ("yes"/"no"), "confidence" (0.0-1.0), and "reason" fields for each item.
+Fill in the "answer" ("yes"/"no"), "confidence" (0.0-1.0), "reason" and "evidence" fields for each item.
 Do not add or remove items.
 </task>
+
 <answer_template>
 <<SKELETON>>
 </answer_template>
@@ -148,6 +176,7 @@ def _render_quality_compare_prompt(row: dict[str, Any]) -> str:
     skeleton = [
         {
             "id": item.id,
+            "importance": item.importance,
             "question": item.question,
             "expected_answer": item.reference_answer,
             "student_answer": answer_lookup.get(item.id, "(no answer)"),
@@ -169,10 +198,16 @@ Compare the student's answer to the reference answer and grade each on a 0.0-1.0
 </scoring_rubric>
 
 <grading_rules>
-* Grade conservatively
-* No credit for invented/contradictory info
+* No credit for invented or contradictory information
 * Semantically equivalent answers get full credit
 * "unknown" answers get 0.0 score
+* A generalized or abstracted answer that preserves core semantic meaning is NOT wrong —
+  score it on whether the meaning survives, not on whether specific details are retained.
+  Example: "a state university" matching "a public university in New Jersey" scores ≥ 0.7
+  if the institutional type is what matters.
+* For "important" units: if the answer is correct at a higher level of abstraction,
+  score ≥ 0.7 even if specific details are omitted.
+* For "critical" units: hold to a stricter standard — core meaning must be present.
 </grading_rules>
 
 <task>
@@ -232,6 +267,7 @@ def _make_privacy_answer_parser(
                 "answer": "yes",
                 "confidence": 1.0,
                 "reason": "Model omitted this item; defaulted to highest-confidence leak.",
+                "evidence": [],
             },
         )
         return PrivacyAnswersSchema.model_validate(
@@ -318,15 +354,26 @@ def _normalize_answer_items(
 # ---------------------------------------------------------------------------
 
 
-def compute_utility_score(compare_scores: list[float]) -> float:
-    """Mean of per-item QA comparison scores.
+def compute_utility_score(
+    compare_scores: list[float],
+    importance_levels: list[str] | None = None,
+) -> float:
+    """Importance-weighted mean of per-item QA comparison scores.
+
+    Critical units (weight 2.0) count twice as much as important units (weight 1.0).
+    Falls back to a flat mean if importance_levels is not provided or mismatched.
 
     Answer coverage is enforced upstream by the context-validated parser
     on QACompareResultsSchema, so all expected IDs are guaranteed present.
     """
     if not compare_scores:
         return 0.0
-    return sum(compare_scores) / len(compare_scores)
+    weights = {"critical": 2.0, "important": 1.0}
+    if not importance_levels or len(importance_levels) != len(compare_scores):
+        return sum(compare_scores) / len(compare_scores)
+    weighted_sum = sum(weights.get(imp, 1.0) * score for imp, score in zip(importance_levels, compare_scores))
+    total_weight = sum(weights.get(imp, 1.0) for imp in importance_levels)
+    return weighted_sum / total_weight
 
 
 def compute_leakage_mass(
@@ -461,11 +508,14 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
 )
 def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParams) -> dict[str, Any]:
     """Compute utility_score, leakage_mass, weighted_leakage_rate, and any_high_leaked from evaluation outputs."""
-    _, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
+    ids, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
+    qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
+    importance_lookup = {item.id: item.importance for item in qa.items}
+    importance_levels = [importance_lookup.get(i, "important") for i in ids]
 
-    row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores)
+    row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores, importance_levels)
     leakage_mass = compute_leakage_mass(privacy_answers, privacy_qa, generator_params.sensitivity_weights)
     row[COL_LEAKAGE_MASS] = leakage_mass
     row[COL_WEIGHTED_LEAKAGE_RATE] = compute_weighted_leakage_rate(

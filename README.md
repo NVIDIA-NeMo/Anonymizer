@@ -18,7 +18,10 @@
 ## Quick Start
 
 ### 1. Install
-
+```bash
+pip install nemo-anonymizer
+```
+Or install from source: 
 ```bash
 git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
 cd Anonymizer
@@ -29,7 +32,9 @@ make install
 
 By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — GLiNER-PII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
 
-Use the default build.nvidia.com setup as a convenient way to experiment with Anonymizer and iterate on small samples. For privacy-sensitive or production data, point Anonymizer at a secure endpoint you trust and to which you are comfortable sending data. Request and token rate limits on build.nvidia.com vary by account and model access, and lower-volume development access can be slow for full-dataset runs.
+The default build.nvidia.com (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
+
+Request and token rate limits on build.nvidia.com vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with preview() on a small sample, then move to your own endpoint for production data and usage.
 
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
@@ -124,6 +129,20 @@ AnonymizerConfig(replace=Hash(algorithm="sha256", digest_length=8))
 
 ---
 
+## Using with Claude Code
+
+This repo ships a Claude Code skill at [`skills/anonymizer/`](skills/anonymizer/SKILL.md) that elicits your dataset's privacy requirements, recommends Rewrite or Replace with a strategy, and drafts a runnable script for you to iterate on. While the skill should work with other coding agents that support skills, development and testing has focused on Claude Code at this stage.
+
+Install via [skills.sh](https://skills.sh):
+
+```bash
+npx skills add NVIDIA-NeMo/Anonymizer
+```
+
+After installation, invoke it with `/anonymizer` from within Claude Code, or describe what you want to anonymize and let it auto-trigger.
+
+---
+
 ## Development
 
 ```bash
@@ -142,6 +161,31 @@ make install-pre-commit   # Install pre-commit hooks
 - Python 3.11+
 - [NeMo Data Designer](https://github.com/NVIDIA-NeMo/DataDesigner) (installed as dependency)
 - [NVIDIA API key](https://build.nvidia.com) for default model providers (GLiNER-PII + text LLM), or custom model endpoints
+
+---
+
+## Telemetry and Privacy
+
+NeMo Anonymizer collects anonymous run-level telemetry to help prioritize product improvements. One event is sent per `Anonymizer.run()` / `Anonymizer.preview()` call, containing only technical metadata: the replacement strategy in use, models used, model hosts (e.g. `nvidia-build`, `openrouter`, `other`), input-record counts, run duration, and failure attribution by pipeline step. **No user data, record contents, prompts, or model outputs are collected.** See the [Telemetry and Privacy docs](https://nvidia-nemo.github.io/Anonymizer/latest/#telemetry-and-privacy) for the full field list.
+
+You may opt out of telemetry at any time:
+
+- **For one CLI invocation**: pass `--no-emit-telemetry`
+  ```bash
+  uv run anonymizer run --source data.csv --text-column text --replace redact --no-emit-telemetry
+  ```
+- **In the SDK**: set `emit_telemetry=False` on `AnonymizerConfig`
+  ```python
+  config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+  ```
+- **For the current shell**: set the environment variable
+  ```bash
+  export NEMO_TELEMETRY_ENABLED=false
+  ```
+
+Aggregate usage data (such as which models are most popular) will be shared back with the community. It is not used to track any individual user behavior.
+
+**Use of third-party endpoints, including NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [build.nvidia.com](https://build.nvidia.com), [OpenRouter](https://openrouter.ai), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
 
 ---
 

@@ -34,11 +34,11 @@
 # ## ⚙️ Setup
 #
 # - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
-#   - Treat the default `build.nvidia.com` setup as a convenient experimentation path. For privacy-sensitive or production data, switch to a secure endpoint you trust and to which you are comfortable sending data.
-#   - Request/token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full runs. Start with `preview()` on a small sample.
+#   - The default `build.nvidia.com` (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
+#   - Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint for production data and usage.
 # - Import the core Anonymizer classes: `Anonymizer`, `AnonymizerConfig`, `AnonymizerInput`, and `Substitute`.
 # - `Anonymizer()` initializes with the default model provider -- no extra config needed.
-# - `Anonymizer.configure_logging()` controls verbosity -- switch to `Anonymizer.configure_logging(LoggingConfig.debug())` when troubleshooting.
+# - `configure_logging(LoggingConfig.default())` keeps logs at INFO. Switch to `LoggingConfig.debug()` when troubleshooting.
 
 # %%
 import getpass
@@ -51,7 +51,9 @@ if not os.getenv("NVIDIA_API_KEY"):
     os.environ["NVIDIA_API_KEY"] = key
 
 # %%
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, Substitute, configure_logging
+
+configure_logging(LoggingConfig.default())
 
 # %%
 anonymizer = Anonymizer()
@@ -112,6 +114,17 @@ print(result)
 
 # %%
 result.dataframe.head()
+
+# %% [markdown]
+# ## 📊 (Optional) Evaluate replacement quality
+#
+# - `evaluate()` is a separate, opt-in step that scores the output with LLM-as-judge metrics.
+# - For Substitute, all four metrics run: **Detection Validity**, **Type Fidelity**, **Relational Consistency**, **Attribute Fidelity**.
+# - Skip it for routine runs; call it when you want LLM-side confidence on the output. Costs LLM calls per record, so try it on `preview` first.
+
+# %%
+evaluated = anonymizer.evaluate(preview)
+evaluated.display_record(0)
 
 # %% [markdown]
 # ## ⏭️ Next steps

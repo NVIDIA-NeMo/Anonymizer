@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswerItemSchema,
@@ -19,8 +20,9 @@ from anonymizer.engine.schemas.rewrite import (
     QualityAnswersSchema,
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
-    StrictSensitivityDispositionSchema,
 )
+
+logger = logging.getLogger("anonymizer.rewrite.parsers")
 
 
 def field(model: type, name: str) -> str:
@@ -111,13 +113,8 @@ def parse_privacy_qa(raw: Any) -> PrivacyQAPairsSchema:
 
 def parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema:
     raw = normalize_payload(raw)
-    if isinstance(raw, StrictSensitivityDispositionSchema):
-        return raw.to_sensitivity_disposition()
-    if isinstance(raw, SensitivityDispositionSchema):
+    if isinstance(raw, SensitivityDispositionSchema):  # catches StrictSensitivityDispositionSchema too
         return raw
     if isinstance(raw, dict):
-        try:
-            return SensitivityDispositionSchema.model_validate(raw)
-        except ValidationError:
-            return StrictSensitivityDispositionSchema.model_validate(raw).to_sensitivity_disposition()
+        return SensitivityDispositionSchema.model_validate(raw)
     raise ValueError(f"Cannot parse sensitivity disposition from {type(raw)}")

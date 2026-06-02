@@ -13,6 +13,7 @@ from data_designer.config.models import ModelConfig
 from anonymizer.config.anonymizer_config import AnonymizerConfig
 from anonymizer.config.models import (
     DetectionModelSelection,
+    EvaluateModelSelection,
     ModelSelection,
     ReplaceModelSelection,
     RewriteModelSelection,
@@ -29,6 +30,21 @@ def _caplog_for_anonymizer(caplog: pytest.LogCaptureFixture) -> Generator[None]:
     anon_logger.addHandler(caplog.handler)
     yield
     anon_logger.removeHandler(caplog.handler)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep telemetry quiet and deterministic in unit tests.
+
+    - Disable emission by default. Tests that exercise the emit path can opt in
+      by setting NEMO_TELEMETRY_ENABLED=true via their own monkeypatch.
+    - Clear NEMO_DEPLOYMENT_TYPE, NEMO_SESSION_PREFIX, and NEMO_TELEMETRY_ENDPOINT
+      so tests don't inherit values from the developer's shell.
+    """
+    monkeypatch.setenv("NEMO_TELEMETRY_ENABLED", "false")
+    monkeypatch.delenv("NEMO_DEPLOYMENT_TYPE", raising=False)
+    monkeypatch.delenv("NEMO_SESSION_PREFIX", raising=False)
+    monkeypatch.delenv("NEMO_TELEMETRY_ENDPOINT", raising=False)
 
 
 @pytest.fixture
@@ -65,6 +81,11 @@ def stub_rewrite_model_selection() -> RewriteModelSelection:
 
 
 @pytest.fixture
+def stub_evaluate_model_selection() -> EvaluateModelSelection:
+    return load_default_model_selection().evaluate
+
+
+@pytest.fixture
 def stub_slim_model_selection() -> ModelSelection:
     """Selection model where every role points to the same known alias."""
     return ModelSelection(
@@ -84,6 +105,12 @@ def stub_slim_model_selection() -> ModelSelection:
             evaluator="known",
             repairer="known",
             judge="known",
+        ),
+        evaluate=EvaluateModelSelection(
+            detection_validity_judge="known",
+            replace_type_fidelity_judge="known",
+            replace_relational_consistency_judge="known",
+            replace_attribute_fidelity_judge="known",
         ),
     )
 

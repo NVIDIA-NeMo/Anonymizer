@@ -158,7 +158,9 @@ nav:
       - Detect: concepts/detection.md
       - Replace: concepts/replace.md
       - Rewrite: concepts/rewrite.md
+      - Choosing a Strategy: concepts/choosing-a-strategy.md
       - Self-hosting GLiNER: concepts/self-hosting-gliner.md
+  - Troubleshooting: troubleshooting.md
   - Tutorials:
       - Overview: tutorials/index.md
       - Your First Anonymization: notebooks/01_your_first_anonymization.ipynb
@@ -169,3 +171,4 @@ nav:
   - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md
+      - "Introducing NeMo Anonymizer": devnotes/posts/anonymizer-intro.md

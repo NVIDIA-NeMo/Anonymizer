@@ -7,11 +7,13 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 
 dependencies = [
-    "data-designer>=0.5.7",
+    "data-designer==0.6.0",
     "pydantic>=2.9,<3",
     "cyclopts>=3",
     "pygments>=2.20.0",
     "cryptography>=46.0.6",
+    "httpx>=0.27.0",
+    "tiktoken>=0.9.0",
 ]
 
 [project.scripts]
@@ -20,7 +22,7 @@ anonymizer = "anonymizer.interface.cli.main:main"
 [dependency-groups]
 dev = [
     "pre-commit>=4.0.0,<5",
-    "pytest>=8.0,<9",
+    "pytest>=9.0.3,<10",
     "pytest-cov>=7.0,<8",
     "ruff>=0.12.3,<1",
     "ty>=0.0.23,<0.1",
@@ -64,6 +66,7 @@ package = true
 
 override-dependencies = [
   "grpcio>=1.68.0",  # forcing to a higher version since litellm is constraining it, to avoid CVE-2024-11407
+  "urllib3>=2.7.0",  # forcing to a higher version since it is pulled in transitively, to avoid CVE-2026-44432
 ]
 
 [tool.pytest.ini_options]

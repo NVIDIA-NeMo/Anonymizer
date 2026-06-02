@@ -82,6 +82,24 @@ class Detect(BaseModel):
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )
+    validation_max_entities_per_call: int = Field(
+        default=100,
+        gt=0,
+        description=(
+            "Maximum number of candidate entities included in a single validator LLM call. "
+            "When a row has more candidates than this, validation is split into chunks that "
+            "are dispatched (round-robin) across the validator pool."
+        ),
+    )
+    validation_excerpt_window_chars: int = Field(
+        default=500,
+        gt=0,
+        description=(
+            "Number of characters to include before and after a chunk's entity span when "
+            "building the text excerpt sent to the validator. Bounds the prompt context the "
+            "validator sees per chunk; it is NOT the LLM's context window limit."
+        ),
+    )
 
     @field_validator("entity_labels")
     @classmethod
@@ -129,7 +147,20 @@ class Rewrite(BaseModel):
 
     @property
     def evaluation(self) -> EvaluationCriteria:
-        """Internal: construct EvaluationCriteria for the engine."""
+        """Construct `EvaluationCriteria` from this `Rewrite` config for the engine.
+
+        `Rewrite` and `EvaluationCriteria` both carry `max_repair_iterations`.
+        This property keeps them in sync: it passes through `self.risk_tolerance`
+        and `self.max_repair_iterations`. Leakage thresholds and repair
+        parameters are derived from `risk_tolerance` via `_RiskToleranceBundle`
+        (see `rewrite.py`).
+
+        Production code that starts from a user-facing `Rewrite` should pass
+        `rewrite.evaluation` into the engine — never duplicate the mapping
+        manually. Tests and engine-internal callers may construct
+        `EvaluationCriteria` directly when they aren't routing through a
+        user-facing `Rewrite`.
+        """
         return EvaluationCriteria(
             risk_tolerance=self.risk_tolerance,
             max_repair_iterations=self.max_repair_iterations,
@@ -145,6 +176,13 @@ class AnonymizerConfig(BaseModel):
         description="Replacement method (Substitute(), Redact(), Annotate(), or Hash()).",
     )
     rewrite: Rewrite | None = Field(default=None, description="Optional rewrite-mode parameters. ")
+    emit_telemetry: bool = Field(
+        default=True,
+        description=(
+            "Whether to emit anonymous Anonymizer telemetry events. See the Telemetry section "
+            "in the README for what is collected and how to opt out at the environment or CLI level."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_exactly_one_mode(self) -> AnonymizerConfig:
@@ -159,3 +197,20 @@ class AnonymizerConfig(BaseModel):
                 " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
             )
         return self
+
+
+class EvaluateConfig(BaseModel):
+    """Optional knobs for :meth:`Anonymizer.evaluate`.
+
+    Reserved for genuinely evaluation-specific configuration — metric selection,
+    per-judge model/prompt overrides, scoring thresholds, etc. The anonymization
+    mode is **not** here: it travels on the ``AnonymizerResult`` /
+    ``PreviewResult`` produced by ``run()`` / ``preview()`` and is read directly
+    by ``evaluate()``, so users don't restate it and can't mis-state it.
+
+    Today this is an empty placeholder; fields will be added as evaluation
+    knobs are introduced.
+    """
+
+    # Intentionally empty for now. New fields land here as evaluation
+    # configurability is introduced.

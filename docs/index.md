@@ -49,9 +49,9 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
 
 !!! warning "Default hosted models are best for experimentation"
 
-    The default `build.nvidia.com` setup is a convenient way to try Anonymizer and iterate on previews. For privacy-sensitive or production data, configure Anonymizer to use a secure endpoint you trust and to which you are comfortable sending data.
+    The default `build.nvidia.com` (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
 
-    Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint if you need stronger privacy guarantees or higher throughput.
+    Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint for production data and usage.
 
 !!! info "Record length"
 
@@ -65,9 +65,9 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
     from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
 
     input_data = AnonymizerInput(
-        source="patient_data.csv",
-        text_column="notes",
-        data_summary="Records containing detailed notes on patient encounters",
+        source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
+        text_column="biography",
+        data_summary="Biographical profiles of individuals",
     )
     anonymizer = Anonymizer()
     config = AnonymizerConfig(replace=Substitute())
@@ -93,19 +93,19 @@ By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based ano
     ```bash
     # Preview a few rows first
     anonymizer preview \
-      --source patient_data.csv \
-      --text-column notes \
-      --data-summary "Records containing detailed notes on patient encounters" \
+      --source "https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv" \
+      --text-column biography \
+      --data-summary "Biographical profiles of individuals" \
       --replace substitute \
       --num-records 5
 
     # Then run the full dataset
     anonymizer run \
-      --source patient_data.csv \
-      --text-column notes \
-      --data-summary "Records containing detailed notes on patient encounters" \
+      --source "https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv" \
+      --text-column biography \
+      --data-summary "Biographical profiles of individuals" \
       --replace substitute \
-      --output patient_data_anonymized.csv
+      --output biographies_anonymized.csv
     ```
 
 !!! note "`data_summary` improves detection"
@@ -133,6 +133,42 @@ Access the full pipeline trace with all internal columns.
 ```python
 preview.trace_dataframe
 ```
+---
+## Telemetry and Privacy
+
+NeMo Anonymizer includes an optional function to share anonymous run-level telemetry with NVIDIA for product improvement. One event is emitted per `Anonymizer.run()` / `Anonymizer.preview()` invocation and contains only technical metadata:
+
+- **Run outcome** — final task status (`completed` / `error` / `canceled`) and wall-clock duration
+- **Pipeline configuration** — transformation type (`annotate`, `redact`, `hash`, `substitute`, `rewrite`), whether `data_summary` / `privacy_goal` / `Substitute(instructions=...)` were customized, `max_repair_iterations`, `strict_entity_protection`
+- **Models used per step** — model aliases for the detector, validator, augmenter, rewriter, etc. (whichever steps ran in this mode)
+- **Model hosts** — coarse classification of the inference endpoints used (`nvidia-build`, `nvidia-internal`, `openrouter`, `local`, `other`)
+- **Aggregate counts** — number of input records, success and failure counts, average tokens per record (estimated with `tiktoken cl100k_base`), and failure attribution by pipeline workflow
+- **Deployment type** — `sdk` or `cli`
+
+**No user data, record contents, prompts, model outputs, or device information are collected.** Aggregate usage data (such as which models are most popular) will be shared back with the community; it is not used to track any individual user behavior.
+
+You may opt out of telemetry collection at any time. Opting out applies only to data collection by NeMo Anonymizer itself.
+
+To disable telemetry in the SDK, set `emit_telemetry=False` on `AnonymizerConfig`:
+
+```python
+config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+```
+
+To disable telemetry for one CLI invocation, pass `--no-emit-telemetry`:
+
+```bash
+uv run anonymizer run --source data.csv --text-column text --replace redact --no-emit-telemetry
+```
+
+To disable telemetry for the current shell, set `NEMO_TELEMETRY_ENABLED=false` (other accepted disabling values: `0`, `no`) in your environment before running:
+
+```bash
+export NEMO_TELEMETRY_ENABLED=false
+```
+
+**Use of third-party endpoints, including NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [build.nvidia.com](https://build.nvidia.com), [OpenRouter](https://openrouter.ai), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
+
 ---
 ## Next up
 

@@ -10,6 +10,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  # Telemetry is opt-out at runtime; in CI we never want to emit.
+  NEMO_TELEMETRY_ENABLED: "false"
+
 jobs:
   test:
     name: Test

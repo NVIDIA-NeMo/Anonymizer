@@ -18,3 +18,12 @@ class InvalidConfigError(AnonymizerError):
 
 class AnonymizerIOError(AnonymizerError):
     """Raised when file IO operations fail."""
+
+
+class AnonymizerWorkflowError(AnonymizerError):
+    """Raised when an underlying workflow step (preview, execution, or dataset load) fails.
+
+    The original backend exception is preserved as ``__cause__`` via ``raise ... from exc``
+    so callers can inspect the exact failure without the anonymizer layer leaking backend
+    exception types into its own public error hierarchy.
+    """

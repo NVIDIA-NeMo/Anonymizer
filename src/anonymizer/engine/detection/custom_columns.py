@@ -34,7 +34,6 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
-    COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
@@ -52,8 +51,6 @@ from anonymizer.engine.schemas import (
     ValidatedDecisionSchema,
     ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
-    ValidationSkeletonDecisionSchema,
-    ValidationSkeletonSchema,
 )
 
 
@@ -132,19 +129,6 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_SEED_VALIDATION_CANDIDATES] = ValidationCandidatesSchema(
         candidates=build_validation_candidates(text=text, entities=seed_spans)
     ).model_dump(mode="json")
-    return row
-
-
-@custom_column_generator(required_columns=[COL_SEED_VALIDATION_CANDIDATES])
-def build_validation_skeleton(row: dict[str, Any]) -> dict[str, Any]:
-    """Pre-populate the decisions template with candidate IDs so the LLM only fills in decision/reason."""
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
-    skeleton = ValidationSkeletonSchema(
-        decisions=[
-            ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in candidates.candidates
-        ]
-    )
-    row[COL_VALIDATION_SKELETON] = skeleton.model_dump(mode="json")
     return row
 
 

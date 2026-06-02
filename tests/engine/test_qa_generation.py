@@ -35,6 +35,7 @@ from anonymizer.engine.schemas import (
     EntityDispositionSchema,
     EntitySource,
     MeaningUnitAspect,
+    MeaningUnitImportance,
     MeaningUnitSchema,
     MeaningUnitsSchema,
     PrivacyQAPairsSchema,
@@ -52,7 +53,6 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             sensitivity=SensitivityLevel.high,
             entity_label="first_name",
             entity_value="Alice",
-            needs_protection=True,
             protection_reason="Full name directly identifies the individual.",
             protection_method_suggestion=ProtectionMethod.replace,
             combined_risk_level="high",
@@ -64,7 +64,6 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             sensitivity=SensitivityLevel.low,
             entity_label="city",
             entity_value="Portland",
-            needs_protection=False,
             protection_reason="City alone does not create meaningful re-identification risk here.",
             protection_method_suggestion=ProtectionMethod.leave_as_is,
             combined_risk_level="low",
@@ -74,8 +73,18 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
 
 _STUB_MEANING_UNITS = MeaningUnitsSchema(
     units=[
-        MeaningUnitSchema(id=1, aspect=MeaningUnitAspect.ROLE, unit="An individual works as a software engineer."),
-        MeaningUnitSchema(id=2, aspect=MeaningUnitAspect.ENVIRONMENT, unit="The individual works remotely."),
+        MeaningUnitSchema(
+            id=1,
+            aspect=MeaningUnitAspect.ROLE,
+            unit="An individual works as a software engineer.",
+            importance=MeaningUnitImportance.critical,
+        ),
+        MeaningUnitSchema(
+            id=2,
+            aspect=MeaningUnitAspect.ENVIRONMENT,
+            unit="The individual works remotely.",
+            importance=MeaningUnitImportance.important,
+        ),
     ]
 )
 
@@ -178,7 +187,6 @@ def test_generate_privacy_qa_column_no_protected_entities() -> None:
                 sensitivity=SensitivityLevel.low,
                 entity_label="city",
                 entity_value="Portland",
-                needs_protection=False,
                 protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
                 combined_risk_level="low",
@@ -209,7 +217,6 @@ def test_generate_privacy_qa_from_disposition_empty_when_nothing_to_protect() ->
                 sensitivity=SensitivityLevel.low,
                 entity_label="city",
                 entity_value="Portland",
-                needs_protection=False,
                 protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
                 combined_risk_level="low",
@@ -229,7 +236,6 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 sensitivity=SensitivityLevel.high,
                 entity_label="first_name",
                 entity_value="Alice",
-                needs_protection=True,
                 protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
                 combined_risk_level="high",
@@ -241,7 +247,6 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 sensitivity=SensitivityLevel.high,
                 entity_label="last_name",
                 entity_value="Smith",
-                needs_protection=True,
                 protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
                 combined_risk_level="high",

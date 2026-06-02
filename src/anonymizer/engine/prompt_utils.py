@@ -20,16 +20,17 @@ def substitute_placeholders(
     *,
     strict: bool = True,
 ) -> str:
-    """Single-pass placeholder substitution.
+    """Single-pass placeholder substitution for dynamic prompt values.
 
-    All ``<<PLACEHOLDER>>`` markers are replaced simultaneously so that
-    user-controlled values inserted for one placeholder cannot collide
-    with markers intended for a later placeholder.
+    Used for dynamic prompt values that aren't DataFrame column
+    references. All `<<PLACEHOLDER>>` markers are replaced simultaneously
+    so that user-controlled values inserted for one placeholder cannot
+    collide with markers intended for a later placeholder.
 
-    When *strict* is True (default):
+    When `strict` is True (default):
 
-    - Raises ``ValueError`` if any key does not match the ``<<...>>`` format.
-    - Raises ``ValueError`` if any ``<<...>>`` placeholders remain after substitution.
+    - Raises `ValueError` if any key does not match the `<<...>>` format.
+    - Raises `ValueError` if any `<<...>>` placeholders remain after substitution.
     - Logs a warning if the dict contains keys not present in the template.
     """
     if not replacements:

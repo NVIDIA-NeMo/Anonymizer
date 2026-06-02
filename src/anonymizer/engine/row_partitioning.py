@@ -38,18 +38,13 @@ def split_rows(
     return working[mask].copy(), working[~mask].copy()
 
 
-def merge_and_reorder(
-    *parts: pd.DataFrame,
-    attrs: dict,
-) -> pd.DataFrame:
-    """Concat partitions, restore original row order, and propagate *attrs*."""
+def merge_and_reorder(*parts: pd.DataFrame) -> pd.DataFrame:
+    """Concat partitions and restore the original row order."""
     if not parts:
         raise ValueError("merge_and_reorder requires at least one partition")
-    combined = (
+    return (
         pd.concat(list(parts), ignore_index=True)
         .sort_values(ROW_ORDER_COL)
         .drop(columns=[ROW_ORDER_COL])
         .reset_index(drop=True)
     )
-    combined.attrs = {**attrs}
-    return combined

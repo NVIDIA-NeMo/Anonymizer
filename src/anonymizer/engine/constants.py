@@ -46,11 +46,40 @@ COL_ENTITIES_BY_VALUE = "_entities_by_value"
 COL_REPLACED_TEXT = "__nemo_anonymizer_text_output__"
 COL_REPLACEMENT_MAP = "_replacement_map"
 
+# LlmReplaceWorkflow internal prompt-construction columns. Created by
+# `LlmReplaceWorkflow.generate_map_only` for the replacement-generator prompt
+# template, dropped before returning. Not part of the output surface.
+COL_ENTITY_EXAMPLES = "_entity_examples"
+COL_ENTITIES_FOR_REPLACE = "_entities_for_replace"
+COL_ENTITIES_FOR_REPLACE_JSON = "_entities_for_replace_json"
+
 # Latent detection (optional second workflow)
 COL_LATENT_ENTITIES = "_latent_entities"
 
 # Final output
 COL_FINAL_ENTITIES = "final_entities"
+
+# Replace evaluation: detection-validity judge
+COL_DETECTION_JUDGE = "_detection_judge"  # raw judge output, internal
+COL_DETECTION_VALID = "detection_valid"  # user-facing bool (None if judge unavailable)
+COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"  # user-facing list of {value, label, reasoning}
+
+# Replace evaluation: type-fidelity judge (Substitute only)
+COL_TYPE_FIDELITY_JUDGE = "_type_fidelity_judge"  # raw judge output, internal
+COL_TYPE_FIDELITY_VALID = "type_fidelity_valid"  # user-facing bool (None if judge unavailable)
+COL_TYPE_FIDELITY_INVALID_REPLACEMENTS = (
+    "type_fidelity_invalid_replacements"  # list of {original, label, synthetic, reasoning}
+)
+
+# Replace evaluation: relational-consistency judge (Substitute only)
+COL_RELATIONAL_CONSISTENCY_JUDGE = "_relational_consistency_judge"  # raw judge output (kept for display denominator)
+COL_RELATIONAL_CONSISTENCY_VALID = "relational_consistency_valid"  # user-facing bool (None if judge unavailable)
+COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS = "relational_consistency_invalid_relations"  # list of failing relations
+
+# Replace evaluation: attribute-fidelity judge (Substitute only)
+COL_ATTRIBUTE_FIDELITY_JUDGE = "_attribute_fidelity_judge"  # raw judge output (kept for display denominator)
+COL_ATTRIBUTE_FIDELITY_VALID = "attribute_fidelity_valid"  # user-facing bool (None if judge unavailable)
+COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES = "attribute_fidelity_invalid_entities"  # list of failing per-entity checks
 
 # ---------------------------------------------------------------------------
 # Rewrite pipeline
@@ -186,9 +215,14 @@ DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
 
 
 def _jinja(col: str, *, key: str | None = None) -> str:
-    """Wrap a column name in Jinja2 template syntax for use in NDD prompts.
+    """Wrap a DataFrame column name in Jinja2 template syntax for NDD prompts.
 
-    When *key* is given the expression becomes ``{{ col['key'] }}``,
+    Use this for any DataFrame column reference inside an NDD prompt
+    template — it keeps column references grep-able. Local Jinja loop
+    variables (e.g. `entity.value` inside `{% for entity in ... %}`) are
+    scoped to the prompt and should *not* go through this helper.
+
+    When `key` is given the expression becomes `{{ col['key'] }}`,
     providing a single grep-able call site for nested schema access.
     """
     expr = col if key is None else f"{col}['{key}']"

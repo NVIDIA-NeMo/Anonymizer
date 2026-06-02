@@ -22,8 +22,8 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 | Alias | Model | Used by |
 |-------|-------|---------|
 | `gliner-pii-detector` | [`nvidia/gliner-pii`](https://build.nvidia.com/nvidia/gliner-pii) | Entity detection (NER) |
-| `gpt-oss-120b` | [`openai/gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Detection validation & augmentation, replacement, rewriting |
-| `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, evaluation, final judge |
+| `gpt-oss-120b` | [`openai/gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Detection validation & augmentation, replacement, replace evaluation, rewriting |
+| `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, rewrite evaluation, final judge |
 
 Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the default configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
 
@@ -31,35 +31,68 @@ Each pipeline stage has a **role** mapped to one of these aliases. See the full 
 
 ## Custom providers
 
-To use models from a different provider (OpenAI, OpenRouter, etc.), define a providers YAML:
+Use `model_providers` to define named API endpoints for hosted models such as OpenAI or OpenRouter.
 
-```yaml
-# my_providers.yaml
-providers:
-  - name: openai
-    base_url: https://api.openai.com/v1
-    api_key_env_var: OPENAI_API_KEY
-  - name: openrouter
-    base_url: https://openrouter.ai/api/v1
-    api_key_env_var: OPENROUTER_API_KEY
-```
-
-Make sure the environment variables are set:
+Set your API keys first:
 
 ```bash
+export NVIDIA_API_KEY="your-nvidia-api-key"  # Used by the nvidia provider (build.nvidia.com)
 export OPENAI_API_KEY="your-openai-api-key"
 export OPENROUTER_API_KEY="your-openrouter-api-key"
+
 ```
 
-```python
-anonymizer = Anonymizer(model_providers="my_providers.yaml")
-```
+=== "YAML"
+
+    Define providers in a YAML file and pass the path to `Anonymizer`.
+
+    ```yaml
+    providers:
+      - name: nvidia
+        endpoint: https://integrate.api.nvidia.com/v1
+      - name: openai
+        endpoint: https://api.openai.com/v1
+      - name: openrouter
+        endpoint: https://openrouter.ai/api/v1
+    ```
+
+    ```python
+    from anonymizer import Anonymizer
+
+    anonymizer = Anonymizer(model_providers="my_providers.yaml")
+    ```
+
+=== "Python"
+
+    Construct `ModelProvider` objects directly in code.
+
+    ```python
+    import os
+    from anonymizer import Anonymizer, ModelProvider
+
+    providers = [
+        ModelProvider(
+            name="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key=os.environ["OPENAI_API_KEY"],
+        ),
+        ModelProvider(
+            name="openrouter",
+            endpoint="https://openrouter.ai/api/v1",
+            api_key=os.environ["OPENROUTER_API_KEY"],
+        ),
+    ]
+
+    anonymizer = Anonymizer(model_providers=providers)
+    ```
+
+After defining providers, reference them from your model configs as described below.
 
 ---
 
 ## Custom models
 
-Override specific roles by passing a unified YAML path to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name -- use `nvidia` for build.nvidia.com, or a custom provider defined above.
+Override specific roles by passing a unified YAML path to `Anonymizer(model_configs=...)`. The `provider` field references a provider by name from the custom providers defined above.
 
 ```yaml
 # my_models.yaml
@@ -96,7 +129,7 @@ model_configs:
 ```python
 anonymizer = Anonymizer(
     model_configs="my_models.yaml",
-    model_providers="my_providers.yaml",
+    model_providers=providers,  # or "my_providers.yaml"
 )
 ```
 
@@ -107,6 +140,33 @@ Roles you don't override keep their default alias selections, but those aliases 
 !!! tip "Validate your config"
 
     Use [`anonymizer.validate_config(config)`](../reference/anonymizer/interface/anonymizer.md) (or [`anonymizer validate`](../reference/anonymizer/interface/cli/main.md) from the CLI) after changing model configs to catch alias mismatches before processing data.
+
+
+### Validator pools
+
+`entity_validator` accepts either a single alias (shown above) or a list of aliases. A list forms a **validator pool** with two jobs:
+
+1. **Load spreading.** [Chunked validation](detection.md#chunked-validation) dispatches each chunk to the next alias in round-robin order, aggregating quota across equivalent endpoints when a single alias would hit the provider's rate limits (tokens-per-minute or requests-per-minute quotas).
+2. **Failover.** If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A row is only dropped when *every* alias in the pool has failed for the same chunk. Single-alias pools have nothing to fall back to, so they behave the same as not using a pool.
+
+```yaml
+selected_models:
+  detection:
+    entity_detector: gliner-pii-detector
+    entity_validator:
+      - gpt5-primary
+      - gpt5-secondary
+    entity_augmenter: gpt5-primary
+    latent_detector: claude-sonnet
+```
+
+Every alias in the pool must also appear in `model_configs`; `anonymizer validate` flags unknown aliases by index. A scalar value remains valid and is equivalent to a one-element list.
+
+!!! warning "`max_parallel_requests` is enforced per alias"
+
+    A pool with N aliases effectively allows up to `sum(max_parallel_requests for alias in pool)` concurrent validator calls per row when chunks exist. Budget your provider rate limits accordingly — the whole point of pooling is to multiply in-flight requests, but the multiplication is real.
+
+    Pool aliases should target **equivalent models** (same model family, similar quality). Mixing heterogeneous models produces inconsistent validation across chunks in the same row and is almost always a misconfiguration.
 
 
 ### Choosing custom models

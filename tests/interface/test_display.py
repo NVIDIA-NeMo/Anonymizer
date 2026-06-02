@@ -3,16 +3,27 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES, COL_REPLACEMENT_MAP
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
+    COL_JUDGE_EVALUATION,
+    COL_REPLACEMENT_MAP,
+    COL_SENSITIVITY_DISPOSITION,
+)
+from anonymizer.engine.rewrite.final_judge import NATURALNESS_RUBRIC, PRIVACY_RUBRIC, QUALITY_RUBRIC
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
+from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, SensitivityDispositionSchema
 from anonymizer.interface.display import (
     _build_replaced_entities,
     _normalize_replacement_map,
     _render_highlighted_text,
+    _verdict_badge,
     render_record_html,
 )
 from anonymizer.interface.results import PreviewResult
@@ -138,6 +149,33 @@ def test_normalize_replacement_map_non_dict_returns_empty() -> None:
     assert _normalize_replacement_map([1, 2, 3]) == []
 
 
+def test_verdict_badge_satisfied_when_all_correct_and_valid_true() -> None:
+    badge, rate = _verdict_badge(valid=True, correct=10, total=10)
+    assert "Satisfied" in badge and "Not" not in badge
+    assert "10/10" in rate
+
+
+def test_verdict_badge_partial_for_mixed_count() -> None:
+    badge, _ = _verdict_badge(valid=False, correct=8, total=10)
+    assert "Partially Satisfied" in badge
+
+
+def test_verdict_badge_unavailable_when_valid_none() -> None:
+    badge, rate = _verdict_badge(valid=None, correct=0, total=0)
+    assert "Unavailable" in badge
+    assert rate == ""
+
+
+def test_verdict_badge_not_satisfied_when_valid_false_without_enumerated_failures() -> None:
+    """``valid is False`` with ``correct == total`` is an inconsistent LLM response
+    (the judge said it's invalid but didn't list specifics). The explicit boolean
+    must override the count so we don't render a misleading green badge."""
+    badge, rate = _verdict_badge(valid=False, correct=10, total=10)
+    assert "Not Satisfied" in badge
+    assert "Satisfied" not in badge.replace("Not Satisfied", "")
+    assert "10/10" in rate
+
+
 @pytest.mark.parametrize(
     "payload_kind",
     ["dict_wrapper", "numpy_wrapped_dict_wrapper", "entities_schema"],
@@ -217,6 +255,23 @@ def test_render_record_html_without_replacement_map() -> None:
     assert "No replacement map available" in result
 
 
+def test_render_record_html_omits_detection_judge_section_when_judge_did_not_run() -> None:
+    """A preview/run without evaluation must not render an empty 'Detection Judge'
+    heading. The wrapper lives inside ``_render_detection_judge_section`` so the
+    whole block is omitted when ``COL_DETECTION_VALID`` is absent."""
+    row = pd.Series(
+        {
+            "text": "Alice works here",
+            "text_replaced": "Bob works here",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            COL_REPLACEMENT_MAP: {},
+        }
+    )
+    result = render_record_html(row)
+    assert "Detection Judge" not in result
+    assert "Detection Validity" not in result
+
+
 def _make_preview(rows: int = 2) -> PreviewResult:
     df = pd.DataFrame(
         {
@@ -226,8 +281,13 @@ def _make_preview(rows: int = 2) -> PreviewResult:
             COL_REPLACEMENT_MAP: [{} for _ in range(rows)],
         }
     )
-    df.attrs["original_text_column"] = "text"
-    return PreviewResult(dataframe=df, trace_dataframe=df, failed_records=[], preview_num_records=rows)
+    return PreviewResult(
+        dataframe=df,
+        trace_dataframe=df,
+        resolved_text_column="text",
+        failed_records=[],
+        preview_num_records=rows,
+    )
 
 
 def test_render_record_html_uses_detected_entities_over_map_scan() -> None:
@@ -486,6 +546,12 @@ def test_render_record_html_rewrite_mode_shows_rewrite_layout() -> None:
 
 
 def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
+    # Derive keys from the actual rubric configs so test↔runtime drift is impossible.
+    judge_eval = {
+        PRIVACY_RUBRIC.name: {"score": 8, "reasoning": "good privacy"},
+        QUALITY_RUBRIC.name: {"score": 9, "reasoning": "high quality"},
+        NATURALNESS_RUBRIC.name: {"score": 7, "reasoning": "mostly natural"},
+    }
     row = pd.Series(
         {
             "text": "Alice works at Acme",
@@ -494,20 +560,77 @@ def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
             "utility_score": 0.9,
             "leakage_mass": 0.1,
             "needs_human_review": False,
-            "_judge_evaluation": {
-                "privacy": {"score": 8, "reasoning": "good privacy"},
-                "quality": {"score": 9, "reasoning": "high quality"},
-                "naturalness": {"score": 7, "reasoning": "mostly natural"},
-            },
+            COL_JUDGE_EVALUATION: judge_eval,
         }
     )
     result = render_record_html(row, record_index=0)
-    assert "privacy: 8/10" in result
-    assert "quality: 9/10" in result
-    assert "naturalness: 7/10" in result
+    assert f"{PRIVACY_RUBRIC.name}: 8/10" in result
+    assert f"{QUALITY_RUBRIC.name}: 9/10" in result
+    assert f"{NATURALNESS_RUBRIC.name}: 7/10" in result
+
+
+def test_render_record_html_rewrite_mode_nan_judge_column_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the judge column exists but a row's value is NaN (typical pandas
+    missing-value sentinel for object columns), the renderer must not emit
+    the 'unexpected shape' warning - that's a normal not-yet-judged row."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            COL_JUDGE_EVALUATION: np.nan,
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
+        render_record_html(row, record_index=0)
+    assert not any("Judge evaluation present but produced no scores" in rec.message for rec in caplog.records)
+
+
+def test_render_record_html_rewrite_mode_malformed_judge_dict_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A judge column whose value is a dict that yields no extractable scores
+    is a real upstream-shape regression and SHOULD emit the warning."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            COL_JUDGE_EVALUATION: {"unexpected_key": "no score field here"},
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
+        render_record_html(row, record_index=0)
+    assert any("Judge evaluation present but produced no scores" in rec.message for rec in caplog.records)
 
 
 def test_render_record_html_rewrite_mode_with_disposition() -> None:
+    # Construct the fixture via model_dump() so it matches the exact dict shape
+    # that LLMStructuredColumnConfig writes to the dataframe at runtime.
+    disposition = SensitivityDispositionSchema(
+        sensitivity_disposition=[
+            EntityDispositionSchema(
+                id=1,
+                source="tagged",
+                category="direct_identifier",
+                sensitivity="high",
+                entity_label="first_name",
+                entity_value="Alice",
+                needs_protection=True,
+                protection_reason="Direct identifier that uniquely identifies the subject.",
+                protection_method_suggestion="replace",
+                combined_risk_level="high",
+            ),
+        ]
+    ).model_dump()
     row = pd.Series(
         {
             "text": "Alice works at Acme",
@@ -516,16 +639,7 @@ def test_render_record_html_rewrite_mode_with_disposition() -> None:
             "utility_score": 0.85,
             "leakage_mass": 0.3,
             "needs_human_review": False,
-            "_sensitivity_disposition": {
-                "sensitivity_disposition": [
-                    {
-                        "entity_value": "Alice",
-                        "entity_label": "first_name",
-                        "sensitivity": "high",
-                        "protection_method_suggestion": "replace",
-                    },
-                ]
-            },
+            COL_SENSITIVITY_DISPOSITION: disposition,
         }
     )
     result = render_record_html(row, record_index=0)

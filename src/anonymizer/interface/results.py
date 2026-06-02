@@ -7,14 +7,16 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
 
 class _DisplayMixin:
-    """Shared display_record behavior for result types."""
+    """Shared ``display_record`` behavior for result types."""
 
     trace_dataframe: pd.DataFrame
+    resolved_text_column: str
     _display_cycle_index: int
 
     def display_record(self, index: int | None = None) -> None:
@@ -28,8 +30,7 @@ class _DisplayMixin:
             raise IndexError(f"Record index {i} is out of bounds for {len(self.trace_dataframe)} records.")
 
         row = self.trace_dataframe.iloc[i]
-        original_text_column = str(self.trace_dataframe.attrs["original_text_column"])
-        html_str = render_record_html(row, record_index=i, original_text_column=original_text_column)
+        html_str = render_record_html(row, record_index=i, resolved_text_column=self.resolved_text_column)
 
         try:
             from IPython.display import HTML, display
@@ -49,12 +50,22 @@ class AnonymizerResult(_DisplayMixin):
     Attributes:
         dataframe: User-facing columns only (text, replaced/rewritten text, scores).
         trace_dataframe: Full pipeline trace including all internal columns.
+        resolved_text_column: Name of the user-facing text column. Equals the
+            user's requested ``text_column`` unless the reader had to rename it
+            to avoid colliding with an Anonymizer output column, in which case
+            it is the post-rename identifier (e.g. ``"final_entities__input"``).
         failed_records: Records that failed during pipeline processing.
+        replace_method: The replace strategy that produced this result. Set by
+            ``run()`` / ``preview()``; consumed by ``evaluate()`` to dispatch the
+            right judges. ``None`` on results that were constructed by hand or
+            loaded from a pre-strategy-tracking format.
     """
 
     dataframe: pd.DataFrame
     trace_dataframe: pd.DataFrame
+    resolved_text_column: str
     failed_records: list[FailedRecord]
+    replace_method: ReplaceMethod | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -75,14 +86,24 @@ class PreviewResult(_DisplayMixin):
     Attributes:
         dataframe: User-facing columns only (text, replaced/rewritten text, scores).
         trace_dataframe: Full pipeline trace including all internal columns.
+        resolved_text_column: Name of the user-facing text column. Equals the
+            user's requested ``text_column`` unless the reader had to rename it
+            to avoid colliding with an Anonymizer output column, in which case
+            it is the post-rename identifier (e.g. ``"final_entities__input"``).
         failed_records: Records that failed during pipeline processing.
         preview_num_records: Number of records requested for the preview.
+        replace_method: The replace strategy that produced this preview. Set by
+            ``preview()``; consumed by ``evaluate()`` to dispatch the right
+            judges. ``None`` on results that were constructed by hand or loaded
+            from a pre-strategy-tracking format.
     """
 
     dataframe: pd.DataFrame
     trace_dataframe: pd.DataFrame
+    resolved_text_column: str
     failed_records: list[FailedRecord]
     preview_num_records: int
+    replace_method: ReplaceMethod | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:

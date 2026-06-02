@@ -5,19 +5,38 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 from dataclasses import dataclass
 
 import pandas as pd
 
 from anonymizer.engine.constants import (
+    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
+    COL_ATTRIBUTE_FIDELITY_JUDGE,
+    COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_VALID,
+    COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+    COL_RELATIONAL_CONSISTENCY_JUDGE,
+    COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
+    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+    COL_TYPE_FIDELITY_VALID,
 )
-from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
+from anonymizer.engine.schemas import (
+    EntitiesByValueSchema,
+    EntitiesSchema,
+    EntityReplacementMapSchema,
+    EntitySchema,
+)
+
+logger = logging.getLogger(__name__)
 
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
@@ -63,13 +82,13 @@ def _color_for_label(label: str) -> tuple[str, str]:
     return ENTITY_COLORS[idx], LABEL_BORDER_COLORS[idx]
 
 
-def render_record_html(row: pd.Series, record_index: int | None = None, original_text_column: str | None = None) -> str:
+def render_record_html(row: pd.Series, record_index: int | None = None, resolved_text_column: str | None = None) -> str:
     """Render a single anonymizer result record as self-contained HTML.
 
     Dispatches to rewrite-mode or replace-mode layout based on which output
     columns are present.
     """
-    text_col = original_text_column or "text"
+    text_col = resolved_text_column or "text"
 
     if f"{text_col}_rewritten" in row.index:
         return _render_rewrite_html(row, text_col=text_col, record_index=record_index)
@@ -78,7 +97,7 @@ def render_record_html(row: pd.Series, record_index: int | None = None, original
 
 
 def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | None) -> str:
-    """Replace-mode layout: Original, Replaced, Replacement Map."""
+    """Replace-mode layout: Original, Replaced, Detection Judge, optional Type Fidelity, Replacement Map."""
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
     entities = _resolve_display_entities(row)
@@ -94,6 +113,10 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
         replaced_entities = _build_replaced_entities_from_map(replacement_map, replaced_text)
     replaced_html = _render_highlighted_text(replaced_text, replaced_entities)
     table_html = _render_replacement_table(replacement_map)
+    detection_judge_html = _render_detection_judge_section(row)
+    type_fidelity_section = _render_type_fidelity_section(row, replacement_map)
+    attribute_fidelity_section = _render_attribute_fidelity_section(row)
+    relational_consistency_section = _render_relational_consistency_section(row)
 
     index_label = f" (record {record_index})" if record_index is not None else ""
 
@@ -101,6 +124,10 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
         index_label=html.escape(index_label),
         original_html=original_html,
         replaced_html=replaced_html,
+        detection_judge_html=detection_judge_html,
+        type_fidelity_section=type_fidelity_section,
+        attribute_fidelity_section=attribute_fidelity_section,
+        relational_consistency_section=relational_consistency_section,
         table_html=table_html,
     )
 
@@ -348,26 +375,41 @@ def _render_replacement_table(replacement_map: list[dict[str, str]]) -> str:
 
 
 def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]:
+    """Coerce ``_replacement_map`` cell values into a list of ``{original, label, synthetic}`` dicts.
+
+    Cells can arrive as JSON strings, Pydantic models, plain dicts, or after a
+    parquet round-trip with ``replacements`` wrapped as a ``numpy.ndarray``.
+    Run the value through ``EntityReplacementMapSchema.model_validate`` so
+    Pydantic's coercion absorbs numpy shapes, then fall back to a permissive
+    hand-walk if validation rejects the payload.
+    """
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump(mode="python")
     if isinstance(raw, str):
         try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
             return []
-    elif hasattr(raw, "model_dump"):
-        data = raw.model_dump()
-    else:
-        data = raw
-    if not isinstance(data, dict):
+    if not isinstance(raw, dict):
         return []
-    replacements = data.get("replacements", [])
+    try:
+        parsed = EntityReplacementMapSchema.model_validate(raw)
+        return [r.model_dump() for r in parsed.replacements]
+    except Exception:
+        pass
+    replacements = raw.get("replacements", [])
+    if hasattr(replacements, "tolist"):
+        replacements = replacements.tolist()
     if not isinstance(replacements, list):
         return []
     result: list[dict[str, str]] = []
     for r in replacements:
+        if hasattr(r, "model_dump"):
+            r = r.model_dump()
         if isinstance(r, dict):
             result.append(r)
-        elif hasattr(r, "model_dump"):
-            result.append(r.model_dump())
     return result
 
 
@@ -381,13 +423,13 @@ def _render_scores_section(row: pd.Series) -> str:
     needs_review = row.get("needs_human_review")
 
     if utility is not None:
-        parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {float(utility):.2f}</span>")
+        parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {utility:.2f}</span>")
     if leakage is not None:
-        parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {float(leakage):.2f}</span>")
+        parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {leakage:.2f}</span>")
     if weighted_leakage_rate is not None:
         parts.append(
             "<span style='margin-right:16px'><strong>Weighted Leakage Rate:</strong> "
-            f"{float(weighted_leakage_rate):.2f}</span>"
+            f"{weighted_leakage_rate:.2f}</span>"
         )
     if needs_review is not None:
         badge_color = "#ef4444" if needs_review else "#22c55e"
@@ -399,6 +441,10 @@ def _render_scores_section(row: pd.Series) -> str:
 
     judge_raw = row.get(COL_JUDGE_EVALUATION)
     judge_scores = _extract_judge_scores(judge_raw)
+    if isinstance(judge_raw, dict) and not judge_scores:
+        logger.warning(
+            "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
+        )
     if judge_scores:
         score_strs = [f"{name}: {score}/10" for name, score in judge_scores]
         parts.append(f"<span><strong>Judge:</strong> {html.escape(', '.join(score_strs))}</span>")
@@ -411,18 +457,9 @@ def _render_scores_section(row: pd.Series) -> str:
 def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
     """Extract (name, score) pairs from the judge evaluation column.
 
-    LLMJudgeColumnConfig output is keyed by rubric name, each value carrying
-    ``{"score": <enum_value>, "reasoning": "..."}``.
+    LLMJudgeColumnConfig output is a plain dict keyed by rubric name, each
+    value carrying ``{"score": <int>, "reasoning": "..."}``.
     """
-    if raw is None:
-        return []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump()
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
     if not isinstance(raw, dict):
         return []
     result: list[tuple[str, int]] = []
@@ -434,6 +471,497 @@ def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
         except (ValueError, TypeError):
             continue
     return result
+
+
+def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
+    """Return (badge_html, rate_html) for the tri-state verdict.
+
+    - ``valid is None``                       -> Unavailable (gray, no rate).
+    - ``total == 0``                          -> Satisfied (green, no rate).
+    - ``valid is False`` and ``correct == total``
+                                              -> Not Satisfied (red, with rate).
+      The judge said the row is invalid but didn't enumerate specifics; trust
+      the explicit boolean over the count rather than rendering a misleading
+      green badge.
+    - ``correct == total``                    -> Satisfied (green, with rate).
+    - ``correct == 0``                        -> Not Satisfied (red, with rate).
+    - otherwise                               -> Partially Satisfied (amber, with rate).
+    """
+    if valid is None:
+        return "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span>", ""
+    if total == 0 and valid is not False:
+        return "<span style='color:#22c55e;font-weight:600'>Satisfied</span>", ""
+    # Explicit boolean wins when it contradicts the count: a "False" verdict with
+    # no enumerated failures means the LLM said the row is invalid but didn't
+    # point at which entries — don't render that green.
+    if valid is False and correct == total:
+        verdict, color = "Not Satisfied", "#ef4444"
+    elif correct >= total:
+        verdict, color = "Satisfied", "#22c55e"
+    elif correct == 0:
+        verdict, color = "Not Satisfied", "#ef4444"
+    else:
+        verdict, color = "Partially Satisfied", "#f59e0b"
+    badge = f"<span style='color:{color};font-weight:600'>{verdict}</span>"
+    rate_html = f" (LLM alignment score: {correct}/{total})"
+    return badge, rate_html
+
+
+def _render_detection_judge_section(row: pd.Series) -> str:
+    """Render the detection-judge verdict plus a drilldown when invalid entities exist."""
+    if COL_DETECTION_VALID not in row.index:
+        return ""
+    valid = row.get(COL_DETECTION_VALID)
+    invalid_entries = _normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
+    total = _count_detected_entity_label_pairs(row)
+    correct = max(total - len(invalid_entries), 0)
+    badge, rate_html = _verdict_badge(valid, correct, total)
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Detection Validity:</strong> {badge}{html.escape(rate_html)}"
+        "<div style='font-size:0.8em;opacity:0.7;font-style:italic;margin-top:2px'>"
+        "LLM alignment score: The level of alignment between the detection and "
+        "evaluation LLMs across entity classification, attributes, and relationships."
+        "</div>"
+        "</div>"
+    )
+
+    body = header
+    if invalid_entries:
+        rows_html: list[str] = []
+        for entry in invalid_entries:
+            value = html.escape(str(entry.get("value", "")))
+            label = html.escape(str(entry.get("label", "")))
+            reasoning = html.escape(str(entry.get("reasoning", "")))
+            rows_html.append(
+                "<tr>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{value}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+                "</tr>"
+            )
+        body += (
+            "<details style='margin-top:8px'>"
+            f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(invalid_entries)} flagged "
+            "entity(ies)</summary>"
+            "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+            "<thead><tr>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Value</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows_html)}</tbody>"
+            "</table>"
+            "</details>"
+        )
+
+    # Wrap the content in the section heading here (not in the outer template) so
+    # the whole "Detection Judge" block is omitted when the judge hasn't run.
+    return (
+        "<div style='margin-bottom:16px'>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Detection Judge</div>'
+        f"{body}"
+        "</div>"
+    )
+
+
+def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str, str]]) -> str:
+    """Render the type-fidelity verdict for Substitute runs. Returns "" when judge did not run."""
+    if COL_TYPE_FIDELITY_VALID not in row.index:
+        return ""
+    valid = row.get(COL_TYPE_FIDELITY_VALID)
+    invalid_entries = _normalize_invalid_entities(row.get(COL_TYPE_FIDELITY_INVALID_REPLACEMENTS))
+    total = _count_replacement_triples(row, fallback=replacement_map)
+    correct = max(total - len(invalid_entries), 0)
+    badge, rate_html = _verdict_badge(valid, correct, total)
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Type Fidelity:</strong> {badge}{html.escape(rate_html)}"
+        "</div>"
+    )
+
+    body = header
+    if invalid_entries:
+        rows_html: list[str] = []
+        for entry in invalid_entries:
+            original = html.escape(str(entry.get("original", "")))
+            label = html.escape(str(entry.get("label", "")))
+            synthetic = html.escape(str(entry.get("synthetic", "")))
+            reasoning = html.escape(str(entry.get("reasoning", "")))
+            rows_html.append(
+                "<tr>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{original}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{synthetic}</td>"
+                f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+                "</tr>"
+            )
+        body += (
+            "<details style='margin-top:8px'>"
+            f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(invalid_entries)} "
+            "flagged replacement(s)</summary>"
+            "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+            "<thead><tr>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Original</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Synthetic</th>"
+            "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows_html)}</tbody>"
+            "</table>"
+            "</details>"
+        )
+
+    return (
+        "<div style='margin-bottom:16px'>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Type Fidelity</div>'
+        f"{body}"
+        "</div>"
+    )
+
+
+def _render_attribute_fidelity_section(row: pd.Series) -> str:
+    """Render the attribute-fidelity verdict for Substitute runs.
+
+    Always lists every entity the judge evaluated (passes + fails), mirroring
+    the relational-consistency drilldown so the reader can see WHICH entities
+    were inspected. Returns "" when the judge did not run for this row.
+    """
+    if COL_ATTRIBUTE_FIDELITY_VALID not in row.index:
+        return ""
+    valid = row.get(COL_ATTRIBUTE_FIDELITY_VALID)
+    all_entries = _extract_all_attribute_entries(row)
+    invalid_count = sum(1 for e in all_entries if not bool(e.get("passes", False)))
+    if not all_entries:
+        fallback_invalid = _normalize_attribute_entries(row.get(COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES))
+        invalid_count = len(fallback_invalid)
+        all_entries = [{**entry, "passes": False} for entry in fallback_invalid]
+    total = len(all_entries)
+    correct = max(total - invalid_count, 0)
+    badge, rate_html = _verdict_badge(valid, correct, total)
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Attribute Fidelity:</strong> {badge}{html.escape(rate_html)}"
+        "</div>"
+    )
+
+    body = header
+    if all_entries:
+        body += _render_attribute_entries_table(all_entries)
+
+    return (
+        "<div style='margin-bottom:16px'>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Attribute Fidelity</div>'
+        f"{body}"
+        "</div>"
+    )
+
+
+def _render_attribute_entries_table(entries: list[dict[str, object]]) -> str:
+    """Render a drilldown listing every entity the attribute-fidelity judge inspected."""
+    rows_html: list[str] = []
+    for entry in entries:
+        original = html.escape(str(entry.get("original", "")))
+        label = html.escape(str(entry.get("label", "")))
+        synthetic = html.escape(str(entry.get("synthetic", "")))
+        attrs = entry.get("attributes_checked", [])
+        if hasattr(attrs, "tolist"):
+            attrs = attrs.tolist()
+        if not isinstance(attrs, list):
+            attrs = []
+        attrs_str = html.escape(", ".join(str(a) for a in attrs))
+        passes = bool(entry.get("passes", False))
+        status_color = "#22c55e" if passes else "#ef4444"
+        status_label = "Pass" if passes else "Fail"
+        status_html = f"<span style='color:{status_color};font-weight:600'>{status_label}</span>"
+        reasoning = html.escape(str(entry.get("reasoning", "")))
+        rows_html.append(
+            "<tr>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{original}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{label}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{synthetic}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{attrs_str}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{status_html}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+            "</tr>"
+        )
+    return (
+        "<details style='margin-top:8px'>"
+        f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(entries)} "
+        "evaluated entity(ies)</summary>"
+        "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+        "<thead><tr>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Original</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Synthetic</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Attributes</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Status</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+        "</details>"
+    )
+
+
+def _extract_all_attribute_entries(row: pd.Series) -> list[dict[str, object]]:
+    """Read the full entities list (passes + fails) from the raw attribute-fidelity column."""
+    raw = row.get(COL_ATTRIBUTE_FIDELITY_JUDGE) if COL_ATTRIBUTE_FIDELITY_JUDGE in row.index else None
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump(mode="python")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if not isinstance(raw, dict):
+        return []
+    entities = raw.get("entities", [])
+    if hasattr(entities, "tolist"):
+        entities = entities.tolist()
+    if not isinstance(entities, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in entities:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def _normalize_attribute_entries(raw: object) -> list[dict[str, object]]:
+    """Coerce the invalid-entities column into a list of plain dicts."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in raw:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def _render_relational_consistency_section(row: pd.Series) -> str:
+    """Render the relational-consistency verdict for Substitute runs.
+
+    Always lists every relation the judge checked (passes and fails) so the
+    reader can see WHICH entities the metric inspected, not just which ones
+    failed. Returns "" when the judge did not run for this row.
+    """
+    if COL_RELATIONAL_CONSISTENCY_VALID not in row.index:
+        return ""
+    valid = row.get(COL_RELATIONAL_CONSISTENCY_VALID)
+    all_relations = _extract_all_relations(row)
+    invalid_count = sum(1 for r in all_relations if not bool(r.get("passes", False)))
+    # Fall back to the invalid-relations column when the raw output is missing,
+    # so the LLM alignment score still surfaces "at least this many failures".
+    if not all_relations:
+        fallback_invalid = _normalize_relations(row.get(COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS))
+        invalid_count = len(fallback_invalid)
+        all_relations = [{**entry, "passes": False} for entry in fallback_invalid]
+    total = len(all_relations)
+    correct = max(total - invalid_count, 0)
+    badge, rate_html = _verdict_badge(valid, correct, total)
+
+    header = (
+        "<div style='font-size:0.9em;line-height:1.8'>"
+        f"<strong>Relational Consistency:</strong> {badge}{html.escape(rate_html)}"
+        "</div>"
+    )
+
+    body = header
+    if all_relations:
+        body += _render_relations_table(all_relations)
+
+    return (
+        "<div style='margin-bottom:16px'>"
+        '<div style="font-size:0.8em;font-weight:600;text-transform:uppercase;'
+        'letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Relational Consistency</div>'
+        f"{body}"
+        "</div>"
+    )
+
+
+def _render_relations_table(relations: list[dict[str, object]]) -> str:
+    """Render a drilldown listing every relation the judge inspected."""
+    rows_html: list[str] = []
+    for entry in relations:
+        description = html.escape(str(entry.get("description", "")))
+        entities = entry.get("entities", [])
+        if hasattr(entities, "tolist"):
+            entities = entities.tolist()
+        if not isinstance(entities, list):
+            entities = []
+        # Each participant may be either a plain string (new schema) or a {original, label,
+        # synthetic} dict (old schema kept for backward compatibility with cached runs).
+        entity_strs: list[str] = []
+        for e in entities:
+            if isinstance(e, str):
+                entity_strs.append(e)
+            elif isinstance(e, dict):
+                entity_strs.append(f"{e.get('original', '')} ({e.get('label', '')}) -> {e.get('synthetic', '')}")
+        entities_str = html.escape(", ".join(entity_strs))
+        passes = bool(entry.get("passes", False))
+        status_color = "#22c55e" if passes else "#ef4444"
+        status_label = "Pass" if passes else "Fail"
+        status_html = f"<span style='color:{status_color};font-weight:600'>{status_label}</span>"
+        reasoning = html.escape(str(entry.get("reasoning", "")))
+        rows_html.append(
+            "<tr>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{description}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{entities_str}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{status_html}</td>"
+            f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+            "</tr>"
+        )
+    return (
+        "<details style='margin-top:8px'>"
+        f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {len(relations)} "
+        "checked relation(s)</summary>"
+        "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
+        "<thead><tr>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Relation</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Entities</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Status</th>"
+        "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+        "</details>"
+    )
+
+
+def _extract_all_relations(row: pd.Series) -> list[dict[str, object]]:
+    """Read the full relations list (passes + fails) from the raw judge column."""
+    raw = row.get(COL_RELATIONAL_CONSISTENCY_JUDGE) if COL_RELATIONAL_CONSISTENCY_JUDGE in row.index else None
+    if raw is None:
+        return []
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump(mode="python")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if not isinstance(raw, dict):
+        return []
+    relations = raw.get("relations", [])
+    if hasattr(relations, "tolist"):
+        relations = relations.tolist()
+    if not isinstance(relations, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in relations:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def _normalize_relations(raw: object) -> list[dict[str, object]]:
+    """Coerce the invalid-relations column into a list of plain dicts."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, object]] = []
+    for entry in raw:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def _count_detected_entity_label_pairs(row: pd.Series) -> int:
+    """Count (value, label) pairs the judge had a chance to evaluate.
+
+    The judge schema flags entities at the (value, label) granularity, so the
+    denominator for the LLM alignment score is the total number of such pairs in the
+    deduped entity payload, not the number of unique values.
+    """
+    raw = row.get(COL_ENTITIES_BY_VALUE) if COL_ENTITIES_BY_VALUE in row.index else None
+    if raw is None:
+        return 0
+    try:
+        parsed = EntitiesByValueSchema.from_raw(raw)
+    except Exception:
+        return 0
+    return sum(len(entity.labels) for entity in parsed.entities_by_value)
+
+
+def _count_replacement_triples(row: pd.Series, *, fallback: list[dict[str, str]]) -> int:
+    """Count replacement entries the type-fidelity judge had a chance to evaluate.
+
+    ``_normalize_replacement_map`` (used to render the table) rejects shapes
+    like ``{"replacements": numpy.ndarray(...)}`` from parquet round-trips,
+    which would silently zero out the success-rate denominator here. Validate
+    via Pydantic instead so the count matches what the judge actually saw.
+    """
+    raw = row.get(COL_REPLACEMENT_MAP) if COL_REPLACEMENT_MAP in row.index else None
+    if raw is not None:
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump(mode="python")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                raw = None
+        if isinstance(raw, dict):
+            try:
+                return len(EntityReplacementMapSchema.model_validate(raw).replacements)
+            except Exception:
+                pass
+    return len(fallback)
+
+
+def _normalize_invalid_entities(raw: object) -> list[dict[str, str]]:
+    """Coerce the invalid-entities column into a list of plain dicts."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for entry in raw:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
 
 
 def _render_disposition_table(row: pd.Series) -> str:
@@ -473,21 +1001,17 @@ def _render_disposition_table(row: pd.Series) -> str:
 
 
 def _normalize_disposition(raw: object) -> list[dict[str, str]]:
-    """Extract disposition entries from the raw column value."""
-    if raw is None:
+    """Extract disposition entries from the raw column value.
+
+    LLMStructuredColumnConfig output lands as a plain dict keyed by
+    ``sensitivity_disposition``, each entry being an EntityDispositionSchema dict.
+    """
+    if not isinstance(raw, dict):
         return []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump()
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if isinstance(raw, dict):
-        entries = raw.get("sensitivity_disposition", [])
-        if isinstance(entries, list):
-            return [e if isinstance(e, dict) else getattr(e, "model_dump", dict)() for e in entries]
-    return []
+    entries = raw.get("sensitivity_disposition", [])
+    if not isinstance(entries, list):
+        return []
+    return [e for e in entries if isinstance(e, dict)]
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +1039,10 @@ letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replaced</div>
 line-height:1.6;white-space:pre-wrap;padding:12px;border:1px solid currentColor;\
 border-radius:6px;opacity:0.85">{replaced_html}</div>
       </div>
+      {detection_judge_html}
+      {type_fidelity_section}
+      {attribute_fidelity_section}
+      {relational_consistency_section}
       <div>
         <div style="font-size:0.8em;font-weight:600;text-transform:uppercase;\
 letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replacement Map</div>
