@@ -15,7 +15,10 @@ Anonymizer's detection workflow calls the `entity_detector` role via an OpenAI-c
     "model": "nvidia/gliner-pii",
     "messages": [{"role": "user", "content": "<the input text>"}],
     "labels": ["first_name", "last_name", "email", ...],
-    "threshold": 0.3
+    "threshold": 0.3,
+    "chunk_length": 384,
+    "overlap": 128,
+    "flat_ner": false
 }
 ```
 
@@ -36,49 +39,44 @@ The server must respond with the chat-completion JSON shape, where `message.cont
 }
 ```
 
-Each entity has `text`, `label`, `start`, `end`, `score`. The `labels` and `threshold` fields on the request come from `anonymizer.engine.detection.detection_workflow._inject_detector_params`; the response is parsed by `anonymizer.engine.detection.postprocess.parse_raw_entities`.
+Each entity has `text`, `label`, `start`, `end`, `score`. The request fields above come from `anonymizer.engine.detection.detection_workflow._inject_detector_params` (`labels`, `threshold`, `chunk_length`, `overlap`, `flat_ner`); the response is parsed by `anonymizer.engine.detection.postprocess.parse_raw_entities`.
+
+Long inputs are split into overlapping chunks before inference. A self-hosted server should honor `chunk_length` and `overlap` so detection matches the hosted `build.nvidia.com` path. The [Guardrails GLiNER server](https://github.com/NVIDIA-NeMo/Guardrails/blob/a5c765899d3a407bf076f0226d9b784324e86eda/examples/deployment/gliner_server/src/gliner_server/server.py) is a useful reference for chunking and deduplication, but Anonymizer expects the chat-completion adapter shown here.
 
 ---
 
 ## Reference implementation
 
-A minimal 55-line FastAPI reference server that implements the contract above is included in the repo at `tools/serve_gliner.py`. It uses the `gliner` Python package directly, loads `nvidia/gliner-pii`, and exposes the required endpoints on `0.0.0.0:8001`.
+A minimal FastAPI reference server that implements the contract above is included in the repo at `tools/serve_gliner.py`. It uses the `gliner` Python package directly, loads `nvidia/gliner-pii`, chunks long text with overlap, **batches concurrent requests**, and exposes the required endpoints on `0.0.0.0:8001`.
 
 ```python title="tools/serve_gliner.py (excerpt)"
-from gliner import GLiNER
-from fastapi import FastAPI, Request
-import torch, uvicorn, json, time, uuid
-
-MODEL_NAME = "nvidia/gliner-pii"
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-app = FastAPI()
-model = GLiNER.from_pretrained(MODEL_NAME).to(DEVICE)
-
-@app.get("/v1/models")
-def list_models():
-    return {"object": "list", "data": [{"id": MODEL_NAME, "object": "model"}]}
-
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
-    text = body["messages"][-1]["content"]  # also handles multi-part
-    labels = body.get("labels") or []
-    threshold = float(body.get("threshold", 0.3))
-    raw = model.predict_entities(text, labels, threshold=threshold) if (labels and text) else []
-    entities = [{"text": e["text"], "label": e["label"], "start": e["start"],
-                 "end": e["end"], "score": e["score"]} for e in raw]
-    return {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": MODEL_NAME,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps({"entities": entities})}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    text = _extract_text(body.get("messages", []))
+    params = DetectParams(
+        labels=tuple(body.get("labels") or []),
+        threshold=float(body.get("threshold", 0.3)),
+        chunk_length=int(body.get("chunk_length", 384)),
+        overlap=int(body.get("overlap", 128)),
+        flat_ner=bool(body.get("flat_ner", False)),
+        inference_batch_size=int(body.get("batch_size", 8)),
+    )
+    entities = await detector.detect(text, params)
+    ...
 ```
+
+Batch mode is **on by default**. When Anonymizer/DataDesigner sends several detector calls in parallel (via `max_parallel_requests` on the model config), the server coalesces them for up to 10 ms and runs one shared GLiNER `inference()` pass per parameter set. Long texts are still split into overlapping chunks first; all chunks from the coalesced requests are flattened into a single batched forward pass.
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `GLINER_BATCH_MODE` | `true` | Coalesce concurrent HTTP requests before inference |
+| `GLINER_MAX_BATCH_REQUESTS` | `32` | Max requests per coalesced batch |
+| `GLINER_BATCH_WAIT_MS` | `10` | Max wait time to fill a batch (milliseconds) |
+| `GLINER_ENABLE_PACKING` | `true` | Enable GLiNER sequence packing for chunk batches |
+| `GLINER_PACKING_STREAMS` | `4` | Packed streams per inference batch |
+
+Set `GLINER_BATCH_MODE=false` to disable request coalescing and process each HTTP call independently.
 
 ---
 
@@ -156,6 +154,8 @@ model_configs:
     model: nvidia/gliner-pii
     provider: local-gliner
     skip_health_check: true   # the default health check sends no `labels`, which GLiNER can't handle
+    inference_parameters:
+      max_parallel_requests: 8   # send concurrent rows; the reference server batches them
 ```
 
 Set `skip_health_check: true`: Anonymizer's default probe sends `prompt="Hello!"` with no `labels` field, which is not a valid GLiNER request.
@@ -164,6 +164,7 @@ Set `skip_health_check: true`: Anonymizer's default probe sends `prompt="Hello!"
 
 ## Performance notes
 
+- **Batch mode**: The reference server coalesces concurrent detector requests by default. Pair it with a higher `max_parallel_requests` on the `gliner-pii-detector` alias (see YAML above) so DataDesigner sends multiple rows at once and the server fills GPU batches efficiently.
 - On CPU, detection of a ~1000-character note with ~30 candidate labels takes **5–20 ms** per request on a modern x86 core. For typical Anonymizer workflows this is a rounding error compared to the LLM roles that follow, and keeping GLiNER on CPU frees GPU memory for the LLM.
 - On GPU the same request drops to roughly **1–3 ms** — worth it when you're processing tens of thousands of documents in a batch workflow, or when the host has spare GPU memory next to the LLM.
 - Choose device by passing `device="cuda"` / `"cpu"` to `GLiNER.from_pretrained(...)` or calling `.to("cuda")` after load. The reference server auto-selects GPU when `torch.cuda.is_available()` returns `True`.
