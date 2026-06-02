@@ -52,6 +52,9 @@ config = AnonymizerConfig(
 
 ## Chunked validation
 
+!!! info "Part of a broader long-context story"
+    Chunked validation is one of four strategies Anonymizer uses to keep large records within an LLM call's limits. For augmentation and latent windowing, and how they relate to validation, see [Long-context handling](long-context.md).
+
 When a row yields many entity candidates, validating them in a single LLM call can often exceed the model's context window or the provider's rate limits (tokens-per-minute or requests-per-minute quotas that many hosted models enforce). Anonymizer automatically splits validation for such rows: candidates are grouped in position order into chunks of at most `validation_max_entities_per_call`, and each chunk is validated independently with its own bounded text excerpt (`validation_excerpt_window_chars` before and after the chunk's span). Decisions are merged back into a single per-row set.
 
 The chunked path is always on; if a row has fewer candidates than the limit, it runs as a single call and is exactly equivalent to the unchunked behavior. Tuning guidance:
