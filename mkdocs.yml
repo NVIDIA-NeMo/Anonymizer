@@ -159,6 +159,7 @@ nav:
       - Replace: concepts/replace.md
       - Rewrite: concepts/rewrite.md
       - Choosing a Strategy: concepts/choosing-a-strategy.md
+      - Self-hosting GLiNER: concepts/self-hosting-gliner.md
   - Troubleshooting: troubleshooting.md
   - Tutorials:
       - Overview: tutorials/index.md
