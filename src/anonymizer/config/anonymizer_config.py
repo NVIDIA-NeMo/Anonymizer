@@ -20,6 +20,17 @@ from anonymizer.config.rewrite import (
 
 logger = logging.getLogger(__name__)
 
+try:
+    from data_designer.engine.processing.ginja.environment import MAX_RENDERED_LEN as _NDD_MAX_RENDERED_LEN
+except Exception:  # pragma: no cover - fall back if NDD internals move
+    _NDD_MAX_RENDERED_LEN = 512_000
+
+# Default per-call render cap for the windowed long-context stages. Kept well below
+# NDD's hard render cap so each window stays small enough to map/rewrite within a
+# single LLM request — large windows on entity-dense documents otherwise time out.
+# Clamped so it never exceeds NDD's cap if that is ever lowered.
+_DEFAULT_WINDOW_MAX_RENDER_CHARS = min(128 * 1024, _NDD_MAX_RENDERED_LEN)
+
 
 def is_remote_input_source(value: str) -> bool:
     """Return True when the input source is an HTTP(S) URL."""
@@ -98,6 +109,33 @@ class Detect(BaseModel):
             "Number of characters to include before and after a chunk's entity span when "
             "building the text excerpt sent to the validator. Bounds the prompt context the "
             "validator sees per chunk; it is NOT the LLM's context window limit."
+        ),
+    )
+    detection_window_max_render_chars: int = Field(
+        default=_DEFAULT_WINDOW_MAX_RENDER_CHARS,
+        gt=0,
+        description=(
+            "Upper bound on a single rendered prompt (characters) for the windowed "
+            "augmentation, latent, substitute-map, and rewrite stages. Documents whose "
+            "rendered prompt would exceed this are processed in windows. Defaults to 128 KiB "
+            "(131072), kept below NDD's MAX_RENDERED_LEN render cap so each window maps or "
+            "rewrites within a single LLM request without timing out on long documents."
+        ),
+    )
+    detection_window_safety_margin_chars: int = Field(
+        default=8_000,
+        ge=0,
+        description=(
+            "Headroom subtracted from detection_window_max_render_chars to leave room for "
+            "prompt scaffolding and tags when sizing augmentation/latent windows."
+        ),
+    )
+    detection_window_overlap_chars: int = Field(
+        default=1_000,
+        ge=0,
+        description=(
+            "Overlap between adjacent augmentation/latent windows so an entity straddling a "
+            "window boundary is fully visible in at least one window."
         ),
     )
 

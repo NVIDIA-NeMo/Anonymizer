@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -34,8 +34,10 @@ def test_columns_uses_disposition_analyzer_alias(
         privacy_goal=_STUB_PRIVACY_GOAL,
     )
     assert len(cols) == 1
-    assert isinstance(cols[0], LLMStructuredColumnConfig)
-    assert cols[0].model_alias == stub_rewrite_model_selection.disposition_analyzer
+    # Disposition is now a windowed custom generator (chunks the tagged text,
+    # unions per-entity decisions) so it can bypass the render cap.
+    assert isinstance(cols[0], CustomColumnConfig)
+    assert cols[0].generator_params.alias == stub_rewrite_model_selection.disposition_analyzer
     assert cols[0].name == COL_SENSITIVITY_DISPOSITION
 
 

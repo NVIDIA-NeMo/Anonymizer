@@ -67,6 +67,8 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> ReplacementResult:
         """Apply the replacement strategy (no LLM judges).
 
@@ -87,6 +89,8 @@ class ReplacementWorkflow:
                 selected_models=selected_models,
                 instructions=replace_method.instructions,
                 preview_num_records=preview_num_records,
+                window_max_render_chars=window_max_render_chars,
+                window_safety_margin_chars=window_safety_margin_chars,
             )
             local_df = apply_replacement_map(map_result.dataframe)
             failed_records = list(map_result.failed_records)

@@ -7,9 +7,11 @@ import json
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 
+from anonymizer.config.anonymizer_config import Detect as _DetectConfig
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
     COL_DOMAIN,
@@ -25,6 +27,11 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.rewrite.chunked_steps import (
+    WindowedStepParams,
+    _compile_template,
+    make_windowed_metadata_generator,
+)
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     Domain,
@@ -45,6 +52,18 @@ _DOMAIN_KEY = next(
 )
 if _DOMAIN_KEY is None:
     raise RuntimeError("DomainClassificationSchema must define a field annotated with Domain")
+
+_DEFAULT_MAX_RENDER_CHARS: int = _DetectConfig.model_fields["detection_window_max_render_chars"].default
+_DEFAULT_SAFETY_MARGIN_CHARS: int = _DetectConfig.model_fields["detection_window_safety_margin_chars"].default
+
+
+def _concat_meaning_units(outputs: list[Any]) -> dict[str, Any]:
+    """Concatenate per-window meaning units, re-sequencing IDs across windows."""
+    units: list[dict[str, Any]] = []
+    for out in outputs:
+        for unit in out.units:
+            units.append({**unit.model_dump(mode="json"), "id": len(units) + 1})
+    return MeaningUnitsSchema.model_validate({"units": units}).model_dump(mode="json")
 
 # ---------------------------------------------------------------------------
 # Stage 1 pre-step: format disposition → disposition block
@@ -294,6 +313,99 @@ Meaning units:
 
 
 # ---------------------------------------------------------------------------
+# Stage 2 (long-context): batch meaning units so each quality-QA prompt fits
+# ---------------------------------------------------------------------------
+
+
+def _batch_units_by_size(units: list[dict[str, Any]], base_len: int, budget: int) -> list[list[dict[str, Any]]]:
+    """Greedily pack units into batches whose rendered prompt stays within ``budget``.
+
+    ``base_len`` is the rendered prompt length with an empty unit list, so
+    ``budget - base_len`` is the char allowance for the units' serialized payload.
+    ``current_len`` tracks that incremental payload (each unit ~ ``len(json)+1``).
+    When the allowance is non-positive a single unit cannot be split, so each unit
+    falls into its own batch.
+    """
+    allowance = budget - base_len
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_len = 0
+    for unit in units:
+        unit_len = len(json.dumps(unit, ensure_ascii=False)) + 1
+        if current and current_len + unit_len > allowance:
+            batches.append(current)
+            current = []
+            current_len = 0
+        current.append(unit)
+        current_len += unit_len
+    if current:
+        batches.append(current)
+    return batches
+
+
+def generate_quality_qa_row(
+    row: dict[str, Any],
+    models: dict[str, Any],
+    *,
+    alias: str,
+    prompt_template: str,
+    max_render_chars: int,
+    safety_margin_chars: int,
+) -> dict[str, Any]:
+    """Build ``COL_QUALITY_QA`` for one row, batching meaning units if one prompt would exceed the cap."""
+    facade = models[alias]
+    recipe = PydanticResponseRecipe(data_type=QualityQAPairsSchema)
+    compiled = _compile_template(prompt_template)
+
+    def _generate(rendered: str, purpose: str) -> QualityQAPairsSchema:
+        out, _ = facade.generate(
+            prompt=recipe.apply_recipe_to_user_prompt(rendered),
+            parser=recipe.parse,
+            system_prompt=recipe.apply_recipe_to_system_prompt(None),
+            purpose=purpose,
+        )
+        return out
+
+    full_rendered = compiled.render(**row)
+    if len(full_rendered) <= max_render_chars:
+        row[COL_QUALITY_QA] = _generate(full_rendered, "quality-qa-generation").model_dump()
+        return row
+
+    units = json.loads(row.get(COL_MEANING_UNITS_SERIALIZED) or "[]")
+    base_len = len(compiled.render(**{**row, COL_MEANING_UNITS_SERIALIZED: "[]"}))
+    batches = _batch_units_by_size(units, base_len, max_render_chars - safety_margin_chars)
+    items: list[dict[str, Any]] = []
+    for batch_idx, batch in enumerate(batches):
+        rendered = compiled.render(**{**row, COL_MEANING_UNITS_SERIALIZED: json.dumps(batch, ensure_ascii=False)})
+        out = _generate(rendered, f"quality-qa-generation-batch-{batch_idx}")
+        for item in out.items:
+            items.append({**item.model_dump(mode="json"), "id": len(items) + 1})
+    row[COL_QUALITY_QA] = QualityQAPairsSchema.model_validate({"items": items}).model_dump()
+    return row
+
+
+def _make_quality_qa_column(qa_generator_alias: str, max_render_chars: int, safety_margin_chars: int) -> Any:
+    """Build the quality-QA generator, batching meaning units when one prompt would exceed the cap."""
+    prompt_template = _get_quality_qa_prompt()
+
+    @custom_column_generator(
+        required_columns=[COL_MEANING_UNITS_SERIALIZED],
+        model_aliases=[qa_generator_alias],
+    )
+    def _quality_qa(row: dict[str, Any], generator_params: None, models: dict[str, Any]) -> dict[str, Any]:
+        return generate_quality_qa_row(
+            row,
+            models,
+            alias=qa_generator_alias,
+            prompt_template=prompt_template,
+            max_render_chars=max_render_chars,
+            safety_margin_chars=safety_margin_chars,
+        )
+
+    return _quality_qa
+
+
+# ---------------------------------------------------------------------------
 # Stage 3: privacy QA generation (pure Python, no LLM)
 # ---------------------------------------------------------------------------
 
@@ -348,21 +460,40 @@ class QAGenerationWorkflow:
                 name=COL_SENSITIVITY_DISPOSITION_BLOCK,
                 generator_function=_format_disposition_block,
             ),
-            LLMStructuredColumnConfig(
+            CustomColumnConfig(
                 name=COL_MEANING_UNITS,
-                prompt=_get_meaning_unit_extraction_prompt(),
-                model_alias=meaning_extractor_alias,
-                output_format=MeaningUnitsSchema,
+                generator_function=make_windowed_metadata_generator(
+                    alias=meaning_extractor_alias,
+                    required_columns=[
+                        COL_TEXT,
+                        COL_SENSITIVITY_DISPOSITION_BLOCK,
+                        COL_DOMAIN,
+                        COL_DOMAIN_SUPPLEMENT,
+                    ],
+                    schema=MeaningUnitsSchema,
+                    merge_fn=_concat_meaning_units,
+                    purpose_prefix="meaning-unit-extraction",
+                ),
+                generator_params=WindowedStepParams(
+                    alias=meaning_extractor_alias,
+                    prompt_template=_get_meaning_unit_extraction_prompt(),
+                    output_column=COL_MEANING_UNITS,
+                    text_column=COL_TEXT,
+                    max_render_chars=_DEFAULT_MAX_RENDER_CHARS,
+                    safety_margin_chars=_DEFAULT_SAFETY_MARGIN_CHARS,
+                ),
             ),
             CustomColumnConfig(
                 name=COL_MEANING_UNITS_SERIALIZED,
                 generator_function=_serialize_meaning_units,
             ),
-            LLMStructuredColumnConfig(
+            CustomColumnConfig(
                 name=COL_QUALITY_QA,
-                prompt=_get_quality_qa_prompt(),
-                model_alias=qa_generator_alias,
-                output_format=QualityQAPairsSchema,
+                generator_function=_make_quality_qa_column(
+                    qa_generator_alias,
+                    _DEFAULT_MAX_RENDER_CHARS,
+                    _DEFAULT_SAFETY_MARGIN_CHARS,
+                ),
             ),
             CustomColumnConfig(
                 name=COL_PRIVACY_QA,

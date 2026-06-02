@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
+from anonymizer.config.anonymizer_config import Detect as _DetectConfig
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
     COL_DOMAIN,
@@ -20,7 +21,16 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.rewrite.chunked_steps import WindowedStepParams, make_windowed_metadata_generator
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
+
+_DEFAULT_MAX_RENDER_CHARS: int = _DetectConfig.model_fields["detection_window_max_render_chars"].default
+_DEFAULT_SAFETY_MARGIN_CHARS: int = _DetectConfig.model_fields["detection_window_safety_margin_chars"].default
+
+
+def _first_output(outputs: list[Any]) -> dict[str, Any]:
+    """Domain is a single doc-level label: keep the first window's classification."""
+    return outputs[0].model_dump(mode="json")
 
 # ---------------------------------------------------------------------------
 # Single source of truth for rewrite-domain metadata.
@@ -270,11 +280,24 @@ class DomainClassificationWorkflow:
     ) -> list[ColumnConfigT]:
         domain_alias = resolve_model_alias("domain_classifier", selected_models)
         return [
-            LLMStructuredColumnConfig(
+            CustomColumnConfig(
                 name=COL_DOMAIN,
-                prompt=_get_domain_classification_prompt(data_summary),
-                model_alias=domain_alias,
-                output_format=DomainClassificationSchema,
+                generator_function=make_windowed_metadata_generator(
+                    alias=domain_alias,
+                    required_columns=[COL_TEXT],
+                    schema=DomainClassificationSchema,
+                    merge_fn=_first_output,
+                    purpose_prefix="domain-classification",
+                ),
+                generator_params=WindowedStepParams(
+                    alias=domain_alias,
+                    prompt_template=_get_domain_classification_prompt(data_summary),
+                    output_column=COL_DOMAIN,
+                    text_column=COL_TEXT,
+                    max_render_chars=_DEFAULT_MAX_RENDER_CHARS,
+                    safety_margin_chars=_DEFAULT_SAFETY_MARGIN_CHARS,
+                    first_only=True,
+                ),
             ),
             CustomColumnConfig(
                 name=COL_DOMAIN_SUPPLEMENT,

@@ -158,6 +158,7 @@ nav:
       - Detect: concepts/detection.md
       - Replace: concepts/replace.md
       - Rewrite: concepts/rewrite.md
+      - Long-Context Handling: concepts/long-context.md
       - Choosing a Strategy: concepts/choosing-a-strategy.md
   - Troubleshooting: troubleshooting.md
   - Tutorials:

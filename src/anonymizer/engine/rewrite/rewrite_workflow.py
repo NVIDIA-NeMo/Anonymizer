@@ -195,6 +195,8 @@ class RewriteWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> RewriteResult:
         all_failed: list[FailedRecord] = []
 
@@ -212,6 +214,8 @@ class RewriteWorkflow:
             entity_rows,
             model_configs=model_configs,
             selected_models=replace_model_selection,
+            window_max_render_chars=window_max_render_chars,
+            window_safety_margin_chars=window_safety_margin_chars,
         )
         entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
         all_failed.extend(replace_result.failed_records)
@@ -227,6 +231,8 @@ class RewriteWorkflow:
             ),
             *self._qa_wf.columns(selected_models=selected_models),
             *self._rewrite_gen_wf.columns(
+                window_max_render_chars=window_max_render_chars,
+                window_safety_margin_chars=window_safety_margin_chars,
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
                 data_summary=data_summary,
