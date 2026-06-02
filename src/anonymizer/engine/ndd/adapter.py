@@ -6,10 +6,12 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
@@ -18,6 +20,7 @@ from data_designer.config.seed import SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
 
 from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.measurement import current_collector, record_ndd_workflow
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -86,7 +89,15 @@ class NddAdapter:
         logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
         col_names = [c.name for c in columns]
         logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
-        model_aliases = [m.alias for m in model_configs]
+        available_model_aliases = [m.alias for m in model_configs]
+        model_aliases = _extract_workflow_model_aliases(columns) or available_model_aliases
+        record_count = (
+            min(preview_num_records, len(workflow_input_df))
+            if preview_num_records is not None
+            else len(workflow_input_df)
+        )
+        started = time.perf_counter()
+        usage_probe = _DataDesignerUsageProbe(self._data_designer, enabled=current_collector() is not None)
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
@@ -97,39 +108,49 @@ class NddAdapter:
             for column in columns:
                 config_builder.add_column(column)
 
-            record_count = (
-                min(preview_num_records, len(workflow_input_df))
-                if preview_num_records is not None
-                else len(workflow_input_df)
-            )
             try:
-                if preview_num_records is None:
-                    run_results = self._data_designer.create(
-                        config_builder,
-                        num_records=len(workflow_input_df),
-                        dataset_name=workflow_name,
-                    )
-                    output_df = run_results.load_dataset()
-                else:
-                    preview_results = self._data_designer.preview(
-                        config_builder,
-                        num_records=record_count,
-                    )
-                    if preview_results.dataset is None:
-                        output_df = workflow_input_df.iloc[0:0].copy()
+                with usage_probe:
+                    if preview_num_records is None:
+                        run_results = self._data_designer.create(
+                            config_builder,
+                            num_records=len(workflow_input_df),
+                            dataset_name=workflow_name,
+                        )
+                        output_df = run_results.load_dataset()
                     else:
-                        output_df = preview_results.dataset
+                        preview_results = self._data_designer.preview(
+                            config_builder,
+                            num_records=record_count,
+                        )
+                        if preview_results.dataset is None:
+                            output_df = workflow_input_df.iloc[0:0].copy()
+                        else:
+                            output_df = preview_results.dataset
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s) on model(s) %s: %s",
                     record_count,
-                    model_aliases,
+                    available_model_aliases,
                     exc,
                 )
                 logger.debug(
                     "Workflow '%s' failure context: columns=%s",
                     workflow_name,
                     col_names,
+                )
+                record_ndd_workflow(
+                    workflow_name=workflow_name,
+                    model_aliases=model_aliases,
+                    input_row_count=record_count,
+                    seed_row_count=len(workflow_input_df),
+                    output_row_count=None,
+                    failed_record_count=None,
+                    elapsed_sec=time.perf_counter() - started,
+                    status="error",
+                    preview_num_records=preview_num_records,
+                    column_count=len(col_names),
+                    column_names=col_names,
+                    model_usage=usage_probe.model_usage(),
                 )
                 raise AnonymizerWorkflowError(f"Workflow failed: {exc}") from exc
 
@@ -142,6 +163,19 @@ class NddAdapter:
                 else workflow_input_df
             ),
             output_df=output_df,
+        )
+        record_ndd_workflow(
+            workflow_name=workflow_name,
+            model_aliases=model_aliases,
+            input_row_count=record_count,
+            seed_row_count=len(workflow_input_df),
+            output_row_count=len(output_df),
+            failed_record_count=len(failed_records),
+            elapsed_sec=time.perf_counter() - started,
+            preview_num_records=preview_num_records,
+            column_count=len(col_names),
+            column_names=col_names,
+            model_usage=usage_probe.model_usage(),
         )
         return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
 
@@ -225,3 +259,84 @@ class NddAdapter:
             )
             for record_id in missing_ids
         ]
+
+
+def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:
+    aliases: list[str] = []
+    for column in columns:
+        aliases.extend(_as_alias_list(getattr(column, "model_alias", None)))
+        generator = getattr(column, "generator_function", None)
+        metadata = getattr(generator, "custom_column_metadata", None)
+        if isinstance(metadata, dict):
+            aliases.extend(_as_alias_list(metadata.get("model_aliases")))
+    return list(dict.fromkeys(alias for alias in aliases if alias))
+
+
+def _as_alias_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item) for item in raw if str(item)]
+    return [str(raw)]
+
+
+class _DataDesignerUsageProbe:
+    """Capture DataDesigner model usage from the per-run private ResourceProvider."""
+
+    def __init__(self, data_designer: DataDesigner, *, enabled: bool) -> None:
+        self._data_designer = data_designer
+        self._enabled = enabled
+        self._original_create_resource_provider: Any | None = None
+        self._resource_providers: list[Any] = []
+
+    def __enter__(self) -> _DataDesignerUsageProbe:
+        if not self._enabled:
+            return self
+
+        original = getattr(self._data_designer, "_create_resource_provider", None)
+        if not callable(original):
+            return self
+
+        self._original_create_resource_provider = original
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            resource_provider = original(*args, **kwargs)
+            self._resource_providers.append(resource_provider)
+            return resource_provider
+
+        setattr(self._data_designer, "_create_resource_provider", wrapper)
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if self._original_create_resource_provider is not None:
+            setattr(self._data_designer, "_create_resource_provider", self._original_create_resource_provider)
+
+    def model_usage(self) -> dict[str, Any] | None:
+        usage: dict[str, Any] = {}
+        for resource_provider in self._resource_providers:
+            model_registry = getattr(resource_provider, "model_registry", None)
+            snapshot = _get_model_usage_snapshot(model_registry)
+            if not snapshot:
+                continue
+            for model_name, stats in snapshot.items():
+                usage[str(model_name)] = _model_usage_as_json(stats)
+        return usage or None
+
+
+def _get_model_usage_snapshot(model_registry: object) -> Mapping[str, object] | None:
+    get_snapshot = getattr(model_registry, "get_model_usage_snapshot", None)
+    if not callable(get_snapshot):
+        return None
+    snapshot = get_snapshot()
+    if isinstance(snapshot, Mapping):
+        return snapshot
+    return None
+
+
+def _model_usage_as_json(stats: object) -> Any:
+    model_dump = getattr(stats, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+    return stats

@@ -59,6 +59,11 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
+from anonymizer.measurement import (
+    record_record_metrics,
+    record_run_metadata,
+    stage_timer,
+)
 from anonymizer.telemetry import (
     NOT_APPLICABLE,
     AnonymizerEvent,
@@ -333,6 +338,45 @@ class Anonymizer:
         preview_num_records: int | None,
     ) -> AnonymizerResult:
         input_df = context.dataframe
+        mode = "replace" if config.replace is not None else "rewrite"
+        strategy = type(config.replace).__name__ if config.replace is not None else "Rewrite"
+        with stage_timer(
+            "Anonymizer._run_internal",
+            mode=mode,
+            strategy=strategy,
+            input_row_count=len(input_df),
+            preview_num_records=preview_num_records,
+        ) as measurement:
+            record_run_metadata(
+                config=config,
+                data=data,
+                mode=mode,
+                strategy=strategy,
+                input_row_count=len(input_df),
+                preview_num_records=preview_num_records,
+                model_configs=self._model_configs,
+            )
+            result = self._run_internal_impl(
+                config=config,
+                data=data,
+                context=context,
+                preview_num_records=preview_num_records,
+            )
+            measurement.update(
+                output_row_count=len(result.trace_dataframe),
+                failed_record_count=len(result.failed_records),
+            )
+            return result
+
+    def _run_internal_impl(
+        self,
+        *,
+        config: AnonymizerConfig,
+        data: AnonymizerInput,
+        context: ResolvedInput,
+        preview_num_records: int | None,
+    ) -> AnonymizerResult:
+        input_df = context.dataframe
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
             effective_records = min(preview_num_records, num_records)
@@ -455,6 +499,13 @@ class Anonymizer:
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
+        record_record_metrics(
+            final_df,
+            mode="replace" if config.replace is not None else "rewrite",
+            strategy=type(config.replace).__name__ if config.replace is not None else "Rewrite",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+        )
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
             trace_dataframe=renamed_trace,

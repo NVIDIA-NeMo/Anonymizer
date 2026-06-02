@@ -59,6 +59,7 @@ from anonymizer.engine.schemas import (
     EntitiesSchema,
     LatentEntitiesSchema,
 )
+from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.detection")
 
@@ -266,54 +267,64 @@ class EntityDetectionWorkflow:
         ``identify_latent_entities`` if ``tag_latent_entities`` is True
         (rewrite mode). Merges failures from both stages.
         """
-        if tag_latent_entities and privacy_goal is None:
-            raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
+        with stage_timer(
+            "EntityDetectionWorkflow.run",
+            input_row_count=len(dataframe),
+            tag_latent_entities=tag_latent_entities,
+        ) as measurement:
+            if tag_latent_entities and privacy_goal is None:
+                raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
 
-        compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
-        detected_result = self.detect_and_validate_entities(
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            entity_labels=entity_labels,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-        )
-
-        if tag_latent_entities:
-            latent_result = self.identify_latent_entities(
-                detected_result.dataframe,
+            compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
+            detected_result = self.detect_and_validate_entities(
+                dataframe,
                 model_configs=model_configs,
                 selected_models=selected_models,
                 gliner_detection_threshold=gliner_detection_threshold,
+                validation_max_entities_per_call=validation_max_entities_per_call,
+                validation_excerpt_window_chars=validation_excerpt_window_chars,
                 entity_labels=entity_labels,
-                privacy_goal=privacy_goal,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
             )
-            final_df = latent_result.dataframe.copy()
-            final_failures = [*detected_result.failed_records, *latent_result.failed_records]
-        else:
-            final_df = detected_result.dataframe.copy()
-            final_failures = detected_result.failed_records
 
-        # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
-        # the augmenter is strict and out-of-scope labels are filtered.
-        # entity_labels=None is the only way to get permissive augmentation.
-        # TODO(docs): document this None-vs-explicit contract in user-facing docs.
-        if COL_DETECTED_ENTITIES in final_df.columns:
-            allowed = set(entity_labels) if entity_labels is not None else None
-            final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                lambda raw: _materialize_final_entities(raw, allowed_labels=allowed)
+            if tag_latent_entities:
+                latent_result = self.identify_latent_entities(
+                    detected_result.dataframe,
+                    model_configs=model_configs,
+                    selected_models=selected_models,
+                    gliner_detection_threshold=gliner_detection_threshold,
+                    entity_labels=entity_labels,
+                    privacy_goal=privacy_goal,
+                    data_summary=data_summary,
+                    preview_num_records=preview_num_records,
+                )
+                final_df = latent_result.dataframe.copy()
+                final_failures = [*detected_result.failed_records, *latent_result.failed_records]
+            else:
+                final_df = detected_result.dataframe.copy()
+                final_failures = detected_result.failed_records
+
+            # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
+            # the augmenter is strict and out-of-scope labels are filtered.
+            # entity_labels=None is the only way to get permissive augmentation.
+            # TODO(docs): document this None-vs-explicit contract in user-facing docs.
+            if COL_DETECTED_ENTITIES in final_df.columns:
+                allowed = set(entity_labels) if entity_labels is not None else None
+                final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
+                    lambda raw: _materialize_final_entities(raw, allowed_labels=allowed)
+                )
+                if compute_grouped:
+                    final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
+            result = EntityDetectionResult(
+                dataframe=final_df,
+                failed_records=final_failures,
             )
-            if compute_grouped:
-                final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
-        return EntityDetectionResult(
-            dataframe=final_df,
-            failed_records=final_failures,
-        )
+            measurement.update(
+                output_row_count=len(result.dataframe),
+                failed_record_count=len(result.failed_records),
+            )
+            return result
 
     def _inject_detector_params(
         self,

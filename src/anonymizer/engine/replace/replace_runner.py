@@ -28,6 +28,7 @@ from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelit
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.replace")
 
@@ -73,27 +74,38 @@ class ReplacementWorkflow:
         Evaluation is a separate concern — call ``evaluate()`` on the resulting
         dataframe when you want the LLM alignment scores.
         """
-        logger.debug("replacement strategy: %s on %d records", type(replace_method).__name__, len(dataframe))
+        strategy = type(replace_method).__name__
+        with stage_timer(
+            "ReplacementWorkflow.run",
+            strategy=strategy,
+            input_row_count=len(dataframe),
+        ) as measurement:
+            logger.debug("replacement strategy: %s on %d records", strategy, len(dataframe))
 
-        if isinstance(replace_method, (Annotate, Redact, Hash)):
-            local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
-            failed_records: list[FailedRecord] = []
-        elif isinstance(replace_method, Substitute):
-            if self._llm_workflow is None:
-                raise ValueError("Substitute requires an llm_workflow, but none was provided.")
-            map_result = self._llm_workflow.generate_map_only(
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                instructions=replace_method.instructions,
-                preview_num_records=preview_num_records,
+            if isinstance(replace_method, (Annotate, Redact, Hash)):
+                local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
+                failed_records: list[FailedRecord] = []
+            elif isinstance(replace_method, Substitute):
+                if self._llm_workflow is None:
+                    raise ValueError("Substitute requires an llm_workflow, but none was provided.")
+                map_result = self._llm_workflow.generate_map_only(
+                    dataframe,
+                    model_configs=model_configs,
+                    selected_models=selected_models,
+                    instructions=replace_method.instructions,
+                    preview_num_records=preview_num_records,
+                )
+                local_df = apply_replacement_map(map_result.dataframe)
+                failed_records = list(map_result.failed_records)
+            else:
+                raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
+
+            result = ReplacementResult(dataframe=local_df, failed_records=failed_records)
+            measurement.update(
+                output_row_count=len(result.dataframe),
+                failed_record_count=len(result.failed_records),
             )
-            local_df = apply_replacement_map(map_result.dataframe)
-            failed_records = list(map_result.failed_records)
-        else:
-            raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
-
-        return ReplacementResult(dataframe=local_df, failed_records=failed_records)
+            return result
 
     def evaluate(
         self,
