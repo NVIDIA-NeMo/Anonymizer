@@ -41,7 +41,7 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
 - **Validator pool is the only model role with built-in load-spreading.** Set `entity_validator: [a, b, c]` in `models.yaml` if rate limits drop rows. Other roles (rewriter, evaluator, etc.) are single-alias.
-- **Self-hosted GLiNER** — when detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run `python tools/serve_gliner.py` and point the `entity_detector` alias at it via `providers.yaml` / `models.yaml`. Set `skip_health_check: true` on that alias (the default health probe sends no `labels`). See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
+- **Self-hosted GLiNER** — when detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run the reference server from a **source checkout** (`python tools/serve_gliner.py`; not installed via `pip install nemo-anonymizer`). Add a provider with `endpoint: http://localhost:8001/v1`, route `entity_detector` via a `gliner-pii-detector` alias with `provider: local-gliner` and `skip_health_check: true`. `model_configs` is a **complete** model pool, not an overlay — copy `src/anonymizer/config/default_model_configs/models.yaml` and change only the detector entry (keep `gpt-oss-120b` and `nemotron-30b-thinking`). See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
 
 # Reference Docs
 
@@ -58,9 +58,9 @@ The agent should consult these as it goes — *do not* try to enumerate field re
 Environment-level issues only. Quality and pipeline issues are in `docs/troubleshooting.md`.
 
 - **`anonymizer` not installed:** Tell the user `nemo-anonymizer` is not in this Python environment (requires Python ≥ 3.11). Ask if they want you to install it (`pip install nemo-anonymizer`) or do it themselves. Do not install without permission.
-- **Model aliases not configured:** Anonymizer can't run without `models.yaml` and `providers.yaml`. Tell the user to set these up — see `docs/concepts/models.md`. If they don't have a config yet, point them at `src/anonymizer/config/default_model_configs/` for the shipped defaults.
-- **LLM calls failing at preview:** Usually an auth issue (missing or invalid API key), a network problem, or a wrong base URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
-- **Local / on-prem GLiNER:** Start `tools/serve_gliner.py`, add a provider with `base_url` pointing at it, and route `entity_detector` to a detector alias with `skip_health_check: true`. Wrong `base_url` or a server that is not up often surfaces as detection-step failures at preview — see [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
+- **Model aliases not configured:** Anonymizer can't run without `model_configs` and `model_providers` (YAML files or Python objects). Tell the user to set these up — see `docs/concepts/models.md`. If they don't have a config yet, point them at `src/anonymizer/config/default_model_configs/` for the shipped defaults.
+- **LLM calls failing at preview:** Usually an auth issue (missing or invalid API key), a network problem, or a wrong endpoint URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
+- **Local / on-prem GLiNER:** Clone or download `tools/serve_gliner.py` from the Anonymizer repo, start the server, add a provider with `endpoint: http://localhost:8001/v1`, and point `gliner-pii-detector` at `provider: local-gliner` with `skip_health_check: true`. Preflight errors about missing aliases usually mean `model_configs` only listed the detector — include the full default pool. Wrong `endpoint` or a down server surfaces as detection failures at preview — see [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
 
 # Output Template
 

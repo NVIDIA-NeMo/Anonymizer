@@ -7,6 +7,8 @@ By default, Anonymizer's entity detection stage calls the hosted `nvidia/gliner-
 
 The model is small (~500 MB) and runs comfortably on CPU — making it a good fit to run alongside a local LLM without competing for GPU memory. It also runs on GPU if one is available, which cuts detection latency on long documents.
 
+The reference server script (`tools/serve_gliner.py`) is **not** installed with `pip install nemo-anonymizer` — get it from a source checkout of this repository (see **Running it** below).
+
 ---
 
 ## How it works
@@ -50,7 +52,7 @@ Long inputs are split into overlapping chunks before inference. A self-hosted se
 
 ## Reference implementation
 
-A minimal FastAPI reference server at `tools/serve_gliner.py` implements the contract above. It loads `nvidia/gliner-pii`, exposes `POST /v1/chat/completions` (and `GET /v1/models`), and uses two levels of batching:
+A minimal FastAPI reference server at [`tools/serve_gliner.py`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/serve_gliner.py) in the Anonymizer GitHub repository implements the contract above. It loads `nvidia/gliner-pii`, exposes `POST /v1/chat/completions` (and `GET /v1/models`), and uses two levels of batching:
 
 1. **Chunk batching** — long text is split into overlapping windows; all chunks are passed to one `model.inference(...)` call.
 2. **Request coalescing** (optional, on by default) — concurrent HTTP requests from DataDesigner are grouped briefly, then all their chunks are inferred together.
@@ -86,6 +88,17 @@ Set `GLINER_BATCH_MODE=false` to disable request coalescing; chunk batching stil
 ---
 
 ## Running it
+
+!!! note "Source checkout only"
+
+    `tools/serve_gliner.py` ships in the [Anonymizer GitHub repository](https://github.com/NVIDIA-NeMo/Anonymizer), not in the `nemo-anonymizer` wheel. Clone the repo or download the file, then run it from that tree:
+
+    ```bash
+    git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
+    cd Anonymizer
+    pip install fastapi uvicorn gliner
+    python tools/serve_gliner.py
+    ```
 
 ### Dependencies
 
@@ -148,15 +161,28 @@ An empty `"entities": []` means either no `labels` in the request matched real P
 
 ## Pointing Anonymizer at the local server
 
-Add a provider and detector alias that route the `entity_detector` role to your local instance:
+Pass separate `model_providers` and `model_configs` files to `Anonymizer`. **`model_configs` replaces the entire model pool** — it is not merged with defaults. Copy the bundled [`models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/models.yaml), change only the `gliner-pii-detector` entry's `provider`, and keep the other default aliases (`gpt-oss-120b`, `nemotron-30b-thinking`). Default role→alias mappings still apply unless you override `selected_models` (see [Custom models](models.md#custom-models)).
 
-```yaml
+Custom `model_providers` also replaces the provider list, so include both your local GLiNER endpoint and the `nvidia` provider used by the LLM roles:
+
+```yaml title="providers.yaml"
 providers:
   - name: local-gliner
     endpoint: http://localhost:8001/v1
     provider_type: openai
     api_key: EMPTY  # ignored; the reference server does not check auth
 
+  - name: nvidia
+    endpoint: https://integrate.api.nvidia.com/v1
+    provider_type: openai
+    api_key: NVIDIA_API_KEY
+```
+
+```bash
+export NVIDIA_API_KEY="your-nvidia-api-key"
+```
+
+```yaml title="models.yaml"
 model_configs:
   - alias: gliner-pii-detector
     model: nvidia/gliner-pii
@@ -164,9 +190,39 @@ model_configs:
     skip_health_check: true   # the default health check sends no `labels`, which GLiNER can't handle
     inference_parameters:
       max_parallel_requests: 8   # send concurrent rows; the reference server batches them
+      timeout: 120
+
+  - alias: gpt-oss-120b
+    model: openai/gpt-oss-120b
+    provider: nvidia
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 16384
+      temperature: 0.3
+      top_p: 0.95
+      timeout: 300
+
+  - alias: nemotron-30b-thinking
+    model: nvidia/nemotron-3-nano-30b-a3b
+    provider: nvidia
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 8192
+      temperature: 0.4
+      top_p: 1.0
+      timeout: 300
 ```
 
-Set `skip_health_check: true`: Anonymizer's default probe sends `prompt="Hello!"` with no `labels` field, which is not a valid GLiNER request.
+```python
+from anonymizer import Anonymizer
+
+anonymizer = Anonymizer(
+    model_providers="providers.yaml",
+    model_configs="models.yaml",
+)
+```
+
+Set `skip_health_check: true` on the detector alias: Anonymizer's default probe sends `prompt="Hello!"` with no `labels` field, which is not a valid GLiNER request.
 
 ---
 
