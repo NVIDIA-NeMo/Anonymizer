@@ -8,7 +8,8 @@ a JSON string of shape ``{"entities": [...]}`` as expected by
 ``anonymizer.engine.detection.postprocess.parse_raw_entities``.
 
 Run:
-    python tools/serve_gliner.py    # binds 0.0.0.0:8001
+    python tools/serve_gliner.py              # binds 0.0.0.0:8001 (default)
+    python tools/serve_gliner.py --port 9000  # override listen port
 
 Chunk batching and entity deduplication are implemented for robust local
 inference. This file adds the Anonymizer chat-completion adapter and optional request
@@ -19,6 +20,7 @@ See ``docs/concepts/self-hosting-gliner.md`` for full usage.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
@@ -35,8 +37,8 @@ from fastapi import FastAPI, HTTPException, Request
 from gliner import GLiNER
 
 MODEL_NAME = "nvidia/gliner-pii"
-HOST = "0.0.0.0"
-PORT = 8001
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8001
 DEFAULT_CHUNK_LENGTH = 384
 DEFAULT_OVERLAP = 128
 DEFAULT_FLAT_NER = False
@@ -458,5 +460,22 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     }
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="OpenAI-compatible GLiNER server for Anonymizer.")
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help=f"Bind address (default: {DEFAULT_HOST})",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Listen port (default: {DEFAULT_PORT})",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host=HOST, port=PORT)
+    cli = _parse_args()
+    uvicorn.run(app, host=cli.host, port=cli.port)

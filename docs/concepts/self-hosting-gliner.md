@@ -116,6 +116,9 @@ On first launch the `gliner` package will download `nvidia/gliner-pii` from Hugg
 python tools/serve_gliner.py
 # INFO     Uvicorn running on http://0.0.0.0:8001
 
+# Optional: override bind address or port (defaults: 0.0.0.0:8001)
+python tools/serve_gliner.py --host 127.0.0.1 --port 9000
+
 # Optional: pick device explicitly (auto prefers mps, then cuda, then cpu)
 DEVICE=cuda python tools/serve_gliner.py
 ```
