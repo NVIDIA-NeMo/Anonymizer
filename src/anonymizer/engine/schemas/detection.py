@@ -351,7 +351,13 @@ class LatentEntitySchema(BaseModel):
     @field_validator("evidence", mode="before")
     @classmethod
     def _clamp_evidence(cls, v: object) -> list[str]:
-        """Accept any list shape; keep at most 2 non-empty string quotes."""
+        """Accept any list shape; keep at most 2 non-empty string quotes.
+
+        A bare string (small models sometimes emit a single quote instead of a
+        one-element list) is treated as a single-item list rather than dropped.
+        """
+        if isinstance(v, str):
+            v = [v]
         if not isinstance(v, list):
             return []
         out: list[str] = []

@@ -132,3 +132,9 @@ class TestLatentEntityDrift:
     def test_unknown_category_drift_normalizes_to_latent_identifier(self) -> None:
         result = LatentEntitySchema.model_validate({"label": "x", "value": "y", "category": "some-novel-bucket"})
         assert result.category == "latent_identifier"
+
+    def test_bare_string_evidence_wrapped_not_dropped(self) -> None:
+        """Small models sometimes emit a single evidence quote as a bare string
+        instead of a one-element list; it should be kept, not silently dropped."""
+        result = LatentEntitySchema.model_validate({"label": "x", "value": "y", "evidence": "lives near the clinic"})
+        assert result.evidence == ["lives near the clinic"]
