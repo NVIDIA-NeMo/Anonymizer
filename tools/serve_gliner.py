@@ -141,7 +141,11 @@ def _remove_subset_entities(entities: list[dict[str, Any]]) -> list[dict[str, An
     to_delete: list[int] = []
     for idx, ent in enumerate(kept):
         has_superset = any(
-            i != idx and i not in to_delete and other["start"] <= ent["start"] and other["end"] >= ent["end"]
+            i != idx
+            and i not in to_delete
+            and other["start"] <= ent["start"]
+            and other["end"] >= ent["end"]
+            and (other["start"] < ent["start"] or other["end"] > ent["end"])
             for i, other in enumerate(kept)
         )
         if has_superset:
