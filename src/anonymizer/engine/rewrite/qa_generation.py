@@ -65,6 +65,7 @@ def _concat_meaning_units(outputs: list[Any]) -> dict[str, Any]:
             units.append({**unit.model_dump(mode="json"), "id": len(units) + 1})
     return MeaningUnitsSchema.model_validate({"units": units}).model_dump(mode="json")
 
+
 # ---------------------------------------------------------------------------
 # Stage 1 pre-step: format disposition → disposition block
 # ---------------------------------------------------------------------------

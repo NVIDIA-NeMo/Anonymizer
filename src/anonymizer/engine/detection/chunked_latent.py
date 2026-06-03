@@ -169,7 +169,11 @@ def plan_latent_windows(
             shrunk = max(_MIN_WINDOW_CHARS, int(window * (cap / len(rendered)) * 0.95))
             logger.debug(
                 "latent @pos=%d: render %d > cap %d; shrinking window %d -> %d chars and retrying",
-                pos, len(rendered), cap, window, shrunk,
+                pos,
+                len(rendered),
+                cap,
+                window,
+                shrunk,
             )
             window = shrunk
             continue
@@ -181,9 +185,7 @@ def plan_latent_windows(
     return windows
 
 
-def _latent_window(
-    *, facade: Any, rendered: str, system_prompt: str | None, start: int
-) -> LatentEntitiesSchema | None:
+def _latent_window(*, facade: Any, rendered: str, system_prompt: str | None, start: int) -> LatentEntitiesSchema | None:
     """Run one latent window; return its result, or ``None`` if the call fails.
 
     A single window's failure (unparseable response, timeout, ...) must not drop the
@@ -252,8 +254,14 @@ def latent_row(
     logger.info(
         "latent: rendered prompt %d chars > cap %d; tiling %d-char document into %d overlapping "
         "window(s) (initial_window=%d, overlap=%d, min_window=%d, max_workers=%d)",
-        len(full_rendered), cap, text_len, len(windows), initial_window, params.overlap_chars,
-        _MIN_WINDOW_CHARS, max_workers,
+        len(full_rendered),
+        cap,
+        text_len,
+        len(windows),
+        initial_window,
+        params.overlap_chars,
+        _MIN_WINDOW_CHARS,
+        max_workers,
     )
 
     results: list[LatentEntitiesSchema] = []
@@ -274,9 +282,13 @@ def latent_row(
         logger.warning("latent: %d of %d window(s) failed and were skipped", failed, len(windows))
     merged = merge_latent(results)
     logger.info(
-        "latent: %d window(s) over %d chars -> %d unique latent entities after dedupe "
-        "(cap=%d, overlap=%d, %d failed)",
-        len(windows), text_len, len(merged.latent_entities), cap, params.overlap_chars, failed,
+        "latent: %d window(s) over %d chars -> %d unique latent entities after dedupe (cap=%d, overlap=%d, %d failed)",
+        len(windows),
+        text_len,
+        len(merged.latent_entities),
+        cap,
+        params.overlap_chars,
+        failed,
     )
     row[COL_LATENT_ENTITIES] = merged.model_dump(mode="json")
     row[COL_LATENT_FAILED_WINDOWS] = failed

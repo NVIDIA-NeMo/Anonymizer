@@ -191,9 +191,7 @@ def judge_row(row: dict[str, Any], params: WindowedJudgeParams, models: dict[str
     results: list[JudgeScoresSchema] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
-            executor.submit(
-                _judge_window, facade=facade, prompt=prompt, system_prompt=params.system_prompt, idx=idx
-            )
+            executor.submit(_judge_window, facade=facade, prompt=prompt, system_prompt=params.system_prompt, idx=idx)
             for idx, prompt in enumerate(prompts)
         ]
         for future in futures:

@@ -67,7 +67,9 @@ class FakeDetectorFacade:
                 i = wt.find(t, i + 1)
             for k in range(len(t) - 1, 2, -1):  # truncated prefix at right edge
                 if wt.endswith(t[:k]):
-                    ents.append({"text": t[:k], "label": self.label, "start": len(wt) - k, "end": len(wt), "score": 0.5})
+                    ents.append(
+                        {"text": t[:k], "label": self.label, "start": len(wt) - k, "end": len(wt), "score": 0.5}
+                    )
                     break
             for k in range(len(t) - 1, 2, -1):  # truncated suffix at left edge
                 if wt.startswith(t[-k:]):

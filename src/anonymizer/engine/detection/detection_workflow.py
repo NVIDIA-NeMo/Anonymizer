@@ -81,15 +81,11 @@ _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL: int = AnonymizerDetectConfig.model_fi
 _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fields[
     "validation_excerpt_window_chars"
 ].default
-_DEFAULT_WINDOW_MAX_RENDER_CHARS: int = AnonymizerDetectConfig.model_fields[
-    "detection_window_max_render_chars"
-].default
+_DEFAULT_WINDOW_MAX_RENDER_CHARS: int = AnonymizerDetectConfig.model_fields["detection_window_max_render_chars"].default
 _DEFAULT_WINDOW_SAFETY_MARGIN_CHARS: int = AnonymizerDetectConfig.model_fields[
     "detection_window_safety_margin_chars"
 ].default
-_DEFAULT_WINDOW_OVERLAP_CHARS: int = AnonymizerDetectConfig.model_fields[
-    "detection_window_overlap_chars"
-].default
+_DEFAULT_WINDOW_OVERLAP_CHARS: int = AnonymizerDetectConfig.model_fields["detection_window_overlap_chars"].default
 
 
 @dataclass(frozen=True)

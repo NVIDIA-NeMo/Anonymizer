@@ -52,6 +52,7 @@ def _clip(text: str, limit: int = _LOG_CLIP_CHARS) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else f"{flat[:limit]}… (+{len(flat) - limit} chars)"
 
+
 _PROMPT_ENV = Environment(loader=BaseLoader(), autoescape=False, undefined=StrictUndefined, keep_trailing_newline=True)
 
 
@@ -102,7 +103,11 @@ def _filter_disposition_to_chunk(block: list[dict[str, Any]], chunk_raw: str) ->
     """Keep disposition entries whose entity value appears in this chunk's raw text."""
     if not isinstance(block, list):
         return []
-    return [e for e in block if isinstance(e, dict) and str(e.get("entity_value", "")) and str(e["entity_value"]) in chunk_raw]
+    return [
+        e
+        for e in block
+        if isinstance(e, dict) and str(e.get("entity_value", "")) and str(e["entity_value"]) in chunk_raw
+    ]
 
 
 def _render_chunk_prompt(*, template: str, chunk_row: dict[str, Any], summary: str) -> str:
@@ -128,7 +133,13 @@ def _rewrite_chunk(*, facade: Any, prompt: str, system_prompt: str | None, purpo
 
 
 def _update_summary(
-    *, facade: Any, prev_summary: str, rewritten_chunk: str, summary_max_chars: int, system_prompt: str | None, purpose: str
+    *,
+    facade: Any,
+    prev_summary: str,
+    rewritten_chunk: str,
+    summary_max_chars: int,
+    system_prompt: str | None,
+    purpose: str,
 ) -> str:
     recipe = TextResponseRecipe()
     rendered = _compile_template(_SUMMARY_PROMPT).render(
@@ -163,8 +174,10 @@ def generate_rewrite_row(
     if len(single_rendered) <= cap:
         logger.debug("rewrite: single-call fast path (rendered=%d chars <= cap=%d)", len(single_rendered), cap)
         text = _rewrite_chunk(
-            facade=facade, prompt=_compile_template(params.single_call_prompt_template).render(**row),
-            system_prompt=params.system_prompt, purpose="rewrite-generation",
+            facade=facade,
+            prompt=_compile_template(params.single_call_prompt_template).render(**row),
+            system_prompt=params.system_prompt,
+            purpose="rewrite-generation",
         )
         row[COL_FULL_REWRITE] = RewriteOutputSchema(rewritten_text=text).model_dump(mode="json")
         return row
@@ -181,7 +194,13 @@ def generate_rewrite_row(
     logger.info(
         "rewrite: rendered prompt %d chars > cap %d; chunking %d-char tagged document into %d boundary "
         "window(s) (initial_window=%d, delimiter=%r, summary_max=%d)",
-        len(single_rendered), cap, len(tagged), len(windows), initial_window, params.delimiter, params.summary_max_chars,
+        len(single_rendered),
+        cap,
+        len(tagged),
+        len(windows),
+        initial_window,
+        params.delimiter,
+        params.summary_max_chars,
     )
     rewritten_parts: list[str] = []
     summary = ""
@@ -198,29 +217,50 @@ def generate_rewrite_row(
         prompt = _render_chunk_prompt(template=params.single_call_prompt_template, chunk_row=chunk_row, summary=summary)
         logger.debug(
             "rewrite window %d/%d: chars [%d, %d) size=%d, %d in-chunk disposition entr(y/ies), prompt=%d chars",
-            i + 1, len(windows), start, end, end - start, len(chunk_disposition), len(prompt),
+            i + 1,
+            len(windows),
+            start,
+            end,
+            end - start,
+            len(chunk_disposition),
+            len(prompt),
         )
         rewritten_chunk = _rewrite_chunk(
-            facade=facade, prompt=prompt, system_prompt=params.system_prompt, purpose=f"rewrite-generation-chunk-{start}"
+            facade=facade,
+            prompt=prompt,
+            system_prompt=params.system_prompt,
+            purpose=f"rewrite-generation-chunk-{start}",
         )
         logger.debug(
-            "rewrite window %d/%d: produced %d chars of rewritten text", i + 1, len(windows), len(rewritten_chunk),
+            "rewrite window %d/%d: produced %d chars of rewritten text",
+            i + 1,
+            len(windows),
+            len(rewritten_chunk),
         )
         rewritten_parts.append(rewritten_chunk)
         if i < len(windows) - 1:
             summary = _update_summary(
-                facade=facade, prev_summary=summary, rewritten_chunk=rewritten_chunk,
-                summary_max_chars=params.summary_max_chars, system_prompt=params.system_prompt,
+                facade=facade,
+                prev_summary=summary,
+                rewritten_chunk=rewritten_chunk,
+                summary_max_chars=params.summary_max_chars,
+                system_prompt=params.system_prompt,
                 purpose=f"rewrite-summary-{start}",
             )
             logger.debug(
                 "rewrite window %d/%d: continuity summary updated -> %d chars: %s",
-                i + 1, len(windows), len(summary), _clip(summary),
+                i + 1,
+                len(windows),
+                len(summary),
+                _clip(summary),
             )
 
     stitched = "\n".join(part for part in rewritten_parts if part)
     logger.info(
-        "rewrite: %d window(s) over %d chars -> %d chars stitched output", len(windows), len(tagged), len(stitched),
+        "rewrite: %d window(s) over %d chars -> %d chars stitched output",
+        len(windows),
+        len(tagged),
+        len(stitched),
     )
     row[COL_FULL_REWRITE] = RewriteOutputSchema(rewritten_text=stitched).model_dump(mode="json")
     return row

@@ -197,7 +197,11 @@ def _detect_window(
     kept = drop_boundary_spans(global_spans, window_start=start, window_end=end, text_len=text_len)
     logger.debug(
         "detection window [%d, %d) size=%d -> %d span(s), %d after edge-drop",
-        start, end, end - start, len(local_spans), len(kept),
+        start,
+        end,
+        end - start,
+        len(local_spans),
+        len(kept),
     )
     return kept
 
@@ -237,7 +241,13 @@ def detect_row(
     logger.info(
         "detection: text %d chars > cap %d; tiling into %d overlapping window(s) "
         "(window=%d, overlap=%d, min_window=%d, max_workers=%d)",
-        text_len, cap, len(windows), window, params.overlap_chars, _MIN_WINDOW_CHARS, max_workers,
+        text_len,
+        cap,
+        len(windows),
+        window,
+        params.overlap_chars,
+        _MIN_WINDOW_CHARS,
+        max_workers,
     )
 
     # Windows are independent LLM calls -> dispatch concurrently. ``future.result()``
@@ -263,7 +273,9 @@ def detect_row(
     merged = resolve_overlaps(all_spans)
     logger.info(
         "detection: %d window(s) over %d chars -> %d unique span(s) after merge",
-        len(windows), text_len, len(merged),
+        len(windows),
+        text_len,
+        len(merged),
     )
     row[COL_RAW_DETECTED] = spans_to_detector_payload(merged)
     return row

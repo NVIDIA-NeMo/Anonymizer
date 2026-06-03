@@ -32,6 +32,7 @@ def _first_output(outputs: list[Any]) -> dict[str, Any]:
     """Domain is a single doc-level label: keep the first window's classification."""
     return outputs[0].model_dump(mode="json")
 
+
 # ---------------------------------------------------------------------------
 # Single source of truth for rewrite-domain metadata.
 #

@@ -59,6 +59,7 @@ def _clip(text: str, limit: int = _LOG_CLIP_CHARS) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else f"{flat[:limit]}… (+{len(flat) - limit} chars)"
 
+
 _PROMPT_ENV = Environment(loader=BaseLoader(), autoescape=False, undefined=StrictUndefined, keep_trailing_newline=True)
 
 
@@ -296,7 +297,13 @@ def generate_replacement_map_row(
     logger.info(
         "replace-map: rendered prompt %d chars > cap %d; chunking %d-char document into %d boundary "
         "window(s) (initial_window=%d, delimiter=%r, summary_max=%d)",
-        len(single_rendered), cap, len(text), len(windows), initial_window, params.delimiter, params.summary_max_chars,
+        len(single_rendered),
+        cap,
+        len(text),
+        len(windows),
+        initial_window,
+        params.delimiter,
+        params.summary_max_chars,
     )
     accumulated: list[dict[str, str]] = []
     summary = ""
@@ -305,7 +312,13 @@ def generate_replacement_map_row(
         chunk_entities = new_chunk_entities(spans, start, end, already)
         logger.debug(
             "replace-map window %d/%d: chars [%d, %d) size=%d, %d new entit(y/ies), %d already mapped",
-            i + 1, len(windows), start, end, end - start, len(chunk_entities), len(already),
+            i + 1,
+            len(windows),
+            start,
+            end,
+            end - start,
+            len(chunk_entities),
+            len(already),
         )
         if chunk_entities:
             tagged = chunk_tagged_text(text, spans, start, end, notation)
@@ -322,7 +335,10 @@ def generate_replacement_map_row(
             accumulated = merge_replacements(accumulated, chunk_map)
             logger.debug(
                 "replace-map window %d/%d: chunk produced %d replacement(s); accumulated map now %d entries",
-                i + 1, len(windows), len(chunk_map.replacements), len(accumulated),
+                i + 1,
+                len(windows),
+                len(chunk_map.replacements),
+                len(accumulated),
             )
         else:
             logger.debug("replace-map window %d/%d: no new entities, skipping map call", i + 1, len(windows))
@@ -338,16 +354,21 @@ def generate_replacement_map_row(
             )
             logger.debug(
                 "replace-map window %d/%d: rolling summary updated -> %d chars: %s",
-                i + 1, len(windows), len(summary), _clip(summary),
+                i + 1,
+                len(windows),
+                len(summary),
+                _clip(summary),
             )
 
     logger.info(
         "replace-map: %d window(s) over %d chars -> %d total replacement(s)",
-        len(windows), len(text), len(accumulated),
+        len(windows),
+        len(text),
+        len(accumulated),
     )
-    row[COL_REPLACEMENT_MAP] = EntityReplacementMapSchema.model_validate(
-        {"replacements": accumulated}
-    ).model_dump(mode="json")
+    row[COL_REPLACEMENT_MAP] = EntityReplacementMapSchema.model_validate({"replacements": accumulated}).model_dump(
+        mode="json"
+    )
     return row
 
 

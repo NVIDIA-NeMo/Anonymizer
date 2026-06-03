@@ -79,4 +79,6 @@ class TestGenerateRewriteRow:
 
     def test_missing_alias_raises(self) -> None:
         with pytest.raises(KeyError, match="not present in models"):
-            generate_rewrite_row(_row("x"), WindowedRewriteParams(alias="w", single_call_prompt_template="x", max_render_chars=10), {})
+            generate_rewrite_row(
+                _row("x"), WindowedRewriteParams(alias="w", single_call_prompt_template="x", max_render_chars=10), {}
+            )
