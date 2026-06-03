@@ -39,12 +39,20 @@ _ACTIVE_COLLECTOR: ContextVar[MeasurementCollector | None] = ContextVar(
 _GROUND_TRUTH_ENTITY_COLUMNS = ("ground_truth_entities", "gt_entities", "expected_entities")
 MEASUREMENT_SCHEMA_VERSION = 1
 DEFAULT_MEASUREMENT_ENV_PREFIX = "ANONYMIZER_MEASUREMENT_"
+DD_TRACE_MODES = {"none", "last_message", "all_messages"}
+DDTraceMode = Literal["none", "last_message", "all_messages"]
 
 logger = logging.getLogger("anonymizer.measurement")
 
 
 class _MeasurementWriter(Protocol):
     def write(self, records: list[dict[str, Any]], path: str | Path) -> None: ...
+
+
+class _MeasurementSink(Protocol):
+    def write_record(self, record: dict[str, Any]) -> None: ...
+
+    def close(self) -> None: ...
 
 
 class _JsonlMeasurementWriter:
@@ -70,6 +78,19 @@ def _writer_for_format(output_format: Literal["jsonl", "json"]) -> _MeasurementW
     return _JsonlMeasurementWriter()
 
 
+class _JsonlMeasurementSink:
+    def __init__(self, path: str | Path) -> None:
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = output_path.open("w", encoding="utf-8", buffering=1)
+
+    def write_record(self, record: dict[str, Any]) -> None:
+        self._file.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
+
+    def close(self) -> None:
+        self._file.close()
+
+
 class _MeasurementEnvSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix=DEFAULT_MEASUREMENT_ENV_PREFIX,
@@ -80,6 +101,10 @@ class _MeasurementEnvSettings(BaseSettings):
     output_path: str | None = None
     output_format: Literal["jsonl", "json"] = "jsonl"
     record_level: bool = True
+    streaming: bool = False
+    keep_records: bool = True
+    dd_trace: DDTraceMode = "none"
+    dd_trace_path: str | None = None
     fail_on_write_error: bool = False
     run_id: str | None = None
     run_tags: dict[str, Any] = Field(default_factory=dict)
@@ -100,10 +125,22 @@ class MeasurementCollector:
         record_hash_key: bytes | str | None = None,
         record_level: bool = True,
         run_tags: Mapping[str, Any] | None = None,
+        record_sink: _MeasurementSink | None = None,
+        keep_records: bool = True,
+        dd_trace_mode: DDTraceMode = "none",
+        dd_trace_sink: _MeasurementSink | None = None,
+        fail_on_write_error: bool = False,
     ) -> None:
         self.run_id = run_id or uuid.uuid4().hex
         self.record_level = record_level
         self.run_tags = cast(dict[str, Any], _json_safe(dict(run_tags or {})))
+        self._record_sink = record_sink
+        self._keep_records = keep_records
+        self._dd_trace_mode = dd_trace_mode
+        self._dd_trace_sink = dd_trace_sink
+        self._fail_on_write_error = fail_on_write_error
+        self._sink_failed = False
+        self._dd_trace_failed = False
         if record_hash_key is None:
             self._record_hash_key = secrets.token_bytes(32)
         elif isinstance(record_hash_key, str):
@@ -127,7 +164,65 @@ class MeasurementCollector:
             "run_tags": self.run_tags,
             "timestamp_unix_sec": time.time(),
         }
-        self._records.append(_json_safe(record))
+        safe_record = _json_safe(record)
+        if self._keep_records:
+            self._records.append(safe_record)
+        if self._record_sink is not None:
+            self._write_record_to_sink(safe_record)
+
+    def close(self) -> None:
+        """Close any streaming measurement sink attached to this collector."""
+        if self._record_sink is not None:
+            self._record_sink.close()
+        if self._dd_trace_sink is not None:
+            self._dd_trace_sink.close()
+
+    @property
+    def dd_trace_mode(self) -> DDTraceMode:
+        return self._dd_trace_mode
+
+    @property
+    def dd_trace_enabled(self) -> bool:
+        return self._dd_trace_mode != "none" and self._dd_trace_sink is not None
+
+    def record_dd_message_trace(self, **fields: Any) -> None:
+        """Write an explicitly opt-in DataDesigner message trace record.
+
+        These records may contain raw prompts, input text, model outputs, and
+        PII. They are intentionally written to a separate trace sink and are
+        never appended to the safe measurement record list.
+        """
+        if not self.dd_trace_enabled or self._dd_trace_failed:
+            return
+
+        record = _json_safe(
+            {
+                **fields,
+                "schema_version": MEASUREMENT_SCHEMA_VERSION,
+                "record_type": "dd_message_trace",
+                "run_id": self.run_id,
+                "run_tags": self.run_tags,
+                "timestamp_unix_sec": time.time(),
+            }
+        )
+        try:
+            cast(_MeasurementSink, self._dd_trace_sink).write_record(record)
+        except Exception:
+            self._dd_trace_failed = True
+            logger.warning("Failed to write DataDesigner message trace records")
+            if self._fail_on_write_error:
+                raise
+
+    def _write_record_to_sink(self, record: dict[str, Any]) -> None:
+        if self._sink_failed:
+            return
+        try:
+            cast(_MeasurementSink, self._record_sink).write_record(record)
+        except Exception:
+            self._sink_failed = True
+            logger.warning("Failed to stream Anonymizer measurement records")
+            if self._fail_on_write_error:
+                raise
 
     def record_hash(self, *, row_index: object, text: str) -> str:
         """Return a run-scoped HMAC for joining records without storing text."""
@@ -161,6 +256,10 @@ class MeasurementConfig:
     output_path: str | Path
     output_format: Literal["jsonl", "json"] = "jsonl"
     record_level: bool = True
+    streaming: bool = False
+    keep_records: bool = True
+    dd_trace: DDTraceMode = "none"
+    dd_trace_path: str | Path | None = None
     run_id: str | None = None
     record_hash_key: bytes | str | None = None
     run_tags: Mapping[str, Any] | None = None
@@ -169,6 +268,12 @@ class MeasurementConfig:
     def __post_init__(self) -> None:
         if self.output_format not in {"jsonl", "json"}:
             raise ValueError("output_format must be 'jsonl' or 'json'")
+        if self.streaming and self.output_format != "jsonl":
+            raise ValueError("streaming measurement output only supports jsonl")
+        if self.dd_trace not in DD_TRACE_MODES:
+            raise ValueError("dd_trace must be 'none', 'last_message', or 'all_messages'")
+        if self.dd_trace != "none" and self.dd_trace_path is None:
+            raise ValueError("dd_trace_path is required when dd_trace is enabled")
 
     @classmethod
     def from_env(cls, *, prefix: str = DEFAULT_MEASUREMENT_ENV_PREFIX) -> MeasurementConfig | None:
@@ -189,6 +294,10 @@ class MeasurementConfig:
             output_path=settings.output_path,
             output_format=settings.output_format,
             record_level=settings.record_level,
+            streaming=settings.streaming,
+            keep_records=settings.keep_records,
+            dd_trace=settings.dd_trace,
+            dd_trace_path=settings.dd_trace_path,
             run_id=settings.run_id,
             run_tags=settings.run_tags,
             fail_on_write_error=settings.fail_on_write_error,
@@ -232,11 +341,18 @@ def configured_measurement_session(config: MeasurementConfig | None) -> Iterator
         yield None
         return
 
+    sink = _JsonlMeasurementSink(config.output_path) if config.streaming else None
+    dd_trace_sink = _JsonlMeasurementSink(config.dd_trace_path) if config.dd_trace != "none" else None
     collector = MeasurementCollector(
         run_id=config.run_id,
         record_hash_key=config.record_hash_key,
         record_level=config.record_level,
         run_tags=config.run_tags,
+        record_sink=sink,
+        keep_records=config.keep_records,
+        dd_trace_mode=config.dd_trace,
+        dd_trace_sink=dd_trace_sink,
+        fail_on_write_error=config.fail_on_write_error,
     )
     with measurement_session(collector):
         body_error: BaseException | None = None
@@ -246,7 +362,11 @@ def configured_measurement_session(config: MeasurementConfig | None) -> Iterator
             body_error = exc
             raise
         finally:
-            _write_collector_safely(config=config, collector=collector, body_error=body_error)
+            if config.streaming:
+                _close_collector_safely(config=config, collector=collector, body_error=body_error)
+            else:
+                _write_collector_safely(config=config, collector=collector, body_error=body_error)
+                _close_collector_safely(config=config, collector=collector, body_error=body_error)
 
 
 def current_collector() -> MeasurementCollector | None:
@@ -731,6 +851,20 @@ def _write_collector_safely(
         config.write_collector(collector)
     except Exception as exc:
         logger.warning("Failed to write Anonymizer measurement records (%s)", type(exc).__name__)
+        if body_error is None and config.fail_on_write_error:
+            raise
+
+
+def _close_collector_safely(
+    *,
+    config: MeasurementConfig,
+    collector: MeasurementCollector,
+    body_error: BaseException | None,
+) -> None:
+    try:
+        collector.close()
+    except Exception as exc:
+        logger.warning("Failed to close Anonymizer measurement stream (%s)", type(exc).__name__)
         if body_error is None and config.fail_on_write_error:
             raise
 

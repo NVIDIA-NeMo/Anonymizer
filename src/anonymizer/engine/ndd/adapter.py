@@ -8,10 +8,12 @@ import logging
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from threading import RLock
+from typing import TYPE_CHECKING, Any, cast
 
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("anonymizer.ndd")
 
 RECORD_ID_COLUMN = "_anonymizer_record_id"
+_DD_MESSAGE_TRACE_PATCH_LOCK = RLock()
 
 
 @dataclass(frozen=True)
@@ -109,7 +112,7 @@ class NddAdapter:
                 config_builder.add_column(column)
 
             try:
-                with usage_probe:
+                with usage_probe, _dd_message_trace(workflow_name=workflow_name):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
@@ -340,3 +343,203 @@ def _model_usage_as_json(stats: object) -> Any:
     if callable(model_dump):
         return model_dump(mode="json")
     return stats
+
+
+@contextmanager
+def _dd_message_trace(*, workflow_name: str) -> Iterator[None]:
+    collector = current_collector()
+    if collector is None or not collector.dd_trace_enabled:
+        yield
+        return
+
+    from data_designer.engine.models.facade import ModelFacade
+
+    with _DD_MESSAGE_TRACE_PATCH_LOCK:
+        original_completion = ModelFacade.completion
+        original_acompletion = ModelFacade.acompletion
+        ModelFacade.completion = _traced_completion(
+            original_completion, collector=collector, workflow_name=workflow_name
+        )
+        ModelFacade.acompletion = _traced_acompletion(
+            original_acompletion,
+            collector=collector,
+            workflow_name=workflow_name,
+        )
+        try:
+            yield
+        finally:
+            ModelFacade.completion = original_completion
+            ModelFacade.acompletion = original_acompletion
+
+
+def _traced_completion(original_completion: Any, *, collector: Any, workflow_name: str) -> Any:
+    def traced(model_facade: Any, messages: list[Any], *args: Any, **kwargs: Any) -> Any:
+        return _run_traced_completion(
+            original_completion,
+            collector=collector,
+            workflow_name=workflow_name,
+            model_facade=model_facade,
+            messages=messages,
+            args=args,
+            kwargs=kwargs,
+        )
+
+    return traced
+
+
+def _run_traced_completion(
+    completion: Any,
+    *,
+    collector: Any,
+    workflow_name: str,
+    model_facade: Any,
+    messages: list[Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    started = time.perf_counter()
+    response: Any | None = None
+    status = "completed"
+    error_type: str | None = None
+    try:
+        response = completion(model_facade, messages, *args, **kwargs)
+        return response
+    except BaseException as exc:
+        status = "error"
+        error_type = type(exc).__name__
+        raise
+    finally:
+        _record_dd_message_trace(
+            collector=collector,
+            workflow_name=workflow_name,
+            model_facade=model_facade,
+            messages=messages,
+            response=response,
+            elapsed_sec=time.perf_counter() - started,
+            status=status,
+            error_type=error_type,
+            is_async=False,
+        )
+
+
+def _traced_acompletion(original_acompletion: Any, *, collector: Any, workflow_name: str) -> Any:
+    async def traced(model_facade: Any, messages: list[Any], *args: Any, **kwargs: Any) -> Any:
+        return await _run_traced_acompletion(
+            original_acompletion,
+            collector=collector,
+            workflow_name=workflow_name,
+            model_facade=model_facade,
+            messages=messages,
+            args=args,
+            kwargs=kwargs,
+        )
+
+    return traced
+
+
+async def _run_traced_acompletion(
+    acompletion: Any,
+    *,
+    collector: Any,
+    workflow_name: str,
+    model_facade: Any,
+    messages: list[Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    started = time.perf_counter()
+    response: Any | None = None
+    status = "completed"
+    error_type: str | None = None
+    try:
+        response = await acompletion(model_facade, messages, *args, **kwargs)
+        return response
+    except BaseException as exc:
+        status = "error"
+        error_type = type(exc).__name__
+        raise
+    finally:
+        _record_dd_message_trace(
+            collector=collector,
+            workflow_name=workflow_name,
+            model_facade=model_facade,
+            messages=messages,
+            response=response,
+            elapsed_sec=time.perf_counter() - started,
+            status=status,
+            error_type=error_type,
+            is_async=True,
+        )
+
+
+def _record_dd_message_trace(
+    *,
+    collector: Any,
+    workflow_name: str,
+    model_facade: Any,
+    messages: list[Any],
+    response: Any | None,
+    elapsed_sec: float,
+    status: str,
+    error_type: str | None,
+    is_async: bool,
+) -> None:
+    if error_type == "SyncClientUnavailableError":
+        return
+    collector.record_dd_message_trace(
+        workflow_name=workflow_name,
+        model_alias=getattr(model_facade, "model_alias", None),
+        model_name=getattr(model_facade, "model_name", None),
+        model_provider_name=getattr(model_facade, "model_provider_name", None),
+        modality="chat",
+        is_async=is_async,
+        status=status,
+        error_type=error_type,
+        elapsed_sec=elapsed_sec,
+        messages=_trace_messages(messages, mode=collector.dd_trace_mode),
+        response=_trace_response(response),
+        usage=_trace_usage(getattr(response, "usage", None) if response is not None else None),
+    )
+
+
+def _trace_messages(messages: list[Any], *, mode: str) -> list[dict[str, Any]]:
+    selected = messages if mode == "all_messages" else messages[-1:]
+    return [_trace_message(message) for message in selected]
+
+
+def _trace_message(message: Any) -> dict[str, Any]:
+    to_dict = getattr(message, "to_dict", None)
+    if callable(to_dict):
+        return cast(dict[str, Any], to_dict())
+    if isinstance(message, Mapping):
+        return dict(message)
+    return {"role": getattr(message, "role", None), "content": getattr(message, "content", None)}
+
+
+def _trace_response(response: Any | None) -> dict[str, Any] | None:
+    if response is None:
+        return None
+    message = getattr(response, "message", None)
+    if message is None:
+        return None
+    return {
+        "content": getattr(message, "content", None),
+        "reasoning_content": getattr(message, "reasoning_content", None),
+        "tool_calls": _trace_tool_calls(getattr(message, "tool_calls", [])),
+    }
+
+
+def _trace_tool_calls(tool_calls: Any) -> list[Any]:
+    if isinstance(tool_calls, list):
+        return [getattr(tool_call, "__dict__", tool_call) for tool_call in tool_calls]
+    return []
+
+
+def _trace_usage(usage: Any | None) -> dict[str, Any] | None:
+    if usage is None:
+        return None
+    return {
+        "input_tokens": getattr(usage, "input_tokens", None),
+        "output_tokens": getattr(usage, "output_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }

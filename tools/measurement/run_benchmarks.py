@@ -18,13 +18,26 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import cyclopts
+import pandas as pd
+import pyarrow.parquet as pq
 import yaml
+from data_designer.config.models import ModelProvider
+from data_designer.config.utils.io_helpers import load_config_file
 from export_measurements import ExportFormat, export_tables, read_measurements
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    Detect,
+    Rewrite,
+    infer_input_source_suffix,
+    is_remote_input_source,
+)
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT, PrivacyGoal, RiskTolerance
+from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
+from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
 
@@ -44,6 +57,12 @@ class CaseStatus(StrEnum):
     planned = "planned"
     completed = "completed"
     error = "error"
+
+
+class DDTraceMode(StrEnum):
+    none = "none"
+    last_message = "last_message"
+    all_messages = "all_messages"
 
 
 class ReplaceKind(StrEnum):
@@ -163,6 +182,7 @@ class BenchmarkCase(BaseModel):
     status: CaseStatus = CaseStatus.planned
     elapsed_sec: float | None = None
     measurement_path: str | None = None
+    trace_path: str | None = None
     error: str | None = None
 
 
@@ -236,6 +256,105 @@ def prepare_output_dir(output_dir: Path, *, overwrite: bool, dry_run: bool) -> N
     (output_dir / "raw").mkdir(exist_ok=True)
 
 
+def preflight_suite(spec: BenchmarkSpec, *, spec_path: Path) -> None:
+    """Validate cheap suite inputs before any benchmark case consumes model time."""
+    base_dir = spec_path.parent
+    errors: list[str] = []
+    parsed_models = None
+
+    try:
+        parsed_models = parse_model_configs(_resolve_config_source(spec.model_configs, base_dir))
+    except Exception as exc:
+        errors.append(f"model_configs invalid: {exc}")
+
+    try:
+        _preflight_model_providers(spec, base_dir=base_dir)
+    except Exception as exc:
+        errors.append(f"model_providers invalid: {exc}")
+
+    for workload in spec.workloads:
+        try:
+            _preflight_workload(workload, base_dir=base_dir)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    for config in spec.configs:
+        try:
+            anonymizer_config = build_anonymizer_config(config)
+        except Exception as exc:
+            errors.append(f"config '{config.id}' invalid: {exc}")
+            continue
+        if parsed_models is None:
+            continue
+        try:
+            validate_model_alias_references(
+                parsed_models.model_configs,
+                parsed_models.selected_models,
+                check_substitute=isinstance(anonymizer_config.replace, Substitute)
+                or anonymizer_config.rewrite is not None,
+                check_rewrite=anonymizer_config.rewrite is not None,
+            )
+        except ValueError as exc:
+            errors.append(f"config '{config.id}' model aliases invalid: {exc}")
+
+    if errors:
+        raise ValueError("Benchmark preflight failed:\n- " + "\n- ".join(errors))
+
+
+def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
+    raw = _resolve_config_source(spec.model_providers, base_dir)
+    if raw is None:
+        return
+    config_source: str | Path = raw
+    if isinstance(raw, str) and "\n" not in raw:
+        candidate = Path(raw.strip()).expanduser()
+        if candidate.suffix in (".yaml", ".yml"):
+            if not candidate.is_file():
+                raise FileNotFoundError(f"Providers config file not found: {candidate}")
+            config_source = candidate
+    config_dict = load_config_file(config_source)
+    raw_providers = config_dict.get("providers") if isinstance(config_dict, dict) else None
+    if not isinstance(raw_providers, list):
+        raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
+    for provider in raw_providers:
+        ModelProvider.model_validate(provider)
+
+
+def _preflight_workload(workload: WorkloadSpec, *, base_dir: Path) -> None:
+    resolved_source = _resolve_input_source(workload.source, base_dir)
+    input_data = AnonymizerInput(
+        source=str(resolved_source),
+        text_column=workload.text_column,
+        id_column=workload.id_column,
+        data_summary=workload.data_summary,
+    )
+    columns = _input_columns(input_data.source)
+    if columns is None:
+        return
+    if workload.text_column not in columns:
+        raise ValueError(
+            f"workload '{workload.id}' text_column '{workload.text_column}' not found in {input_data.source}; "
+            f"available columns: {sorted(columns)}"
+        )
+    if workload.id_column is not None and workload.id_column not in columns:
+        raise ValueError(
+            f"workload '{workload.id}' id_column '{workload.id_column}' not found in {input_data.source}; "
+            f"available columns: {sorted(columns)}"
+        )
+
+
+def _input_columns(source: str) -> set[str] | None:
+    suffix = infer_input_source_suffix(source)
+    if suffix not in SUPPORTED_IO_FORMATS:
+        supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
+        raise ValueError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
+    if is_remote_input_source(source):
+        return None
+    if suffix == ".csv":
+        return set(pd.read_csv(source, nrows=0).columns)
+    return set(pq.ParquetFile(source).schema_arrow.names)
+
+
 def run_suite(
     spec: BenchmarkSpec,
     *,
@@ -243,8 +362,16 @@ def run_suite(
     output_dir: Path,
     export: bool,
     fail_fast: bool,
+    dd_trace: DDTraceMode,
+    trace_dir: Path | None,
 ) -> BenchmarkResult:
-    contexts = _build_contexts(spec, spec_path=spec_path, output_dir=output_dir)
+    contexts = _build_contexts(
+        spec,
+        spec_path=spec_path,
+        output_dir=output_dir,
+        dd_trace=dd_trace,
+        trace_dir=trace_dir,
+    )
     anonymizer = Anonymizer(**contexts["anonymizer_kwargs"])
     cases = [
         _run_case(case, spec, contexts=contexts, anonymizer=anonymizer, fail_fast=fail_fast)
@@ -265,7 +392,14 @@ def run_suite(
     return result
 
 
-def _build_contexts(spec: BenchmarkSpec, *, spec_path: Path, output_dir: Path) -> dict[str, Any]:
+def _build_contexts(
+    spec: BenchmarkSpec,
+    *,
+    spec_path: Path,
+    output_dir: Path,
+    dd_trace: DDTraceMode,
+    trace_dir: Path | None,
+) -> dict[str, Any]:
     base_dir = spec_path.parent
     artifact_path = _resolve_optional_path(spec.artifact_path, base_dir) or output_dir / "artifacts"
     return {
@@ -273,6 +407,8 @@ def _build_contexts(spec: BenchmarkSpec, *, spec_path: Path, output_dir: Path) -
         "workloads": {workload.id: workload for workload in spec.workloads},
         "configs": {config.id: config for config in spec.configs},
         "raw_dir": output_dir / "raw",
+        "dd_trace": dd_trace,
+        "trace_dir": trace_dir or output_dir / "traces",
         "anonymizer_kwargs": {
             "model_configs": _resolve_config_source(spec.model_configs, base_dir),
             "model_providers": _resolve_config_source(spec.model_providers, base_dir),
@@ -290,18 +426,28 @@ def _run_case(
     fail_fast: bool,
 ) -> BenchmarkCase:
     raw_path = contexts["raw_dir"] / f"{case.case_id}.jsonl"
+    trace_path = _case_trace_path(case, contexts=contexts)
     started = time.perf_counter()
     try:
         workload = _get_item(contexts["workloads"], case.workload_id, "workload")
         config = _get_item(contexts["configs"], case.config_id, "config")
         _execute_case(
-            anonymizer, workload, config, raw_path=raw_path, case=case, spec=spec, base_dir=contexts["base_dir"]
+            anonymizer,
+            workload,
+            config,
+            raw_path=raw_path,
+            trace_path=trace_path,
+            case=case,
+            spec=spec,
+            base_dir=contexts["base_dir"],
+            dd_trace=contexts["dd_trace"],
         )
         return case.model_copy(
             update={
                 "status": CaseStatus.completed,
                 "elapsed_sec": time.perf_counter() - started,
                 "measurement_path": str(raw_path),
+                "trace_path": str(trace_path) if trace_path is not None else None,
             }
         )
     except Exception as exc:
@@ -312,9 +458,16 @@ def _run_case(
                 "status": CaseStatus.error,
                 "elapsed_sec": time.perf_counter() - started,
                 "measurement_path": str(raw_path),
+                "trace_path": str(trace_path) if trace_path is not None else None,
                 "error": str(exc),
             }
         )
+
+
+def _case_trace_path(case: BenchmarkCase, *, contexts: dict[str, Any]) -> Path | None:
+    if contexts["dd_trace"] == DDTraceMode.none:
+        return None
+    return contexts["trace_dir"] / f"{case.case_id}.jsonl"
 
 
 def _execute_case(
@@ -323,11 +476,22 @@ def _execute_case(
     config: ConfigSpec,
     *,
     raw_path: Path,
+    trace_path: Path | None,
     case: BenchmarkCase,
     spec: BenchmarkSpec,
     base_dir: Path,
+    dd_trace: DDTraceMode,
 ) -> None:
-    measurement = MeasurementConfig(output_path=raw_path, run_id=case.case_id, run_tags=_run_tags(case, spec))
+    measurement = MeasurementConfig(
+        output_path=raw_path,
+        run_id=case.case_id,
+        run_tags=_run_tags(case, spec),
+        streaming=True,
+        keep_records=False,
+        dd_trace=dd_trace.value,
+        dd_trace_path=trace_path,
+        fail_on_write_error=True,
+    )
     with configured_measurement_session(measurement):
         anonymizer.run(config=build_anonymizer_config(config), data=build_input(workload, base_dir))
 
@@ -471,8 +635,20 @@ def _resolve_path(raw: str, base_dir: Path) -> Path:
     return path if path.is_absolute() else base_dir / path
 
 
-def dry_run_result(spec: BenchmarkSpec, *, output_dir: Path, export: bool) -> BenchmarkResult:
+def dry_run_result(
+    spec: BenchmarkSpec,
+    *,
+    output_dir: Path,
+    export: bool,
+    dd_trace: DDTraceMode,
+    trace_dir: Path | None,
+) -> BenchmarkResult:
     cases = build_cases(spec)
+    if dd_trace != DDTraceMode.none:
+        resolved_trace_dir = trace_dir or output_dir / "traces"
+        cases = [
+            case.model_copy(update={"trace_path": str(resolved_trace_dir / f"{case.case_id}.jsonl")}) for case in cases
+        ]
     return BenchmarkResult(
         suite_id=spec.suite_id,
         output_dir=str(output_dir),
@@ -492,13 +668,22 @@ def main(
     dry_run: Annotated[bool, cyclopts.Parameter("--dry-run")] = False,
     export: Annotated[bool, cyclopts.Parameter("--export")] = True,
     fail_fast: Annotated[bool, cyclopts.Parameter("--fail-fast")] = False,
+    dd_trace: Annotated[DDTraceMode, cyclopts.Parameter("--dd-trace")] = DDTraceMode.none,
+    trace_dir: Annotated[Path | None, cyclopts.Parameter("--trace-dir")] = None,
     json_output: Annotated[bool, cyclopts.Parameter("--json")] = False,
     log_format: Annotated[LogFormat, cyclopts.Parameter("--log-format")] = LogFormat.plain,
 ) -> None:
     configure_logging(log_format)
     try:
         result = run_or_plan(
-            spec, output=output, overwrite=overwrite, dry_run=dry_run, export=export, fail_fast=fail_fast
+            spec,
+            output=output,
+            overwrite=overwrite,
+            dry_run=dry_run,
+            export=export,
+            fail_fast=fail_fast,
+            dd_trace=dd_trace,
+            trace_dir=trace_dir,
         )
     except (ValueError, ValidationError) as exc:
         log_bad_input(str(exc))
@@ -516,13 +701,32 @@ def run_or_plan(
     dry_run: bool,
     export: bool,
     fail_fast: bool,
+    dd_trace: DDTraceMode = DDTraceMode.none,
+    trace_dir: Path | None = None,
 ) -> BenchmarkResult:
     benchmark_spec = load_spec(spec_path)
     output_dir = output or Path("benchmark-runs") / benchmark_spec.suite_id
-    prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
+    if trace_dir is not None and dd_trace == DDTraceMode.none:
+        raise ValueError("--trace-dir requires --dd-trace")
     if dry_run:
-        return dry_run_result(benchmark_spec, output_dir=output_dir, export=export)
-    return run_suite(benchmark_spec, spec_path=spec_path, output_dir=output_dir, export=export, fail_fast=fail_fast)
+        return dry_run_result(
+            benchmark_spec,
+            output_dir=output_dir,
+            export=export,
+            dd_trace=dd_trace,
+            trace_dir=trace_dir,
+        )
+    preflight_suite(benchmark_spec, spec_path=spec_path)
+    prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
+    return run_suite(
+        benchmark_spec,
+        spec_path=spec_path,
+        output_dir=output_dir,
+        export=export,
+        fail_fast=fail_fast,
+        dd_trace=dd_trace,
+        trace_dir=trace_dir,
+    )
 
 
 if __name__ == "__main__":

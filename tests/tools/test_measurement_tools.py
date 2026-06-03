@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -134,3 +137,182 @@ matrix:
     assert result.table_dir is None
     assert {case.status for case in result.cases} == {tool.CaseStatus.planned}
     assert not output_dir.exists()
+
+
+def test_benchmark_preflight_rejects_missing_text_column(tmp_path: Path) -> None:
+    tool = load_tool("measurement_benchmark_tool_preflight_input", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"body": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: bad-input-suite
+workloads:
+  - id: biography
+    source: input.csv
+    text_column: text
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="workload 'biography' text_column 'text' not found"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_preflight_rejects_bad_model_alias_references(tmp_path: Path) -> None:
+    tool = load_tool("measurement_benchmark_tool_preflight_models", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: bad-model-suite
+model_configs: |
+  selected_models:
+    detection:
+      entity_detector: detector
+      entity_validator: [validator]
+      entity_augmenter: augmenter
+    replace:
+      replacement_generator: missing-replacer
+  model_configs:
+    - alias: detector
+      model: test/detector
+    - alias: validator
+      model: test/validator
+    - alias: augmenter
+      model: test/augmenter
+workloads:
+  - id: biography
+    source: input.csv
+configs:
+  - id: substitute
+    replace: substitute
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="missing-replacer"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_preflight_rejects_bad_provider_config(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_preflight_providers", REPO_ROOT / "tools/measurement/run_benchmarks.py"
+    )
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    provider_path = tmp_path / "providers.yaml"
+    provider_path.write_text("not_providers: []\n", encoding="utf-8")
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: bad-provider-suite
+model_providers: providers.yaml
+workloads:
+  - id: biography
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="providers"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_preflight_accepts_provider_config_path(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_preflight_provider_path", REPO_ROOT / "tools/measurement/run_benchmarks.py"
+    )
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    provider_path = tmp_path / "providers.yaml"
+    provider_path.write_text(
+        """
+providers:
+  - name: test-provider
+    endpoint: https://example.com/v1
+    provider_type: openai
+    api_key: TEST_API_KEY
+""",
+        encoding="utf-8",
+    )
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: provider-path-suite
+model_providers: providers.yaml
+workloads:
+  - id: biography
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool("measurement_benchmark_tool_dd_trace", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    captured: list[Any] = []
+
+    @contextmanager
+    def fake_measurement_session(config: Any) -> Iterator[None]:
+        captured.append(config)
+        yield None
+
+    class FakeAnonymizer:
+        def run(self, *, config: Any, data: Any) -> None:
+            assert config.replace is not None
+            assert data.text_column == "text"
+
+    monkeypatch.setattr(tool, "configured_measurement_session", fake_measurement_session)
+
+    spec = tool.BenchmarkSpec(
+        suite_id="trace-suite",
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=[tool.ConfigSpec(id="redact", replace="redact")],
+    )
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(tmp_path / "input.csv", index=False)
+    case = tool.BenchmarkCase(
+        suite_id="trace-suite",
+        workload_id="input",
+        config_id="redact",
+        repetition=0,
+        case_id="input__redact__r000",
+    )
+    trace_path = tmp_path / "traces" / "input__redact__r000.jsonl"
+
+    tool._execute_case(
+        FakeAnonymizer(),
+        spec.workloads[0],
+        spec.configs[0],
+        raw_path=tmp_path / "raw" / "input__redact__r000.jsonl",
+        trace_path=trace_path,
+        case=case,
+        spec=spec,
+        base_dir=tmp_path,
+        dd_trace=tool.DDTraceMode.all_messages,
+    )
+
+    assert len(captured) == 1
+    assert captured[0].dd_trace == "all_messages"
+    assert captured[0].dd_trace_path == trace_path
+    assert captured[0].streaming is True
+    assert captured[0].keep_records is False

@@ -15,6 +15,9 @@ import pandas as pd
 import pytest
 from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.models import ModelConfig
+from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionResponse, Usage
+from data_designer.engine.models.facade import ModelFacade
+from data_designer.engine.models.utils import ChatMessage
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
@@ -496,6 +499,102 @@ def test_measurement_config_write_errors_do_not_mask_body_errors(
             assert collector is not None
             collector.record("example")
             raise RuntimeError("body failed")
+
+
+def test_streaming_measurement_session_writes_jsonl_without_retaining_records(tmp_path: Path) -> None:
+    output_path = tmp_path / "measurements.jsonl"
+
+    with configured_measurement_session(
+        MeasurementConfig(output_path=output_path, streaming=True, keep_records=False)
+    ) as collector:
+        assert collector is not None
+        collector.record("example", value=1)
+
+        assert collector.records == []
+        assert output_path.read_text(encoding="utf-8").count("\n") == 1
+
+        collector.record("example", value=2)
+
+    lines = output_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert [json.loads(line)["value"] for line in lines] == [1, 2]
+
+
+def test_streaming_measurement_requires_jsonl_output(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="streaming measurement output only supports jsonl"):
+        MeasurementConfig(output_path=tmp_path / "measurements.json", output_format="json", streaming=True)
+
+
+def test_dd_message_trace_requires_trace_path(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="dd_trace_path is required"):
+        MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_trace="last_message")
+
+
+def test_ndd_adapter_writes_opt_in_dd_message_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+
+    def fake_completion(
+        _self: object,
+        _messages: list[ChatMessage],
+        skip_usage_tracking: bool = False,
+        **_kwargs: object,
+    ) -> ChatCompletionResponse:
+        assert skip_usage_tracking is False
+        return ChatCompletionResponse(
+            message=AssistantMessage(content="secret response"),
+            usage=Usage(input_tokens=3, output_tokens=2, total_tokens=5),
+        )
+
+    monkeypatch.setattr(ModelFacade, "completion", fake_completion)
+
+    class TraceDataDesigner:
+        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+            ModelFacade.completion(
+                SimpleNamespace(model_alias="alias", model_name="dummy-model", model_provider_name="provider"),
+                [
+                    ChatMessage.as_system("system secret"),
+                    ChatMessage.as_user("prompt secret"),
+                ],
+            )
+            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, TraceDataDesigner()))
+    trace_path = tmp_path / "trace.jsonl"
+
+    with configured_measurement_session(
+        MeasurementConfig(
+            output_path=tmp_path / "measurements.jsonl", dd_trace="last_message", dd_trace_path=trace_path
+        )
+    ):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[ModelConfig(alias="alias", model="dummy")],
+            columns=[
+                LLMTextColumnConfig(
+                    name="raw_detected",
+                    prompt="{{ text }}",
+                    model_alias="alias",
+                )
+            ],
+            workflow_name="entity-detection",
+            preview_num_records=1,
+        )
+
+    trace = json.loads(trace_path.read_text(encoding="utf-8").strip())
+    assert trace["record_type"] == "dd_message_trace"
+    assert trace["workflow_name"] == "entity-detection"
+    assert trace["model_alias"] == "alias"
+    assert trace["status"] == "completed"
+    assert trace["messages"] == [{"role": "user", "content": [{"type": "text", "text": "prompt secret"}]}]
+    assert trace["response"]["content"] == "secret response"
+    assert trace["usage"] == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+
+    serialized_measurements = (tmp_path / "measurements.jsonl").read_text(encoding="utf-8")
+    assert "prompt secret" not in serialized_measurements
+    assert "secret response" not in serialized_measurements
 
 
 def test_record_metrics_capture_generic_counts_without_raw_values() -> None:

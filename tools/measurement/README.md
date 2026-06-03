@@ -30,6 +30,25 @@ measurement JSONL format, one raw file per benchmark case plus a combined
 ```bash
 uv run python tools/measurement/run_benchmarks.py suite.yaml --output benchmark-runs/suite
 uv run python tools/measurement/run_benchmarks.py suite.yaml --dry-run --json
+uv run python tools/measurement/run_benchmarks.py suite.yaml \
+  --output benchmark-runs/suite \
+  --dd-trace last-message
+```
+
+To rerun the repo-data smoke suite with DataDesigner traces enabled:
+
+```bash
+bash tools/measurement/examples/run-repo-data-smoke-with-dd-traces.sh
+```
+
+The script writes to `/tmp/anonymizer-repo-data-smoke-dd-traces` by default.
+Pass a different output directory as the first argument, or set
+`DD_TRACE_MODE=all-messages` when you need full chat history:
+
+```bash
+DD_TRACE_MODE=all-messages \
+  bash tools/measurement/examples/run-repo-data-smoke-with-dd-traces.sh \
+  /tmp/anonymizer-repo-data-smoke-dd-traces-full
 ```
 
 Benchmark suites are YAML files with three parts:
@@ -77,6 +96,21 @@ matrix:
 The runner refuses to write into a non-empty output directory unless
 `--overwrite` is set. By default it also exports Parquet tables into
 `tables/`; pass `--no-export` when you only want the raw measurement JSONL.
+Before starting a real run, the benchmark runner performs cheap preflight
+checks: suite/config parsing, local dataset existence, CSV/Parquet text-column
+metadata, provider YAML shape, and active model-alias references. `--dry-run`
+only expands the planned matrix and skips these file/config checks.
+
+For debugging DataDesigner calls, pass `--dd-trace last-message` or
+`--dd-trace all-messages`. Trace records are written separately from sanitized
+measurements, under `traces/{case_id}.jsonl` by default. Use `--trace-dir` to
+choose another directory. `last-message` stores only the final prompt message
+for each DataDesigner model call; `all-messages` stores the full message list.
+
+DataDesigner traces may contain raw input text, prompts, model outputs, entity
+values, replacement values, secrets, and PII. Treat them as debug artifacts:
+keep them out of shared benchmark bundles unless they have been reviewed or
+redacted.
 
 ## Output Layout
 
@@ -87,6 +121,8 @@ benchmark-runs/suite-id/
   raw/
     biographies__redact-default__r000.jsonl
     support__hash-agent-labels__r000.jsonl
+  traces/
+    biographies__redact-default__r000.jsonl
   measurements.jsonl
   summary.json
   tables/
@@ -97,8 +133,15 @@ benchmark-runs/suite-id/
     ndd_workflow.parquet
 ```
 
+Raw per-case JSONL files are streamed as measurement events are recorded, so a
+long run leaves inspectable partial output before the case exits. The combined
+`measurements.jsonl` is written after the completed and errored case files are
+collected.
+
 Use `summary.json` to inspect case status and errors. Use `measurements.jsonl`
 when you need the original structured records. Use `tables/` for analysis.
+Use `traces/` only when `--dd-trace` was enabled and you need raw
+DataDesigner message-level debugging.
 
 The exporter groups records by `record_type`:
 
