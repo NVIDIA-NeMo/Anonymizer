@@ -17,6 +17,7 @@ from typing import Any, Callable
 import pytest
 
 from anonymizer.engine.constants import (
+    COL_AUGMENTATION_FAILED_WINDOWS,
     COL_AUGMENTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_SEED_ENTITIES_JSON,
@@ -173,6 +174,35 @@ class TestAugmentRowWindowed:
         assert len(facade.calls) > 1
         result = AugmentedEntitiesSchema.model_validate(out[COL_AUGMENTED_ENTITIES])
         assert len(result.entities) == len(facade.calls)
+
+    def test_one_failing_window_is_skipped_not_fatal(self) -> None:
+        # A single window's LLM failure must not drop the whole record: the row
+        # still completes and the other windows' entities survive.
+        text = ("A" * 5000) + ("B" * 5000)  # forces multiple windows
+        counter = itertools.count()
+
+        def resp(_prompt):
+            i = next(counter)
+            if i == 1:  # exactly one window raises (order is nondeterministic under the pool)
+                raise ValueError("simulated unparseable model output")
+            return {"entities": [{"value": f"v{i}", "label": "name"}]}
+
+        facade = FakeFacade(resp)
+        row = {
+            COL_TEXT: text,
+            COL_INITIAL_TAGGED_TEXT: text,
+            COL_SEED_ENTITIES_JSON: "[]",
+            COL_VALIDATED_SEED_ENTITIES: EntitiesSchema(entities=[]).model_dump(mode="json"),
+            COL_TAG_NOTATION: "xml",
+        }
+        # Should NOT raise despite one window failing.
+        out = augment_row(
+            row, _params(max_render_chars=4000, safety_margin_chars=0, overlap_chars=1000), {"aug": facade}
+        )
+        result = AugmentedEntitiesSchema.model_validate(out[COL_AUGMENTED_ENTITIES])
+        assert len(facade.calls) > 1  # multiple windows attempted
+        assert len(result.entities) == len(facade.calls) - 1  # exactly one window dropped
+        assert out[COL_AUGMENTATION_FAILED_WINDOWS] == 1  # the skip is recorded for degraded-flagging
 
     def test_missing_alias_raises(self) -> None:
         with pytest.raises(KeyError, match="not present in models"):

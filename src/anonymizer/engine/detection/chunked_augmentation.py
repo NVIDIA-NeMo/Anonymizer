@@ -25,6 +25,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -33,6 +34,7 @@ from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
 
 from anonymizer.engine.constants import (
+    COL_AUGMENTATION_FAILED_WINDOWS,
     COL_AUGMENTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_SEED_ENTITIES_JSON,
@@ -48,6 +50,11 @@ logger = logging.getLogger("anonymizer.detection.chunked_augmentation")
 # Floor on window size so a pathologically entity-dense slice still makes
 # progress instead of shrinking toward zero.
 _MIN_WINDOW_CHARS = 4000
+
+# Upper bound on augmentation windows dispatched concurrently for one record. The
+# per-alias rate limit (``max_parallel_requests`` on the facade) still caps the
+# real in-flight count; this just bounds thread creation on very long inputs.
+_MAX_PARALLEL_WINDOWS = 8
 
 # Jinja2 environment used to render the per-window augmentation prompt. Mirrors
 # chunked_validation: same template, same placeholders, per-window values.
@@ -221,6 +228,75 @@ def _call_augmenter(*, facade: Any, prompt: str, system_prompt: str | None, purp
     return output
 
 
+def plan_augmentation_windows(
+    *,
+    text: str,
+    all_spans: list[EntitySpan],
+    notation: TagNotation,
+    params: WindowedAugmentationParams,
+    cap: int,
+    initial_window: int,
+) -> list[tuple[int, int, str]]:
+    """Walk the document applying the shrink rule, returning ``(start, end, rendered_prompt)``.
+
+    No LLM calls — only Jinja renders + length checks — so this is cheap and runs
+    serially to fix the (data-dependent) window boundaries before the parallel LLM
+    pass. The window shrinks when a render exceeds ``cap`` and the shrunk size
+    carries forward, exactly as the previous in-line loop did.
+    """
+    text_len = len(text)
+    windows: list[tuple[int, int, str]] = []
+    window = initial_window
+    pos = 0
+    while pos < text_len:
+        end = min(text_len, pos + window)
+        tagged, seed_json = build_window_inputs(text=text, all_spans=all_spans, start=pos, end=end, notation=notation)
+        rendered = render_augment_prompt(
+            template=params.prompt_template, tagged_text=tagged, seed_entities_json=seed_json, notation=notation
+        )
+        if len(rendered) > cap and (end - pos) > _MIN_WINDOW_CHARS:
+            # Shrink proportionally to the measured overage so the next try lands just
+            # under the cap (0.95 = small safety margin). Strictly decreasing -> converges.
+            shrunk = max(_MIN_WINDOW_CHARS, int(window * (cap / len(rendered)) * 0.95))
+            logger.debug(
+                "augmentation @pos=%d: render %d > cap %d; shrinking window %d -> %d chars and retrying",
+                pos, len(rendered), cap, window, shrunk,
+            )
+            window = shrunk
+            continue
+        logger.debug(
+            "augmentation window @[%d, %d) size=%d, rendered=%d/%d chars", pos, end, end - pos, len(rendered), cap
+        )
+        windows.append((pos, end, rendered))
+        if end >= text_len:
+            break
+        pos = max(pos + 1, end - params.overlap_chars)
+    return windows
+
+
+def _augment_window(
+    *, facade: Any, rendered: str, system_prompt: str | None, start: int
+) -> AugmentedEntitiesSchema | None:
+    """Run one augmentation window; return its result, or ``None`` if the call fails.
+
+    A single window's failure (e.g. an unparseable model response, or a timeout)
+    must not drop the whole record: augmentation only *adds* entities GLiNER missed,
+    so a skipped window degrades gracefully. The error is logged at WARNING with its
+    type and message so it stays fully visible. Safe to run per window in a pool.
+    """
+    try:
+        result = _call_augmenter(
+            facade=facade, prompt=rendered, system_prompt=system_prompt, purpose=f"entity-augmentation-window-{start}"
+        )
+    except Exception as exc:  # noqa: BLE001 — one window must not sink the record
+        logger.warning(
+            "augmentation window @%d failed (%s: %s); skipping this window's entities", start, type(exc).__name__, exc
+        )
+        return None
+    logger.debug("augmentation window @%d: augmenter proposed %d entities", start, len(result.entities))
+    return result
+
+
 def augment_row(
     row: dict[str, Any],
     params: WindowedAugmentationParams,
@@ -266,71 +342,49 @@ def augment_row(
             purpose="entity-augmentation",
         )
         row[COL_AUGMENTED_ENTITIES] = output.model_dump(mode="json")
+        row[COL_AUGMENTATION_FAILED_WINDOWS] = 0
         return row
 
-    # Windowed path: tile the document, shrinking a window only if its render
-    # exceeds the cap (e.g. an entity-dense slice with many tags).
+    # Windowed path. First plan the windows serially (cheap renders + the
+    # data-dependent shrink), then run the LLM calls in parallel. A single
+    # window's failure is logged and skipped rather than dropping the record.
     all_spans = parse_validated_seed_spans(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
-    results: list[AugmentedEntitiesSchema] = []
-    window = initial_window
-    pos = 0
     text_len = len(text)
-    logger.info(
-        "augmentation: rendered prompt %d chars > cap %d; tiling %d-char document into "
-        "overlapping windows (initial_window=%d, overlap=%d, min_window=%d)",
-        len(full_rendered), cap, text_len, initial_window, params.overlap_chars, _MIN_WINDOW_CHARS,
+    windows = plan_augmentation_windows(
+        text=text, all_spans=all_spans, notation=notation, params=params, cap=cap, initial_window=initial_window
     )
-    window_index = 0
-    while pos < text_len:
-        end = min(text_len, pos + window)
-        tagged, seed_json = build_window_inputs(
-            text=text, all_spans=all_spans, start=pos, end=end, notation=notation
-        )
-        rendered = render_augment_prompt(
-            template=params.prompt_template,
-            tagged_text=tagged,
-            seed_entities_json=seed_json,
-            notation=notation,
-        )
-        if len(rendered) > cap and (end - pos) > _MIN_WINDOW_CHARS:
-            # Shrink proportionally to the measured overage so the next try lands
-            # just under the cap (0.95 = small safety margin), instead of halving
-            # and overshooting. Strictly decreasing -> converges, then the floor stops it.
-            shrunk = max(_MIN_WINDOW_CHARS, int(window * (cap / len(rendered)) * 0.95))
-            logger.debug(
-                "augmentation window %d @pos=%d: render %d > cap %d; shrinking window %d -> %d chars and retrying",
-                window_index, pos, len(rendered), cap, window, shrunk,
-            )
-            window = shrunk
-            continue
-        logger.debug(
-            "augmentation window %d: chars [%d, %d) size=%d, rendered=%d/%d chars",
-            window_index, pos, end, end - pos, len(rendered), cap,
-        )
-        result = _call_augmenter(
-            facade=facade,
-            prompt=rendered,
-            system_prompt=params.system_prompt,
-            purpose=f"entity-augmentation-window-{pos}",
-        )
-        logger.debug("augmentation window %d: augmenter proposed %d entities", window_index, len(result.entities))
-        results.append(result)
-        if end >= text_len:
-            break
-        next_pos = max(pos + 1, end - params.overlap_chars)
-        logger.debug(
-            "augmentation window %d: advancing pos %d -> %d (overlap back %d chars)",
-            window_index, pos, next_pos, end - next_pos,
-        )
-        pos = next_pos
-        window_index += 1
+    max_workers = min(len(windows), _MAX_PARALLEL_WINDOWS)
+    logger.info(
+        "augmentation: rendered prompt %d chars > cap %d; tiling %d-char document into %d overlapping "
+        "window(s) (initial_window=%d, overlap=%d, min_window=%d, max_workers=%d)",
+        len(full_rendered), cap, text_len, len(windows), initial_window, params.overlap_chars,
+        _MIN_WINDOW_CHARS, max_workers,
+    )
 
+    results: list[AugmentedEntitiesSchema] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                _augment_window, facade=facade, rendered=rendered, system_prompt=params.system_prompt, start=start
+            )
+            for start, _end, rendered in windows
+        ]
+        for future in futures:
+            result = future.result()  # _augment_window swallows errors -> never raises
+            if result is not None:
+                results.append(result)
+
+    failed = len(windows) - len(results)
+    if failed:
+        logger.warning("augmentation: %d of %d window(s) failed and were skipped", failed, len(windows))
     merged = merge_augmented(results)
     logger.info(
-        "augmentation: %d window(s) over %d chars -> %d unique entities after dedupe (cap=%d, overlap=%d)",
-        len(results), text_len, len(merged.entities), cap, params.overlap_chars,
+        "augmentation: %d window(s) over %d chars -> %d unique entities after dedupe "
+        "(cap=%d, overlap=%d, %d failed)",
+        len(windows), text_len, len(merged.entities), cap, params.overlap_chars, failed,
     )
     row[COL_AUGMENTED_ENTITIES] = merged.model_dump(mode="json")
+    row[COL_AUGMENTATION_FAILED_WINDOWS] = failed
     return row
 
 
@@ -359,6 +413,7 @@ def make_windowed_augmentation_generator(alias: str) -> Any:
             COL_VALIDATED_SEED_ENTITIES,
             COL_TAG_NOTATION,
         ],
+        side_effect_columns=[COL_AUGMENTATION_FAILED_WINDOWS],
         model_aliases=[alias],
     )
     def windowed_augment(

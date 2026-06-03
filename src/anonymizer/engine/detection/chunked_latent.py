@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import functools
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -30,6 +31,7 @@ from pydantic import BaseModel, Field
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_LATENT_ENTITIES,
+    COL_LATENT_FAILED_WINDOWS,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -42,6 +44,11 @@ logger = logging.getLogger("anonymizer.detection.chunked_latent")
 
 # Floor on window size so a pathologically entity-dense slice still progresses.
 _MIN_WINDOW_CHARS = 4000
+
+# Upper bound on latent windows dispatched concurrently for one record. The
+# per-alias rate limit (``max_parallel_requests`` on the facade) still caps the
+# real in-flight count; this just bounds thread creation on very long inputs.
+_MAX_PARALLEL_WINDOWS = 8
 
 _PROMPT_ENV = Environment(
     loader=BaseLoader(),
@@ -134,6 +141,68 @@ def _call_latent(*, facade: Any, prompt: str, system_prompt: str | None, purpose
     return output
 
 
+def plan_latent_windows(
+    *,
+    text: str,
+    spans: list[EntitySpan],
+    notation: TagNotation,
+    params: WindowedLatentParams,
+    cap: int,
+    initial_window: int,
+) -> list[tuple[int, int, str]]:
+    """Walk the document applying the shrink rule, returning ``(start, end, rendered_prompt)``.
+
+    No LLM calls — only Jinja renders + length checks — so this runs serially to fix
+    the (data-dependent) window boundaries before the parallel LLM pass. The window
+    shrinks when a render exceeds ``cap`` and the shrunk size carries forward.
+    """
+    text_len = len(text)
+    windows: list[tuple[int, int, str]] = []
+    window = initial_window
+    pos = 0
+    while pos < text_len:
+        end = min(text_len, pos + window)
+        # Reuse augmentation's span-rebasing + tagging; latent ignores the seed JSON.
+        tagged, _seed_json = build_window_inputs(text=text, all_spans=spans, start=pos, end=end, notation=notation)
+        rendered = render_latent_prompt(template=params.prompt_template, tagged_text=tagged, notation=notation)
+        if len(rendered) > cap and (end - pos) > _MIN_WINDOW_CHARS:
+            shrunk = max(_MIN_WINDOW_CHARS, int(window * (cap / len(rendered)) * 0.95))
+            logger.debug(
+                "latent @pos=%d: render %d > cap %d; shrinking window %d -> %d chars and retrying",
+                pos, len(rendered), cap, window, shrunk,
+            )
+            window = shrunk
+            continue
+        logger.debug("latent window @[%d, %d) size=%d, rendered=%d/%d chars", pos, end, end - pos, len(rendered), cap)
+        windows.append((pos, end, rendered))
+        if end >= text_len:
+            break
+        pos = max(pos + 1, end - params.overlap_chars)
+    return windows
+
+
+def _latent_window(
+    *, facade: Any, rendered: str, system_prompt: str | None, start: int
+) -> LatentEntitiesSchema | None:
+    """Run one latent window; return its result, or ``None`` if the call fails.
+
+    A single window's failure (unparseable response, timeout, ...) must not drop the
+    record: latent detection only contributes inferred entities, so a skipped window
+    degrades gracefully. The error is logged at WARNING so it stays visible.
+    """
+    try:
+        result = _call_latent(
+            facade=facade, prompt=rendered, system_prompt=system_prompt, purpose=f"latent-detection-window-{start}"
+        )
+    except Exception as exc:  # noqa: BLE001 — one window must not sink the record
+        logger.warning(
+            "latent window @%d failed (%s: %s); skipping this window's entities", start, type(exc).__name__, exc
+        )
+        return None
+    logger.debug("latent window @%d: detector proposed %d latent entities", start, len(result.latent_entities))
+    return result
+
+
 def latent_row(
     row: dict[str, Any],
     params: WindowedLatentParams,
@@ -168,66 +237,49 @@ def latent_row(
             purpose="latent-detection",
         )
         row[COL_LATENT_ENTITIES] = output.model_dump(mode="json")
+        row[COL_LATENT_FAILED_WINDOWS] = 0
         return row
 
-    # Windowed path.
+    # Windowed path. Plan the windows serially (cheap renders + the data-dependent
+    # shrink), then run the LLM calls in parallel; a single window's failure is
+    # logged and skipped rather than dropping the record.
     spans = parse_detected_spans(row.get(COL_DETECTED_ENTITIES, {}))
-    results: list[LatentEntitiesSchema] = []
-    window = initial_window
-    pos = 0
     text_len = len(text)
-    logger.info(
-        "latent: rendered prompt %d chars > cap %d; tiling %d-char document into "
-        "overlapping windows (initial_window=%d, overlap=%d, min_window=%d)",
-        len(full_rendered), cap, text_len, initial_window, params.overlap_chars, _MIN_WINDOW_CHARS,
+    windows = plan_latent_windows(
+        text=text, spans=spans, notation=notation, params=params, cap=cap, initial_window=initial_window
     )
-    window_index = 0
-    while pos < text_len:
-        end = min(text_len, pos + window)
-        # Reuse augmentation's span-rebasing + tagging; latent ignores the seed JSON.
-        tagged, _seed_json = build_window_inputs(
-            text=text, all_spans=spans, start=pos, end=end, notation=notation
-        )
-        rendered = render_latent_prompt(template=params.prompt_template, tagged_text=tagged, notation=notation)
-        if len(rendered) > cap and (end - pos) > _MIN_WINDOW_CHARS:
-            # Shrink proportionally to the measured overage so the next try lands
-            # just under the cap (0.95 = small safety margin), instead of halving
-            # and overshooting. Strictly decreasing -> converges, then the floor stops it.
-            shrunk = max(_MIN_WINDOW_CHARS, int(window * (cap / len(rendered)) * 0.95))
-            logger.debug(
-                "latent window %d @pos=%d: render %d > cap %d; shrinking window %d -> %d chars and retrying",
-                window_index, pos, len(rendered), cap, window, shrunk,
-            )
-            window = shrunk
-            continue
-        logger.debug(
-            "latent window %d: chars [%d, %d) size=%d, rendered=%d/%d chars",
-            window_index, pos, end, end - pos, len(rendered), cap,
-        )
-        result = _call_latent(
-            facade=facade,
-            prompt=rendered,
-            system_prompt=params.system_prompt,
-            purpose=f"latent-detection-window-{pos}",
-        )
-        logger.debug("latent window %d: detector proposed %d latent entities", window_index, len(result.latent_entities))
-        results.append(result)
-        if end >= text_len:
-            break
-        next_pos = max(pos + 1, end - params.overlap_chars)
-        logger.debug(
-            "latent window %d: advancing pos %d -> %d (overlap back %d chars)",
-            window_index, pos, next_pos, end - next_pos,
-        )
-        pos = next_pos
-        window_index += 1
+    max_workers = min(len(windows), _MAX_PARALLEL_WINDOWS)
+    logger.info(
+        "latent: rendered prompt %d chars > cap %d; tiling %d-char document into %d overlapping "
+        "window(s) (initial_window=%d, overlap=%d, min_window=%d, max_workers=%d)",
+        len(full_rendered), cap, text_len, len(windows), initial_window, params.overlap_chars,
+        _MIN_WINDOW_CHARS, max_workers,
+    )
 
+    results: list[LatentEntitiesSchema] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                _latent_window, facade=facade, rendered=rendered, system_prompt=params.system_prompt, start=start
+            )
+            for start, _end, rendered in windows
+        ]
+        for future in futures:
+            result = future.result()  # _latent_window swallows errors -> never raises
+            if result is not None:
+                results.append(result)
+
+    failed = len(windows) - len(results)
+    if failed:
+        logger.warning("latent: %d of %d window(s) failed and were skipped", failed, len(windows))
     merged = merge_latent(results)
     logger.info(
-        "latent: %d window(s) over %d chars -> %d unique latent entities after dedupe (cap=%d, overlap=%d)",
-        len(results), text_len, len(merged.latent_entities), cap, params.overlap_chars,
+        "latent: %d window(s) over %d chars -> %d unique latent entities after dedupe "
+        "(cap=%d, overlap=%d, %d failed)",
+        len(windows), text_len, len(merged.latent_entities), cap, params.overlap_chars, failed,
     )
     row[COL_LATENT_ENTITIES] = merged.model_dump(mode="json")
+    row[COL_LATENT_FAILED_WINDOWS] = failed
     return row
 
 
@@ -248,6 +300,7 @@ def make_windowed_latent_generator(alias: str) -> Any:
             COL_DETECTED_ENTITIES,
             COL_TAG_NOTATION,
         ],
+        side_effect_columns=[COL_LATENT_FAILED_WINDOWS],
         model_aliases=[alias],
     )
     def windowed_latent(

@@ -29,7 +29,7 @@ except Exception:  # pragma: no cover - fall back if NDD internals move
 # NDD's hard render cap so each window stays small enough to map/rewrite within a
 # single LLM request — large windows on entity-dense documents otherwise time out.
 # Clamped so it never exceeds NDD's cap if that is ever lowered.
-_DEFAULT_WINDOW_MAX_RENDER_CHARS = min(128 * 1024, _NDD_MAX_RENDERED_LEN)
+_DEFAULT_WINDOW_MAX_RENDER_CHARS = min(128_000, _NDD_MAX_RENDERED_LEN)
 
 
 def is_remote_input_source(value: str) -> bool:
