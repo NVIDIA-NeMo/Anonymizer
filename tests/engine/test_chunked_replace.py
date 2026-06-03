@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 import pytest
 
@@ -32,12 +31,21 @@ from anonymizer.engine.schemas import EntitiesSchema, EntityReplacementMapSchema
 
 # Single-call prompt stand-in (the real one is large); references the columns the
 # fast path renders with the row.
-_SINGLE_PROMPT = "MAP {{ tagged_text }} || {% for e in _entities_for_replace %}{{ e.value }};{% endfor %} || {{ _entity_examples }}"
+_SINGLE_PROMPT = (
+    "MAP {{ tagged_text }} || {% for e in _entities_for_replace %}{{ e.value }};{% endfor %} || {{ _entity_examples }}"
+)
 
 
 def _span(value: str, label: str, start: int, end: int) -> EntitySpan:
-    return EntitySpan(entity_id=f"{label}_{start}", value=value, label=label,
-                      start_position=start, end_position=end, score=1.0, source="d")
+    return EntitySpan(
+        entity_id=f"{label}_{start}",
+        value=value,
+        label=label,
+        start_position=start,
+        end_position=end,
+        score=1.0,
+        source="d",
+    )
 
 
 class TestNewChunkEntities:
@@ -57,10 +65,12 @@ class TestMergeReplacements:
     def test_dedupes_by_original_label_earlier_wins(self) -> None:
         existing = [{"original": "Alice", "label": "name", "synthetic": "Jane"}]
         new = EntityReplacementMapSchema.model_validate(
-            {"replacements": [
-                {"original": "Alice", "label": "name", "synthetic": "DIFFERENT"},  # dup -> ignored
-                {"original": "Bob", "label": "name", "synthetic": "Mike"},
-            ]}
+            {
+                "replacements": [
+                    {"original": "Alice", "label": "name", "synthetic": "DIFFERENT"},  # dup -> ignored
+                    {"original": "Bob", "label": "name", "synthetic": "Mike"},
+                ]
+            }
         )
         merged = merge_replacements(existing, new)
         assert merged == [
@@ -100,13 +110,17 @@ class TestGenerateReplacementMapRow:
     def test_fast_path_single_call(self) -> None:
         facade = _Fake()
         row = {
-            COL_TEXT: "Alice here", COL_TAGGED_TEXT: "Alice here", COL_TAG_NOTATION: "xml",
+            COL_TEXT: "Alice here",
+            COL_TAGGED_TEXT: "Alice here",
+            COL_TAG_NOTATION: "xml",
             COL_ENTITY_EXAMPLES: "{}",
             COL_ENTITIES_FOR_REPLACE: [{"value": "Alice", "labels": ["name"], "labels_str": "name"}],
             COL_FINAL_ENTITIES: EntitiesSchema(entities=[]).model_dump(mode="json"),
         }
         # NB: fast path renders the single prompt; our stand-in lists entities so the fake maps them.
-        params = WindowedReplaceParams(alias="r", single_call_prompt_template='MAP - "Alice" (name)', max_render_chars=1_000_000)
+        params = WindowedReplaceParams(
+            alias="r", single_call_prompt_template='MAP - "Alice" (name)', max_render_chars=1_000_000
+        )
         out = generate_replacement_map_row(row, params, {"r": facade})
         assert facade.map_calls == 1 and facade.summary_calls == 0
         m = EntityReplacementMapSchema.model_validate(out[COL_REPLACEMENT_MAP])
@@ -122,17 +136,33 @@ class TestGenerateReplacementMapRow:
         spans = []
         for val in ["Alice", "Bob", "Carol"]:
             for mobj in re.finditer(re.escape(val), text):
-                spans.append({"id": f"name_{mobj.start()}", "value": val, "label": "name",
-                              "start_position": mobj.start(), "end_position": mobj.end(), "score": 1.0, "source": "d"})
+                spans.append(
+                    {
+                        "id": f"name_{mobj.start()}",
+                        "value": val,
+                        "label": "name",
+                        "start_position": mobj.start(),
+                        "end_position": mobj.end(),
+                        "score": 1.0,
+                        "source": "d",
+                    }
+                )
         final = EntitiesSchema.model_validate({"entities": spans}).model_dump(mode="json")
 
         facade = _Fake()
         row = {
-            COL_TEXT: text, COL_TAGGED_TEXT: text, COL_TAG_NOTATION: "xml", COL_ENTITY_EXAMPLES: "{}",
-            COL_ENTITIES_FOR_REPLACE: [{"value": v, "labels": ["name"], "labels_str": "name"} for v in ["Alice", "Bob", "Carol"]],
+            COL_TEXT: text,
+            COL_TAGGED_TEXT: text,
+            COL_TAG_NOTATION: "xml",
+            COL_ENTITY_EXAMPLES: "{}",
+            COL_ENTITIES_FOR_REPLACE: [
+                {"value": v, "labels": ["name"], "labels_str": "name"} for v in ["Alice", "Bob", "Carol"]
+            ],
             COL_FINAL_ENTITIES: final,
         }
-        params = WindowedReplaceParams(alias="r", single_call_prompt_template=_SINGLE_PROMPT, max_render_chars=4000, safety_margin_chars=0)
+        params = WindowedReplaceParams(
+            alias="r", single_call_prompt_template=_SINGLE_PROMPT, max_render_chars=4000, safety_margin_chars=0
+        )
         out = generate_replacement_map_row(row, params, {"r": facade})
         result = EntityReplacementMapSchema.model_validate(out[COL_REPLACEMENT_MAP])
         assert facade.map_calls == 3  # one per window with new entities
@@ -142,4 +172,8 @@ class TestGenerateReplacementMapRow:
 
     def test_missing_alias_raises(self) -> None:
         with pytest.raises(KeyError, match="not present in models"):
-            generate_replacement_map_row({COL_TEXT: "x"}, WindowedReplaceParams(alias="r", single_call_prompt_template="x", max_render_chars=10), {})
+            generate_replacement_map_row(
+                {COL_TEXT: "x"},
+                WindowedReplaceParams(alias="r", single_call_prompt_template="x", max_render_chars=10),
+                {},
+            )

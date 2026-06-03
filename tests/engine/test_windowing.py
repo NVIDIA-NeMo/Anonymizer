@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from anonymizer.engine.windowing import iter_boundary_windows, next_window_end
 
 

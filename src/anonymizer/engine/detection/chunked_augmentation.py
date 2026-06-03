@@ -260,7 +260,11 @@ def plan_augmentation_windows(
             shrunk = max(_MIN_WINDOW_CHARS, int(window * (cap / len(rendered)) * 0.95))
             logger.debug(
                 "augmentation @pos=%d: render %d > cap %d; shrinking window %d -> %d chars and retrying",
-                pos, len(rendered), cap, window, shrunk,
+                pos,
+                len(rendered),
+                cap,
+                window,
+                shrunk,
             )
             window = shrunk
             continue
@@ -357,8 +361,14 @@ def augment_row(
     logger.info(
         "augmentation: rendered prompt %d chars > cap %d; tiling %d-char document into %d overlapping "
         "window(s) (initial_window=%d, overlap=%d, min_window=%d, max_workers=%d)",
-        len(full_rendered), cap, text_len, len(windows), initial_window, params.overlap_chars,
-        _MIN_WINDOW_CHARS, max_workers,
+        len(full_rendered),
+        cap,
+        text_len,
+        len(windows),
+        initial_window,
+        params.overlap_chars,
+        _MIN_WINDOW_CHARS,
+        max_workers,
     )
 
     results: list[AugmentedEntitiesSchema] = []
@@ -379,9 +389,13 @@ def augment_row(
         logger.warning("augmentation: %d of %d window(s) failed and were skipped", failed, len(windows))
     merged = merge_augmented(results)
     logger.info(
-        "augmentation: %d window(s) over %d chars -> %d unique entities after dedupe "
-        "(cap=%d, overlap=%d, %d failed)",
-        len(windows), text_len, len(merged.entities), cap, params.overlap_chars, failed,
+        "augmentation: %d window(s) over %d chars -> %d unique entities after dedupe (cap=%d, overlap=%d, %d failed)",
+        len(windows),
+        text_len,
+        len(merged.entities),
+        cap,
+        params.overlap_chars,
+        failed,
     )
     row[COL_AUGMENTED_ENTITIES] = merged.model_dump(mode="json")
     row[COL_AUGMENTATION_FAILED_WINDOWS] = failed

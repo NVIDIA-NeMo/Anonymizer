@@ -76,7 +76,9 @@ def test_plan_judge_windows_single_when_small():
 def test_plan_judge_windows_splits_when_large():
     original, rewritten = "o" * 9000, "r" * 9000
     # tiny budget -> multiple windows; both texts sliced into the same count
-    prompts = plan_judge_windows(original=original, rewritten=rewritten, template=_TEMPLATE, cap=4200, safety_margin_chars=0)
+    prompts = plan_judge_windows(
+        original=original, rewritten=rewritten, template=_TEMPLATE, cap=4200, safety_margin_chars=0
+    )
     assert len(prompts) > 1
 
 
