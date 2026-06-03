@@ -14,6 +14,7 @@ import pytest
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_LATENT_ENTITIES,
+    COL_LATENT_FAILED_WINDOWS,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -110,6 +111,33 @@ class TestLatentRowWindowed:
         assert len(facade.calls) > 1
         result = LatentEntitiesSchema.model_validate(out[COL_LATENT_ENTITIES])
         assert len(result.latent_entities) == len(facade.calls)
+
+    def test_one_failing_window_is_skipped_not_fatal(self) -> None:
+        # A single window's LLM failure must not drop the record; the other
+        # windows' latent entities survive and no exception propagates.
+        text = ("A" * 5000) + ("B" * 5000)
+        counter = itertools.count()
+
+        def resp(_p):
+            i = next(counter)
+            if i == 1:  # exactly one window raises (order nondeterministic under the pool)
+                raise ValueError("simulated unparseable model output")
+            return {"latent_entities": [_latent("employer", f"Org{i}")]}
+
+        facade = FakeFacade(resp)
+        row = {
+            COL_TEXT: text,
+            COL_TAGGED_TEXT: text,
+            COL_DETECTED_ENTITIES: EntitiesSchema(entities=[]).model_dump(mode="json"),
+            COL_TAG_NOTATION: "xml",
+        }
+        out = latent_row(
+            row, _params(max_render_chars=4000, safety_margin_chars=0, overlap_chars=1000), {"lat": facade}
+        )
+        result = LatentEntitiesSchema.model_validate(out[COL_LATENT_ENTITIES])
+        assert len(facade.calls) > 1
+        assert len(result.latent_entities) == len(facade.calls) - 1  # one window dropped
+        assert out[COL_LATENT_FAILED_WINDOWS] == 1  # the skip is recorded for degraded-flagging
 
     def test_missing_alias_raises(self) -> None:
         with pytest.raises(KeyError, match="not present in models"):
