@@ -26,6 +26,8 @@ from urllib.parse import urlparse
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
 
+from anonymizer.engine.constants import COL_FINAL_ENTITIES
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -322,30 +324,36 @@ def record_ndd_workflow(
     if collector is None:
         return
     observed_usage = _summarize_model_usage(model_usage)
-    collector.record(
-        "ndd_workflow",
-        workflow_name=workflow_name,
-        status=status,
-        model_aliases=sorted(set(model_aliases)),
-        input_row_count=input_row_count,
-        seed_row_count=seed_row_count,
-        output_row_count=output_row_count,
-        failed_record_count=failed_record_count,
-        elapsed_sec=elapsed_sec,
-        preview_num_records=preview_num_records,
-        column_count=column_count,
-        column_names=column_names or [],
-        model_usage=dict(model_usage or {}),
+    workflow_fields = {
+        "workflow_name": workflow_name,
+        "status": status,
+        "model_aliases": sorted(set(model_aliases)),
+        "input_row_count": input_row_count,
+        "seed_row_count": seed_row_count,
+        "output_row_count": output_row_count,
+        "failed_record_count": failed_record_count,
+        "elapsed_sec": elapsed_sec,
+        "preview_num_records": preview_num_records,
+        "column_count": column_count,
+        "column_names": column_names or [],
+        "model_usage": dict(model_usage or {}),
+    }
+    collector.record("ndd_workflow", **_ndd_workflow_fields(workflow_fields, observed_usage))
+
+
+def _ndd_workflow_fields(fields: dict[str, Any], observed_usage: dict[str, int | None]) -> dict[str, Any]:
+    return {
+        **fields,
         **observed_usage,
         **_throughput_fields(
-            elapsed_sec=elapsed_sec,
-            input_row_count=input_row_count,
-            output_row_count=output_row_count,
+            elapsed_sec=cast(float, fields["elapsed_sec"]),
+            input_row_count=cast(int, fields["input_row_count"]),
+            output_row_count=cast(int | None, fields["output_row_count"]),
             total_tokens=observed_usage["observed_total_tokens"],
             total_requests=observed_usage["observed_total_requests"],
             successful_requests=observed_usage["observed_successful_requests"],
         ),
-    )
+    }
 
 
 def record_run_metadata(
@@ -364,15 +372,7 @@ def record_run_metadata(
         return
 
     detect = getattr(config, "detect", None)
-    entity_labels = getattr(detect, "entity_labels", None)
-    if entity_labels is None:
-        from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
-
-        entity_label_count = len(DEFAULT_ENTITY_LABELS)
-    else:
-        entity_label_count = len(entity_labels)
     source = str(getattr(data, "source", ""))
-    source_metadata = _source_metadata(source)
     collector.record(
         "run",
         mode=mode,
@@ -380,18 +380,11 @@ def record_run_metadata(
         input_row_count=input_row_count,
         preview_num_records=preview_num_records,
         source_hash=collector.record_hash(row_index="source", text=source),
-        input_source=source_metadata,
+        input_source=_source_metadata(source),
         input_text_column=str(getattr(data, "text_column", "")),
         input_has_id_column=bool(getattr(data, "id_column", None)),
         input_has_data_summary=bool(getattr(data, "data_summary", None)),
-        detect={
-            "gliner_threshold": getattr(detect, "gliner_threshold", None),
-            "entity_label_source": "custom" if entity_labels is not None else "default",
-            "entity_label_count": entity_label_count,
-            "entity_labels": list(entity_labels) if entity_labels is not None else None,
-            "validation_max_entities_per_call": getattr(detect, "validation_max_entities_per_call", None),
-            "validation_excerpt_window_chars": getattr(detect, "validation_excerpt_window_chars", None),
-        },
+        detect=_detect_config_metadata(detect),
         replace=_replace_config_metadata(getattr(config, "replace", None)),
         rewrite=_rewrite_config_metadata(getattr(config, "rewrite", None)),
         models=[_model_config_metadata(model_config) for model_config in model_configs],
@@ -409,101 +402,179 @@ def record_record_metrics(
 ) -> None:
     """Record per-row count, length, and nominal-call metrics from a trace DataFrame."""
     collector = current_collector()
-    if collector is None:
-        return
-    if not collector.record_level:
+    if collector is None or not collector.record_level:
         return
 
+    ground_truth_column = next((col for col in _GROUND_TRUTH_ENTITY_COLUMNS if col in dataframe.columns), None)
+    columns = set(dataframe.columns)
+    for row_index, row in dataframe.iterrows():
+        final_entities = _entities_from_raw(row.get(COL_FINAL_ENTITIES))
+        collector.record(
+            "record",
+            **_base_record_fields(
+                collector=collector,
+                row_index=row_index,
+                row=row,
+                text_column=text_column,
+                mode=mode,
+                strategy=strategy,
+            ),
+            **_entity_record_fields(row, final_entities=final_entities, ground_truth_column=ground_truth_column),
+            **_replacement_record_fields(row, columns=columns),
+            **_rewrite_record_fields(row, columns=columns),
+            **_llm_record_fields(
+                row,
+                columns=columns,
+                mode=mode,
+                strategy=strategy,
+                final_entity_count=len(final_entities),
+                validation_max_entities_per_call=validation_max_entities_per_call,
+            ),
+        )
+
+
+def _detect_config_metadata(detect: Any | None) -> dict[str, Any]:
+    entity_labels = getattr(detect, "entity_labels", None)
+    if entity_labels is None:
+        from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
+
+        entity_label_count = len(DEFAULT_ENTITY_LABELS)
+    else:
+        entity_label_count = len(entity_labels)
+    return {
+        "gliner_threshold": getattr(detect, "gliner_threshold", None),
+        "entity_label_source": "custom" if entity_labels is not None else "default",
+        "entity_label_count": entity_label_count,
+        "entity_labels": list(entity_labels) if entity_labels is not None else None,
+        "validation_max_entities_per_call": getattr(detect, "validation_max_entities_per_call", None),
+        "validation_excerpt_window_chars": getattr(detect, "validation_excerpt_window_chars", None),
+    }
+
+
+def _base_record_fields(
+    *,
+    collector: MeasurementCollector,
+    row_index: object,
+    row: Any,
+    text_column: str,
+    mode: str,
+    strategy: str,
+) -> dict[str, Any]:
+    text = str(row.get(text_column, ""))
+    text_length_tokens = _count_text_tokens(text)
+    return {
+        "mode": mode,
+        "strategy": strategy,
+        "row_index": _safe_row_index(row_index),
+        "record_hash": collector.record_hash(row_index=row_index, text=text),
+        "text_length_chars": len(text),
+        "text_length_chars_bucket": _size_bucket(len(text)),
+        "text_length_tokens": text_length_tokens,
+        "text_length_tokens_bucket": _size_bucket(text_length_tokens),
+    }
+
+
+def _entity_record_fields(
+    row: Any,
+    *,
+    final_entities: list[dict[str, Any]],
+    ground_truth_column: str | None,
+) -> dict[str, Any]:
+    ground_truth_entities = (
+        _entities_from_raw(row.get(ground_truth_column)) if ground_truth_column is not None else None
+    )
+    return {
+        "final_entity_count": len(final_entities),
+        "final_entity_label_counts": dict(
+            sorted(Counter(e.get("label", "") for e in final_entities if e.get("label")).items())
+        ),
+        **_entity_ground_truth_metrics(final_entities, ground_truth_entities),
+    }
+
+
+def _replacement_record_fields(row: Any, *, columns: set[str]) -> dict[str, Any]:
+    from anonymizer.engine.constants import COL_REPLACEMENT_MAP
+
+    if COL_REPLACEMENT_MAP not in columns:
+        return {}
+    return _replacement_map_metrics(row.get(COL_REPLACEMENT_MAP))
+
+
+def _rewrite_record_fields(row: Any, *, columns: set[str]) -> dict[str, Any]:
     from anonymizer.engine.constants import (
         COL_ANY_HIGH_LEAKED,
-        COL_ENTITIES_BY_VALUE,
-        COL_FINAL_ENTITIES,
         COL_LEAKAGE_MASS,
         COL_NEEDS_HUMAN_REVIEW,
         COL_NEEDS_REPAIR,
-        COL_REPAIR_ITERATIONS,
-        COL_REPLACEMENT_MAP,
-        COL_SEED_VALIDATION_CANDIDATES,
         COL_UTILITY_SCORE,
         COL_WEIGHTED_LEAKAGE_RATE,
     )
 
-    ground_truth_column = next((col for col in _GROUND_TRUTH_ENTITY_COLUMNS if col in dataframe.columns), None)
-    for row_index, row in dataframe.iterrows():
-        text = str(row.get(text_column, ""))
-        text_length_tokens = _count_text_tokens(text)
-        final_entities = _entities_from_raw(row.get(COL_FINAL_ENTITIES))
-        final_entity_count = len(final_entities)
-        ground_truth_metrics = _entity_ground_truth_metrics(
-            final_entities,
-            _entities_from_raw(row.get(ground_truth_column)) if ground_truth_column is not None else None,
-        )
-        replacement_metrics = (
-            _replacement_map_metrics(row.get(COL_REPLACEMENT_MAP)) if COL_REPLACEMENT_MAP in dataframe.columns else {}
-        )
-        detected_candidate_count = (
-            _count_items(row.get(COL_SEED_VALIDATION_CANDIDATES), primary_key="candidates", fallback_keys=("entities",))
-            if COL_SEED_VALIDATION_CANDIDATES in dataframe.columns
-            else None
-        )
-        validation_chunk_count = _validation_chunk_count(
-            detected_candidate_count,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-        )
-        grouped_entity_count = (
-            _count_items(row.get(COL_ENTITIES_BY_VALUE), primary_key="entities_by_value", fallback_keys=("entities",))
-            if COL_ENTITIES_BY_VALUE in dataframe.columns
-            else final_entity_count
-        )
-        repair_iterations = _coerce_int(row.get(COL_REPAIR_ITERATIONS, 0), default=0)
-        llm_calls_by_stage = estimate_llm_calls_by_stage(
-            mode=mode,
-            strategy=strategy,
-            has_grouped_entities=grouped_entity_count > 0,
-            validation_chunk_count=validation_chunk_count,
-            repair_iterations=repair_iterations,
-        )
-        total_estimated = (
-            sum(llm_calls_by_stage.values())
-            if all(value is not None for value in llm_calls_by_stage.values())
-            else None
-        )
-        collector.record(
-            "record",
-            mode=mode,
-            strategy=strategy,
-            row_index=_safe_row_index(row_index),
-            record_hash=collector.record_hash(row_index=row_index, text=text),
-            text_length_chars=len(text),
-            text_length_chars_bucket=_size_bucket(len(text)),
-            text_length_tokens=text_length_tokens,
-            text_length_tokens_bucket=_size_bucket(text_length_tokens),
-            final_entity_count=final_entity_count,
-            final_entity_label_counts=dict(
-                sorted(Counter(e.get("label", "") for e in final_entities if e.get("label")).items())
-            ),
-            **ground_truth_metrics,
-            **replacement_metrics,
-            utility_score=_coerce_float(row.get(COL_UTILITY_SCORE)) if COL_UTILITY_SCORE in dataframe.columns else None,
-            leakage_mass=_coerce_float(row.get(COL_LEAKAGE_MASS)) if COL_LEAKAGE_MASS in dataframe.columns else None,
-            weighted_leakage_rate=(
-                _coerce_float(row.get(COL_WEIGHTED_LEAKAGE_RATE))
-                if COL_WEIGHTED_LEAKAGE_RATE in dataframe.columns
-                else None
-            ),
-            any_high_leaked=(
-                _coerce_bool(row.get(COL_ANY_HIGH_LEAKED)) if COL_ANY_HIGH_LEAKED in dataframe.columns else None
-            ),
-            needs_human_review=(
-                _coerce_bool(row.get(COL_NEEDS_HUMAN_REVIEW)) if COL_NEEDS_HUMAN_REVIEW in dataframe.columns else None
-            ),
-            needs_repair=_coerce_bool(row.get(COL_NEEDS_REPAIR)) if COL_NEEDS_REPAIR in dataframe.columns else None,
-            detected_candidate_count=detected_candidate_count,
-            validation_chunk_count=validation_chunk_count,
-            repair_iterations=repair_iterations if mode == "rewrite" else 0,
-            llm_calls_estimated_by_stage=llm_calls_by_stage,
-            llm_calls_estimated_total=total_estimated,
-        )
+    return {
+        "utility_score": _coerce_float(row.get(COL_UTILITY_SCORE)) if COL_UTILITY_SCORE in columns else None,
+        "leakage_mass": _coerce_float(row.get(COL_LEAKAGE_MASS)) if COL_LEAKAGE_MASS in columns else None,
+        "weighted_leakage_rate": (
+            _coerce_float(row.get(COL_WEIGHTED_LEAKAGE_RATE)) if COL_WEIGHTED_LEAKAGE_RATE in columns else None
+        ),
+        "any_high_leaked": _coerce_bool(row.get(COL_ANY_HIGH_LEAKED)) if COL_ANY_HIGH_LEAKED in columns else None,
+        "needs_human_review": (
+            _coerce_bool(row.get(COL_NEEDS_HUMAN_REVIEW)) if COL_NEEDS_HUMAN_REVIEW in columns else None
+        ),
+        "needs_repair": _coerce_bool(row.get(COL_NEEDS_REPAIR)) if COL_NEEDS_REPAIR in columns else None,
+    }
+
+
+def _llm_record_fields(
+    row: Any,
+    *,
+    columns: set[str],
+    mode: str,
+    strategy: str,
+    final_entity_count: int,
+    validation_max_entities_per_call: int,
+) -> dict[str, Any]:
+    from anonymizer.engine.constants import COL_REPAIR_ITERATIONS
+
+    detected_candidate_count = _detected_candidate_count(row, columns=columns)
+    validation_chunk_count = _validation_chunk_count(
+        detected_candidate_count,
+        validation_max_entities_per_call=validation_max_entities_per_call,
+    )
+    grouped_entity_count = _grouped_entity_count(row, columns=columns, final_entity_count=final_entity_count)
+    repair_iterations = _coerce_int(row.get(COL_REPAIR_ITERATIONS, 0), default=0)
+    calls_by_stage = estimate_llm_calls_by_stage(
+        mode=mode,
+        strategy=strategy,
+        has_grouped_entities=grouped_entity_count > 0,
+        validation_chunk_count=validation_chunk_count,
+        repair_iterations=repair_iterations,
+    )
+    total_estimated = (
+        sum(calls_by_stage.values()) if all(value is not None for value in calls_by_stage.values()) else None
+    )
+    return {
+        "detected_candidate_count": detected_candidate_count,
+        "validation_chunk_count": validation_chunk_count,
+        "repair_iterations": repair_iterations if mode == "rewrite" else 0,
+        "llm_calls_estimated_by_stage": calls_by_stage,
+        "llm_calls_estimated_total": total_estimated,
+    }
+
+
+def _detected_candidate_count(row: Any, *, columns: set[str]) -> int | None:
+    from anonymizer.engine.constants import COL_SEED_VALIDATION_CANDIDATES
+
+    if COL_SEED_VALIDATION_CANDIDATES not in columns:
+        return None
+    return _count_items(row.get(COL_SEED_VALIDATION_CANDIDATES), primary_key="candidates", fallback_keys=("entities",))
+
+
+def _grouped_entity_count(row: Any, *, columns: set[str], final_entity_count: int) -> int:
+    from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE
+
+    if COL_ENTITIES_BY_VALUE not in columns:
+        return final_entity_count
+    return _count_items(row.get(COL_ENTITIES_BY_VALUE), primary_key="entities_by_value", fallback_keys=("entities",))
 
 
 def _source_metadata(source: str) -> dict[str, Any]:
@@ -892,48 +963,56 @@ def _count_text_tokens(text: str) -> int:
 
 
 def _summarize_model_usage(model_usage: Mapping[str, Any] | None) -> dict[str, int | None]:
-    input_tokens = 0
-    output_tokens = 0
-    total_tokens = 0
-    reasoning_tokens = 0
-    has_reasoning_tokens = False
-    successful_requests = 0
-    failed_requests = 0
-    total_requests = 0
-
+    totals = _empty_model_usage_totals()
     for usage in (model_usage or {}).values():
         if not isinstance(usage, Mapping):
             continue
+        _add_model_usage_totals(totals, usage)
 
-        token_usage = usage.get("token_usage")
-        if isinstance(token_usage, Mapping):
-            input_tokens += _coerce_int(token_usage.get("input_tokens"), default=0)
-            output_tokens += _coerce_int(token_usage.get("output_tokens"), default=0)
-            total_tokens += _coerce_int(token_usage.get("total_tokens"), default=0)
-            if token_usage.get("reasoning_tokens") is not None:
-                has_reasoning_tokens = True
-                reasoning_tokens += _coerce_int(token_usage.get("reasoning_tokens"), default=0)
-
-        request_usage = usage.get("request_usage")
-        if isinstance(request_usage, Mapping):
-            successful_requests += _coerce_int(request_usage.get("successful_requests"), default=0)
-            failed_requests += _coerce_int(request_usage.get("failed_requests"), default=0)
-            total_requests += _coerce_int(request_usage.get("total_requests"), default=0)
-
-    if total_tokens == 0:
-        total_tokens = input_tokens + output_tokens
-    if total_requests == 0:
-        total_requests = successful_requests + failed_requests
+    if totals["total_tokens"] == 0:
+        totals["total_tokens"] = totals["input_tokens"] + totals["output_tokens"]
+    if totals["total_requests"] == 0:
+        totals["total_requests"] = totals["successful_requests"] + totals["failed_requests"]
 
     return {
-        "observed_input_tokens": input_tokens,
-        "observed_output_tokens": output_tokens,
-        "observed_total_tokens": total_tokens,
-        "observed_reasoning_tokens": reasoning_tokens if has_reasoning_tokens else None,
-        "observed_successful_requests": successful_requests,
-        "observed_failed_requests": failed_requests,
-        "observed_total_requests": total_requests,
+        "observed_input_tokens": totals["input_tokens"],
+        "observed_output_tokens": totals["output_tokens"],
+        "observed_total_tokens": totals["total_tokens"],
+        "observed_reasoning_tokens": totals["reasoning_tokens"] if totals["has_reasoning_tokens"] else None,
+        "observed_successful_requests": totals["successful_requests"],
+        "observed_failed_requests": totals["failed_requests"],
+        "observed_total_requests": totals["total_requests"],
     }
+
+
+def _empty_model_usage_totals() -> dict[str, int | bool]:
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "reasoning_tokens": 0,
+        "has_reasoning_tokens": False,
+        "successful_requests": 0,
+        "failed_requests": 0,
+        "total_requests": 0,
+    }
+
+
+def _add_model_usage_totals(totals: dict[str, int | bool], usage: Mapping[str, Any]) -> None:
+    token_usage = usage.get("token_usage")
+    if isinstance(token_usage, Mapping):
+        totals["input_tokens"] += _coerce_int(token_usage.get("input_tokens"), default=0)
+        totals["output_tokens"] += _coerce_int(token_usage.get("output_tokens"), default=0)
+        totals["total_tokens"] += _coerce_int(token_usage.get("total_tokens"), default=0)
+        if token_usage.get("reasoning_tokens") is not None:
+            totals["has_reasoning_tokens"] = True
+            totals["reasoning_tokens"] += _coerce_int(token_usage.get("reasoning_tokens"), default=0)
+
+    request_usage = usage.get("request_usage")
+    if isinstance(request_usage, Mapping):
+        totals["successful_requests"] += _coerce_int(request_usage.get("successful_requests"), default=0)
+        totals["failed_requests"] += _coerce_int(request_usage.get("failed_requests"), default=0)
+        totals["total_requests"] += _coerce_int(request_usage.get("total_requests"), default=0)
 
 
 def _json_safe(value: object) -> Any:
@@ -944,7 +1023,9 @@ def _json_safe(value: object) -> Any:
     if isinstance(value, tuple):
         return [_json_safe(v) for v in value]
     if isinstance(value, set):
-        return sorted(_json_safe(v) for v in value)
+        return sorted((_json_safe(v) for v in value), key=str)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)

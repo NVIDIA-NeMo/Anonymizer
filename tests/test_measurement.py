@@ -329,6 +329,18 @@ def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:
     assert str(input_csv) not in serialized
 
 
+def test_measurement_records_write_strict_json_safe_values(tmp_path: Path) -> None:
+    output_jsonl = tmp_path / "measurements.jsonl"
+    collector = MeasurementCollector(record_hash_key="test-key")
+    collector.record("run", non_finite=float("nan"), mixed_set={1, "two"})
+
+    collector.write_jsonl(output_jsonl)
+
+    payload = json.loads(output_jsonl.read_text(encoding="utf-8"))
+    assert payload["non_finite"] is None
+    assert payload["mixed_set"] == [1, "two"]
+
+
 def test_measurement_config_record_level_false_skips_record_rows(tmp_path: Path) -> None:
     output_json = tmp_path / "measurements.json"
     dataframe = pd.DataFrame(

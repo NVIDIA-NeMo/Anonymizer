@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+suite_id: repo-data-smoke
+workloads:
+  - id: biographies
+    source: ../../../docs/data/NVIDIA_synthetic_biographies.csv
+    text_column: biography
+  - id: legal
+    source: ../../../docs/data/TAB_legal_sample25.csv
+    text_column: text
+configs:
+  - id: biographies-redact-default
+    replace: redact
+  - id: legal-hash-agent-labels
+    detect:
+      entity_labels: [person, email, api_key, password]
+    replace:
+      strategy: hash
+      digest_length: 12
+matrix:
+  - workload: biographies
+    config: biographies-redact-default
+  - workload: legal
+    config: legal-hash-agent-labels
