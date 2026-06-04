@@ -305,8 +305,13 @@ class EntityDetectionWorkflow:
         # TODO(docs): document this None-vs-explicit contract in user-facing docs.
         if COL_DETECTED_ENTITIES in final_df.columns:
             allowed = set(entity_labels) if entity_labels is not None else None
+            excluded = _infer_excluded_default_labels(entity_labels)
             final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                lambda raw: _materialize_final_entities(raw, allowed_labels=allowed)
+                lambda raw: _materialize_final_entities(
+                    raw,
+                    allowed_labels=allowed,
+                    excluded_labels=excluded,
+                )
             )
             if compute_grouped:
                 final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
@@ -344,12 +349,31 @@ def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
     return list(entity_labels)
 
 
-def _materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:
-    """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels*."""
+def _infer_excluded_default_labels(entity_labels: list[str] | None) -> set[str]:
+    if entity_labels is None:
+        return set()
+    default_labels = set(DEFAULT_ENTITY_LABELS)
+    provided = set(entity_labels)
+    if provided == default_labels:
+        return set()
+    return default_labels - provided
+
+
+def _materialize_final_entities(
+    raw: object,
+    *,
+    allowed_labels: set[str] | None,
+    excluded_labels: set[str],
+) -> dict:
+    """Build COL_FINAL_ENTITIES, filtering to allowed and excluding labels."""
     parsed = EntitiesSchema.from_raw(raw)
-    if allowed_labels is None:
+    if allowed_labels is None and not excluded_labels:
         return parsed.model_dump()
-    kept = [e for e in parsed.entities if e.label in allowed_labels]
+    kept = [
+        e
+        for e in parsed.entities
+        if (allowed_labels is None or e.label in allowed_labels) and e.label not in excluded_labels
+    ]
     return EntitiesSchema(entities=kept).model_dump()
 
 
