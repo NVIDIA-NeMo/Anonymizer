@@ -42,6 +42,11 @@ class LlmReplaceResult:
     failed_records: list[FailedRecord]
 
 
+@dataclass(frozen=True)
+class ReplacePolicy:
+    deny_labels: tuple[str, ...] = ()
+
+
 class LlmReplaceWorkflow:
     """Generate replacement maps via LLM workflow."""
 
@@ -61,9 +66,16 @@ class LlmReplaceWorkflow:
         replace_alias = resolve_model_alias("replacement_generator", selected_models)
 
         working_df = dataframe.copy()
+        replace_policy = _extract_replace_policy(instructions)
+        prompt_instructions = _strip_replace_policy_block(instructions)
 
         # Parse the per-row entity payload once, then reuse it for prompt inputs.
         parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
+        if replace_policy.deny_labels:
+            blocked = set(replace_policy.deny_labels)
+            parsed_entities = parsed_entities.apply(
+                lambda entities: _filter_labels(entities=entities, deny_labels=blocked)
+            )
         working_df[COL_ENTITY_EXAMPLES] = parsed_entities.apply(_create_entity_examples)
         working_df[COL_ENTITIES_FOR_REPLACE] = parsed_entities.apply(_enrich_entities_for_template)
         working_df[COL_ENTITIES_FOR_REPLACE_JSON] = working_df[COL_ENTITIES_FOR_REPLACE].apply(json.dumps)
@@ -91,7 +103,7 @@ class LlmReplaceWorkflow:
                     name=COL_REPLACEMENT_MAP,
                     prompt=_get_replacement_mapping_prompt(
                         entities_column=COL_ENTITIES_FOR_REPLACE,
-                        instructions=instructions,
+                        instructions=prompt_instructions,
                     ),
                     model_alias=replace_alias,
                     output_format=EntityReplacementMapSchema,
@@ -195,8 +207,71 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
+def _extract_replace_policy(instructions: str | None) -> ReplacePolicy:
+    if not instructions:
+        return ReplacePolicy()
+
+    start = instructions.find("<replace_policy>")
+    end = instructions.find("</replace_policy>")
+    if start == -1 or end == -1 or end < start:
+        return ReplacePolicy()
+
+    payload = instructions[start + len("<replace_policy>") : end].strip()
+    if not payload:
+        return ReplacePolicy()
+
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        logger.warning("Could not parse <replace_policy> JSON block; ignoring it")
+        return ReplacePolicy()
+
+    raw_deny = parsed.get("deny_labels", []) if isinstance(parsed, dict) else []
+    if not isinstance(raw_deny, list):
+        logger.warning("replace_policy deny_labels must be a list; ignoring it")
+        return ReplacePolicy()
+
+    deny_labels: list[str] = []
+    for label in raw_deny:
+        if not isinstance(label, str):
+            continue
+        normalized = label.strip()
+        if normalized and normalized not in deny_labels:
+            deny_labels.append(normalized)
+
+    return ReplacePolicy(deny_labels=tuple(deny_labels))
+
+
+def _strip_replace_policy_block(instructions: str | None) -> str | None:
+    if not instructions:
+        return instructions
+
+    start = instructions.find("<replace_policy>")
+    end = instructions.find("</replace_policy>")
+    if start == -1 or end == -1 or end < start:
+        return instructions
+
+    return (instructions[:start] + instructions[end + len("</replace_policy>") :]).strip()
+
+
+def _filter_labels(*, entities: EntitiesByValueSchema, deny_labels: set[str]) -> EntitiesByValueSchema:
+    filtered_entities: list[dict[str, object]] = []
+    for entity in entities.entities_by_value:
+        labels = [label for label in entity.labels if label and label not in deny_labels]
+        if not labels:
+            continue
+        filtered_entities.append(
+            {
+                "value": entity.value,
+                "labels": labels,
+            }
+        )
+
+    return EntitiesByValueSchema.model_validate({"entities_by_value": filtered_entities})
+
+
 def _get_replacement_mapping_prompt(*, entities_column: str, instructions: str | None = None) -> str:
-    instruction_block = f"\nAdditional instructions: {instructions}\n" if instructions else ""
+    instruction_block = f"\nHIGHEST PRIORITY user instructions: {instructions}\n" if instructions else ""
     prompt = """Generate synthetic replacements for sensitive entities. ONE value per entity, used consistently.
 <<INSTRUCTION_BLOCK>>
 
@@ -209,7 +284,7 @@ The replacements must:
 
 The replacements must NOT:
    - be a synonym or near-synonym of the original value
-   - e a closely related specialization of the same role
+   - be a closely related specialization of the same role
 
 Prefer replacements that shift the concept to a different but plausible value within a related domain, \
 or a nearby role that is clearly distinct from the original.
