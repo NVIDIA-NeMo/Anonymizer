@@ -6,9 +6,12 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_types import ColumnConfigT
+from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
@@ -106,6 +109,42 @@ class EntityDetectionWorkflow:
         have missed, and produces final standoff entity spans with overlap
         resolution.
         """
+        workflow_model_configs, columns = self._build_detection_spec(
+            model_configs=model_configs,
+            selected_models=selected_models,
+            gliner_detection_threshold=gliner_detection_threshold,
+            validation_max_entities_per_call=validation_max_entities_per_call,
+            validation_excerpt_window_chars=validation_excerpt_window_chars,
+            entity_labels=entity_labels,
+            data_summary=data_summary,
+        )
+        detection_result = self._adapter.run_workflow(
+            dataframe,
+            model_configs=workflow_model_configs,
+            columns=columns,
+            workflow_name="entity-detection",
+            preview_num_records=preview_num_records,
+        )
+        detected_df = detection_result.dataframe.copy()
+        return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
+
+    def _build_detection_spec(
+        self,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: DetectionModelSelection,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+    ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
+        """Build the (model_configs, columns) for the core detection workflow.
+
+        Shared by :meth:`detect_and_validate_entities` (which executes it in-process)
+        and :meth:`build_detection_config` (which exports it for an external runtime),
+        so both paths run exactly the same workflow.
+        """
         labels = _resolve_detection_labels(entity_labels)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
@@ -146,59 +185,126 @@ class EntityDetectionWorkflow:
             prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
         )
 
-        detection_result = self._adapter.run_workflow(
+        columns: list[ColumnConfigT] = [
+            LLMTextColumnConfig(
+                name=COL_RAW_DETECTED,
+                prompt=_jinja(COL_TEXT),
+                model_alias=detection_alias,
+            ),
+            CustomColumnConfig(
+                name=COL_SEED_ENTITIES,
+                generator_function=parse_detected_entities,
+            ),
+            CustomColumnConfig(
+                name=COL_SEED_VALIDATION_CANDIDATES,
+                generator_function=prepare_validation_inputs,
+            ),
+            CustomColumnConfig(
+                name=COL_VALIDATION_DECISIONS,
+                generator_function=validator_generator,
+                generator_params=validator_params,
+                drop=True,
+            ),
+            CustomColumnConfig(
+                name=COL_VALIDATED_ENTITIES,
+                generator_function=enrich_validation_decisions,
+            ),
+            CustomColumnConfig(
+                name=COL_SEED_ENTITIES_JSON,
+                generator_function=apply_validation_to_seed_entities,
+            ),
+            LLMStructuredColumnConfig(
+                name=COL_AUGMENTED_ENTITIES,
+                prompt=_get_augment_prompt(
+                    data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                ),
+                model_alias=augmenter_alias,
+                output_format=AugmentedEntitiesSchema,
+            ),
+            CustomColumnConfig(
+                name=COL_MERGED_ENTITIES,
+                generator_function=merge_and_build_candidates,
+            ),
+            CustomColumnConfig(
+                name=COL_DETECTED_ENTITIES,
+                generator_function=apply_validation_and_finalize,
+            ),
+        ]
+        return workflow_model_configs, columns
+
+    def build_detection_config(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: DetectionModelSelection,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+    ) -> DataDesignerConfigBuilder:
+        """Build (without executing) the core detection workflow as a DataDesigner
+        config, for an external at-scale executor to run. Produces the same columns
+        as :meth:`detect_and_validate_entities` (culminating in final entities); the
+        external runtime supplies the model providers and the seed dataset.
+        """
+        workflow_model_configs, columns = self._build_detection_spec(
+            model_configs=model_configs,
+            selected_models=selected_models,
+            gliner_detection_threshold=gliner_detection_threshold,
+            validation_max_entities_per_call=validation_max_entities_per_call,
+            validation_excerpt_window_chars=validation_excerpt_window_chars,
+            entity_labels=entity_labels,
+            data_summary=data_summary,
+        )
+        return self._adapter.build_config(
             dataframe,
             model_configs=workflow_model_configs,
-            columns=[
-                LLMTextColumnConfig(
-                    name=COL_RAW_DETECTED,
-                    prompt=_jinja(COL_TEXT),
-                    model_alias=detection_alias,
-                ),
-                CustomColumnConfig(
-                    name=COL_SEED_ENTITIES,
-                    generator_function=parse_detected_entities,
-                ),
-                CustomColumnConfig(
-                    name=COL_SEED_VALIDATION_CANDIDATES,
-                    generator_function=prepare_validation_inputs,
-                ),
-                CustomColumnConfig(
-                    name=COL_VALIDATION_DECISIONS,
-                    generator_function=validator_generator,
-                    generator_params=validator_params,
-                    drop=True,
-                ),
-                CustomColumnConfig(
-                    name=COL_VALIDATED_ENTITIES,
-                    generator_function=enrich_validation_decisions,
-                ),
-                CustomColumnConfig(
-                    name=COL_SEED_ENTITIES_JSON,
-                    generator_function=apply_validation_to_seed_entities,
-                ),
-                LLMStructuredColumnConfig(
-                    name=COL_AUGMENTED_ENTITIES,
-                    prompt=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
-                    ),
-                    model_alias=augmenter_alias,
-                    output_format=AugmentedEntitiesSchema,
-                ),
-                CustomColumnConfig(
-                    name=COL_MERGED_ENTITIES,
-                    generator_function=merge_and_build_candidates,
-                ),
-                CustomColumnConfig(
-                    name=COL_DETECTED_ENTITIES,
-                    generator_function=apply_validation_and_finalize,
-                ),
-            ],
-            workflow_name="entity-detection",
-            preview_num_records=preview_num_records,
+            columns=columns,
+            seed_path=seed_path,
         )
-        detected_df = detection_result.dataframe.copy()
-        return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
+
+    def build_detection_builder_for_seed(
+        self,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: DetectionModelSelection,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+        job_index: int = 0,
+        num_jobs: int = 1,
+    ) -> DataDesignerConfigBuilder:
+        """Build the detection workflow reading an EXISTING seed parquet (no write).
+
+        Same columns as :meth:`build_detection_config`, but the seed dataset points at an
+        already-written ``seed_path`` and optionally selects this worker's ordered
+        partition (``job_index`` of ``num_jobs``). For a distributed executor (e.g. a SLURM
+        orchestrator) that builds this workflow *in-process on the worker* — the
+        custom-column callables stay live (they can't survive JSON serialization) and the
+        model aliases are resolved by the runtime's providers.
+        """
+        workflow_model_configs, columns = self._build_detection_spec(
+            model_configs=model_configs,
+            selected_models=selected_models,
+            gliner_detection_threshold=gliner_detection_threshold,
+            validation_max_entities_per_call=validation_max_entities_per_call,
+            validation_excerpt_window_chars=validation_excerpt_window_chars,
+            entity_labels=entity_labels,
+            data_summary=data_summary,
+        )
+        return self._adapter.build_config_for_seed(
+            model_configs=workflow_model_configs,
+            columns=columns,
+            seed_path=seed_path,
+            job_index=job_index,
+            num_jobs=num_jobs,
+        )
 
     def identify_latent_entities(
         self,

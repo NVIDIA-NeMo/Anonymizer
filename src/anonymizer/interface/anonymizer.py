@@ -74,6 +74,7 @@ from anonymizer.telemetry import (
 
 if TYPE_CHECKING:
     import pandas as pd
+    from data_designer.config.config_builder import DataDesignerConfigBuilder
 
 logger = logging.getLogger("anonymizer")
 
@@ -192,6 +193,74 @@ class Anonymizer:
                 result=result,
                 duration_sec=time.perf_counter() - t_start,
             )
+
+    def export_detection_config(
+        self,
+        *,
+        config: AnonymizerConfig,
+        data: AnonymizerInput,
+        seed_path: str | Path,
+    ) -> DataDesignerConfigBuilder:
+        """Build (without running) the core detection workflow as a DataDesigner config.
+
+        For handing the detection pipeline to an *external* at-scale executor (e.g. an
+        on-SLURM DataDesigner orchestrator) instead of running it in-process. Reads
+        ``data``, resolves the same detection model configs/selections as :meth:`run`,
+        writes the seed dataset to ``seed_path``, and returns the
+        ``DataDesignerConfigBuilder`` for the GLiNER + LLM-validate/augment workflow.
+        The external runtime supplies the model providers (e.g. served vLLM endpoints);
+        its per-record output carries the finalized entity columns to score.
+
+        Args:
+            config: Same workflow config as :meth:`run` (entity labels, thresholds).
+            data: Input source (the records to detect over).
+            seed_path: Destination parquet path for the seed dataset.
+        """
+        self._validate_preflight_config(config)
+        context = read_input(data)
+        return self._detection_workflow.build_detection_config(
+            context.dataframe,
+            seed_path=seed_path,
+            model_configs=self._model_configs,
+            selected_models=self._selected_models.detection,
+            gliner_detection_threshold=config.detect.gliner_threshold,
+            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+            entity_labels=config.detect.entity_labels,
+            data_summary=data.data_summary,
+        )
+
+    def export_detection_builder_for_seed(
+        self,
+        *,
+        config: AnonymizerConfig,
+        seed_path: str | Path,
+        job_index: int = 0,
+        num_jobs: int = 1,
+        data_summary: str | None = None,
+    ) -> DataDesignerConfigBuilder:
+        """Build the detection workflow reading an EXISTING seed parquet (no write).
+
+        Like :meth:`export_detection_config`, but for a distributed executor that builds
+        the workflow *in-process on each worker* (so the custom-column callables stay
+        live — they cannot survive JSON serialization) and received the seed dataset from
+        the orchestrator. The seed is read from ``seed_path`` (not rewritten), and
+        ``num_jobs > 1`` selects this worker's ordered partition (``job_index`` of
+        ``num_jobs``). See ``anonymizer.distributed`` for the worker factory entrypoint.
+        """
+        self._validate_preflight_config(config)
+        return self._detection_workflow.build_detection_builder_for_seed(
+            seed_path=seed_path,
+            model_configs=self._model_configs,
+            selected_models=self._selected_models.detection,
+            gliner_detection_threshold=config.detect.gliner_threshold,
+            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+            entity_labels=config.detect.entity_labels,
+            data_summary=data_summary,
+            job_index=job_index,
+            num_jobs=num_jobs,
+        )
 
     def preview(
         self,
