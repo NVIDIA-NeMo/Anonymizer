@@ -281,7 +281,7 @@ def _as_alias_list(raw: Any) -> list[str]:
     if isinstance(raw, str):
         return [raw]
     if isinstance(raw, (list, tuple, set)):
-        return [str(item) for item in raw if str(item)]
+        return [str(item) for item in raw if item is not None and str(item)]
     return [str(raw)]
 
 
@@ -373,6 +373,13 @@ def _model_usage_as_json(stats: object) -> Any:
 
 @contextmanager
 def _dd_message_trace(*, workflow_name: str) -> Iterator[None]:
+    """Trace DataDesigner model messages for the active measurement context.
+
+    DataDesigner constructs ``ModelFacade`` instances internally, so this hook
+    wraps the facade class while a traced workflow runs. The wrappers re-check
+    the active collector before writing a trace record so unrelated concurrent
+    workflows pass through without contaminating the traced collector.
+    """
     collector = current_collector()
     if collector is None or not collector.dd_trace_enabled:
         yield
@@ -435,17 +442,19 @@ def _run_traced_completion(
         error_type = type(exc).__name__
         raise
     finally:
-        _record_dd_message_trace(
-            collector=collector,
-            workflow_name=workflow_name,
-            model_facade=model_facade,
-            messages=messages,
-            response=response,
-            elapsed_sec=time.perf_counter() - started,
-            status=status,
-            error_type=error_type,
-            is_async=False,
-        )
+        active_collector = _active_trace_collector(collector)
+        if active_collector is not None:
+            _record_dd_message_trace(
+                collector=active_collector,
+                workflow_name=workflow_name,
+                model_facade=model_facade,
+                messages=messages,
+                response=response,
+                elapsed_sec=time.perf_counter() - started,
+                status=status,
+                error_type=error_type,
+                is_async=False,
+            )
 
 
 def _traced_acompletion(original_acompletion: Any, *, collector: Any, workflow_name: str) -> Any:
@@ -485,17 +494,26 @@ async def _run_traced_acompletion(
         error_type = type(exc).__name__
         raise
     finally:
-        _record_dd_message_trace(
-            collector=collector,
-            workflow_name=workflow_name,
-            model_facade=model_facade,
-            messages=messages,
-            response=response,
-            elapsed_sec=time.perf_counter() - started,
-            status=status,
-            error_type=error_type,
-            is_async=True,
-        )
+        active_collector = _active_trace_collector(collector)
+        if active_collector is not None:
+            _record_dd_message_trace(
+                collector=active_collector,
+                workflow_name=workflow_name,
+                model_facade=model_facade,
+                messages=messages,
+                response=response,
+                elapsed_sec=time.perf_counter() - started,
+                status=status,
+                error_type=error_type,
+                is_async=True,
+            )
+
+
+def _active_trace_collector(expected_collector: Any) -> Any | None:
+    active_collector = current_collector()
+    if active_collector is expected_collector and active_collector.dd_trace_enabled:
+        return active_collector
+    return None
 
 
 def _record_dd_message_trace(

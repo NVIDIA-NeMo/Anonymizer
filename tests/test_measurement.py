@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -743,6 +744,81 @@ def test_ndd_adapter_writes_opt_in_dd_message_trace(
     serialized_measurements = (tmp_path / "measurements.jsonl").read_text(encoding="utf-8")
     assert "prompt secret" not in serialized_measurements
     assert "secret response" not in serialized_measurements
+
+
+def test_dd_message_trace_does_not_capture_concurrent_unmeasured_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+
+    def fake_completion(
+        _self: object,
+        _messages: list[ChatMessage],
+        **_kwargs: object,
+    ) -> ChatCompletionResponse:
+        return ChatCompletionResponse(
+            message=AssistantMessage(content="response"),
+            usage=Usage(input_tokens=3, output_tokens=2, total_tokens=5),
+        )
+
+    monkeypatch.setattr(ModelFacade, "completion", fake_completion)
+
+    class TraceDataDesigner:
+        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+            errors: list[BaseException] = []
+
+            def concurrent_call_without_measurement_context() -> None:
+                try:
+                    ModelFacade.completion(
+                        SimpleNamespace(
+                            model_alias="outside",
+                            model_name="outside-model",
+                            model_provider_name="provider",
+                        ),
+                        [ChatMessage.as_user("outside prompt")],
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            thread = threading.Thread(target=concurrent_call_without_measurement_context)
+            thread.start()
+            thread.join()
+            assert errors == []
+
+            ModelFacade.completion(
+                SimpleNamespace(model_alias="inside", model_name="inside-model", model_provider_name="provider"),
+                [ChatMessage.as_user("inside prompt")],
+            )
+            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, TraceDataDesigner()))
+    trace_path = tmp_path / "trace.jsonl"
+
+    with configured_measurement_session(
+        MeasurementConfig(
+            output_path=tmp_path / "measurements.jsonl", dd_trace="all_messages", dd_trace_path=trace_path
+        )
+    ):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[ModelConfig(alias="inside", model="dummy")],
+            columns=[
+                LLMTextColumnConfig(
+                    name="raw_detected",
+                    prompt="{{ text }}",
+                    model_alias="inside",
+                )
+            ],
+            workflow_name="entity-detection",
+            preview_num_records=1,
+        )
+
+    traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert [trace["model_alias"] for trace in traces] == ["inside"]
+    serialized_traces = json.dumps(traces)
+    assert "inside prompt" in serialized_traces
+    assert "outside prompt" not in serialized_traces
 
 
 def test_record_metrics_capture_generic_counts_without_raw_values() -> None:
