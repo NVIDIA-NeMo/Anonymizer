@@ -117,3 +117,9 @@ AnonymizerConfig(replace=Hash(algorithm="sha1", digest_length=8))
 | `algorithm` | `sha256` | Hash algorithm (`sha256`, `sha1`, or `md5`). |
 | `digest_length` | `12` | Number of hex characters to keep (6--64). |
 | `format_template` | `<HASH_{label}_{digest}>` | Template with `{digest}` required; `{label}` optional. |
+
+---
+
+## Evaluating replace output
+
+After running `replace`, you can score the quality of substitutions using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on all four judges (detection validity, type fidelity, attribute fidelity, relational consistency) and how to call `Anonymizer.evaluate()`.
