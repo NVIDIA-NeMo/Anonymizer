@@ -44,12 +44,13 @@ def test_analyze_staged_detection_output_summarizes_native_detection_probe(tmp_p
                 "record_type": "staged_detection_case",
                 "case_id": "shell-row-0",
                 "row_index": 0,
-                "seed_source": "gliner",
+                "seed_source": "rules_router",
                 "status": "completed",
                 "elapsed_sec": 0.002,
                 "model_elapsed_sec": 0.0,
                 "model_phase_count": 0,
                 "model_request_count": 0,
+                "rule_covered_label_set": True,
                 "final_entity_count": 5,
                 "final_entity_signature_count": 5,
                 "final_label_counts": {"api_key": 2, "email": 1, "password": 1, "url": 1},
@@ -67,12 +68,13 @@ def test_analyze_staged_detection_output_summarizes_native_detection_probe(tmp_p
                 "record_type": "staged_detection_case",
                 "case_id": "bio-row-0",
                 "row_index": 0,
-                "seed_source": "direct_llm",
+                "seed_source": "rules_plus_direct_llm",
                 "status": "completed",
                 "elapsed_sec": 10.0,
                 "model_elapsed_sec": 9.5,
                 "model_phase_count": 3,
                 "model_request_count": 3,
+                "rule_covered_label_set": False,
                 "final_entity_count": 3,
                 "final_entity_signature_count": 3,
                 "final_label_counts": {"person": 2, "api_key": 1},
@@ -90,12 +92,13 @@ def test_analyze_staged_detection_output_summarizes_native_detection_probe(tmp_p
                 "record_type": "staged_detection_case",
                 "case_id": "bio-row-1",
                 "row_index": 1,
-                "seed_source": "direct_llm",
+                "seed_source": "rules_plus_direct_llm",
                 "status": "error",
                 "elapsed_sec": 1.0,
                 "model_elapsed_sec": 0.8,
                 "model_phase_count": 1,
                 "model_request_count": 1,
+                "rule_covered_label_set": False,
                 "final_entity_count": 0,
                 "final_entity_signature_count": 0,
                 "total_usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
@@ -110,30 +113,87 @@ def test_analyze_staged_detection_output_summarizes_native_detection_probe(tmp_p
     assert result.case_count == 3
     assert result.group_count == 2
     groups = {row.seed_source: row for row in result.groups}
-    assert groups["gliner"].case_count == 1
-    assert groups["gliner"].completed_case_count == 1
-    assert groups["gliner"].model_elapsed_sec_sum == 0.0
-    assert groups["gliner"].model_request_count_sum == 0
-    assert groups["gliner"].baseline_shared_signature_rate == 1.0
-    assert groups["direct_llm"].case_count == 2
-    assert groups["direct_llm"].completed_case_count == 1
-    assert groups["direct_llm"].error_case_count == 1
-    assert groups["direct_llm"].elapsed_sec_sum == pytest.approx(11.0)
-    assert groups["direct_llm"].model_elapsed_sec_sum == pytest.approx(10.3)
-    assert groups["direct_llm"].model_request_count_sum == 4
-    assert groups["direct_llm"].total_tokens_sum == 132
-    assert groups["direct_llm"].baseline_final_entity_signature_count_sum == 4
-    assert groups["direct_llm"].shared_final_entity_signature_count_sum == 2
-    assert groups["direct_llm"].baseline_only_final_entity_signature_count_sum == 2
-    assert groups["direct_llm"].direct_only_final_entity_signature_count_sum == 1
-    assert groups["direct_llm"].baseline_shared_signature_rate == pytest.approx(0.5)
+    assert groups["rules_router"].case_count == 1
+    assert groups["rules_router"].completed_case_count == 1
+    assert groups["rules_router"].model_elapsed_sec_sum == 0.0
+    assert groups["rules_router"].model_request_count_sum == 0
+    assert groups["rules_router"].rule_covered_case_count == 1
+    assert groups["rules_router"].baseline_shared_signature_rate == 1.0
+    assert groups["rules_router"].fast_lane_verdict == "review"
+    assert groups["rules_router"].flags == ["too_few_cases"]
+    assert groups["rules_plus_direct_llm"].case_count == 2
+    assert groups["rules_plus_direct_llm"].completed_case_count == 1
+    assert groups["rules_plus_direct_llm"].error_case_count == 1
+    assert groups["rules_plus_direct_llm"].elapsed_sec_sum == pytest.approx(11.0)
+    assert groups["rules_plus_direct_llm"].model_elapsed_sec_sum == pytest.approx(10.3)
+    assert groups["rules_plus_direct_llm"].model_request_count_sum == 4
+    assert groups["rules_plus_direct_llm"].total_tokens_sum == 132
+    assert groups["rules_plus_direct_llm"].baseline_final_entity_signature_count_sum == 4
+    assert groups["rules_plus_direct_llm"].shared_final_entity_signature_count_sum == 2
+    assert groups["rules_plus_direct_llm"].baseline_only_final_entity_signature_count_sum == 2
+    assert groups["rules_plus_direct_llm"].direct_only_final_entity_signature_count_sum == 1
+    assert groups["rules_plus_direct_llm"].baseline_shared_signature_rate == pytest.approx(0.5)
+    assert groups["rules_plus_direct_llm"].fast_lane_verdict == "reject"
+    assert groups["rules_plus_direct_llm"].flags == [
+        "too_few_cases",
+        "case_errors",
+        "baseline_signature_loss",
+        "uses_model",
+        "not_fully_rule_covered",
+    ]
 
     label_deltas = {(row.seed_source, row.delta_type, row.label): row.count for row in result.label_deltas}
     assert label_deltas == {
-        ("direct_llm", "baseline_only", "city"): 1,
-        ("direct_llm", "baseline_only", "person"): 1,
-        ("direct_llm", "direct_only", "api_key"): 1,
+        ("rules_plus_direct_llm", "baseline_only", "city"): 1,
+        ("rules_plus_direct_llm", "baseline_only", "person"): 1,
+        ("rules_plus_direct_llm", "direct_only", "api_key"): 1,
     }
+
+
+def test_staged_detection_output_analysis_requires_repeated_cases_for_fast_lane(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_staged_detection_output_analysis_repeated_gate",
+        REPO_ROOT / "tools/measurement/analyze_staged_detection_output.py",
+    )
+    output_dir = tmp_path / "staged"
+    output_dir.mkdir()
+    _write_jsonl(
+        output_dir / "staged-detection-cases.jsonl",
+        [
+            {
+                "record_type": "staged_detection_case",
+                "case_id": f"shell-row-{index}",
+                "row_index": index,
+                "seed_source": "rules_router",
+                "status": "completed",
+                "elapsed_sec": 0.002,
+                "model_elapsed_sec": 0.0,
+                "model_phase_count": 0,
+                "model_request_count": 0,
+                "rule_covered_label_set": True,
+                "final_entity_count": 5,
+                "final_entity_signature_count": 5,
+                "total_usage": {},
+                "comparison": {
+                    "baseline_final_entity_signature_count": 5,
+                    "shared_final_entity_signature_count": 5,
+                    "baseline_only_final_entity_signature_count": 0,
+                    "direct_only_final_entity_signature_count": 0,
+                    "baseline_only_label_counts": {},
+                    "direct_only_label_counts": {},
+                },
+            }
+            for index in range(3)
+        ],
+    )
+
+    result = tool.analyze_staged_detection_output(output_dir)
+
+    group = result.groups[0]
+    assert group.seed_source == "rules_router"
+    assert group.case_count == 3
+    assert group.fast_lane_verdict == "fast_lane_candidate"
+    assert group.flags == []
 
 
 def test_staged_detection_output_analysis_writes_csv_tables(tmp_path: Path) -> None:
@@ -148,7 +208,7 @@ def test_staged_detection_output_analysis_writes_csv_tables(tmp_path: Path) -> N
             {
                 "case_id": "case-0",
                 "row_index": 0,
-                "seed_source": "gliner",
+                "seed_source": "rules_router",
                 "status": "completed",
                 "elapsed_sec": 0.01,
                 "model_elapsed_sec": 0.0,

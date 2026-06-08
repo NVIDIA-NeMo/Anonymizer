@@ -46,8 +46,8 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
             },
             {
                 "workload_id": "shell-1",
-                "config_id": "shell-native",
-                "experimental_detection_strategy": "native_candidate_validate_no_augment",
+                "config_id": "shell-filter",
+                "experimental_detection_strategy": "rules_filter_guardrail_no_augment",
                 "experimental_replacement_strategy": "local_structured_substitute",
                 "case_id": "shell__candidate",
                 "pipeline_elapsed_sec": 0.8,
@@ -58,7 +58,7 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
                 "seed_validation_candidate_count": 0,
                 "augmented_entity_count": 0,
                 "augmented_new_final_value_count": 0,
-                "artifact_final_augmenter_entity_count": 8,
+                "artifact_final_rule_entity_count": 8,
             },
             {
                 "workload_id": "legal-1",
@@ -76,8 +76,8 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
             },
             {
                 "workload_id": "legal-1",
-                "config_id": "legal-native",
-                "experimental_detection_strategy": "native_candidate_validate_no_augment",
+                "config_id": "legal-filter",
+                "experimental_detection_strategy": "rules_filter_guardrail_no_augment",
                 "experimental_replacement_strategy": "local_structured_substitute",
                 "case_id": "legal__candidate",
                 "pipeline_elapsed_sec": 20.9,
@@ -94,7 +94,7 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
     rows = tool.compare_case_analysis(
         table,
         baseline_strategy="no_augment",
-        candidate_strategy="native_candidate_validate_no_augment",
+        candidate_strategy="rules_filter_guardrail_no_augment",
     )
 
     by_workload = {row.workload_id: row for row in rows}
@@ -111,11 +111,11 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
     assert shell.baseline_augmented_new_final_value_count == 1
     assert shell.candidate_augmented_new_final_value_count == 0
     assert shell.augmented_new_final_value_count_delta == -1
-    assert shell.candidate_augmenter_entity_count == 8
+    assert shell.candidate_rule_entity_count == 8
     assert shell.safety_verdict == "review"
     assert shell.performance_verdict == "improved"
     assert shell.candidate_verdict == "review"
-    assert shell.flags == ["no_candidate_detector_entities"]
+    assert shell.flags == ["no_candidate_detector_entities", "candidate_uses_rule_entities"]
 
     legal = by_workload["legal-1"]
     assert legal.baseline_replacement_strategy == "default"
@@ -151,14 +151,14 @@ def test_compare_case_analysis_rejects_ambiguous_strategy_selector() -> None:
             {
                 "workload_id": "shell-1",
                 "config_id": "candidate",
-                "experimental_detection_strategy": "detector_only",
+                "experimental_detection_strategy": "rules_only",
                 "case_id": "c",
             },
         ]
     )
 
     with pytest.raises(ValueError, match="baseline selector matched multiple configs"):
-        tool.compare_case_analysis(table, baseline_strategy="no_augment", candidate_strategy="detector_only")
+        tool.compare_case_analysis(table, baseline_strategy="no_augment", candidate_strategy="rules_only")
 
 
 def test_compare_case_analysis_rejects_candidate_synthetic_original_collisions() -> None:
@@ -279,8 +279,8 @@ def test_compare_case_tables_allows_candidate_from_separate_run() -> None:
         [
             {
                 "workload_id": "legal-5",
-                "config_id": "legal-native-validate",
-                "experimental_detection_strategy": "detector_native_validate_no_augment",
+                "config_id": "legal-rules-guardrail",
+                "experimental_detection_strategy": "rules_guardrail_no_augment",
                 "case_id": "legal__candidate",
                 "observed_total_tokens": 55805,
                 "final_entity_count": 193,
@@ -293,13 +293,13 @@ def test_compare_case_tables_allows_candidate_from_separate_run() -> None:
         baseline,
         candidate,
         baseline_strategy="no_augment",
-        candidate_strategy="detector_native_validate_no_augment",
+        candidate_strategy="rules_guardrail_no_augment",
     )
 
     assert len(rows) == 1
     assert rows[0].workload_id == "legal-5"
     assert rows[0].baseline_config_id == "legal-no-augment"
-    assert rows[0].candidate_config_id == "legal-native-validate"
+    assert rows[0].candidate_config_id == "legal-rules-guardrail"
     assert rows[0].observed_total_tokens_delta == 15
     assert rows[0].flags == ["token_increase"]
 
@@ -348,7 +348,7 @@ def test_compare_case_analysis_preserves_augmentation_contribution_deltas() -> N
     assert row.candidate_augmenter_entity_count == 0
 
 
-def test_compare_case_analysis_review_gates_detector_only_candidate_shell_case() -> None:
+def test_compare_case_analysis_review_gates_detector_only_candidates() -> None:
     tool = load_tool(
         "measurement_compare_strategy_pairs_detector_only",
         REPO_ROOT / "tools/measurement/compare_strategy_pairs.py",
@@ -392,9 +392,9 @@ def test_compare_case_analysis_review_gates_detector_only_candidate_shell_case()
     assert row.flags == ["candidate_skips_llm_validation"]
 
 
-def test_compare_case_analysis_review_gates_detector_only_candidates() -> None:
+def test_compare_case_analysis_review_gates_rule_detector_only_candidates() -> None:
     tool = load_tool(
-        "measurement_compare_strategy_pairs_detector_only",
+        "measurement_compare_strategy_pairs_rule_detector_only",
         REPO_ROOT / "tools/measurement/compare_strategy_pairs.py",
     )
     table = pd.DataFrame(
@@ -413,14 +413,15 @@ def test_compare_case_analysis_review_gates_detector_only_candidates() -> None:
             },
             {
                 "workload_id": "shell-1",
-                "config_id": "detector-only",
-                "experimental_detection_strategy": "detector_only",
+                "config_id": "rule-detector-only",
+                "experimental_detection_strategy": "rules_guardrail_detector_only",
                 "case_id": "shell__candidate",
                 "pipeline_elapsed_sec": 1,
                 "observed_total_requests": 1,
                 "observed_total_tokens": 200,
                 "final_entity_count": 2,
-                "artifact_final_detector_entity_count": 2,
+                "artifact_final_detector_entity_count": 1,
+                "artifact_final_rule_entity_count": 1,
                 "artifact_final_entity_signature_hashes": ["a", "b"],
             },
         ]
@@ -429,7 +430,7 @@ def test_compare_case_analysis_review_gates_detector_only_candidates() -> None:
     rows = tool.compare_case_analysis(
         table,
         baseline_strategy="default",
-        candidate_strategy="detector_only",
+        candidate_strategy="rules_guardrail_detector_only",
     )
 
     assert len(rows) == 1
@@ -437,19 +438,19 @@ def test_compare_case_analysis_review_gates_detector_only_candidates() -> None:
     assert row.safety_verdict == "review"
     assert row.performance_verdict == "improved"
     assert row.candidate_verdict == "review"
-    assert row.flags == ["candidate_skips_llm_validation"]
+    assert row.flags == ["candidate_uses_rule_entities", "candidate_skips_llm_validation"]
 
 
-def test_compare_case_analysis_review_gates_non_detector_sources_when_signatures_match() -> None:
+def test_compare_case_analysis_review_gates_rules_covered_or_default_when_signatures_match() -> None:
     tool = load_tool(
-        "measurement_compare_strategy_pairs_non_detector_sources",
+        "measurement_compare_strategy_pairs_rules_covered_or_default",
         REPO_ROOT / "tools/measurement/compare_strategy_pairs.py",
     )
     table = pd.DataFrame(
         [
             {
                 "workload_id": "shell-1",
-                "config_id": "native-source-default",
+                "config_id": "rule-labels-default",
                 "experimental_detection_strategy": "default",
                 "case_id": "shell__default",
                 "pipeline_elapsed_sec": 21.4,
@@ -462,14 +463,14 @@ def test_compare_case_analysis_review_gates_non_detector_sources_when_signatures
             },
             {
                 "workload_id": "shell-1",
-                "config_id": "native-source-candidate",
-                "experimental_detection_strategy": "native_single_pass",
+                "config_id": "rule-labels-covered-or-default",
+                "experimental_detection_strategy": "rules_covered_or_default",
                 "case_id": "shell__candidate",
                 "pipeline_elapsed_sec": 0.001,
                 "observed_total_requests": 0,
                 "observed_total_tokens": 0,
                 "final_entity_count": 2,
-                "artifact_final_augmenter_entity_count": 2,
+                "artifact_final_rule_entity_count": 2,
                 "artifact_final_entity_signature_hashes": ["a", "b"],
                 "artifact_final_entity_signature_labels": {"a": "api_key", "b": "password"},
             },
@@ -478,8 +479,8 @@ def test_compare_case_analysis_review_gates_non_detector_sources_when_signatures
 
     rows = tool.compare_case_analysis(
         table,
-        baseline_config="native-source-default",
-        candidate_config="native-source-candidate",
+        baseline_config="rule-labels-default",
+        candidate_config="rule-labels-covered-or-default",
     )
 
     assert len(rows) == 1
@@ -492,7 +493,7 @@ def test_compare_case_analysis_review_gates_non_detector_sources_when_signatures
     assert row.safety_verdict == "review"
     assert row.performance_verdict == "improved"
     assert row.candidate_verdict == "review"
-    assert row.flags == ["no_candidate_detector_entities"]
+    assert row.flags == ["no_candidate_detector_entities", "candidate_uses_rule_entities"]
 
 
 def test_compare_case_analysis_flags_signature_loss_even_when_counts_match() -> None:
@@ -586,20 +587,20 @@ def test_compare_case_analysis_treats_baseline_subspan_as_candidate_covered() ->
             },
             {
                 "workload_id": "structured-identifiers",
-                "config_id": "native-local",
-                "experimental_detection_strategy": "native_single_pass",
+                "config_id": "rules-local",
+                "experimental_detection_strategy": "rules_covered_or_default",
                 "case_id": "candidate-r0",
                 "pipeline_elapsed_sec": 0.01,
                 "observed_total_requests": 0,
                 "observed_total_tokens": 0,
                 "final_entity_count": 2,
-                "artifact_final_augmenter_entity_count": 2,
+                "artifact_final_rule_entity_count": 2,
                 "artifact_final_entity_signature_hashes": ["cookie", "pin"],
                 "artifact_final_entity_signature_labels": {"cookie": "http_cookie", "pin": "pin"},
                 "artifact_final_entity_signature_details": {
                     "cookie": {
                         "label": "http_cookie",
-                        "source": "native",
+                        "source": "rule",
                         "row_index": 0,
                         "start_position": 30,
                         "end_position": 80,
@@ -608,7 +609,7 @@ def test_compare_case_analysis_treats_baseline_subspan_as_candidate_covered() ->
                     },
                     "pin": {
                         "label": "pin",
-                        "source": "native",
+                        "source": "rule",
                         "row_index": 0,
                         "start_position": 90,
                         "end_position": 95,
@@ -620,7 +621,7 @@ def test_compare_case_analysis_treats_baseline_subspan_as_candidate_covered() ->
         ]
     )
 
-    rows = tool.compare_case_analysis(table, baseline_config="default", candidate_config="native-local")
+    rows = tool.compare_case_analysis(table, baseline_config="default", candidate_config="rules-local")
 
     assert len(rows) == 1
     row = rows[0]
@@ -743,20 +744,20 @@ def test_compare_case_analysis_treats_high_overlap_candidate_span_as_covered() -
             },
             {
                 "workload_id": "structured-identifiers",
-                "config_id": "native-local",
-                "experimental_detection_strategy": "native_single_pass",
+                "config_id": "rules-local",
+                "experimental_detection_strategy": "rules_covered_or_default",
                 "case_id": "candidate-r0",
                 "pipeline_elapsed_sec": 0.01,
                 "observed_total_requests": 0,
                 "observed_total_tokens": 0,
                 "final_entity_count": 1,
-                "artifact_final_augmenter_entity_count": 1,
+                "artifact_final_rule_entity_count": 1,
                 "artifact_final_entity_signature_hashes": ["token-value"],
                 "artifact_final_entity_signature_labels": {"token-value": "api_key"},
                 "artifact_final_entity_signature_details": {
                     "token-value": {
                         "label": "api_key",
-                        "source": "native",
+                        "source": "rule",
                         "row_index": 0,
                         "start_position": 26,
                         "end_position": 69,
@@ -768,7 +769,7 @@ def test_compare_case_analysis_treats_high_overlap_candidate_span_as_covered() -
         ]
     )
 
-    rows = tool.compare_case_analysis(table, baseline_config="default", candidate_config="native-local")
+    rows = tool.compare_case_analysis(table, baseline_config="default", candidate_config="rules-local")
 
     assert len(rows) == 1
     row = rows[0]
@@ -819,20 +820,20 @@ def test_compare_case_analysis_treats_small_assignment_prefix_gap_as_boundary_ov
             },
             {
                 "workload_id": "structured-identifiers",
-                "config_id": "native-local",
-                "experimental_detection_strategy": "native_single_pass",
+                "config_id": "rules-local",
+                "experimental_detection_strategy": "rules_covered_or_default",
                 "case_id": "candidate-r0",
                 "pipeline_elapsed_sec": 0.01,
                 "observed_total_requests": 0,
                 "observed_total_tokens": 0,
                 "final_entity_count": 1,
-                "artifact_final_augmenter_entity_count": 1,
+                "artifact_final_rule_entity_count": 1,
                 "artifact_final_entity_signature_hashes": ["login-value"],
                 "artifact_final_entity_signature_labels": {"login-value": "user_name"},
                 "artifact_final_entity_signature_details": {
                     "login-value": {
                         "label": "user_name",
-                        "source": "native",
+                        "source": "rule",
                         "row_index": 0,
                         "start_position": 26,
                         "end_position": 38,
@@ -844,7 +845,7 @@ def test_compare_case_analysis_treats_small_assignment_prefix_gap_as_boundary_ov
         ]
     )
 
-    rows = tool.compare_case_analysis(table, baseline_config="default", candidate_config="native-local")
+    rows = tool.compare_case_analysis(table, baseline_config="default", candidate_config="rules-local")
 
     assert len(rows) == 1
     row = rows[0]
@@ -956,7 +957,7 @@ def test_compare_case_analysis_rejects_candidate_original_value_leaks() -> None:
             {
                 "workload_id": "structured-secrets",
                 "config_id": "candidate",
-                "experimental_detection_strategy": "native_single_pass",
+                "experimental_detection_strategy": "rules_covered_or_default",
                 "case_id": "structured__candidate",
                 "pipeline_elapsed_sec": 1,
                 "observed_total_tokens": 0,
@@ -1154,7 +1155,7 @@ def test_compare_case_analysis_rejects_candidate_case_failures() -> None:
             {
                 "workload_id": "shell-5",
                 "config_id": "candidate",
-                "experimental_detection_strategy": "detector_only",
+                "experimental_detection_strategy": "rules_guardrail_detector_only",
                 "case_id": "candidate-r0",
                 "pipeline_elapsed_sec": 2,
                 "case_failed": False,
@@ -1163,7 +1164,7 @@ def test_compare_case_analysis_rejects_candidate_case_failures() -> None:
             {
                 "workload_id": "shell-5",
                 "config_id": "candidate",
-                "experimental_detection_strategy": "detector_only",
+                "experimental_detection_strategy": "rules_guardrail_detector_only",
                 "case_id": "candidate-r1",
                 "pipeline_elapsed_sec": 0.2,
                 "case_failed": True,
@@ -1385,7 +1386,7 @@ def test_compare_strategy_pairs_writes_csv(tmp_path: Path) -> None:
             baseline_final_entity_count=4,
             candidate_final_entity_count=8,
             final_entity_count_delta=4,
-            flags=["candidate_skips_llm_validation"],
+            flags=["candidate_uses_rule_entities"],
         )
     ]
 
@@ -1396,7 +1397,7 @@ def test_compare_strategy_pairs_writes_csv(tmp_path: Path) -> None:
     assert exported["workload_id"].tolist() == ["shell-1"]
     assert exported["candidate_replacement_strategy"].tolist() == ["local_structured_substitute"]
     assert exported["final_entity_count_delta"].tolist() == [4]
-    assert exported["flags"].tolist() == ['["candidate_skips_llm_validation"]']
+    assert exported["flags"].tolist() == ['["candidate_uses_rule_entities"]']
 
 
 def test_compare_strategy_pairs_summarizes_candidate_verdicts() -> None:
@@ -1432,7 +1433,7 @@ def test_compare_strategy_pairs_summarizes_candidate_verdicts() -> None:
         tool.ComparisonRow(
             workload_id="shell-1",
             baseline_config_id="shell-default",
-            candidate_config_id="shell-detector-only",
+            candidate_config_id="shell-rules",
             baseline_case_count=1,
             candidate_case_count=1,
             value_protection_verdict="review",

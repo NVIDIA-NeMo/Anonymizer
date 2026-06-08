@@ -78,13 +78,20 @@ from anonymizer.engine.detection.postprocess import (
     TagNotation,
     apply_augmented_entities,
     build_tagged_text,
+    build_validation_candidates,
     get_tag_notation,
     parse_raw_entities,
+    resolve_overlaps,
+)
+from anonymizer.engine.detection.rules import (
+    STRUCTURED_RULE_FAST_LANE_LABELS,
+    detect_high_confidence_entities,
 )
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     EntitySchema,
     RawValidationDecisionsSchema,
+    ValidatedDecisionSchema,
     ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
 )
@@ -107,6 +114,10 @@ _DATE_OF_BIRTH_CONTEXT_RE = re.compile(r"\b(born|birth|date of birth|dob)\b", re
 class SeedSource(StrEnum):
     direct_llm = "direct_llm"
     gliner = "gliner"
+    rules = "rules"
+    rules_trusted = "rules_trusted"
+    rules_plus_direct_llm = "rules_plus_direct_llm"
+    rules_router = "rules_router"
 
 
 class ValidationPromptMode(StrEnum):
@@ -140,6 +151,7 @@ class StagedExecutionConfig(BaseModel):
     max_tokens: int = Field(default=4096, gt=0)
     timeout_sec: float = Field(default=180.0, gt=0)
     skip_augmentation: bool = False
+    skip_augmentation_when_rule_covered: bool = False
     validation_prompt_mode: ValidationPromptMode = ValidationPromptMode.full_text
     validation_max_entities_per_call: int = Field(default=10, gt=0)
     validation_excerpt_window_chars: int = Field(default=160, gt=0)
@@ -240,6 +252,7 @@ class StagedDetectionCase(BaseModel):
     total_usage: dict[str, int] = Field(default_factory=dict)
     model_phase_count: int = 0
     model_request_count: int = 0
+    rule_covered_label_set: bool = False
     seed_suggestion_count: int = 0
     seed_entity_count: int = 0
     validation_candidate_count: int = 0
@@ -302,6 +315,7 @@ def run_staged_detection_case(
     max_tokens: int = 4096,
     timeout_sec: float = 180.0,
     skip_augmentation: bool = False,
+    skip_augmentation_when_rule_covered: bool = False,
     validation_prompt_mode: ValidationPromptMode = ValidationPromptMode.full_text,
     validation_max_entities_per_call: int = 10,
     validation_excerpt_window_chars: int = 160,
@@ -320,6 +334,7 @@ def run_staged_detection_case(
         max_tokens=max_tokens,
         timeout_sec=timeout_sec,
         skip_augmentation=skip_augmentation,
+        skip_augmentation_when_rule_covered=skip_augmentation_when_rule_covered,
         validation_prompt_mode=validation_prompt_mode,
         validation_max_entities_per_call=validation_max_entities_per_call,
         validation_excerpt_window_chars=validation_excerpt_window_chars,
@@ -341,6 +356,7 @@ def execute_staged_detection_case(
     max_tokens: int = 4096,
     timeout_sec: float = 180.0,
     skip_augmentation: bool = False,
+    skip_augmentation_when_rule_covered: bool = False,
     validation_prompt_mode: ValidationPromptMode = ValidationPromptMode.full_text,
     validation_max_entities_per_call: int = 10,
     validation_excerpt_window_chars: int = 160,
@@ -413,8 +429,14 @@ def _run_seed_phase(
     seed_client: GlinerSeedClient | None,
     config: StagedExecutionConfig,
 ) -> tuple[dict[str, Any], int, DirectCompletion]:
+    if _uses_rule_short_circuit(request, config):
+        return _run_rules_seed_phase(request)
     if config.seed_source == SeedSource.gliner:
         return _run_gliner_seed_phase(request, seed_client or HttpxGlinerSeedClient(), config)
+    if config.seed_source in {SeedSource.rules, SeedSource.rules_trusted}:
+        return _run_rules_seed_phase(request)
+    if config.seed_source in {SeedSource.rules_plus_direct_llm, SeedSource.rules_router}:
+        return _run_rules_plus_direct_llm_seed_phase(request, client, config)
     return _run_direct_llm_seed_phase(request, client, config)
 
 
@@ -451,6 +473,25 @@ def _run_direct_llm_seed_phase(
     )
     row, seed_suggestions = _seed_row_from_llm(request, completion.content)
     return row, len(seed_suggestions), completion
+
+
+def _run_rules_plus_direct_llm_seed_phase(
+    request: StagedDetectionRequest,
+    client: DirectDetectionClient,
+    config: StagedExecutionConfig,
+) -> tuple[dict[str, Any], int, DirectCompletion]:
+    completion = _complete(client, prompt=_seed_prompt(request), config=config)
+    direct_spans, seed_suggestions = _direct_seed_spans(request, completion.content)
+    rule_spans = detect_high_confidence_entities(request.text, labels=request.labels)
+    row = _seed_row_from_spans(request, resolve_overlaps([*rule_spans, *direct_spans]))
+    _limit_validation_candidates_to_sources(row, sources={"direct_seed"})
+    return row, len(seed_suggestions) + len(rule_spans), completion
+
+
+def _run_rules_seed_phase(request: StagedDetectionRequest) -> tuple[dict[str, Any], int, DirectCompletion]:
+    seed_spans = detect_high_confidence_entities(request.text, labels=request.labels)
+    completion = DirectCompletion(content="", elapsed_sec=0.0, usage={})
+    return _seed_row_from_spans(request, seed_spans), len(seed_spans), completion
 
 
 def _complete(
@@ -536,12 +577,23 @@ def _seed_entity_id(label: str, span: EntitySpan) -> str:
     return f"{label}_{span.start_position}_{span.end_position}"
 
 
+def _limit_validation_candidates_to_sources(row: dict[str, Any], *, sources: set[str]) -> None:
+    text = str(row.get(COL_TEXT, ""))
+    seed_spans = [span for span in _seed_entity_spans(row) if span.source in sources]
+    row[COL_SEED_VALIDATION_CANDIDATES] = ValidationCandidatesSchema(
+        candidates=build_validation_candidates(text=text, entities=seed_spans)
+    ).model_dump(mode="json")
+
+
 def _run_validation_phase(
     row: dict[str, Any],
     request: StagedDetectionRequest,
     client: DirectDetectionClient,
     config: StagedExecutionConfig,
 ) -> DirectCompletion:
+    if config.seed_source == SeedSource.rules_trusted or _uses_rule_short_circuit(request, config):
+        _trust_seed_entities(row)
+        return DirectCompletion(content="", elapsed_sec=0.0, usage={})
     candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
     if not candidates.candidates:
         row[COL_VALIDATION_DECISIONS] = {"decisions": []}
@@ -671,6 +723,23 @@ def _sum_completion_usage(completions: list[DirectCompletion]) -> dict[str, int]
     return dict(sorted(totals.items()))
 
 
+def _trust_seed_entities(row: dict[str, Any]) -> None:
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
+    row[COL_VALIDATED_ENTITIES] = ValidatedDecisionsSchema(
+        decisions=[
+            ValidatedDecisionSchema(
+                id=candidate.id,
+                decision="keep",
+                value=candidate.value,
+                label=candidate.label,
+                reason="trusted deterministic rule",
+            )
+            for candidate in candidates.candidates
+        ]
+    ).model_dump(mode="json")
+    apply_validation_to_seed_entities(row)
+
+
 def _validation_prompt(
     request: StagedDetectionRequest,
     candidates: ValidationCandidatesSchema,
@@ -730,7 +799,19 @@ def _run_augmentation_phase(
 
 
 def _should_skip_augmentation(request: StagedDetectionRequest, config: StagedExecutionConfig) -> bool:
-    return config.skip_augmentation
+    if config.skip_augmentation:
+        return True
+    if _uses_rule_short_circuit(request, config):
+        return True
+    if not config.skip_augmentation_when_rule_covered:
+        return False
+    if config.seed_source not in {SeedSource.rules, SeedSource.rules_trusted, SeedSource.rules_plus_direct_llm}:
+        return False
+    return set(request.labels).issubset(STRUCTURED_RULE_FAST_LANE_LABELS)
+
+
+def _uses_rule_short_circuit(request: StagedDetectionRequest, config: StagedExecutionConfig) -> bool:
+    return config.seed_source == SeedSource.rules_router and _is_rule_covered_label_set(request)
 
 
 def _augmentation_prompt(request: StagedDetectionRequest, row: dict[str, Any]) -> str:
@@ -817,6 +898,7 @@ def _completed_case(
         total_usage=_sum_usage(phase_usage),
         model_phase_count=_model_phase_count(phase_model_work),
         model_request_count=_model_request_count(phase_model_requests),
+        rule_covered_label_set=_is_rule_covered_label_set(request),
         seed_suggestion_count=seed_suggestion_count,
         seed_entity_count=artifact.seed_entity_count,
         validation_candidate_count=artifact.seed_validation_candidate_count,
@@ -841,12 +923,28 @@ def _phase_model_work(
 
 
 def _uses_seed_model(request: StagedDetectionRequest, config: StagedExecutionConfig) -> bool:
-    return config.seed_source in {SeedSource.direct_llm, SeedSource.gliner}
+    if _uses_rule_short_circuit(request, config):
+        return False
+    return config.seed_source in {
+        SeedSource.direct_llm,
+        SeedSource.gliner,
+        SeedSource.rules_plus_direct_llm,
+        SeedSource.rules_router,
+    }
 
 
 def _uses_validation_model(
     request: StagedDetectionRequest, artifact: DetectionArtifactRow, config: StagedExecutionConfig
 ) -> bool:
+    if _uses_rule_short_circuit(request, config):
+        return False
+    if (
+        config.seed_source in {SeedSource.rules_trusted, SeedSource.rules_router}
+        and artifact.seed_validation_candidate_count == 0
+    ):
+        return False
+    if config.seed_source == SeedSource.rules_trusted:
+        return False
     return artifact.seed_validation_candidate_count > 0
 
 
@@ -861,12 +959,16 @@ def _phase_skip_reasons(
 
 
 def _seed_skip_reason(request: StagedDetectionRequest, config: StagedExecutionConfig) -> str | None:
+    if config.seed_source in {SeedSource.rules, SeedSource.rules_trusted} or _uses_rule_short_circuit(request, config):
+        return "deterministic_rules"
     return None
 
 
 def _validation_skip_reason(
     request: StagedDetectionRequest, artifact: DetectionArtifactRow, config: StagedExecutionConfig
 ) -> str | None:
+    if config.seed_source == SeedSource.rules_trusted or _uses_rule_short_circuit(request, config):
+        return "trusted_rules"
     if artifact.seed_validation_candidate_count == 0:
         return "no_seed_candidates"
     return None
@@ -875,6 +977,8 @@ def _validation_skip_reason(
 def _augmentation_skip_reason(request: StagedDetectionRequest, config: StagedExecutionConfig) -> str | None:
     if config.skip_augmentation:
         return "disabled"
+    if _should_skip_augmentation(request, config):
+        return "rule_covered_labels"
     return None
 
 
@@ -912,6 +1016,10 @@ def _ceil_div(numerator: int, denominator: int) -> int:
 
 def _model_request_count(phase_model_requests: PhaseModelRequests) -> int:
     return phase_model_requests.seed + phase_model_requests.validation + phase_model_requests.augmentation
+
+
+def _is_rule_covered_label_set(request: StagedDetectionRequest) -> bool:
+    return set(request.labels).issubset(STRUCTURED_RULE_FAST_LANE_LABELS)
 
 
 def _extract_entity_suggestions(content: str) -> list[dict[str, str]]:
@@ -1221,6 +1329,7 @@ def run_probe(
     gliner_api_key_env: str = "NVIDIA_API_KEY",
     gliner_threshold: float = 0.3,
     skip_augmentation: bool = False,
+    skip_augmentation_when_rule_covered: bool = False,
     validation_prompt_mode: ValidationPromptMode = ValidationPromptMode.full_text,
     validation_max_entities_per_call: int = 10,
     validation_excerpt_window_chars: int = 160,
@@ -1279,6 +1388,7 @@ def _run_probe_cases(
             gliner_api_key_env=config.gliner_api_key_env,
             gliner_threshold=config.gliner_threshold,
             skip_augmentation=config.skip_augmentation,
+            skip_augmentation_when_rule_covered=config.skip_augmentation_when_rule_covered,
             validation_prompt_mode=config.validation_prompt_mode,
             validation_max_entities_per_call=config.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.validation_excerpt_window_chars,
@@ -1357,6 +1467,9 @@ def main(
     gliner_api_key_env: Annotated[str, cyclopts.Parameter("--gliner-api-key-env")] = "NVIDIA_API_KEY",
     gliner_threshold: Annotated[float, cyclopts.Parameter("--gliner-threshold")] = 0.3,
     skip_augmentation: Annotated[bool, cyclopts.Parameter("--skip-augmentation")] = False,
+    skip_augmentation_when_rule_covered: Annotated[
+        bool, cyclopts.Parameter("--skip-augmentation-when-rule-covered")
+    ] = False,
     validation_prompt_mode: Annotated[
         ValidationPromptMode, cyclopts.Parameter("--validation-prompt-mode")
     ] = ValidationPromptMode.full_text,
