@@ -16,7 +16,7 @@ Anonymizer provides LLM-as-judge evaluation for both modes, replace and rewrite,
 
 Rewrite evaluation is part of the pipeline and runs automatically — there is no separate call. After the rewritten text is generated, an evaluate–repair loop scores each record for **utility** (how much semantic content was preserved) and **leakage mass** (how much sensitive information survived). Records that exceed the leakage threshold are sent back for repair, up to `max_repair_iterations` times. A final judge then produces a qualitative assessment and flags records that still need human review.
 
-The key output columns are `utility_score`, `leakage_mass`, `weighted_leakage_rate`, `any_high_leaked`, and `needs_human_review`. See [Rewrite](rewrite.md) for the more details.
+The key output columns are `utility_score`, `leakage_mass`, `weighted_leakage_rate`, `any_high_leaked`, and `needs_human_review`. See [Rewrite](rewrite.md) for more details.
 
 ---
 
