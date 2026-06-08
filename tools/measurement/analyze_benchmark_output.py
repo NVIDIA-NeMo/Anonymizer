@@ -28,6 +28,14 @@ app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.benchmark_output")
 
 _SYNC_CLIENT_UNAVAILABLE_ERROR = "SyncClientUnavailableError"
+_SIGNATURE_DETAIL_FIELDS = {
+    "label",
+    "source",
+    "row_index",
+    "start_position",
+    "end_position",
+    "value_length",
+}
 
 
 class ExportFormat(StrEnum):
@@ -771,6 +779,8 @@ def _artifact_signature_details(artifact_rows: pd.DataFrame) -> dict[str, dict[s
         signature_hash, _, field = remainder.partition(".")
         if not signature_hash or not field:
             continue
+        if field not in _SIGNATURE_DETAIL_FIELDS:
+            continue
         for value in artifact_rows[column].dropna():
             details.setdefault(signature_hash, {})[field] = _json_scalar(value)
     return dict(sorted(details.items()))
@@ -787,7 +797,9 @@ def _coerce_detail_map(raw: object) -> dict[str, dict[str, Any]]:
     details: dict[str, dict[str, Any]] = {}
     for signature_hash, value in raw.items():
         if isinstance(value, dict):
-            details[str(signature_hash)] = {str(key): _json_scalar(item) for key, item in value.items()}
+            details[str(signature_hash)] = {
+                str(key): _json_scalar(item) for key, item in value.items() if str(key) in _SIGNATURE_DETAIL_FIELDS
+            }
     return details
 
 

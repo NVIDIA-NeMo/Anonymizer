@@ -85,15 +85,12 @@ from anonymizer.engine.schemas import AugmentedEntitiesSchema, EntitiesSchema, V
 from anonymizer.measurement import record_model_workflow
 
 _NATIVE_DIRECT_MODEL_ALIAS = "native-direct"
-_NATIVE_DIRECT_MODEL_NAME = "nvidia/nemotron-3-super"
-_NATIVE_DIRECT_MODEL_PROVIDER = "local-vllm"
-_NATIVE_DIRECT_ENDPOINT = "http://gpu-dev-pod-serve-svc:8000/v1"
-_NATIVE_DIRECT_MAX_TOKENS = 4096
-_NATIVE_DIRECT_TIMEOUT_SEC = 180.0
 _GLINER_DIRECT_MODEL_ALIAS = "gliner-direct"
-_GLINER_DIRECT_MODEL_NAME = "nvidia/gliner-pii"
-_GLINER_DIRECT_MODEL_PROVIDER = "nvidia"
-_NATIVE_STAGED_MAX_WORKERS = 4
+_DIRECT_MODEL_NAME = "configured-native-model"
+_DIRECT_MODEL_PROVIDER = "configured-native-provider"
+_DIRECT_MAX_TOKENS = 4096
+_DIRECT_TIMEOUT_SEC = 180.0
+_DIRECT_MAX_WORKERS = 4
 _STRUCTURED_ASSIGNMENT_RE = re.compile(
     r"(?<![A-Za-z0-9_-])['\"]?"
     r"(?P<key>"
@@ -148,6 +145,25 @@ Contextual prose recall focus:
 
 
 @dataclass(frozen=True)
+class NativeDetectionRuntime:
+    """Runtime settings for benchmark-only native detection strategies."""
+
+    endpoint: str | None = None
+    model: str = _DIRECT_MODEL_NAME
+    provider: str = _DIRECT_MODEL_PROVIDER
+    alias: str = _NATIVE_DIRECT_MODEL_ALIAS
+    max_tokens: int = _DIRECT_MAX_TOKENS
+    timeout_sec: float = _DIRECT_TIMEOUT_SEC
+    gliner_endpoint: str | None = None
+    gliner_model: str = _DIRECT_MODEL_NAME
+    gliner_provider: str = _DIRECT_MODEL_PROVIDER
+    gliner_alias: str = _GLINER_DIRECT_MODEL_ALIAS
+    gliner_api_key_env: str = "NVIDIA_API_KEY"
+    gliner_threshold: float = 0.3
+    max_workers: int = _DIRECT_MAX_WORKERS
+
+
+@dataclass(frozen=True)
 class _NoAugmentOptions:
     include_rules: bool
     final_rule_guardrail: bool = False
@@ -167,6 +183,7 @@ class _NativeStagedRunParams:
     labels: list[str]
     client: DirectDetectionClient
     gliner_seed_client: GlinerSeedClient | None
+    runtime: NativeDetectionRuntime
     data_summary: str | None
     validation_prompt_mode: ValidationPromptMode
     validation_max_entities_per_call: int
@@ -189,6 +206,7 @@ class _NativeStagedRowResult:
 class _DetectorNativeValidationParams:
     labels: list[str]
     client: DirectDetectionClient
+    runtime: NativeDetectionRuntime
     data_summary: str | None
     validation_prompt_mode: ValidationPromptMode
     validation_max_entities_per_call: int
@@ -202,6 +220,7 @@ class _DetectorNativeValidationRowResult:
     ordinal: int
     index: Any
     workflow_name: str
+    runtime: NativeDetectionRuntime
     output_row: dict[str, Any] | None
     failed_record: FailedRecord | None
     completion: DirectCompletion | None
@@ -216,6 +235,7 @@ def experimental_detection_strategy_context(
     rule_labels: list[str] | None = None,
     native_client: DirectDetectionClient | None = None,
     gliner_seed_client: GlinerSeedClient | None = None,
+    native_runtime: NativeDetectionRuntime | None = None,
 ) -> Iterator[None]:
     """Temporarily apply a benchmark-only detection strategy."""
     if strategy == ExperimentalDetectionStrategy.default:
@@ -239,6 +259,7 @@ def experimental_detection_strategy_context(
             rule_labels=rule_labels,
             native_client=native_client,
             gliner_seed_client=gliner_seed_client,
+            native_runtime=native_runtime or NativeDetectionRuntime(),
         )
     try:
         yield
@@ -276,7 +297,9 @@ def _method_for_strategy(
     rule_labels: list[str] | None = None,
     native_client: DirectDetectionClient | None = None,
     gliner_seed_client: GlinerSeedClient | None = None,
+    native_runtime: NativeDetectionRuntime | None = None,
 ) -> _DetectAndValidate:
+    runtime = native_runtime or NativeDetectionRuntime()
     if strategy == ExperimentalDetectionStrategy.compact_validation:
         if original is None:
             raise ValueError("compact_validation requires the original detection method")
@@ -323,32 +346,39 @@ def _method_for_strategy(
     if strategy == ExperimentalDetectionStrategy.rules_only:
         return _detect_with_rules_only
     if strategy == ExperimentalDetectionStrategy.native_rules_router:
-        return _make_native_rules_router_method(native_client=native_client)
+        return _make_native_rules_router_method(native_client=native_client, native_runtime=runtime)
     if strategy == ExperimentalDetectionStrategy.native_candidate_validate_no_augment:
-        return _make_native_candidate_validate_no_augment_method(native_client=native_client)
+        return _make_native_candidate_validate_no_augment_method(native_client=native_client, native_runtime=runtime)
     if strategy == ExperimentalDetectionStrategy.detector_native_validate_no_augment:
-        return _make_detector_native_validate_no_augment_method(native_client=native_client)
+        return _make_detector_native_validate_no_augment_method(native_client=native_client, native_runtime=runtime)
     if strategy == ExperimentalDetectionStrategy.detector_native_validate_native_augment:
-        return _make_detector_native_validate_native_augment_method(native_client=native_client)
+        return _make_detector_native_validate_native_augment_method(native_client=native_client, native_runtime=runtime)
     if strategy == ExperimentalDetectionStrategy.gliner_native_validate_no_augment:
         return _make_gliner_native_validate_no_augment_method(
             native_client=native_client,
             gliner_seed_client=gliner_seed_client,
+            native_runtime=runtime,
         )
     if strategy == ExperimentalDetectionStrategy.gliner_native_validate_native_augment:
         return _make_gliner_native_validate_native_augment_method(
             native_client=native_client,
             gliner_seed_client=gliner_seed_client,
+            native_runtime=runtime,
         )
     if strategy == ExperimentalDetectionStrategy.native_single_pass:
-        return _make_native_single_pass_method(native_client=native_client)
+        return _make_native_single_pass_method(native_client=native_client, native_runtime=runtime)
     if strategy == ExperimentalDetectionStrategy.native_single_pass_recall:
-        return _make_native_single_pass_method(native_client=native_client, recall_prompt=True)
+        return _make_native_single_pass_method(native_client=native_client, native_runtime=runtime, recall_prompt=True)
     if strategy == ExperimentalDetectionStrategy.native_single_pass_values:
-        return _make_native_single_pass_method(native_client=native_client, value_only_prompt=True)
+        return _make_native_single_pass_method(
+            native_client=native_client,
+            native_runtime=runtime,
+            value_only_prompt=True,
+        )
     if strategy == ExperimentalDetectionStrategy.native_single_pass_values_recall:
         return _make_native_single_pass_method(
             native_client=native_client,
+            native_runtime=runtime,
             recall_prompt=True,
             value_only_prompt=True,
         )
@@ -1114,8 +1144,9 @@ def _entity_spans_from_payload(raw_payload: object) -> list[EntitySpan]:
 
 
 def _make_native_single_pass_method(
-    native_client: DirectDetectionClient | None,
     *,
+    native_client: DirectDetectionClient | None,
+    native_runtime: NativeDetectionRuntime,
     recall_prompt: bool = False,
     value_only_prompt: bool = False,
 ) -> _DetectAndValidate:
@@ -1134,11 +1165,12 @@ def _make_native_single_pass_method(
         preview_num_records: int | None = None,
     ) -> dw.EntityDetectionResult:
         labels = dw._resolve_detection_labels(entity_labels)
-        client = native_client or HttpxDirectDetectionClient()
+        client = _native_client_or_default(native_client, native_runtime)
         return _run_native_single_pass_detection(
             dataframe,
             labels=labels,
             client=client,
+            runtime=native_runtime,
             data_summary=data_summary,
             preview_num_records=preview_num_records,
             recall_prompt=recall_prompt,
@@ -1153,6 +1185,7 @@ def _run_native_single_pass_detection(
     *,
     labels: list[str],
     client: DirectDetectionClient,
+    runtime: NativeDetectionRuntime,
     data_summary: str | None,
     preview_num_records: int | None,
     recall_prompt: bool,
@@ -1169,6 +1202,7 @@ def _run_native_single_pass_detection(
             index=index,
             labels=labels,
             client=client,
+            runtime=runtime,
             data_summary=data_summary,
             recall_prompt=recall_prompt,
             value_only_prompt=value_only_prompt,
@@ -1194,6 +1228,7 @@ def _execute_native_single_pass_row(
     index: object,
     labels: list[str],
     client: DirectDetectionClient,
+    runtime: NativeDetectionRuntime,
     data_summary: str | None,
     recall_prompt: bool,
     value_only_prompt: bool,
@@ -1205,19 +1240,32 @@ def _execute_native_single_pass_row(
             text=text,
             labels=labels,
             client=client,
+            runtime=runtime,
             data_summary=data_summary,
             recall_prompt=recall_prompt,
             value_only_prompt=value_only_prompt,
         )
     except Exception as exc:  # noqa: BLE001 - benchmark experiment records case-local failures
-        _record_native_single_pass_request_error(elapsed_sec=time.perf_counter() - started)
+        _record_native_single_pass_request_error(elapsed_sec=time.perf_counter() - started, runtime=runtime)
         return None, _native_single_pass_failed_record(index, error=f"{type(exc).__name__}: {exc}")
     try:
         spans = _native_single_pass_spans(text, completion.content, labels=labels)
     except Exception as exc:  # noqa: BLE001 - parser fragility is a benchmark failure mode
-        _record_native_single_pass_completion(completion, status="error", output_row_count=0, failed_record_count=1)
+        _record_native_single_pass_completion(
+            completion,
+            status="error",
+            output_row_count=0,
+            failed_record_count=1,
+            runtime=runtime,
+        )
         return None, _native_single_pass_failed_record(index, error=f"{type(exc).__name__}: {exc}")
-    _record_native_single_pass_completion(completion, status="completed", output_row_count=1, failed_record_count=0)
+    _record_native_single_pass_completion(
+        completion,
+        status="completed",
+        output_row_count=1,
+        failed_record_count=0,
+        runtime=runtime,
+    )
     return _native_single_pass_result_row(row, spans=spans, labels=labels), None
 
 
@@ -1226,14 +1274,15 @@ def _complete_native_single_pass(
     text: str,
     labels: list[str],
     client: DirectDetectionClient,
+    runtime: NativeDetectionRuntime,
     data_summary: str | None,
     recall_prompt: bool,
     value_only_prompt: bool,
 ) -> Any:
     return client.complete(
         DirectGenerationRequest(
-            endpoint=_NATIVE_DIRECT_ENDPOINT,
-            model=_NATIVE_DIRECT_MODEL_NAME,
+            endpoint=runtime.endpoint or "",
+            model=runtime.model,
             prompt=_native_single_pass_prompt(
                 text=text,
                 labels=labels,
@@ -1241,8 +1290,8 @@ def _complete_native_single_pass(
                 recall_prompt=recall_prompt,
                 value_only_prompt=value_only_prompt,
             ),
-            max_tokens=_NATIVE_DIRECT_MAX_TOKENS,
-            timeout_sec=_NATIVE_DIRECT_TIMEOUT_SEC,
+            max_tokens=runtime.max_tokens,
+            timeout_sec=runtime.timeout_sec,
         )
     )
 
@@ -1395,10 +1444,11 @@ def _record_native_single_pass_completion(
     status: str,
     output_row_count: int,
     failed_record_count: int,
+    runtime: NativeDetectionRuntime,
 ) -> None:
     record_model_workflow(
         workflow_name="entity-detection-native-single-pass",
-        model_aliases=[_NATIVE_DIRECT_MODEL_ALIAS],
+        model_aliases=[runtime.alias],
         input_row_count=1,
         output_row_count=output_row_count,
         failed_record_count=failed_record_count,
@@ -1408,20 +1458,26 @@ def _record_native_single_pass_completion(
             successful_requests=1,
             failed_requests=0,
             usage=dict(getattr(completion, "usage", {}) or {}),
+            runtime=runtime,
         ),
     )
 
 
-def _record_native_single_pass_request_error(*, elapsed_sec: float) -> None:
+def _record_native_single_pass_request_error(*, elapsed_sec: float, runtime: NativeDetectionRuntime) -> None:
     record_model_workflow(
         workflow_name="entity-detection-native-single-pass",
-        model_aliases=[_NATIVE_DIRECT_MODEL_ALIAS],
+        model_aliases=[runtime.alias],
         input_row_count=1,
         output_row_count=0,
         failed_record_count=1,
         elapsed_sec=elapsed_sec,
         status="error",
-        model_usage=_native_single_pass_model_usage(successful_requests=0, failed_requests=1, usage={}),
+        model_usage=_native_single_pass_model_usage(
+            successful_requests=0,
+            failed_requests=1,
+            usage={},
+            runtime=runtime,
+        ),
     )
 
 
@@ -1430,13 +1486,14 @@ def _native_single_pass_model_usage(
     successful_requests: int,
     failed_requests: int,
     usage: dict[str, int],
+    runtime: NativeDetectionRuntime,
 ) -> dict[str, dict[str, Any]]:
     total_requests = successful_requests + failed_requests
     return {
-        _NATIVE_DIRECT_MODEL_ALIAS: {
-            "model_alias": _NATIVE_DIRECT_MODEL_ALIAS,
-            "model_name": _NATIVE_DIRECT_MODEL_NAME,
-            "model_provider_name": _NATIVE_DIRECT_MODEL_PROVIDER,
+        runtime.alias: {
+            "model_alias": runtime.alias,
+            "model_name": runtime.model,
+            "model_provider_name": runtime.provider,
             "request_usage": {
                 "successful_requests": successful_requests,
                 "failed_requests": failed_requests,
@@ -1447,10 +1504,33 @@ def _native_single_pass_model_usage(
     }
 
 
-def _make_native_rules_router_method(native_client: DirectDetectionClient | None) -> _DetectAndValidate:
+def _native_client_or_default(
+    native_client: DirectDetectionClient | None,
+    runtime: NativeDetectionRuntime,
+) -> DirectDetectionClient:
+    if native_client is not None:
+        return native_client
+    _require_native_endpoint(runtime)
+    return HttpxDirectDetectionClient()
+
+
+def _require_native_endpoint(runtime: NativeDetectionRuntime) -> None:
+    if not runtime.endpoint or not runtime.model:
+        raise ValueError(
+            "native detection strategies require configured native endpoint and model; "
+            "set native_runtime.endpoint and native_runtime.model in the benchmark suite"
+        )
+
+
+def _make_native_rules_router_method(
+    *,
+    native_client: DirectDetectionClient | None,
+    native_runtime: NativeDetectionRuntime,
+) -> _DetectAndValidate:
     return _make_native_staged_method(
         native_client=native_client,
         gliner_seed_client=None,
+        native_runtime=native_runtime,
         seed_source=SeedSource.rules_router,
         workflow_name="entity-detection-native-rules-router",
         skip_augmentation=False,
@@ -1458,11 +1538,14 @@ def _make_native_rules_router_method(native_client: DirectDetectionClient | None
 
 
 def _make_native_candidate_validate_no_augment_method(
+    *,
     native_client: DirectDetectionClient | None,
+    native_runtime: NativeDetectionRuntime,
 ) -> _DetectAndValidate:
     return _make_native_staged_method(
         native_client=native_client,
         gliner_seed_client=None,
+        native_runtime=native_runtime,
         seed_source=SeedSource.rules_plus_direct_llm,
         workflow_name="entity-detection-native-candidate-validate-no-augment",
         skip_augmentation=True,
@@ -1473,10 +1556,12 @@ def _make_gliner_native_validate_no_augment_method(
     *,
     native_client: DirectDetectionClient | None,
     gliner_seed_client: GlinerSeedClient | None,
+    native_runtime: NativeDetectionRuntime,
 ) -> _DetectAndValidate:
     return _make_native_staged_method(
         native_client=native_client,
         gliner_seed_client=gliner_seed_client,
+        native_runtime=native_runtime,
         seed_source=SeedSource.gliner,
         workflow_name="entity-detection-gliner-native-validate-no-augment",
         skip_augmentation=True,
@@ -1487,10 +1572,12 @@ def _make_gliner_native_validate_native_augment_method(
     *,
     native_client: DirectDetectionClient | None,
     gliner_seed_client: GlinerSeedClient | None,
+    native_runtime: NativeDetectionRuntime,
 ) -> _DetectAndValidate:
     return _make_native_staged_method(
         native_client=native_client,
         gliner_seed_client=gliner_seed_client,
+        native_runtime=native_runtime,
         seed_source=SeedSource.gliner,
         workflow_name="entity-detection-gliner-native-validate-native-augment",
         skip_augmentation=False,
@@ -1498,10 +1585,13 @@ def _make_gliner_native_validate_native_augment_method(
 
 
 def _make_detector_native_validate_no_augment_method(
+    *,
     native_client: DirectDetectionClient | None,
+    native_runtime: NativeDetectionRuntime,
 ) -> _DetectAndValidate:
     return _make_detector_native_validate_method(
-        native_client,
+        native_client=native_client,
+        native_runtime=native_runtime,
         workflow_name="entity-detection-detector-native-validate-no-augment",
         seed_workflow_name="entity-detection-detector-native-validate-no-augment-seed",
         skip_augmentation=True,
@@ -1509,10 +1599,13 @@ def _make_detector_native_validate_no_augment_method(
 
 
 def _make_detector_native_validate_native_augment_method(
+    *,
     native_client: DirectDetectionClient | None,
+    native_runtime: NativeDetectionRuntime,
 ) -> _DetectAndValidate:
     return _make_detector_native_validate_method(
-        native_client,
+        native_client=native_client,
+        native_runtime=native_runtime,
         workflow_name="entity-detection-detector-native-validate-native-augment",
         seed_workflow_name="entity-detection-detector-native-validate-native-augment-seed",
         skip_augmentation=False,
@@ -1520,8 +1613,9 @@ def _make_detector_native_validate_native_augment_method(
 
 
 def _make_detector_native_validate_method(
-    native_client: DirectDetectionClient | None,
     *,
+    native_client: DirectDetectionClient | None,
+    native_runtime: NativeDetectionRuntime,
     workflow_name: str,
     seed_workflow_name: str,
     skip_augmentation: bool,
@@ -1541,7 +1635,7 @@ def _make_detector_native_validate_method(
         preview_num_records: int | None = None,
     ) -> dw.EntityDetectionResult:
         labels = dw._resolve_detection_labels(entity_labels)
-        client = native_client or HttpxDirectDetectionClient()
+        client = _native_client_or_default(native_client, native_runtime)
         return _run_detector_native_validate_detection(
             self,
             dataframe,
@@ -1554,6 +1648,7 @@ def _make_detector_native_validate_method(
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             client=client,
+            runtime=native_runtime,
             data_summary=data_summary,
             workflow_name=workflow_name,
             seed_workflow_name=seed_workflow_name,
@@ -1576,6 +1671,7 @@ def _run_detector_native_validate_detection(
     validation_excerpt_window_chars: int,
     validation_single_chunk_full_text: bool,
     client: DirectDetectionClient,
+    runtime: NativeDetectionRuntime,
     data_summary: str | None,
     workflow_name: str,
     seed_workflow_name: str,
@@ -1605,6 +1701,7 @@ def _run_detector_native_validate_detection(
     params = _DetectorNativeValidationParams(
         labels=labels,
         client=client,
+        runtime=runtime,
         data_summary=data_summary,
         validation_prompt_mode=validation_prompt_mode,
         validation_max_entities_per_call=validation_max_entities_per_call,
@@ -1645,7 +1742,7 @@ def _execute_detector_native_validate_tasks(
 ) -> list[_DetectorNativeValidationRowResult]:
     if not tasks:
         return []
-    worker_count = _native_staged_worker_count(len(tasks))
+    worker_count = _native_staged_worker_count(len(tasks), runtime=params.runtime)
     if worker_count == 1:
         return [_execute_detector_native_validate_task(task, params=params) for task in tasks]
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -1668,6 +1765,7 @@ def _execute_detector_native_validate_task(
         ordinal=task.ordinal,
         labels=params.labels,
         client=params.client,
+        runtime=params.runtime,
         data_summary=params.data_summary,
         validation_prompt_mode=params.validation_prompt_mode,
         validation_max_entities_per_call=params.validation_max_entities_per_call,
@@ -1698,6 +1796,7 @@ def _execute_detector_native_validate_row(
     ordinal: int,
     labels: list[str],
     client: DirectDetectionClient,
+    runtime: NativeDetectionRuntime,
     data_summary: str | None,
     validation_prompt_mode: ValidationPromptMode,
     validation_max_entities_per_call: int,
@@ -1708,6 +1807,10 @@ def _execute_detector_native_validate_row(
     output_row = row.to_dict()
     request = _native_staged_request(row, index=index, ordinal=ordinal, labels=labels, data_summary=data_summary)
     config = StagedExecutionConfig(
+        endpoint=runtime.endpoint or "",
+        model=runtime.model,
+        max_tokens=runtime.max_tokens,
+        timeout_sec=runtime.timeout_sec,
         validation_prompt_mode=validation_prompt_mode,
         validation_max_entities_per_call=validation_max_entities_per_call,
         validation_excerpt_window_chars=validation_excerpt_window_chars,
@@ -1733,6 +1836,7 @@ def _execute_detector_native_validate_row(
             ordinal=ordinal,
             index=index,
             workflow_name=workflow_name,
+            runtime=runtime,
             output_row=None,
             failed_record=_native_failed_record(
                 index,
@@ -1747,6 +1851,7 @@ def _execute_detector_native_validate_row(
         ordinal=ordinal,
         index=index,
         workflow_name=workflow_name,
+        runtime=runtime,
         output_row=output_row,
         failed_record=None,
         completion=completion,
@@ -1782,10 +1887,11 @@ def _record_detector_native_validation_completion(
     *,
     request_count: int,
     workflow_name: str,
+    runtime: NativeDetectionRuntime,
 ) -> None:
     record_model_workflow(
         workflow_name=workflow_name,
-        model_aliases=[_NATIVE_DIRECT_MODEL_ALIAS],
+        model_aliases=[runtime.alias],
         input_row_count=1,
         output_row_count=1,
         failed_record_count=0,
@@ -1794,6 +1900,7 @@ def _record_detector_native_validation_completion(
             successful_requests=request_count,
             failed_requests=0,
             usage=dict(completion.usage or {}),
+            runtime=runtime,
         ),
     )
 
@@ -1804,6 +1911,7 @@ def _record_detector_native_validation_result(result: _DetectorNativeValidationR
             result.completion,
             request_count=result.request_count,
             workflow_name=result.workflow_name,
+            runtime=result.runtime,
         )
         return
     if result.failed_record is not None:
@@ -1811,13 +1919,20 @@ def _record_detector_native_validation_result(result: _DetectorNativeValidationR
             elapsed_sec=result.elapsed_sec,
             request_count=result.request_count,
             workflow_name=result.workflow_name,
+            runtime=result.runtime,
         )
 
 
-def _record_detector_native_validation_error(*, elapsed_sec: float, request_count: int, workflow_name: str) -> None:
+def _record_detector_native_validation_error(
+    *,
+    elapsed_sec: float,
+    request_count: int,
+    workflow_name: str,
+    runtime: NativeDetectionRuntime,
+) -> None:
     record_model_workflow(
         workflow_name=workflow_name,
-        model_aliases=[_NATIVE_DIRECT_MODEL_ALIAS],
+        model_aliases=[runtime.alias],
         input_row_count=1,
         output_row_count=0,
         failed_record_count=1,
@@ -1827,6 +1942,7 @@ def _record_detector_native_validation_error(*, elapsed_sec: float, request_coun
             successful_requests=0,
             failed_requests=max(request_count, 1),
             usage={},
+            runtime=runtime,
         ),
     )
 
@@ -1835,6 +1951,7 @@ def _make_native_staged_method(
     *,
     native_client: DirectDetectionClient | None,
     gliner_seed_client: GlinerSeedClient | None,
+    native_runtime: NativeDetectionRuntime,
     seed_source: SeedSource,
     workflow_name: str,
     skip_augmentation: bool,
@@ -1855,12 +1972,13 @@ def _make_native_staged_method(
     ) -> dw.EntityDetectionResult:
         _ = self, model_configs, selected_models, gliner_detection_threshold
         labels = dw._resolve_detection_labels(entity_labels)
-        client = native_client or HttpxDirectDetectionClient()
+        client = _native_client_or_default(native_client, native_runtime)
         return _run_native_staged_detection(
             dataframe,
             labels=labels,
             client=client,
             gliner_seed_client=gliner_seed_client,
+            runtime=native_runtime,
             data_summary=data_summary,
             preview_num_records=preview_num_records,
             validation_max_entities_per_call=validation_max_entities_per_call,
@@ -1880,6 +1998,7 @@ def _run_native_staged_detection(
     labels: list[str],
     client: DirectDetectionClient,
     gliner_seed_client: GlinerSeedClient | None,
+    runtime: NativeDetectionRuntime,
     data_summary: str | None,
     preview_num_records: int | None,
     validation_max_entities_per_call: int,
@@ -1898,6 +2017,7 @@ def _run_native_staged_detection(
         labels=labels,
         client=client,
         gliner_seed_client=gliner_seed_client,
+        runtime=runtime,
         data_summary=data_summary,
         validation_prompt_mode=validation_prompt_mode,
         validation_max_entities_per_call=validation_max_entities_per_call,
@@ -1925,7 +2045,7 @@ def _run_native_staged_detection(
             )
             continue
         if result.case is not None:
-            _record_native_direct_usage(result.case, workflow_name=workflow_name)
+            _record_native_direct_usage(result.case, workflow_name=workflow_name, runtime=runtime)
         output_rows.append(result.output_row)
         output_indices.append(result.index)
 
@@ -1942,15 +2062,15 @@ def _execute_native_staged_tasks(
 ) -> list[_NativeStagedRowResult]:
     if not tasks:
         return []
-    worker_count = _native_staged_worker_count(len(tasks))
+    worker_count = _native_staged_worker_count(len(tasks), runtime=params.runtime)
     if worker_count == 1:
         return [_execute_native_staged_task(task, params=params) for task in tasks]
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         return list(executor.map(lambda task: _execute_native_staged_task(task, params=params), tasks))
 
 
-def _native_staged_worker_count(task_count: int) -> int:
-    return max(1, min(task_count, _NATIVE_STAGED_MAX_WORKERS))
+def _native_staged_worker_count(task_count: int, *, runtime: NativeDetectionRuntime) -> int:
+    return max(1, min(task_count, runtime.max_workers))
 
 
 def _execute_native_staged_task(
@@ -1971,6 +2091,14 @@ def _execute_native_staged_task(
             client=params.client,
             seed_client=params.gliner_seed_client,
             seed_source=params.seed_source,
+            endpoint=params.runtime.endpoint or "",
+            model=params.runtime.model,
+            gliner_endpoint=params.runtime.gliner_endpoint or "",
+            gliner_model=params.runtime.gliner_model,
+            gliner_api_key_env=params.runtime.gliner_api_key_env,
+            gliner_threshold=params.runtime.gliner_threshold,
+            max_tokens=params.runtime.max_tokens,
+            timeout_sec=params.runtime.timeout_sec,
             skip_augmentation=params.skip_augmentation,
             validation_prompt_mode=params.validation_prompt_mode,
             validation_max_entities_per_call=params.validation_max_entities_per_call,
@@ -2021,8 +2149,13 @@ def _native_failed_record(index: object, *, workflow_name: str, error: str | Non
     )
 
 
-def _record_native_direct_usage(case: StagedDetectionCase, *, workflow_name: str) -> None:
-    model_usage = _native_staged_model_usage(case)
+def _record_native_direct_usage(
+    case: StagedDetectionCase,
+    *,
+    workflow_name: str,
+    runtime: NativeDetectionRuntime,
+) -> None:
+    model_usage = _native_staged_model_usage(case, runtime=runtime)
     if not model_usage:
         return
     record_model_workflow(
@@ -2036,17 +2169,21 @@ def _record_native_direct_usage(case: StagedDetectionCase, *, workflow_name: str
     )
 
 
-def _native_staged_model_usage(case: StagedDetectionCase) -> dict[str, dict[str, Any]]:
+def _native_staged_model_usage(
+    case: StagedDetectionCase,
+    *,
+    runtime: NativeDetectionRuntime,
+) -> dict[str, dict[str, Any]]:
     usage: dict[str, dict[str, Any]] = {}
     native_requests = 0
     native_usage: list[dict[str, int]] = []
 
     if case.phase_model_work.seed:
         if case.seed_source == SeedSource.gliner:
-            usage[_GLINER_DIRECT_MODEL_ALIAS] = _direct_model_usage_entry(
-                alias=_GLINER_DIRECT_MODEL_ALIAS,
-                model_name=_GLINER_DIRECT_MODEL_NAME,
-                provider_name=_GLINER_DIRECT_MODEL_PROVIDER,
+            usage[runtime.gliner_alias] = _direct_model_usage_entry(
+                alias=runtime.gliner_alias,
+                model_name=runtime.gliner_model,
+                provider_name=runtime.gliner_provider,
                 successful_requests=case.phase_model_requests.seed,
                 usage=case.phase_usage.seed,
             )
@@ -2060,10 +2197,10 @@ def _native_staged_model_usage(case: StagedDetectionCase) -> dict[str, dict[str,
         native_requests += case.phase_model_requests.augmentation
         native_usage.append(case.phase_usage.augmentation)
     if native_requests:
-        usage[_NATIVE_DIRECT_MODEL_ALIAS] = _direct_model_usage_entry(
-            alias=_NATIVE_DIRECT_MODEL_ALIAS,
-            model_name=_NATIVE_DIRECT_MODEL_NAME,
-            provider_name=_NATIVE_DIRECT_MODEL_PROVIDER,
+        usage[runtime.alias] = _direct_model_usage_entry(
+            alias=runtime.alias,
+            model_name=runtime.model,
+            provider_name=runtime.provider,
             successful_requests=native_requests,
             usage=_sum_usage_dicts(native_usage),
         )

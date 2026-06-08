@@ -108,6 +108,8 @@ even when the matrix has multiple configs or repetitions. Slicing is rejected
 for URL-like sources because the runner cannot safely materialize a local
 subset without downloading the whole dataset first.
 
+Relative paths in suite files are resolved from the suite file's directory.
+
 Use `case_retries` and `case_retry_backoff_sec` for long-running suites on
 shared model endpoints. Retries are disabled by default. When enabled, a failed
 case is retried with the same `case_id` and output paths; the final case still
@@ -128,6 +130,30 @@ configs:
     replace:
       strategy: hash
       digest_length: 12
+```
+
+Native benchmark strategies require an explicit runtime. Set top-level
+`native_runtime.endpoint` and `native_runtime.model`, set the standard
+`ANONYMIZER_BENCH_NATIVE_ENDPOINT` and `ANONYMIZER_BENCH_NATIVE_MODEL`
+environment variables, or override runtime fields per config with
+`configs[].native_runtime`. GLiNER-seeded native strategies also require
+`native_runtime.gliner_endpoint` and `native_runtime.gliner_model`, or the
+standard `ANONYMIZER_BENCH_GLINER_ENDPOINT` and
+`ANONYMIZER_BENCH_GLINER_MODEL` environment variables. The runner records
+runtime id, alias, provider, model, and env-variable names as run tags; raw
+endpoint URLs are not emitted into measurement tables.
+
+```yaml
+native_runtime:
+  runtime_id: local-vllm-json
+  endpoint_env: ANONYMIZER_BENCH_NATIVE_ENDPOINT
+  model_env: ANONYMIZER_BENCH_NATIVE_MODEL
+  provider: local-vllm
+  alias: native-direct
+configs:
+  - id: native-single-pass
+    experimental_detection_strategy: native_single_pass
+    replace: redact
 ```
 
 Supported values:
@@ -231,12 +257,11 @@ short-circuit for the former and falls back to the default pipeline for prose
 or legal labels.
 
 Use `native_rules_router` when you want the same routing shape without
-DataDesigner orchestration. It defaults to the local OpenAI-compatible endpoint
-used by the staged probe (`http://gpu-dev-pod-serve-svc:8000/v1`) and model
-`nvidia/nemotron-3-super`. Treat it as a native-executor prototype: it can prove
-that DataDesigner overhead is avoidable, but it must be compared against
-baseline signatures and original-value leak metrics before any workload-specific
-promotion decision.
+DataDesigner orchestration. It uses the resolved native runtime endpoint/model
+from `native_runtime` or the standard benchmark runtime environment variables.
+Treat it as a native-executor prototype: it can prove that DataDesigner overhead
+is avoidable, but it must be compared against baseline signatures and
+original-value leak metrics before any workload-specific promotion decision.
 
 Use `native_candidate_validate_no_augment` when you want a narrower native
 executor diagnostic: direct seed candidates plus direct validation, with no
@@ -260,15 +285,15 @@ validation and augmentation.
 Use `gliner_native_validate_no_augment` or
 `gliner_native_validate_native_augment` when the question is specifically
 "what if GLiNER did not run through DataDesigner?" These strategies use the
-staged direct executor's GLiNER seed client, which defaults to
-`https://integrate.api.nvidia.com/v1`, model `nvidia/gliner-pii`, and the
-`NVIDIA_API_KEY` environment variable. The no-augmentation arm is a lower-cost
-boundary; the native-augmentation arm is the quality-oriented no-DataDesigner
-candidate. The integrated benchmark strategies execute staged direct rows with
-bounded parallelism so hosted GLiNER and native validation/augmentation latency
-is not serialized across records. These arms also normalize direct GLiNER
-`date` seeds to `date_of_birth` only when the local seed context contains
-birth/DOB language.
+staged direct executor's GLiNER seed client using
+`native_runtime.gliner_endpoint`, `native_runtime.gliner_model`, or the standard
+GLiNER runtime environment variables; the API key env var defaults to
+`NVIDIA_API_KEY`. The no-augmentation arm is a lower-cost boundary; the
+native-augmentation arm is the quality-oriented no-DataDesigner candidate. The
+integrated benchmark strategies execute staged direct rows with bounded
+parallelism so GLiNER and native validation/augmentation latency is not
+serialized across records. These arms also normalize direct GLiNER `date` seeds
+to `date_of_birth` only when the local seed context contains birth/DOB language.
 Generic filing or event dates remain `date`. Both arms still need repeated
 signature, leak, label-mismatch, and reliability gates before any
 workload-specific promotion.
@@ -320,8 +345,9 @@ The runner refuses to write into a non-empty output directory unless
 `tables/`; pass `--no-export` when you only want the raw measurement JSONL.
 Before starting a real run, the benchmark runner performs cheap preflight
 checks: suite/config parsing, local dataset existence, CSV/Parquet text-column
-metadata, provider YAML shape, and active model-alias references. `--dry-run`
-only expands the planned matrix and skips these file/config checks.
+metadata, provider YAML shape, native runtime requirements, and active
+model-alias references. `--dry-run` runs those same checks, expands the planned
+matrix, and skips output-dir writes and model work.
 
 For debugging DataDesigner calls, pass `--dd-trace last-message` or
 `--dd-trace all-messages`. Trace records are written separately from sanitized
@@ -380,6 +406,9 @@ input row, then reuses Anonymizer's existing span postprocessing, occurrence
 expansion, overlap resolution, and entity signature logic so results can be
 compared against normal detection artifacts.
 
+Pass `--endpoint` and `--model`, or set `ANONYMIZER_BENCH_NATIVE_ENDPOINT` and
+`ANONYMIZER_BENCH_NATIVE_MODEL`.
+
 Example biography probe:
 
 ```bash
@@ -387,8 +416,10 @@ uv run python tools/measurement/direct_detection_probe.py \
   docs/data/NVIDIA_synthetic_biographies.csv \
   --text-column biography \
   --labels age,city,company_name,degree,education_level,field_of_study,first_name,language,last_name,occupation,organization_name,place_name,political_view,race_ethnicity,religious_belief,state,university \
-  --baseline-artifacts /tmp/anonymizer-perf-explore/out-repo-data-sliced-local-vllm-json-strategies-labels/raw/biographies-slice-1__biography-prose-default__r000.detection-artifacts.jsonl \
-  --output /tmp/anonymizer-perf-explore/out-direct-detection-probe-biography \
+  --endpoint http://your-openai-compatible-endpoint/v1 \
+  --model your-model-id \
+  --baseline-artifacts "$BASELINE_ARTIFACTS" \
+  --output /tmp/direct-detection-probe-biography \
   --overwrite \
   --json
 ```
@@ -400,8 +431,10 @@ uv run python tools/measurement/direct_detection_probe.py \
   docs/data/TAB_legal_sample25.csv \
   --text-column text \
   --labels application_number,city,country,date,date_of_birth,nationality,person \
-  --baseline-artifacts /tmp/anonymizer-perf-explore/out-repo-data-sliced-local-vllm-json-strategies-labels/raw/legal-slice-2__legal-prose-default__r000.detection-artifacts.jsonl \
-  --output /tmp/anonymizer-perf-explore/out-direct-detection-probe-legal \
+  --endpoint http://your-openai-compatible-endpoint/v1 \
+  --model your-model-id \
+  --baseline-artifacts "$BASELINE_ARTIFACTS" \
+  --output /tmp/direct-detection-probe-legal \
   --overwrite \
   --json
 ```
@@ -413,6 +446,9 @@ signature hashes, and optional baseline comparison counts. Artifact rows use
 the same opaque signature fields as `analyze_detection_artifacts.py` and omit
 raw entity values. For baseline comparison, pass a per-case sidecar or another
 artifact file with one row per `row_index`; duplicate row indexes are rejected
+to avoid ambiguous comparisons. Treat the probe `summary.json` as a sensitive
+debug artifact because it records the resolved endpoint/model runtime used for
+the probe.
 so a combined multi-case artifact cannot silently select the wrong baseline.
 
 When this probe shape is promising, move it into a normal benchmark suite with
@@ -455,8 +491,10 @@ uv run python tools/measurement/staged_detection_probe.py \
   docs/data/NVIDIA_synthetic_biographies.csv \
   --text-column biography \
   --labels age,city,company_name,degree,education_level,field_of_study,first_name,language,last_name,occupation,organization_name,place_name,political_view,race_ethnicity,religious_belief,state,university \
-  --baseline-artifacts /tmp/anonymizer-perf-explore/out-repo-data-sliced-local-vllm-json-strategies-labels/raw/biographies-slice-1__biography-prose-default__r000.detection-artifacts.jsonl \
-  --output /tmp/anonymizer-perf-explore/out-staged-detection-probe-biography \
+  --endpoint http://your-openai-compatible-endpoint/v1 \
+  --model your-model-id \
+  --baseline-artifacts "$BASELINE_ARTIFACTS" \
+  --output /tmp/staged-detection-probe-biography \
   --overwrite \
   --json
 ```
@@ -468,16 +506,19 @@ uv run python tools/measurement/staged_detection_probe.py \
   docs/data/TAB_legal_sample25.csv \
   --text-column text \
   --labels application_number,city,country,date,date_of_birth,nationality,person \
-  --baseline-artifacts /tmp/anonymizer-perf-explore/out-repo-data-sliced-local-vllm-json-strategies-labels/raw/legal-slice-2__legal-prose-default__r000.detection-artifacts.jsonl \
-  --output /tmp/anonymizer-perf-explore/out-staged-detection-probe-legal \
+  --endpoint http://your-openai-compatible-endpoint/v1 \
+  --model your-model-id \
+  --baseline-artifacts "$BASELINE_ARTIFACTS" \
+  --output /tmp/staged-detection-probe-legal \
   --overwrite \
   --json
 ```
 
 To replace the LLM seed phase with a direct GLiNER call, add
-`--seed-source gliner`. The default GLiNER endpoint is NVIDIA-hosted
-`https://integrate.api.nvidia.com/v1` with model `nvidia/gliner-pii`; it reads
-the API key from `NVIDIA_API_KEY`.
+`--seed-source gliner` plus `--gliner-endpoint` and `--gliner-model`, or set
+`ANONYMIZER_BENCH_GLINER_ENDPOINT` and `ANONYMIZER_BENCH_GLINER_MODEL`. The
+probe reads the GLiNER API key from `--gliner-api-key-env`, which defaults to
+`NVIDIA_API_KEY`.
 
 To replace the LLM seed phase with deterministic local rules, add
 `--seed-source rules`. This still sends rule candidates through the validator.
@@ -516,6 +557,8 @@ wall time in `elapsed_sec`, model-call time in `model_elapsed_sec`, plus
 `model_phase_count`, `model_request_count`, total usage, and optional baseline
 signature deltas. Use these fields to distinguish local work, provider latency,
 and a provider that returned no token accounting.
+Treat the staged probe `summary.json` as a sensitive debug artifact because it
+records the resolved endpoint/model runtime used for the probe.
 For example, a fully local rule-covered run should show `model_phase_count: 0`,
 `model_request_count: 0`, `rule_covered_label_set: true`, and
 `phase_skip_reasons.augmentation: "rule_covered_labels"`; `elapsed_sec` should
@@ -527,8 +570,8 @@ To summarize those staged probe outputs without hand-written `jq`, run:
 
 ```bash
 uv run python tools/measurement/analyze_staged_detection_output.py \
-  /tmp/anonymizer-perf-explore/out-staged-detection-probe-biography \
-  --output /tmp/anonymizer-perf-explore/out-staged-detection-probe-biography/analysis \
+  /tmp/staged-detection-probe-biography \
+  --output /tmp/staged-detection-probe-biography/analysis \
   --format csv
 ```
 
@@ -660,9 +703,13 @@ A benchmark run writes one raw measurement file per case, then combines them:
 ```text
 benchmark-runs/suite-id/
   raw/
+    inputs/
+      biographies__redact-default__r000.csv
     biographies__redact-default__r000.jsonl
     biographies__redact-default__r000.detection-artifacts.jsonl
     support__hash-agent-labels__r000.jsonl
+  artifacts/
+    biographies__redact-default__r000/
   traces/
     biographies__redact-default__r000.jsonl
   measurements.jsonl
@@ -688,6 +735,13 @@ Use `measurements.jsonl` when you need the original structured records. Use
 `tables/` for analysis.
 Use `traces/` only when `--dd-trace` was enabled and you need raw
 DataDesigner message-level debugging.
+
+Treat `summary.json`, `raw/inputs/`, `artifacts/`,
+`raw/*.detection-artifacts.jsonl`, and `traces/` as sensitive outputs. They can
+contain source text, entity values, replacement values, prompts, model
+responses, exception messages, or other PII-bearing debug data. The exported
+measurement tables and detection signature ids are designed for analysis
+without raw values, but debug sidecars are not sanitized bundles.
 
 Detection workflow artifacts can be analyzed separately when you need to know
 whether augmentation helped or only added cost. `run_benchmarks.py` writes
@@ -793,8 +847,9 @@ detection artifacts, including `artifact_final_detector_entity_count`,
 strategy is still relying on contextual detector/validator spans, or whether it
 has shifted a workload entirely onto deterministic rules.
 They also include `artifact_final_entity_signature_count` and
-`artifact_final_entity_signature_hashes`, which are opaque per-row hashes of the
-final entity label, normalized value, and offsets. The companion
+`artifact_final_entity_signature_hashes`, which are opaque per-row identifiers
+derived from the final entity label and offsets. They do not include raw or
+normalized entity values. The companion
 `artifact_final_entity_signature_labels` field maps each opaque hash to its
 entity label. These fields do not expose raw entity values, but they let
 analysis tools detect when two configs report the same entity count while
@@ -935,7 +990,7 @@ by source-path fragments:
 
 ```bash
 uv run python tools/measurement/screen_strategy_comparisons.py \
-  /tmp/anonymizer-perf-explore \
+  /tmp/anonymizer-benchmark-scratch \
   --source-include analysis-current-csv \
   --source-include analysis-failure-aware-csv \
   --output current-strategy-screen.csv \
@@ -1306,8 +1361,9 @@ Use `extract_signature_deltas.py` when a fast candidate has fewer, more, or
 different final entity signatures than a higher-recall reference run. The tool
 compares two `detection-artifacts.jsonl` files and recovers local context from
 the DataDesigner artifact parquet files. Entity values are masked by default:
-the output stores label, source, span offsets, value length, value hash, and a
-small context window with the entity replaced by a placeholder.
+the output stores label, source, span offsets, value length, signature id, and a
+small context window with the entity replaced by a placeholder. It does not
+emit a hash derived from the raw entity value.
 
 Example: review spans found by a text/raw-parser reference but missed by a
 hybrid candidate for one workload/config pair:

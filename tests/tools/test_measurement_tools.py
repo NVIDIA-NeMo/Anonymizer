@@ -14,6 +14,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT
@@ -847,6 +848,7 @@ matrix:
 """,
         encoding="utf-8",
     )
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(tmp_path / "biographies.csv", index=False)
     output_dir = tmp_path / "dry-run-output"
 
     result = tool.run_or_plan(
@@ -1037,6 +1039,43 @@ configs:
     tool.preflight_suite(spec, spec_path=spec_path)
 
 
+def test_benchmark_example_suites_are_portable() -> None:
+    example_paths = sorted((REPO_ROOT / "tools/measurement/examples").glob("*.yaml"))
+    assert example_paths
+
+    machine_specific_fragments = (
+        "/root/",
+        "/Users/",
+        "/stable-cache/",
+        "gpu-dev-pod",
+        "serve-svc",
+    )
+    path_fields = {"source", "model_configs", "model_providers", "artifact_path"}
+
+    def walk(value: Any) -> Iterator[tuple[str, Any]]:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield str(key), item
+                yield from walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item)
+
+    for example_path in example_paths:
+        payload = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+        assert isinstance(payload, dict)
+
+        for key, value in walk(payload):
+            if isinstance(value, str):
+                assert not any(fragment in value for fragment in machine_specific_fragments), (
+                    f"{example_path} contains machine-specific value for {key}: {value}"
+                )
+                if key in path_fields:
+                    assert not Path(value).is_absolute(), f"{example_path} uses absolute path for {key}: {value}"
+                if key in {"endpoint", "gliner_endpoint"}:
+                    raise AssertionError(f"{example_path} should use endpoint_env for {key}, not a literal endpoint")
+
+
 def test_benchmark_preflight_rejects_bad_provider_config(tmp_path: Path) -> None:
     tool = load_tool(
         "measurement_benchmark_tool_preflight_providers", REPO_ROOT / "tools/measurement/run_benchmarks.py"
@@ -1093,6 +1132,186 @@ workloads:
 configs:
   - id: redact
     replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_preflight_rejects_native_strategy_without_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_required",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", raising=False)
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_MODEL", raising=False)
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: native-runtime-suite
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: native-single-pass
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="native_runtime.runtime_id"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_native_runtime_config_override_merges_suite_defaults() -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_merge",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    config = tool.ConfigSpec(
+        id="native-single-pass",
+        experimental_detection_strategy="native_single_pass",
+        native_runtime=tool.NativeRuntimeSpec(model="config-model", max_workers=2),
+        replace="redact",
+    )
+    spec = tool.BenchmarkSpec(
+        suite_id="native-runtime-suite",
+        native_runtime=tool.NativeRuntimeSpec(
+            runtime_id="suite-runtime",
+            endpoint="http://suite-endpoint/v1",
+            model="suite-model",
+            provider="suite-provider",
+            max_workers=4,
+        ),
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=[config],
+    )
+
+    runtime = tool._native_detection_runtime(spec, config)
+
+    assert runtime.endpoint == "http://suite-endpoint/v1"
+    assert runtime.model == "config-model"
+    assert runtime.provider == "suite-provider"
+    assert runtime.max_workers == 2
+
+
+def test_benchmark_preflight_rejects_native_strategy_without_endpoint_or_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_endpoint_required",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", raising=False)
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_MODEL", raising=False)
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: native-runtime-suite
+native_runtime:
+  runtime_id: native-runtime
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: native-single-pass
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="native_runtime.endpoint"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_native_runtime_resolves_endpoint_and_model_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_env",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    monkeypatch.setenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", "http://runtime-from-env/v1")
+    monkeypatch.setenv("ANONYMIZER_BENCH_NATIVE_MODEL", "env-model")
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: native-runtime-suite
+native_runtime:
+  runtime_id: env-runtime
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: native-single-pass
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    tool.preflight_suite(spec, spec_path=spec_path)
+    runtime = tool._native_detection_runtime(spec, spec.configs[0])
+    tags = tool._run_tags(
+        tool.BenchmarkCase(
+            suite_id="native-runtime-suite",
+            workload_id="input",
+            config_id="native-single-pass",
+            repetition=0,
+            case_id="input__native-single-pass__r000",
+        ),
+        spec,
+    )
+
+    assert runtime.endpoint == "http://runtime-from-env/v1"
+    assert runtime.model == "env-model"
+    assert tags["native_runtime_id"] == "env-runtime"
+    assert "native_endpoint" not in tags
+    assert tags["native_endpoint_env"] == "ANONYMIZER_BENCH_NATIVE_ENDPOINT"
+    assert tags["native_model"] == "env-model"
+
+
+def test_benchmark_preflight_skips_inactive_native_configs(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_inactive_native_runtime",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: inactive-native-suite
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+  - id: inactive-native
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+matrix:
+  - workload: input
+    config: redact
 """,
         encoding="utf-8",
     )

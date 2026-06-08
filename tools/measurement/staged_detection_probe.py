@@ -98,6 +98,15 @@ from anonymizer.engine.schemas import (
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.staged_detection_probe")
+
+_NATIVE_ENDPOINT_ENV = "ANONYMIZER_BENCH_NATIVE_ENDPOINT"
+_NATIVE_MODEL_ENV = "ANONYMIZER_BENCH_NATIVE_MODEL"
+_GLINER_ENDPOINT_ENV = "ANONYMIZER_BENCH_GLINER_ENDPOINT"
+_GLINER_MODEL_ENV = "ANONYMIZER_BENCH_GLINER_MODEL"
+_UNCONFIGURED_ENDPOINT = "configured-native-endpoint"
+_UNCONFIGURED_MODEL = "configured-native-model"
+_UNCONFIGURED_GLINER_ENDPOINT = "configured-gliner-endpoint"
+_UNCONFIGURED_GLINER_MODEL = "configured-gliner-model"
 _log_format = LogFormat.plain
 _DATE_OF_BIRTH_CONTEXT_RE = re.compile(r"\b(born|birth|date of birth|dob)\b", re.IGNORECASE)
 
@@ -121,7 +130,7 @@ class GlinerDetectionRequest(BaseModel):
     model: str
     text: str
     labels: list[str] = Field(min_length=1)
-    threshold: float = 0.3
+    threshold: float = Field(default=0.3, ge=0.0, le=1.0)
     max_tokens: int = Field(default=4096, gt=0)
     timeout_sec: float = Field(default=120.0, gt=0)
     api_key_env: str = "NVIDIA_API_KEY"
@@ -132,13 +141,13 @@ class GlinerSeedClient(Protocol):
 
 
 class StagedExecutionConfig(BaseModel):
-    endpoint: str = "http://gpu-dev-pod-serve-svc:8000/v1"
-    model: str = "nvidia/nemotron-3-super"
+    endpoint: str = _UNCONFIGURED_ENDPOINT
+    model: str = _UNCONFIGURED_MODEL
     seed_source: SeedSource = SeedSource.direct_llm
-    gliner_endpoint: str = "https://integrate.api.nvidia.com/v1"
-    gliner_model: str = "nvidia/gliner-pii"
+    gliner_endpoint: str = _UNCONFIGURED_GLINER_ENDPOINT
+    gliner_model: str = _UNCONFIGURED_GLINER_MODEL
     gliner_api_key_env: str = "NVIDIA_API_KEY"
-    gliner_threshold: float = 0.3
+    gliner_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
     max_tokens: int = Field(default=4096, gt=0)
     timeout_sec: float = Field(default=180.0, gt=0)
     skip_augmentation: bool = False
@@ -297,10 +306,10 @@ def run_staged_detection_case(
     client: DirectDetectionClient,
     seed_client: GlinerSeedClient | None = None,
     seed_source: SeedSource = SeedSource.direct_llm,
-    endpoint: str = "http://gpu-dev-pod-serve-svc:8000/v1",
-    model: str = "nvidia/nemotron-3-super",
-    gliner_endpoint: str = "https://integrate.api.nvidia.com/v1",
-    gliner_model: str = "nvidia/gliner-pii",
+    endpoint: str = _UNCONFIGURED_ENDPOINT,
+    model: str = _UNCONFIGURED_MODEL,
+    gliner_endpoint: str = _UNCONFIGURED_GLINER_ENDPOINT,
+    gliner_model: str = _UNCONFIGURED_GLINER_MODEL,
     gliner_api_key_env: str = "NVIDIA_API_KEY",
     gliner_threshold: float = 0.3,
     max_tokens: int = 4096,
@@ -338,10 +347,10 @@ def execute_staged_detection_case(
     client: DirectDetectionClient,
     seed_client: GlinerSeedClient | None = None,
     seed_source: SeedSource = SeedSource.direct_llm,
-    endpoint: str = "http://gpu-dev-pod-serve-svc:8000/v1",
-    model: str = "nvidia/nemotron-3-super",
-    gliner_endpoint: str = "https://integrate.api.nvidia.com/v1",
-    gliner_model: str = "nvidia/gliner-pii",
+    endpoint: str = _UNCONFIGURED_ENDPOINT,
+    model: str = _UNCONFIGURED_MODEL,
+    gliner_endpoint: str = _UNCONFIGURED_GLINER_ENDPOINT,
+    gliner_model: str = _UNCONFIGURED_GLINER_MODEL,
     gliner_api_key_env: str = "NVIDIA_API_KEY",
     gliner_threshold: float = 0.3,
     max_tokens: int = 4096,
@@ -1312,11 +1321,11 @@ def run_probe(
     labels: list[str],
     output: Path | None = None,
     overwrite: bool = False,
-    endpoint: str = "http://gpu-dev-pod-serve-svc:8000/v1",
-    model: str = "nvidia/nemotron-3-super",
+    endpoint: str | None = None,
+    model: str | None = None,
     seed_source: SeedSource = SeedSource.direct_llm,
-    gliner_endpoint: str = "https://integrate.api.nvidia.com/v1",
-    gliner_model: str = "nvidia/gliner-pii",
+    gliner_endpoint: str | None = None,
+    gliner_model: str | None = None,
     gliner_api_key_env: str = "NVIDIA_API_KEY",
     gliner_threshold: float = 0.3,
     skip_augmentation: bool = False,
@@ -1328,6 +1337,18 @@ def run_probe(
     offset: int = 0,
     baseline_artifacts: Path | None = None,
 ) -> StagedDetectionRun:
+    endpoint = _required_runtime_value("endpoint", explicit=endpoint, env_var=_NATIVE_ENDPOINT_ENV)
+    model = _required_runtime_value("model", explicit=model, env_var=_NATIVE_MODEL_ENV)
+    if seed_source == SeedSource.gliner:
+        gliner_endpoint = _required_runtime_value(
+            "gliner_endpoint", explicit=gliner_endpoint, env_var=_GLINER_ENDPOINT_ENV
+        )
+        gliner_model = _required_runtime_value("gliner_model", explicit=gliner_model, env_var=_GLINER_MODEL_ENV)
+        if not os.environ.get(gliner_api_key_env):
+            raise ValueError(f"{gliner_api_key_env} is not set")
+    else:
+        gliner_endpoint = gliner_endpoint or _UNCONFIGURED_GLINER_ENDPOINT
+        gliner_model = gliner_model or _UNCONFIGURED_GLINER_MODEL
     requests = _load_requests(input_path, text_column=text_column, labels=labels, limit=limit, offset=offset)
     config = _execution_config_from_params(locals())
     cases = _run_probe_cases(requests, config)
@@ -1339,6 +1360,13 @@ def run_probe(
     if output is not None:
         write_outputs(result, output, overwrite=overwrite)
     return result
+
+
+def _required_runtime_value(name: str, *, explicit: str | None, env_var: str) -> str:
+    value = explicit or os.environ.get(env_var)
+    if not value:
+        raise ValueError(f"{name} is required; pass --{name.replace('_', '-')} or set {env_var}")
+    return value
 
 
 def _run_probe_cases(
@@ -1431,11 +1459,11 @@ def main(
     labels: Annotated[str, cyclopts.Parameter("--labels")],
     output: Annotated[Path | None, cyclopts.Parameter(("--output", "-o"))] = None,
     overwrite: Annotated[bool, cyclopts.Parameter("--overwrite")] = False,
-    endpoint: Annotated[str, cyclopts.Parameter("--endpoint")] = "http://gpu-dev-pod-serve-svc:8000/v1",
-    model: Annotated[str, cyclopts.Parameter("--model")] = "nvidia/nemotron-3-super",
+    endpoint: Annotated[str | None, cyclopts.Parameter("--endpoint")] = None,
+    model: Annotated[str | None, cyclopts.Parameter("--model")] = None,
     seed_source: Annotated[SeedSource, cyclopts.Parameter("--seed-source")] = SeedSource.direct_llm,
-    gliner_endpoint: Annotated[str, cyclopts.Parameter("--gliner-endpoint")] = "https://integrate.api.nvidia.com/v1",
-    gliner_model: Annotated[str, cyclopts.Parameter("--gliner-model")] = "nvidia/gliner-pii",
+    gliner_endpoint: Annotated[str | None, cyclopts.Parameter("--gliner-endpoint")] = None,
+    gliner_model: Annotated[str | None, cyclopts.Parameter("--gliner-model")] = None,
     gliner_api_key_env: Annotated[str, cyclopts.Parameter("--gliner-api-key-env")] = "NVIDIA_API_KEY",
     gliner_threshold: Annotated[float, cyclopts.Parameter("--gliner-threshold")] = 0.3,
     skip_augmentation: Annotated[bool, cyclopts.Parameter("--skip-augmentation")] = False,

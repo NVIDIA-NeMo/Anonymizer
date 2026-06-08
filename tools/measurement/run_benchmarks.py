@@ -10,6 +10,7 @@ Usage:
 
 import json
 import logging
+import os
 import shutil
 import sys
 import time
@@ -32,6 +33,7 @@ from data_designer.config.utils.io_helpers import load_config_file
 from dd_parser_compat import DDParserCompatMode, dd_parser_compat_context
 from detection_strategies import (
     ExperimentalDetectionStrategy,
+    NativeDetectionRuntime,
     experimental_detection_strategy_context,
 )
 from export_measurements import ExportFormat, export_tables, read_measurements
@@ -88,6 +90,35 @@ class DDTraceMode(StrEnum):
     all_messages = "all_messages"
 
 
+_NATIVE_ENDPOINT_ENV = "ANONYMIZER_BENCH_NATIVE_ENDPOINT"
+_NATIVE_MODEL_ENV = "ANONYMIZER_BENCH_NATIVE_MODEL"
+_GLINER_ENDPOINT_ENV = "ANONYMIZER_BENCH_GLINER_ENDPOINT"
+_GLINER_MODEL_ENV = "ANONYMIZER_BENCH_GLINER_MODEL"
+
+
+class NativeRuntimeSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runtime_id: str | None = None
+    endpoint: str | None = None
+    endpoint_env: str | None = _NATIVE_ENDPOINT_ENV
+    model: str | None = None
+    model_env: str | None = _NATIVE_MODEL_ENV
+    provider: str = "native"
+    alias: str = "native-direct"
+    max_tokens: int = Field(default=4096, gt=0)
+    timeout_sec: float = Field(default=180.0, gt=0)
+    gliner_endpoint: str | None = None
+    gliner_endpoint_env: str | None = _GLINER_ENDPOINT_ENV
+    gliner_model: str | None = None
+    gliner_model_env: str | None = _GLINER_MODEL_ENV
+    gliner_provider: str = "gliner"
+    gliner_alias: str = "gliner-direct"
+    gliner_api_key_env: str = "NVIDIA_API_KEY"
+    gliner_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    max_workers: int = Field(default=4, ge=1)
+
+
 class ReplaceKind(StrEnum):
     redact = "redact"
     hash = "hash"
@@ -140,6 +171,7 @@ class ConfigSpec(BaseModel):
     experimental_detection_strategy: ExperimentalDetectionStrategy = ExperimentalDetectionStrategy.default
     experimental_replacement_strategy: ExperimentalReplacementStrategy = ExperimentalReplacementStrategy.default
     experimental_rule_labels: list[str] | None = None
+    native_runtime: NativeRuntimeSpec | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> "ConfigSpec":
@@ -176,6 +208,7 @@ class BenchmarkSpec(BaseModel):
     model_providers: str | None = None
     artifact_path: str | None = None
     dd_parser_compat: DDParserCompatMode = DDParserCompatMode.none
+    native_runtime: NativeRuntimeSpec | None = None
     case_retries: int = Field(default=0, ge=0)
     case_retry_backoff_sec: float = Field(default=0.0, ge=0.0)
     workloads: list[WorkloadSpec] = Field(min_length=1)
@@ -269,6 +302,22 @@ _RULE_BACKED_STRATEGIES = {
     ExperimentalDetectionStrategy.rules_filter_guardrail_no_augment,
     ExperimentalDetectionStrategy.rules_guardrail_detector_only,
     ExperimentalDetectionStrategy.rules_only,
+}
+_NATIVE_RUNTIME_STRATEGIES = {
+    ExperimentalDetectionStrategy.native_rules_router,
+    ExperimentalDetectionStrategy.native_candidate_validate_no_augment,
+    ExperimentalDetectionStrategy.detector_native_validate_no_augment,
+    ExperimentalDetectionStrategy.detector_native_validate_native_augment,
+    ExperimentalDetectionStrategy.gliner_native_validate_no_augment,
+    ExperimentalDetectionStrategy.gliner_native_validate_native_augment,
+    ExperimentalDetectionStrategy.native_single_pass,
+    ExperimentalDetectionStrategy.native_single_pass_recall,
+    ExperimentalDetectionStrategy.native_single_pass_values,
+    ExperimentalDetectionStrategy.native_single_pass_values_recall,
+}
+_GLINER_NATIVE_RUNTIME_STRATEGIES = {
+    ExperimentalDetectionStrategy.gliner_native_validate_no_augment,
+    ExperimentalDetectionStrategy.gliner_native_validate_native_augment,
 }
 
 _FINAL_ARTIFACT_KEYS = {
@@ -392,7 +441,10 @@ def _preflight_workload_errors(spec: BenchmarkSpec, *, base_dir: Path) -> list[s
 
 def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) -> list[str]:
     errors: list[str] = []
+    active_config_ids = _active_config_ids(spec)
     for config in spec.configs:
+        if config.id not in active_config_ids:
+            continue
         try:
             anonymizer_config = build_anonymizer_config(config)
         except Exception as exc:
@@ -402,6 +454,10 @@ def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) 
             _preflight_experimental_detection_strategy(config, anonymizer_config)
         except Exception as exc:
             errors.append(f"config '{config.id}' experimental_detection_strategy invalid: {exc}")
+        try:
+            _preflight_native_runtime(config, spec=spec)
+        except Exception as exc:
+            errors.append(f"config '{config.id}' native_runtime invalid: {exc}")
         try:
             _preflight_experimental_replacement_strategy(config, anonymizer_config)
         except Exception as exc:
@@ -419,6 +475,12 @@ def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) 
         except ValueError as exc:
             errors.append(f"config '{config.id}' model aliases invalid: {exc}")
     return errors
+
+
+def _active_config_ids(spec: BenchmarkSpec) -> set[str]:
+    if spec.matrix is None:
+        return {config.id for config in spec.configs}
+    return {entry.config for entry in spec.matrix}
 
 
 def _preflight_experimental_detection_strategy(config: ConfigSpec, anonymizer_config: AnonymizerConfig) -> None:
@@ -452,6 +514,65 @@ def _preflight_experimental_rule_labels(config: ConfigSpec) -> None:
         raise ValueError(
             f"unsupported experimental_rule_labels: {', '.join(unsupported)}; supported labels: {supported}"
         )
+
+
+def _preflight_native_runtime(config: ConfigSpec, *, spec: BenchmarkSpec) -> None:
+    strategy = config.experimental_detection_strategy
+    if strategy not in _NATIVE_RUNTIME_STRATEGIES:
+        return
+    runtime = _resolve_native_runtime_spec(spec, config)
+    if not runtime.runtime_id:
+        raise ValueError("native strategies require native_runtime.runtime_id")
+    if not runtime.endpoint or not runtime.model:
+        raise ValueError("native strategies require native_runtime.endpoint and native_runtime.model")
+    if strategy in _GLINER_NATIVE_RUNTIME_STRATEGIES:
+        if not runtime.gliner_endpoint or not runtime.gliner_model:
+            raise ValueError("GLiNER-native strategies require native_runtime.gliner_endpoint and gliner_model")
+        if not os.environ.get(runtime.gliner_api_key_env):
+            raise ValueError(f"{runtime.gliner_api_key_env} is not set for GLiNER-native strategy")
+
+
+def _resolve_native_runtime_spec(spec: BenchmarkSpec, config: ConfigSpec) -> NativeRuntimeSpec:
+    runtime = spec.native_runtime or NativeRuntimeSpec()
+    if config.native_runtime is not None:
+        runtime = runtime.model_copy(update=config.native_runtime.model_dump(exclude_unset=True))
+    return runtime.model_copy(
+        update={
+            "endpoint": _resolve_runtime_value(runtime.endpoint, runtime.endpoint_env),
+            "model": _resolve_runtime_value(runtime.model, runtime.model_env),
+            "gliner_endpoint": _resolve_runtime_value(runtime.gliner_endpoint, runtime.gliner_endpoint_env),
+            "gliner_model": _resolve_runtime_value(runtime.gliner_model, runtime.gliner_model_env),
+        }
+    )
+
+
+def _resolve_runtime_value(explicit: str | None, env_var: str | None) -> str | None:
+    if explicit:
+        return explicit
+    return os.environ.get(env_var) if env_var else None
+
+
+def _native_detection_runtime(spec: BenchmarkSpec, config: ConfigSpec) -> NativeDetectionRuntime:
+    runtime = _resolve_native_runtime_spec(spec, config)
+    if not runtime.runtime_id:
+        raise ValueError("native strategies require native_runtime.runtime_id")
+    if not runtime.endpoint or not runtime.model:
+        raise ValueError("native strategies require native_runtime.endpoint and native_runtime.model")
+    return NativeDetectionRuntime(
+        endpoint=runtime.endpoint,
+        model=runtime.model,
+        provider=runtime.provider,
+        alias=runtime.alias,
+        max_tokens=runtime.max_tokens,
+        timeout_sec=runtime.timeout_sec,
+        gliner_endpoint=runtime.gliner_endpoint,
+        gliner_model=runtime.gliner_model or "",
+        gliner_provider=runtime.gliner_provider,
+        gliner_alias=runtime.gliner_alias,
+        gliner_api_key_env=runtime.gliner_api_key_env,
+        gliner_threshold=runtime.gliner_threshold,
+        max_workers=runtime.max_workers,
+    )
 
 
 def _preflight_experimental_replacement_strategy(
@@ -489,7 +610,7 @@ def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
             if not candidate.is_file():
                 raise FileNotFoundError(f"Providers config file not found: {candidate}")
             config_source = candidate
-    config_dict = load_config_file(config_source)
+    config_dict = yaml.safe_load(raw) if isinstance(raw, str) and "\n" in raw else load_config_file(config_source)
     raw_providers = config_dict.get("providers") if isinstance(config_dict, dict) else None
     if not isinstance(raw_providers, list):
         raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
@@ -1027,9 +1148,12 @@ def _execute_case(
     )
     with configured_measurement_session(measurement):
         with dd_parser_compat_context(dd_parser_compat):
+            detection_context_kwargs: dict[str, Any] = {"rule_labels": config.experimental_rule_labels}
+            if config.experimental_detection_strategy in _NATIVE_RUNTIME_STRATEGIES:
+                detection_context_kwargs["native_runtime"] = _native_detection_runtime(spec, config)
             with experimental_detection_strategy_context(
                 config.experimental_detection_strategy,
-                rule_labels=config.experimental_rule_labels,
+                **detection_context_kwargs,
             ):
                 with experimental_replacement_strategy_context(config.experimental_replacement_strategy):
                     result = anonymizer.run(
@@ -1358,7 +1482,7 @@ def render_result(result: BenchmarkResult, *, json_output: bool) -> str:
 
 def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
     config = next(item for item in spec.configs if item.id == case.config_id)
-    return {
+    tags = {
         "suite_id": spec.suite_id,
         "workload_id": case.workload_id,
         "config_id": case.config_id,
@@ -1369,6 +1493,32 @@ def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
         "experimental_rule_labels": config.experimental_rule_labels,
         "dd_parser_compat": spec.dd_parser_compat.value,
     }
+    if config.experimental_detection_strategy in _NATIVE_RUNTIME_STRATEGIES:
+        tags.update(_native_runtime_tags(_resolve_native_runtime_spec(spec, config)))
+    return tags
+
+
+def _native_runtime_tags(runtime: NativeRuntimeSpec) -> dict[str, Any]:
+    return _present(
+        {
+            "native_runtime_id": runtime.runtime_id,
+            "native_endpoint_env": runtime.endpoint_env,
+            "native_model": runtime.model,
+            "native_model_env": runtime.model_env,
+            "native_provider": runtime.provider,
+            "native_alias": runtime.alias,
+            "native_max_tokens": runtime.max_tokens,
+            "native_timeout_sec": runtime.timeout_sec,
+            "native_max_workers": runtime.max_workers,
+            "gliner_endpoint_env": runtime.gliner_endpoint_env,
+            "gliner_model": runtime.gliner_model,
+            "gliner_model_env": runtime.gliner_model_env,
+            "gliner_provider": runtime.gliner_provider,
+            "gliner_alias": runtime.gliner_alias,
+            "gliner_api_key_env": runtime.gliner_api_key_env,
+            "gliner_threshold": runtime.gliner_threshold,
+        }
+    )
 
 
 def _present(values: dict[str, Any]) -> dict[str, Any]:
@@ -1481,6 +1631,7 @@ def run_or_plan(
     output_dir = output or Path("benchmark-runs") / benchmark_spec.suite_id
     if trace_dir is not None and dd_trace == DDTraceMode.none:
         raise ValueError("--trace-dir requires --dd-trace")
+    preflight_suite(benchmark_spec, spec_path=spec_path)
     if dry_run:
         return dry_run_result(
             benchmark_spec,
@@ -1489,7 +1640,6 @@ def run_or_plan(
             dd_trace=dd_trace,
             trace_dir=trace_dir,
         )
-    preflight_suite(benchmark_spec, spec_path=spec_path)
     prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
     return run_suite(
         benchmark_spec,

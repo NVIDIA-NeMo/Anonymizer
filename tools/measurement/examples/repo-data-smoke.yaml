@@ -6,9 +6,11 @@ workloads:
   - id: biographies
     source: ../../../docs/data/NVIDIA_synthetic_biographies.csv
     text_column: biography
+    row_limit: 5
   - id: legal
     source: ../../../docs/data/TAB_legal_sample25.csv
     text_column: text
+    row_limit: 5
 configs:
   - id: biographies-redact-default
     replace: redact

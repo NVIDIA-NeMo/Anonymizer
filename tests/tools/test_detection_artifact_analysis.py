@@ -113,7 +113,7 @@ def test_detection_artifact_analysis_reports_augmentation_contribution(tmp_path:
     assert first_name_detail["start_position"] == 0
     assert first_name_detail["end_position"] == 5
     assert first_name_detail["value_length"] == 5
-    assert len(first_name_detail["value_hash"]) == 16
+    assert "value_hash" not in first_name_detail
 
     serialized = row.model_dump_json()
     assert "Alice" not in serialized

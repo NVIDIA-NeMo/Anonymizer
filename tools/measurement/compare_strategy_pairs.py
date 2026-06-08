@@ -30,6 +30,15 @@ from pydantic import BaseModel, Field
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.strategy_pairs")
 
+_SIGNATURE_DETAIL_FIELDS = {
+    "label",
+    "source",
+    "row_index",
+    "start_position",
+    "end_position",
+    "value_length",
+}
+
 
 class ExportFormat(StrEnum):
     parquet = "parquet"
@@ -1104,6 +1113,8 @@ def _signature_details(rows: pd.DataFrame) -> dict[str, dict[str, object]]:
         signature_hash, _, field = remainder.partition(".")
         if not signature_hash or not field:
             continue
+        if field not in _SIGNATURE_DETAIL_FIELDS:
+            continue
         for value in rows[column].tolist():
             if not _is_missing_cell(value):
                 details.setdefault(signature_hash, {})[field] = _json_scalar(value)
@@ -1221,7 +1232,9 @@ def _coerce_signature_details(value: object) -> dict[str, dict[str, object]]:
             if not isinstance(raw_detail, dict):
                 continue
             details[str(signature_hash)] = {
-                str(key): _json_scalar(item) for key, item in raw_detail.items() if not _is_missing_cell(item)
+                str(key): _json_scalar(item)
+                for key, item in raw_detail.items()
+                if str(key) in _SIGNATURE_DETAIL_FIELDS and not _is_missing_cell(item)
             }
         return dict(sorted(details.items()))
     if not isinstance(value, str):

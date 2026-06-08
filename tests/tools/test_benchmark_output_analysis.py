@@ -302,7 +302,6 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
             "row_index": 0,
             "start_position": 0,
             "end_position": 5,
-            "value_hash": "hash-person",
             "value_length": 5,
         }
     }

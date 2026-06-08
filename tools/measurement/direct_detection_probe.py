@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import sys
 from collections import Counter
@@ -33,6 +34,11 @@ from anonymizer.engine.schemas import EntitySchema
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.direct_detection_probe")
+
+_NATIVE_ENDPOINT_ENV = "ANONYMIZER_BENCH_NATIVE_ENDPOINT"
+_NATIVE_MODEL_ENV = "ANONYMIZER_BENCH_NATIVE_MODEL"
+_UNCONFIGURED_ENDPOINT = "configured-native-endpoint"
+_UNCONFIGURED_MODEL = "configured-native-model"
 
 
 class CaseStatus(StrEnum):
@@ -217,11 +223,13 @@ def run_direct_detection_case(
     request: DirectDetectionRequest,
     *,
     client: DirectDetectionClient,
-    endpoint: str = "http://gpu-dev-pod-serve-svc:8000/v1",
-    model: str = "nvidia/nemotron-3-super",
+    endpoint: str | None = None,
+    model: str | None = None,
     max_tokens: int = 4096,
     timeout_sec: float = 180.0,
 ) -> DirectDetectionCase:
+    endpoint = endpoint or _UNCONFIGURED_ENDPOINT
+    model = model or _UNCONFIGURED_MODEL
     try:
         completion = client.complete(
             DirectGenerationRequest(
@@ -422,13 +430,15 @@ def run_probe(
     labels: list[str],
     output: Path | None = None,
     overwrite: bool = False,
-    endpoint: str = "http://gpu-dev-pod-serve-svc:8000/v1",
-    model: str = "nvidia/nemotron-3-super",
+    endpoint: str | None = None,
+    model: str | None = None,
     limit: int = 1,
     offset: int = 0,
     prompt_mode: PromptMode = PromptMode.compact,
     baseline_artifacts: Path | None = None,
 ) -> DirectDetectionRun:
+    endpoint = _required_runtime_value("endpoint", explicit=endpoint, env_var=_NATIVE_ENDPOINT_ENV)
+    model = _required_runtime_value("model", explicit=model, env_var=_NATIVE_MODEL_ENV)
     requests = _load_requests(
         input_path, text_column=text_column, labels=labels, limit=limit, offset=offset, prompt_mode=prompt_mode
     )
@@ -448,6 +458,13 @@ def run_probe(
     if output is not None:
         write_outputs(result, output, overwrite=overwrite)
     return result
+
+
+def _required_runtime_value(name: str, *, explicit: str | None, env_var: str) -> str:
+    value = explicit or os.environ.get(env_var)
+    if not value:
+        raise ValueError(f"{name} is required; pass --{name.replace('_', '-')} or set {env_var}")
+    return value
 
 
 def _load_requests(
@@ -523,8 +540,8 @@ def main(
     labels: Annotated[str, cyclopts.Parameter("--labels")],
     output: Annotated[Path | None, cyclopts.Parameter(("--output", "-o"))] = None,
     overwrite: Annotated[bool, cyclopts.Parameter("--overwrite")] = False,
-    endpoint: Annotated[str, cyclopts.Parameter("--endpoint")] = "http://gpu-dev-pod-serve-svc:8000/v1",
-    model: Annotated[str, cyclopts.Parameter("--model")] = "nvidia/nemotron-3-super",
+    endpoint: Annotated[str | None, cyclopts.Parameter("--endpoint")] = None,
+    model: Annotated[str | None, cyclopts.Parameter("--model")] = None,
     limit: Annotated[int, cyclopts.Parameter("--limit")] = 1,
     offset: Annotated[int, cyclopts.Parameter("--offset")] = 0,
     prompt_mode: Annotated[PromptMode, cyclopts.Parameter("--prompt-mode")] = PromptMode.compact,

@@ -279,7 +279,6 @@ def _entity_signature_details(entities: list[EntitySchema], *, row_index: int) -
             "row_index": int(row_index),
             "start_position": entity.start_position,
             "end_position": entity.end_position,
-            "value_hash": _entity_value_hash(entity.value),
             "value_length": len(entity.value),
         }
         for entity in entities
@@ -292,7 +291,6 @@ def _entity_signature_hash(entity: EntitySchema, *, row_index: int) -> str:
         {
             "row": row_index,
             "label": entity.label,
-            "value": _value_key(entity.value),
             "start": entity.start_position,
             "end": entity.end_position,
         },
@@ -300,10 +298,6 @@ def _entity_signature_hash(entity: EntitySchema, *, row_index: int) -> str:
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
-
-
-def _entity_value_hash(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 def _weak_api_key_shape_counts(entities: list[EntitySchema]) -> Counter[str]:

@@ -13,7 +13,6 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import sys
@@ -58,6 +57,14 @@ class ContextResolution(StrEnum):
 
 
 _log_format = LogFormat.plain
+_SIGNATURE_DETAIL_FIELDS = {
+    "label",
+    "source",
+    "row_index",
+    "start_position",
+    "end_position",
+    "value_length",
+}
 
 
 class SignatureDeltaRow(BaseModel):
@@ -70,7 +77,6 @@ class SignatureDeltaRow(BaseModel):
     source: str | None = None
     start_position: int | None = None
     end_position: int | None = None
-    value_hash: str | None = None
     value_length: int | None = None
     masked_context: str | None = None
     resolution: ContextResolution = ContextResolution.metadata_only
@@ -317,7 +323,7 @@ def _parquet_entity_context(
     text, row_index, row = record
     for entity in EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES)).entities:
         if _entity_signature_hash(entity, row_index=row_index) == signature:
-            return _entity_context(entity, text, context_window, ContextResolution.parquet)
+            return _entity_context(entity, text, signature, context_window, ContextResolution.parquet)
     return None
 
 
@@ -335,7 +341,7 @@ def _rule_entity_context(
     for span in detect_high_confidence_entities(text, labels=[label]):
         entity = EntitySchema.model_validate(span.as_dict())
         if _entity_signature_hash(entity, row_index=row_index) == signature:
-            return _entity_context(entity, text, context_window, ContextResolution.rule)
+            return _entity_context(entity, text, signature, context_window, ContextResolution.rule)
     return None
 
 
@@ -351,9 +357,8 @@ def _artifact_detail_context(
         return None
     start_position = _optional_int(details.get("start_position"))
     end_position = _optional_int(details.get("end_position"))
-    value_hash = _optional_string(details.get("value_hash"))
     resolved_label = _optional_string(details.get("label")) or label
-    if start_position is None or end_position is None or value_hash is None or resolved_label is None:
+    if start_position is None or end_position is None or resolved_label is None:
         return _metadata_context_from_details(details)
     record = _artifact_record(artifact_row, artifact_root)
     masked_context = None
@@ -362,7 +367,7 @@ def _artifact_detail_context(
         masked_context = _masked_context_from_details(
             text,
             label=resolved_label,
-            value_hash=value_hash,
+            signature_hash=signature,
             start_position=start_position,
             end_position=end_position,
             window=context_window,
@@ -371,7 +376,6 @@ def _artifact_detail_context(
         "source": _optional_string(details.get("source")),
         "start_position": start_position,
         "end_position": end_position,
-        "value_hash": value_hash,
         "value_length": _optional_int(details.get("value_length")),
         "masked_context": masked_context,
         "resolution": ContextResolution.artifact_details
@@ -390,6 +394,8 @@ def _signature_details(row: dict[str, object]) -> dict[str, dict[str, object]]:
         signature_hash, _, field = remainder.partition(".")
         if not signature_hash or not field:
             continue
+        if field not in _SIGNATURE_DETAIL_FIELDS:
+            continue
         details.setdefault(signature_hash, {})[field] = value
     return details
 
@@ -402,7 +408,11 @@ def _coerce_detail_map(raw: object) -> dict[str, dict[str, object]]:
             return {}
     if not isinstance(raw, dict):
         return {}
-    return {str(key): value for key, value in raw.items() if isinstance(value, dict)}
+    return {
+        str(key): {str(field): item for field, item in value.items() if str(field) in _SIGNATURE_DETAIL_FIELDS}
+        for key, value in raw.items()
+        if isinstance(value, dict)
+    }
 
 
 def _metadata_context_from_details(details: dict[str, object]) -> dict[str, object]:
@@ -410,7 +420,6 @@ def _metadata_context_from_details(details: dict[str, object]) -> dict[str, obje
         "source": _optional_string(details.get("source")),
         "start_position": _optional_int(details.get("start_position")),
         "end_position": _optional_int(details.get("end_position")),
-        "value_hash": _optional_string(details.get("value_hash")),
         "value_length": _optional_int(details.get("value_length")),
         "resolution": ContextResolution.metadata_only,
     }
@@ -431,6 +440,7 @@ def _artifact_record(artifact_row: dict[str, object], artifact_root: Path) -> tu
 def _entity_context(
     entity: EntitySchema,
     text: str,
+    signature_hash: str,
     context_window: int,
     resolution: ContextResolution,
 ) -> dict[str, object]:
@@ -438,17 +448,16 @@ def _entity_context(
         "source": entity.source,
         "start_position": entity.start_position,
         "end_position": entity.end_position,
-        "value_hash": _value_hash(entity.value),
         "value_length": len(entity.value),
-        "masked_context": _masked_context(text, entity, context_window),
+        "masked_context": _masked_context(text, entity, signature_hash, context_window),
         "resolution": resolution,
     }
 
 
-def _masked_context(text: str, entity: EntitySchema, window: int) -> str:
+def _masked_context(text: str, entity: EntitySchema, signature_hash: str, window: int) -> str:
     before = text[max(0, entity.start_position - window) : entity.start_position]
     after = text[entity.end_position : entity.end_position + window]
-    placeholder = f"[{entity.label.upper()}:{_value_hash(entity.value)}]"
+    placeholder = f"[{entity.label.upper()}:{signature_hash}]"
     return (before + placeholder + after).replace("\n", " ")
 
 
@@ -456,19 +465,15 @@ def _masked_context_from_details(
     text: str,
     *,
     label: str,
-    value_hash: str,
+    signature_hash: str,
     start_position: int,
     end_position: int,
     window: int,
 ) -> str:
     before = text[max(0, start_position - window) : start_position]
     after = text[end_position : end_position + window]
-    placeholder = f"[{label.upper()}:{value_hash}]"
+    placeholder = f"[{label.upper()}:{signature_hash}]"
     return (before + placeholder + after).replace("\n", " ")
-
-
-def _value_hash(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 def _optional_int(value: object) -> int | None:

@@ -299,6 +299,7 @@ def test_native_rules_router_strategy_records_direct_model_usage() -> None:
         with tool.experimental_detection_strategy_context(
             tool.ExperimentalDetectionStrategy.native_rules_router,
             native_client=SequencedClient(),
+            native_runtime=tool.NativeDetectionRuntime(model="test/native", provider="test-provider"),
         ):
             workflow = EntityDetectionWorkflow(adapter=Mock())
             workflow.detect_and_validate_entities(
@@ -320,7 +321,8 @@ def test_native_rules_router_strategy_records_direct_model_usage() -> None:
     assert record["observed_input_tokens"] == 30
     assert record["observed_output_tokens"] == 12
     assert record["observed_total_tokens"] == 42
-    assert record["model_usage"]["native-direct"]["model_name"] == "nvidia/nemotron-3-super"
+    assert record["model_usage"]["native-direct"]["model_name"] == "test/native"
+    assert record["model_usage"]["native-direct"]["model_provider_name"] == "test-provider"
 
 
 def test_native_candidate_validate_no_augment_strategy_skips_data_designer_and_augmentation() -> None:
@@ -738,6 +740,12 @@ def test_gliner_native_validate_no_augment_strategy_bypasses_data_designer() -> 
             tool.ExperimentalDetectionStrategy.gliner_native_validate_no_augment,
             native_client=validation_client,
             gliner_seed_client=seed_client,
+            native_runtime=tool.NativeDetectionRuntime(
+                model="test/native",
+                provider="test-native-provider",
+                gliner_model="test/gliner",
+                gliner_provider="test-gliner-provider",
+            ),
         ):
             workflow = EntityDetectionWorkflow(adapter=adapter)
             result = workflow.detect_and_validate_entities(
@@ -763,9 +771,11 @@ def test_gliner_native_validate_no_augment_strategy_bypasses_data_designer() -> 
     assert record["observed_total_requests"] == 2
     assert record["observed_total_tokens"] == 73
     assert sorted(record["model_usage"]) == ["gliner-direct", "native-direct"]
-    assert record["model_usage"]["gliner-direct"]["model_name"] == "nvidia/gliner-pii"
+    assert record["model_usage"]["gliner-direct"]["model_name"] == "test/gliner"
+    assert record["model_usage"]["gliner-direct"]["model_provider_name"] == "test-gliner-provider"
     assert record["model_usage"]["gliner-direct"]["token_usage"]["total_tokens"] == 25
-    assert record["model_usage"]["native-direct"]["model_name"] == "nvidia/nemotron-3-super"
+    assert record["model_usage"]["native-direct"]["model_name"] == "test/native"
+    assert record["model_usage"]["native-direct"]["model_provider_name"] == "test-native-provider"
     assert record["model_usage"]["native-direct"]["token_usage"]["total_tokens"] == 48
 
 
