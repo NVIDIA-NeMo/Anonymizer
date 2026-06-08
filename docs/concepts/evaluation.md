@@ -8,21 +8,13 @@ Anonymizer provides LLM-as-judge evaluation for both modes, replace and rewrite,
 | Mode | How evaluation runs |
 |------|---------------------|
 | **Replace** | Post-hoc, via a separate `Anonymizer.evaluate()` call after `run()` / `preview()`. |
-| **Rewrite** | Built into the anonymization pipeline — runs automatically as part of every `run()` / `preview()` call. |
+| **Rewrite** | Runs automatically as part of every `run()` / `preview()` call. A dedicated post-hoc `evaluate()` call, matching replace mode, is planned for a future release. |
 
 ---
 
-## Rewrite evaluation
+## Replace Evaluation
 
-Rewrite evaluation is part of the pipeline and runs automatically — there is no separate call. After the rewritten text is generated, an evaluate–repair loop scores each record for **utility** (how much semantic content was preserved) and **leakage mass** (how much sensitive information survived). Records that exceed the leakage threshold are sent back for repair, up to `max_repair_iterations` times. A final judge then produces a qualitative assessment and flags records that still need human review.
-
-The key output columns are `utility_score`, `leakage_mass`, `weighted_leakage_rate`, `any_high_leaked`, and `needs_human_review`. See [Rewrite](rewrite.md) for more details.
-
----
-
-## Replace evaluation
-
-Replace evaluation is **optional and post-hoc** — you call `Anonymizer.evaluate()` on a result from `run()` or `preview()`. The replace mode is read directly from the result object, so you don't restate it:
+Replace evaluation is **optional and post-hoc** — you call `Anonymizer.evaluate()` on a result from `run()` or `preview()`:
 
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
@@ -36,7 +28,7 @@ evaluated = anonymizer.evaluate(result)
 evaluated.display_record(0)
 ```
 
-You can also save a `preview()` result and evaluate it in a separate session:
+Both `run()` and `preview()` results can be saved and evaluated in a separate session:
 
 ```python
 import pickle
@@ -53,16 +45,17 @@ with open("/tmp/preview.pkl", "rb") as f:
 evaluated = anonymizer.evaluate(loaded)
 ```
 
-Four LLM judges run: one that scores detection quality and three that score replacement quality (Substitute mode only). Note that all 4 scores are assigned per record.
+Four LLM judges run per record: one that scores detection quality and three that score replacement quality (Substitute mode only).
 
 ---
-### Entity Detection judge:
 
-### Detection validity
+### Entity Detection Judge
+
+#### Detection Validity
 
 > "Are the detected entities actually correct (value, label) pairs in context?"
 
-This judge runs during replace evaluation regardless of which replace mode was used. It looks at each detected span and flags:
+This judge runs regardless of which replace mode was used. It looks at each detected span and flags:
 
 - **false_positive** — the span is not actually identifying or sensitive in this context (common word, generic phrase, boilerplate).
 - **wrong_label** — the span is sensitive but the label sits in a clearly different domain (e.g. a company name labeled `first_name`). Sibling labels within the same broad domain are treated as valid.
@@ -77,11 +70,11 @@ This judge runs during replace evaluation regardless of which replace mode was u
 
 ---
 
-### Entity Replacement judges
+### Entity Replacement Judges
 
 When the source result used the **Substitute** mode, three additional LLM judges run in parallel — one per quality dimension.
 
-### Type fidelity
+#### Type Fidelity
 
 > "Does each synthetic value still belong to the same entity class and match the expected format for that class?"
 
@@ -92,23 +85,23 @@ The judge checks that replacements are shape-compatible with their originals —
 | `type_fidelity_valid` | `bool \| None` | `True` if all replacements pass; `None` if the judge was unavailable. |
 | `type_fidelity_invalid_replacements` | `list` | Each failing replacement with label, original, synthetic, and reasoning. |
 
-### Attribute fidelity
+#### Attribute Fidelity
 
 > "Does each synthetic value preserve the salient within-entity attributes of the original?"
 
-The judge checks attributes including:
+The judge checks two attributes:
 
 - **Gender of name** — applies to `first_name`, `last_name`, `user_name`. Only checked when the original name clearly implies a gender. Adjacent or ambiguous cases pass.
 - **Age bucket** — applies to `age` and `date_of_birth`. Buckets: child (0–12), teen (13–19), young adult (20–29), adult (30–44), middle-aged (45–64), senior (65+). Adjacent buckets pass; only clear flips (adult → child) fail.
 
-All other labels are skipped — their attributes are either handled by other metrics or too unreliable to judge automatically.
+All other labels are outside the scope of this metric.
 
 | Output column | Type | Description |
 |---|---|---|
 | `attribute_fidelity_valid` | `bool \| None` | `True` if all checked attributes pass; `None` if unavailable. |
 | `attribute_fidelity_invalid_entities` | `list` | Each failing entity with attributes checked and reasoning. |
 
-### Relational consistency
+#### Relational Consistency
 
 > "Do the synthetic entities preserve the same relational coherence with each other that the originals had?"
 
@@ -152,12 +145,7 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 All four judges default to `gpt-oss-120b`. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them by passing a `model_configs` YAML to `Anonymizer(model_configs=...)` — see [Models](models.md) for the full override pattern.
 
-| Role | Default | Purpose |
-|------|---------|---------|
-| `detection_validity_judge` | `gpt-oss-120b` | Checks detected (value, label) pairs for correctness. |
-| `replace_type_fidelity_judge` | `gpt-oss-120b` | Checks entity class and format preservation. |
-| `replace_attribute_fidelity_judge` | `gpt-oss-120b` | Checks within-entity attribute preservation. |
-| `replace_relational_consistency_judge` | `gpt-oss-120b` | Checks cross-entity coherence within a record. |
+The four roles are `detection_validity_judge`, `replace_type_fidelity_judge`, `replace_attribute_fidelity_judge`, and `replace_relational_consistency_judge`.
 
 ```yaml
 # my_models.yaml
@@ -169,3 +157,10 @@ selected_models:
     replace_relational_consistency_judge: your-model-alias
 ```
 
+---
+
+## Rewrite Evaluation
+
+Rewrite evaluation is part of the pipeline and runs automatically — there is no separate call. After the rewritten text is generated, an evaluate–repair loop scores each record for **utility** (how much semantic content was preserved) and **leakage mass** (how much sensitive information survived). Records that exceed the leakage threshold are sent back for repair, up to `max_repair_iterations` times. A final judge then produces a qualitative assessment and flags records that still need human review.
+
+The key output columns are `utility_score`, `leakage_mass`, `weighted_leakage_rate`, `any_high_leaked`, and `needs_human_review`. See [Rewrite](rewrite.md) for more details.
