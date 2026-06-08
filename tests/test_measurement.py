@@ -800,6 +800,16 @@ def test_record_metrics_capture_generic_counts_without_raw_values() -> None:
     assert record["entity_precision"] == 0.5
     assert record["entity_recall"] == 0.5
     assert record["entity_f1"] == 0.5
+    assert record["entity_relaxed_gt_found_count"] == 2
+    assert record["entity_relaxed_detected_tp_count"] == 2
+    assert record["entity_relaxed_label_compatible_gt_found_count"] == 2
+    assert record["entity_relaxed_label_compatible_detected_tp_count"] == 2
+    assert record["entity_relaxed_precision"] == 1.0
+    assert record["entity_relaxed_recall"] == 1.0
+    assert record["entity_relaxed_f1"] == 1.0
+    assert record["entity_relaxed_label_compatible_precision"] == 1.0
+    assert record["entity_relaxed_label_compatible_recall"] == 1.0
+    assert record["entity_relaxed_label_compatible_f1"] == 1.0
     assert record["replacement_count"] == 2
     assert record["replacement_label_counts"] == {"company_name": 1, "first_name": 1}
     assert record["replacement_duplicate_value_count"] == 1
@@ -822,6 +832,55 @@ def test_record_metrics_capture_generic_counts_without_raw_values() -> None:
     assert "Acme" not in serialized
     assert "Beta" not in serialized
     assert "Maya" not in serialized
+
+
+def test_record_metrics_capture_relaxed_gt_label_equivalence_without_raw_values() -> None:
+    final_entities = {
+        "entities": [
+            {"value": "builduser42", "label": "user_name", "start_position": 4, "end_position": 15},
+        ]
+    }
+    ground_truth_entities = {
+        "entities": [
+            {"value": "legacy-user", "label": "username", "start_position": 6, "end_position": 14},
+        ]
+    }
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["ssh builduser42@host"],
+            COL_FINAL_ENTITIES: [final_entities],
+            "ground_truth_entities": [ground_truth_entities],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Redact",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=2,
+        )
+
+    record = collector.records[0]
+    assert record["entity_true_positive_count"] == 0
+    assert record["entity_false_positive_count"] == 1
+    assert record["entity_false_negative_count"] == 1
+    assert record["entity_relaxed_gt_found_count"] == 1
+    assert record["entity_relaxed_detected_tp_count"] == 1
+    assert record["entity_relaxed_label_compatible_gt_found_count"] == 1
+    assert record["entity_relaxed_label_compatible_detected_tp_count"] == 1
+    assert record["entity_relaxed_precision"] == 1.0
+    assert record["entity_relaxed_recall"] == 1.0
+    assert record["entity_relaxed_f1"] == 1.0
+    assert record["entity_relaxed_label_compatible_precision"] == 1.0
+    assert record["entity_relaxed_label_compatible_recall"] == 1.0
+    assert record["entity_relaxed_label_compatible_f1"] == 1.0
+
+    serialized = json.dumps(collector.records)
+    assert "builduser42" not in serialized
+    assert "legacy-user" not in serialized
 
 
 def test_record_metrics_counts_missing_replacement_map_entries_without_raw_values() -> None:

@@ -828,13 +828,22 @@ and token counts still contribute to case, group, and model summaries. When the
 benchmark was run with current sidecar export, `rules_only` also has
 artifact-derived signatures and source counts; older runs may only have
 record-level entity counts. The joined case/group tables include
-successful/failed request counts, input/output token splits,
-`seed_validation_candidate_count`, `estimated_seed_validation_chunk_count`, and
-`observed_failed_request_rate`; use these when testing
+successful/failed request counts, input/output token splits, record counts,
+dataset input-token throughput, `seed_validation_candidate_count`,
+`estimated_seed_validation_chunk_count`, and `observed_failed_request_rate`;
+use these when testing
 `detect.validation_max_entities_per_call` so you can distinguish a real chunk
 count change from provider retry variance. The model tables split the same
 usage by `workflow_name` and `model_name`, which is useful for separating local
 detector cost from validator, augmenter, substitute, or rewrite model cost.
+When record-level measurements include ground-truth entities, the joined tables
+also expose exact and relaxed entity-quality metrics. The relaxed metrics count
+span overlap, with small label-equivalence groups for common aliases such as
+`user_name` / `username` and `api_key` / `auth_token`. Case and group tables
+also count empty detections, including empty records that had ground-truth
+entities. If your suite adds portable topology tags such as `endpoint_count`,
+`gpu_count`, or `tensor_parallelism`, the analysis computes per-endpoint and
+per-GPU input-token throughput; otherwise those normalized fields remain null.
 The case/group tables also surface incomplete benchmark cases with
 `case_failed`, `error_stage_count`, `error_ndd_workflow_count`,
 `error_model_workflow_count`, `failed_case_count`, and `failed_case_rate`.
@@ -1842,6 +1851,16 @@ Latency and throughput:
 - `tokens_per_sec`: observed total tokens per second when token usage exists.
 - `text_length_tokens_bucket`: a coarse text-size bucket for comparing similar
   inputs without storing text.
+- `record_count` and `input_text_tokens_total`: case-level workload size
+  derived from record measurements. These are independent of provider-reported
+  token usage.
+- `records_per_pipeline_sec` and `input_text_tokens_per_pipeline_sec`: dataset
+  throughput normalized by the measured Anonymizer pipeline stage. The matching
+  `*_per_ndd_sec` fields use summed DataDesigner workflow wall time instead.
+- `input_text_tokens_per_endpoint_sec` and
+  `input_text_tokens_per_gpu_sec`: optional topology-normalized dataset
+  throughput. These are populated only when benchmark run tags provide portable
+  topology counts such as `endpoint_count` or `gpu_count`.
 
 LLM usage:
 
@@ -1942,8 +1961,18 @@ Entity and quality metrics:
   it can replace a DataDesigner-backed baseline.
 - `final_entity_label_counts`: per-label entity counts serialized as JSON in
   exported tabular files.
-- `ground_truth_*`: precision, recall, F1, false positives, and false negatives
-  when the input includes one of the supported ground-truth entity columns.
+- `ground_truth_*` and `entity_*`: exact value+label precision, recall, F1,
+  false positives, and false negatives when the input includes one of the
+  supported ground-truth entity columns.
+- `entity_relaxed_*`: span-overlap precision, recall, and F1. The
+  label-compatible variants require both span overlap and equivalent labels,
+  while the non-label-compatible relaxed metrics only ask whether a
+  ground-truth span was protected by any detected span.
+- `empty_detection_count`, `empty_detection_rate`,
+  `empty_detection_with_ground_truth_count`, and
+  `empty_detection_with_ground_truth_rate`: diagnostics for records where the
+  detector returned no final entities. The ground-truth-specific fields are the
+  important safety signal when a benchmark includes labels.
 - `utility_score`, `leakage_mass`, `weighted_leakage_rate`,
   `needs_repair`, and `needs_human_review`: rewrite-mode evaluation fields.
   These are null for replace-mode runs.

@@ -18,7 +18,7 @@ import math
 import sys
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import cyclopts
 import pandas as pd
@@ -55,10 +55,14 @@ _log_format = LogFormat.plain
 class CaseAnalysisRow(BaseModel):
     suite_id: str | None = None
     workload_id: str | None = None
+    workload_category: str | None = None
     config_id: str | None = None
     experimental_detection_strategy: str | None = None
     experimental_replacement_strategy: str | None = None
     dd_parser_compat: str | None = None
+    entity_label_set_id: str | None = None
+    entity_label_count: int | None = None
+    gliner_threshold: float | None = None
     repetition: int | None = None
     case_id: str
     run_id: str
@@ -83,10 +87,44 @@ class CaseAnalysisRow(BaseModel):
     observed_non_bridge_total_requests: int | None = None
     observed_non_bridge_failed_requests: int | None = None
     observed_non_bridge_failed_request_rate: float | None = None
+    record_count: int = 0
+    input_text_tokens_total: int | None = None
+    records_per_pipeline_sec: float | None = None
+    records_per_ndd_sec: float | None = None
+    input_text_tokens_per_pipeline_sec: float | None = None
+    input_text_tokens_per_ndd_sec: float | None = None
+    topology_endpoint_count: float | None = None
+    topology_gpu_count: float | None = None
+    topology_tensor_parallelism: float | None = None
+    topology_shard_count: float | None = None
+    input_text_tokens_per_endpoint_sec: float | None = None
+    input_text_tokens_per_gpu_sec: float | None = None
     route_total_row_count: float | None = None
     route_rule_row_count: float | None = None
     route_fallback_row_count: float | None = None
     final_entity_count: float | None = None
+    empty_detection_count: int = 0
+    empty_detection_rate: float | None = None
+    empty_detection_with_ground_truth_count: int = 0
+    empty_detection_with_ground_truth_rate: float | None = None
+    ground_truth_record_count: int = 0
+    ground_truth_entity_count: float | None = None
+    entity_true_positive_count: float | None = None
+    entity_false_positive_count: float | None = None
+    entity_false_negative_count: float | None = None
+    entity_precision: float | None = None
+    entity_recall: float | None = None
+    entity_f1: float | None = None
+    entity_relaxed_gt_found_count: float | None = None
+    entity_relaxed_detected_tp_count: float | None = None
+    entity_relaxed_label_compatible_gt_found_count: float | None = None
+    entity_relaxed_label_compatible_detected_tp_count: float | None = None
+    entity_relaxed_precision: float | None = None
+    entity_relaxed_recall: float | None = None
+    entity_relaxed_f1: float | None = None
+    entity_relaxed_label_compatible_precision: float | None = None
+    entity_relaxed_label_compatible_recall: float | None = None
+    entity_relaxed_label_compatible_f1: float | None = None
     replacement_count: float | None = None
     replacement_missing_final_entity_count: float | None = None
     replacement_missing_final_entity_label_counts: dict[str, int] = Field(default_factory=dict)
@@ -116,9 +154,13 @@ class CaseAnalysisRow(BaseModel):
 
 class GroupAnalysisRow(BaseModel):
     workload_id: str | None = None
+    workload_category: str | None = None
     config_id: str | None = None
     experimental_detection_strategy: str | None = None
     experimental_replacement_strategy: str | None = None
+    entity_label_set_id: str | None = None
+    entity_label_count: int | None = None
+    gliner_threshold: float | None = None
     case_count: int
     failed_case_count: int = 0
     failed_case_rate: float | None = None
@@ -138,10 +180,48 @@ class GroupAnalysisRow(BaseModel):
     median_observed_non_bridge_total_requests: float | None = None
     median_observed_non_bridge_failed_requests: float | None = None
     median_observed_non_bridge_failed_request_rate: float | None = None
+    total_record_count: int = 0
+    median_record_count: float | None = None
+    total_input_text_tokens: int | None = None
+    median_input_text_tokens_total: float | None = None
+    median_records_per_pipeline_sec: float | None = None
+    median_records_per_ndd_sec: float | None = None
+    median_input_text_tokens_per_pipeline_sec: float | None = None
+    median_input_text_tokens_per_ndd_sec: float | None = None
+    median_topology_endpoint_count: float | None = None
+    median_topology_gpu_count: float | None = None
+    median_topology_tensor_parallelism: float | None = None
+    median_topology_shard_count: float | None = None
+    median_input_text_tokens_per_endpoint_sec: float | None = None
+    median_input_text_tokens_per_gpu_sec: float | None = None
     median_route_total_row_count: float | None = None
     median_route_rule_row_count: float | None = None
     median_route_fallback_row_count: float | None = None
     median_final_entity_count: float | None = None
+    total_empty_detection_count: int = 0
+    empty_detection_rate: float | None = None
+    total_empty_detection_with_ground_truth_count: int = 0
+    empty_detection_with_ground_truth_rate: float | None = None
+    total_ground_truth_record_count: int = 0
+    sum_ground_truth_entity_count: float | None = None
+    sum_entity_true_positive_count: float | None = None
+    sum_entity_false_positive_count: float | None = None
+    sum_entity_false_negative_count: float | None = None
+    micro_entity_precision: float | None = None
+    micro_entity_recall: float | None = None
+    micro_entity_f1: float | None = None
+    sum_entity_relaxed_gt_found_count: float | None = None
+    sum_entity_relaxed_detected_tp_count: float | None = None
+    sum_entity_relaxed_label_compatible_gt_found_count: float | None = None
+    sum_entity_relaxed_label_compatible_detected_tp_count: float | None = None
+    micro_entity_relaxed_precision: float | None = None
+    micro_entity_relaxed_recall: float | None = None
+    micro_entity_relaxed_f1: float | None = None
+    micro_entity_relaxed_label_compatible_precision: float | None = None
+    micro_entity_relaxed_label_compatible_recall: float | None = None
+    micro_entity_relaxed_label_compatible_f1: float | None = None
+    median_entity_relaxed_f1: float | None = None
+    median_entity_relaxed_label_compatible_f1: float | None = None
     median_replacement_missing_final_entity_count: float | None = None
     median_replacement_missing_final_value_count: float | None = None
     replacement_missing_final_entity_label_counts: dict[str, int] = Field(default_factory=dict)
@@ -373,10 +453,26 @@ def _build_case_row(
     pipeline_rows = _pipeline_stage_rows(measurement_rows)
     validation_max_entities_per_call = _first_int([measurement_rows], ["detect.validation_max_entities_per_call"])
     request_metrics = _case_request_metrics(model_rows)
+    pipeline_elapsed_sec = _sum_or_none(pipeline_rows, "elapsed_sec")
+    ndd_elapsed_sec_total = _sum_or_zero(ndd_rows, "elapsed_sec")
+    record_count = len(record_rows)
+    input_text_tokens_total = _sum_int_or_none(record_rows, "text_length_tokens")
+    records_per_pipeline_sec = _safe_rate(record_count, pipeline_elapsed_sec)
+    records_per_ndd_sec = _safe_rate(record_count, ndd_elapsed_sec_total)
+    input_text_tokens_per_pipeline_sec = _safe_rate(input_text_tokens_total, pipeline_elapsed_sec)
+    input_text_tokens_per_ndd_sec = _safe_rate(input_text_tokens_total, ndd_elapsed_sec_total)
+    final_entity_count = _coalesce_number(
+        _sum_or_none(record_rows, "final_entity_count"),
+        _sum_or_none(artifact_rows, "final_entity_count"),
+    )
     return CaseAnalysisRow(
         suite_id=_first_value([measurement_rows, artifact_rows, trace_rows], ["run_tags.suite_id", "suite_id"]),
         workload_id=_first_value(
             [measurement_rows, artifact_rows, trace_rows], ["run_tags.workload_id", "workload_id"]
+        ),
+        workload_category=_first_value(
+            [measurement_rows, artifact_rows, trace_rows],
+            ["run_tags.workload_category", "run_tags.dataset_category", "workload_category", "dataset_category"],
         ),
         config_id=_first_value([measurement_rows, artifact_rows, trace_rows], ["run_tags.config_id", "config_id"]),
         experimental_detection_strategy=_first_value([measurement_rows], ["run_tags.experimental_detection_strategy"]),
@@ -385,22 +481,42 @@ def _build_case_row(
             ["run_tags.experimental_replacement_strategy"],
         ),
         dd_parser_compat=_first_value([measurement_rows], ["run_tags.dd_parser_compat"]),
+        entity_label_set_id=_first_value(
+            [measurement_rows],
+            [
+                "run_tags.entity_label_set_id",
+                "run_tags.entity_label_set",
+                "run_tags.label_set",
+                "detect.entity_label_source",
+            ],
+        ),
+        entity_label_count=_first_int([measurement_rows], ["run_tags.entity_label_count", "detect.entity_label_count"]),
+        gliner_threshold=_first_float([measurement_rows], ["run_tags.gliner_threshold", "detect.gliner_threshold"]),
         repetition=_first_int([measurement_rows, artifact_rows, trace_rows], ["run_tags.repetition", "repetition"]),
         case_id=case_id,
         run_id=_first_value([measurement_rows, artifact_rows, trace_rows], ["run_id"]) or case_id,
         **_case_failure_metrics(stage_rows=stage_rows, ndd_rows=ndd_rows, model_rows=model_rows),
-        pipeline_elapsed_sec=_sum_or_none(pipeline_rows, "elapsed_sec"),
+        pipeline_elapsed_sec=pipeline_elapsed_sec,
         ndd_workflow_count=len(ndd_rows),
-        ndd_elapsed_sec_total=_sum_or_zero(ndd_rows, "elapsed_sec"),
+        ndd_elapsed_sec_total=ndd_elapsed_sec_total,
         **request_metrics,
         **_case_trace_metrics(trace_rows, request_metrics=request_metrics),
+        record_count=record_count,
+        input_text_tokens_total=input_text_tokens_total,
+        records_per_pipeline_sec=records_per_pipeline_sec,
+        records_per_ndd_sec=records_per_ndd_sec,
+        input_text_tokens_per_pipeline_sec=input_text_tokens_per_pipeline_sec,
+        input_text_tokens_per_ndd_sec=input_text_tokens_per_ndd_sec,
+        **_case_topology_metrics(
+            measurement_rows,
+            input_text_tokens_per_pipeline_sec=input_text_tokens_per_pipeline_sec,
+        ),
         route_total_row_count=_sum_or_none(model_rows, "route_total_row_count"),
         route_rule_row_count=_sum_or_none(model_rows, "route_rule_row_count"),
         route_fallback_row_count=_sum_or_none(model_rows, "route_fallback_row_count"),
-        final_entity_count=_coalesce_number(
-            _sum_or_none(record_rows, "final_entity_count"),
-            _sum_or_none(artifact_rows, "final_entity_count"),
-        ),
+        final_entity_count=final_entity_count,
+        **_case_empty_detection_metrics(record_rows, record_count=record_count),
+        **_case_ground_truth_metrics(record_rows, final_entity_count=final_entity_count),
         replacement_count=_sum_or_none(record_rows, "replacement_count"),
         replacement_missing_final_entity_count=_sum_or_none(record_rows, "replacement_missing_final_entity_count"),
         replacement_missing_final_entity_label_counts=_sum_prefixed_ints(
@@ -501,6 +617,115 @@ def _case_failure_metrics(
         "error_stage_count": error_stage_count,
         "error_ndd_workflow_count": error_ndd_workflow_count,
         "error_model_workflow_count": error_model_workflow_count,
+    }
+
+
+def _case_topology_metrics(
+    measurement_rows: pd.DataFrame,
+    *,
+    input_text_tokens_per_pipeline_sec: float | None,
+) -> dict[str, float | None]:
+    endpoint_count = _first_float(
+        [measurement_rows],
+        [
+            "run_tags.topology_endpoint_count",
+            "run_tags.endpoint_count",
+            "run_tags.n_endpoints",
+            "run_tags.n_llm_endpoints",
+        ],
+    )
+    gpu_count = _first_float(
+        [measurement_rows],
+        [
+            "run_tags.topology_gpu_count",
+            "run_tags.gpu_count",
+            "run_tags.n_gpus",
+            "run_tags.n_llm_gpus",
+        ],
+    )
+    tensor_parallelism = _first_float(
+        [measurement_rows],
+        [
+            "run_tags.topology_tensor_parallelism",
+            "run_tags.tensor_parallelism",
+            "run_tags.gpus_per_endpoint",
+            "run_tags.tp",
+        ],
+    )
+    shard_count = _first_float(
+        [measurement_rows],
+        ["run_tags.topology_shard_count", "run_tags.shard_count", "run_tags.n_shards"],
+    )
+    return {
+        "topology_endpoint_count": endpoint_count,
+        "topology_gpu_count": gpu_count,
+        "topology_tensor_parallelism": tensor_parallelism,
+        "topology_shard_count": shard_count,
+        "input_text_tokens_per_endpoint_sec": _safe_ratio(input_text_tokens_per_pipeline_sec, endpoint_count),
+        "input_text_tokens_per_gpu_sec": _safe_ratio(input_text_tokens_per_pipeline_sec, gpu_count),
+    }
+
+
+def _case_empty_detection_metrics(record_rows: pd.DataFrame, *, record_count: int) -> dict[str, int | float | None]:
+    empty_detection_count = _zero_count(record_rows, "final_entity_count")
+    ground_truth_record_count = _non_null_count(record_rows, "ground_truth_entity_count")
+    empty_detection_with_gt_count = _zero_with_positive_count(
+        record_rows,
+        zero_column="final_entity_count",
+        positive_column="ground_truth_entity_count",
+    )
+    return {
+        "empty_detection_count": empty_detection_count,
+        "empty_detection_rate": _safe_ratio(empty_detection_count, record_count),
+        "empty_detection_with_ground_truth_count": empty_detection_with_gt_count,
+        "empty_detection_with_ground_truth_rate": _safe_ratio(
+            empty_detection_with_gt_count,
+            ground_truth_record_count,
+        ),
+        "ground_truth_record_count": ground_truth_record_count,
+    }
+
+
+def _case_ground_truth_metrics(
+    record_rows: pd.DataFrame,
+    *,
+    final_entity_count: float | None,
+) -> dict[str, float | None]:
+    ground_truth_entity_count = _sum_or_none(record_rows, "ground_truth_entity_count")
+    true_positive = _sum_or_none(record_rows, "entity_true_positive_count")
+    false_positive = _sum_or_none(record_rows, "entity_false_positive_count")
+    false_negative = _sum_or_none(record_rows, "entity_false_negative_count")
+    relaxed_gt_found = _sum_or_none(record_rows, "entity_relaxed_gt_found_count")
+    relaxed_detected_tp = _sum_or_none(record_rows, "entity_relaxed_detected_tp_count")
+    label_compatible_gt_found = _sum_or_none(record_rows, "entity_relaxed_label_compatible_gt_found_count")
+    label_compatible_detected_tp = _sum_or_none(
+        record_rows,
+        "entity_relaxed_label_compatible_detected_tp_count",
+    )
+    strict_precision = _safe_ratio(true_positive, _sum_optional_numbers(true_positive, false_positive))
+    strict_recall = _safe_ratio(true_positive, _sum_optional_numbers(true_positive, false_negative))
+    relaxed_precision = _safe_ratio(relaxed_detected_tp, final_entity_count)
+    relaxed_recall = _safe_ratio(relaxed_gt_found, ground_truth_entity_count)
+    label_compatible_precision = _safe_ratio(label_compatible_detected_tp, final_entity_count)
+    label_compatible_recall = _safe_ratio(label_compatible_gt_found, ground_truth_entity_count)
+    return {
+        "ground_truth_entity_count": ground_truth_entity_count,
+        "entity_true_positive_count": true_positive,
+        "entity_false_positive_count": false_positive,
+        "entity_false_negative_count": false_negative,
+        "entity_precision": strict_precision,
+        "entity_recall": strict_recall,
+        "entity_f1": _f1(strict_precision, strict_recall),
+        "entity_relaxed_gt_found_count": relaxed_gt_found,
+        "entity_relaxed_detected_tp_count": relaxed_detected_tp,
+        "entity_relaxed_label_compatible_gt_found_count": label_compatible_gt_found,
+        "entity_relaxed_label_compatible_detected_tp_count": label_compatible_detected_tp,
+        "entity_relaxed_precision": relaxed_precision,
+        "entity_relaxed_recall": relaxed_recall,
+        "entity_relaxed_f1": _f1(relaxed_precision, relaxed_recall),
+        "entity_relaxed_label_compatible_precision": label_compatible_precision,
+        "entity_relaxed_label_compatible_recall": label_compatible_recall,
+        "entity_relaxed_label_compatible_f1": _f1(label_compatible_precision, label_compatible_recall),
     }
 
 
@@ -735,6 +960,11 @@ def _first_int(frames: list[pd.DataFrame], columns: list[str]) -> int | None:
     return int(float(value)) if value is not None else None
 
 
+def _first_float(frames: list[pd.DataFrame], columns: list[str]) -> float | None:
+    value = _first_value(frames, columns)
+    return float(value) if value is not None else None
+
+
 def _coalesce_number(*values: float | None) -> float | None:
     for value in values:
         if value is not None:
@@ -852,6 +1082,27 @@ def _positive_count(dataframe: pd.DataFrame, column: str) -> int:
     return int((values > 0).sum())
 
 
+def _zero_count(dataframe: pd.DataFrame, column: str) -> int:
+    if column not in dataframe.columns:
+        return 0
+    values = pd.to_numeric(dataframe[column], errors="coerce").dropna()
+    return int((values == 0).sum())
+
+
+def _non_null_count(dataframe: pd.DataFrame, column: str) -> int:
+    if column not in dataframe.columns:
+        return 0
+    return int(pd.to_numeric(dataframe[column], errors="coerce").notna().sum())
+
+
+def _zero_with_positive_count(dataframe: pd.DataFrame, *, zero_column: str, positive_column: str) -> int:
+    if zero_column not in dataframe.columns or positive_column not in dataframe.columns:
+        return 0
+    zero_values = pd.to_numeric(dataframe[zero_column], errors="coerce")
+    positive_values = pd.to_numeric(dataframe[positive_column], errors="coerce")
+    return int(((zero_values == 0) & (positive_values > 0)).sum())
+
+
 def _sum_prefixed_ints(dataframe: pd.DataFrame, prefix: str) -> dict[str, int]:
     totals: dict[str, int] = {}
     base_column = prefix.removesuffix(".")
@@ -890,9 +1141,13 @@ def build_group_rows(cases: list[CaseAnalysisRow]) -> list[GroupAnalysisRow]:
     rows: list[GroupAnalysisRow] = []
     group_columns = [
         "workload_id",
+        "workload_category",
         "config_id",
         "experimental_detection_strategy",
         "experimental_replacement_strategy",
+        "entity_label_set_id",
+        "entity_label_count",
+        "gliner_threshold",
     ]
     for keys, group in table.groupby(group_columns, dropna=False):
         rows.append(_build_group_row(keys, group))
@@ -961,15 +1216,48 @@ def _build_model_usage_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> 
     )
 
 
-def _build_group_row(keys: tuple[Any, Any, Any, Any], group: pd.DataFrame) -> GroupAnalysisRow:
-    workload_id, config_id, detection_strategy, replacement_strategy = keys
+def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysisRow:
+    (
+        workload_id,
+        workload_category,
+        config_id,
+        detection_strategy,
+        replacement_strategy,
+        entity_label_set_id,
+        entity_label_count,
+        gliner_threshold,
+    ) = keys
     case_count = int(group["case_id"].nunique())
     failed_case_count = _sum_bool_or_zero(group, "case_failed")
+    total_record_count = _sum_int_or_zero(group, "record_count")
+    total_input_text_tokens = _sum_int_or_none(group, "input_text_tokens_total")
+    total_empty_detection_count = _sum_int_or_zero(group, "empty_detection_count")
+    total_ground_truth_record_count = _sum_int_or_zero(group, "ground_truth_record_count")
+    total_empty_detection_with_gt_count = _sum_int_or_zero(group, "empty_detection_with_ground_truth_count")
+    final_entity_count = _sum_or_none(group, "final_entity_count")
+    ground_truth_entity_count = _sum_or_none(group, "ground_truth_entity_count")
+    true_positive = _sum_or_none(group, "entity_true_positive_count")
+    false_positive = _sum_or_none(group, "entity_false_positive_count")
+    false_negative = _sum_or_none(group, "entity_false_negative_count")
+    strict_precision = _safe_ratio(true_positive, _sum_optional_numbers(true_positive, false_positive))
+    strict_recall = _safe_ratio(true_positive, _sum_optional_numbers(true_positive, false_negative))
+    relaxed_gt_found = _sum_or_none(group, "entity_relaxed_gt_found_count")
+    relaxed_detected_tp = _sum_or_none(group, "entity_relaxed_detected_tp_count")
+    label_compatible_gt_found = _sum_or_none(group, "entity_relaxed_label_compatible_gt_found_count")
+    label_compatible_detected_tp = _sum_or_none(group, "entity_relaxed_label_compatible_detected_tp_count")
+    relaxed_precision = _safe_ratio(relaxed_detected_tp, final_entity_count)
+    relaxed_recall = _safe_ratio(relaxed_gt_found, ground_truth_entity_count)
+    label_compatible_precision = _safe_ratio(label_compatible_detected_tp, final_entity_count)
+    label_compatible_recall = _safe_ratio(label_compatible_gt_found, ground_truth_entity_count)
     return GroupAnalysisRow(
         workload_id=_none_if_nan(workload_id),
+        workload_category=_none_if_nan(workload_category),
         config_id=_none_if_nan(config_id),
         experimental_detection_strategy=_none_if_nan(detection_strategy),
         experimental_replacement_strategy=_none_if_nan(replacement_strategy),
+        entity_label_set_id=_none_if_nan(entity_label_set_id),
+        entity_label_count=_int_if_not_nan(entity_label_count),
+        gliner_threshold=_float_if_not_nan(gliner_threshold),
         case_count=case_count,
         failed_case_count=failed_case_count,
         failed_case_rate=_request_failure_rate(failed=failed_case_count, total=case_count),
@@ -992,10 +1280,54 @@ def _build_group_row(keys: tuple[Any, Any, Any, Any], group: pd.DataFrame) -> Gr
             group,
             "observed_non_bridge_failed_request_rate",
         ),
+        total_record_count=total_record_count,
+        median_record_count=_median_or_none(group, "record_count"),
+        total_input_text_tokens=total_input_text_tokens,
+        median_input_text_tokens_total=_median_or_none(group, "input_text_tokens_total"),
+        median_records_per_pipeline_sec=_median_or_none(group, "records_per_pipeline_sec"),
+        median_records_per_ndd_sec=_median_or_none(group, "records_per_ndd_sec"),
+        median_input_text_tokens_per_pipeline_sec=_median_or_none(group, "input_text_tokens_per_pipeline_sec"),
+        median_input_text_tokens_per_ndd_sec=_median_or_none(group, "input_text_tokens_per_ndd_sec"),
+        median_topology_endpoint_count=_median_or_none(group, "topology_endpoint_count"),
+        median_topology_gpu_count=_median_or_none(group, "topology_gpu_count"),
+        median_topology_tensor_parallelism=_median_or_none(group, "topology_tensor_parallelism"),
+        median_topology_shard_count=_median_or_none(group, "topology_shard_count"),
+        median_input_text_tokens_per_endpoint_sec=_median_or_none(group, "input_text_tokens_per_endpoint_sec"),
+        median_input_text_tokens_per_gpu_sec=_median_or_none(group, "input_text_tokens_per_gpu_sec"),
         median_route_total_row_count=_median_or_none(group, "route_total_row_count"),
         median_route_rule_row_count=_median_or_none(group, "route_rule_row_count"),
         median_route_fallback_row_count=_median_or_none(group, "route_fallback_row_count"),
         median_final_entity_count=_median_or_none(group, "final_entity_count"),
+        total_empty_detection_count=total_empty_detection_count,
+        empty_detection_rate=_safe_ratio(total_empty_detection_count, total_record_count),
+        total_empty_detection_with_ground_truth_count=total_empty_detection_with_gt_count,
+        empty_detection_with_ground_truth_rate=_safe_ratio(
+            total_empty_detection_with_gt_count,
+            total_ground_truth_record_count,
+        ),
+        total_ground_truth_record_count=total_ground_truth_record_count,
+        sum_ground_truth_entity_count=ground_truth_entity_count,
+        sum_entity_true_positive_count=true_positive,
+        sum_entity_false_positive_count=false_positive,
+        sum_entity_false_negative_count=false_negative,
+        micro_entity_precision=strict_precision,
+        micro_entity_recall=strict_recall,
+        micro_entity_f1=_f1(strict_precision, strict_recall),
+        sum_entity_relaxed_gt_found_count=relaxed_gt_found,
+        sum_entity_relaxed_detected_tp_count=relaxed_detected_tp,
+        sum_entity_relaxed_label_compatible_gt_found_count=label_compatible_gt_found,
+        sum_entity_relaxed_label_compatible_detected_tp_count=label_compatible_detected_tp,
+        micro_entity_relaxed_precision=relaxed_precision,
+        micro_entity_relaxed_recall=relaxed_recall,
+        micro_entity_relaxed_f1=_f1(relaxed_precision, relaxed_recall),
+        micro_entity_relaxed_label_compatible_precision=label_compatible_precision,
+        micro_entity_relaxed_label_compatible_recall=label_compatible_recall,
+        micro_entity_relaxed_label_compatible_f1=_f1(label_compatible_precision, label_compatible_recall),
+        median_entity_relaxed_f1=_median_or_none(group, "entity_relaxed_f1"),
+        median_entity_relaxed_label_compatible_f1=_median_or_none(
+            group,
+            "entity_relaxed_label_compatible_f1",
+        ),
         median_replacement_missing_final_entity_count=_median_or_none(
             group,
             "replacement_missing_final_entity_count",
@@ -1039,6 +1371,18 @@ def _none_if_nan(value: object) -> str | None:
     return str(value)
 
 
+def _int_if_not_nan(value: object) -> int | None:
+    if pd.isna(value):
+        return None
+    return int(float(cast(Any, value)))
+
+
+def _float_if_not_nan(value: object) -> float | None:
+    if pd.isna(value):
+        return None
+    return float(cast(Any, value))
+
+
 def _median_or_none(dataframe: pd.DataFrame, column: str) -> float | None:
     values = pd.to_numeric(dataframe[column], errors="coerce").dropna()
     if values.empty:
@@ -1067,6 +1411,35 @@ def _request_failure_rate(*, failed: object, total: object) -> float | None:
     if failed_value is None or total_value is None or total_value <= 0:
         return None
     return failed_value / total_value
+
+
+def _safe_rate(numerator: object, elapsed_sec: object) -> float | None:
+    numerator_value = _optional_number(numerator)
+    elapsed_value = _optional_number(elapsed_sec)
+    if numerator_value is None or elapsed_value is None or elapsed_value <= 0:
+        return None
+    return numerator_value / elapsed_value
+
+
+def _safe_ratio(numerator: object, denominator: object) -> float | None:
+    numerator_value = _optional_number(numerator)
+    denominator_value = _optional_number(denominator)
+    if numerator_value is None or denominator_value is None or denominator_value <= 0:
+        return None
+    return numerator_value / denominator_value
+
+
+def _sum_optional_numbers(*values: object) -> float | None:
+    numeric_values = [_optional_number(value) for value in values]
+    if any(value is None for value in numeric_values):
+        return None
+    return sum(cast(float, value) for value in numeric_values)
+
+
+def _f1(precision: float | None, recall: float | None) -> float | None:
+    if precision is None or recall is None or precision + recall == 0:
+        return None
+    return 2 * precision * recall / (precision + recall)
 
 
 def _optional_number(value: object) -> float | None:
@@ -1161,6 +1534,9 @@ def render_result(result: BenchmarkOutputAnalysis, *, json_output: bool) -> str:
             f"- {label}: cases={group.case_count}, median_entities={group.median_final_entity_count}, "
             f"failed_cases={group.failed_case_count}/{group.case_count}, "
             f"median_requests={group.median_observed_total_requests}, median_tokens={group.median_observed_total_tokens}, "
+            f"median_input_tok_s={group.median_input_text_tokens_per_pipeline_sec}, "
+            f"micro_relaxed_f1={group.micro_entity_relaxed_f1}, "
+            f"empty_with_gt={group.total_empty_detection_with_ground_truth_count}, "
             f"median_failed_request_rate={group.median_observed_failed_request_rate}, "
             f"median_aug_new_final={group.median_augmented_new_final_value_count}"
         )

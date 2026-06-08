@@ -84,10 +84,41 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
                 "run_tags": {
                     "suite_id": "suite",
                     "workload_id": "bio",
+                    "workload_category": "synthetic_biography",
                     "config_id": "default",
                     "experimental_detection_strategy": "default",
                     "experimental_replacement_strategy": "default",
                     "dd_parser_compat": "raw_json",
+                    "entity_label_set_id": "agent",
+                    "entity_label_count": 4,
+                    "gliner_threshold": 0.3,
+                    "topology_endpoint_count": 2,
+                    "topology_gpu_count": 4,
+                    "topology_tensor_parallelism": 2,
+                    "repetition": 0,
+                    "case_id": "bio__default__r000",
+                },
+            },
+            {
+                "record_type": "stage",
+                "run_id": "bio__default__r000",
+                "stage": "Anonymizer._run_internal",
+                "elapsed_sec": 10.0,
+                "status": "completed",
+                "run_tags": {
+                    "suite_id": "suite",
+                    "workload_id": "bio",
+                    "workload_category": "synthetic_biography",
+                    "config_id": "default",
+                    "experimental_detection_strategy": "default",
+                    "experimental_replacement_strategy": "default",
+                    "dd_parser_compat": "raw_json",
+                    "entity_label_set_id": "agent",
+                    "entity_label_count": 4,
+                    "gliner_threshold": 0.3,
+                    "topology_endpoint_count": 2,
+                    "topology_gpu_count": 4,
+                    "topology_tensor_parallelism": 2,
                     "repetition": 0,
                     "case_id": "bio__default__r000",
                 },
@@ -95,7 +126,16 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
             {
                 "record_type": "record",
                 "run_id": "bio__default__r000",
+                "text_length_tokens": 1200,
                 "final_entity_count": 14,
+                "ground_truth_entity_count": 20,
+                "entity_true_positive_count": 10,
+                "entity_false_positive_count": 4,
+                "entity_false_negative_count": 10,
+                "entity_relaxed_gt_found_count": 15,
+                "entity_relaxed_detected_tp_count": 14,
+                "entity_relaxed_label_compatible_gt_found_count": 13,
+                "entity_relaxed_label_compatible_detected_tp_count": 12,
                 "replacement_count": 12,
                 "replacement_missing_final_entity_count": 2,
                 "replacement_missing_final_entity_label_counts": {"date": 2},
@@ -108,10 +148,51 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
                 "run_tags": {
                     "suite_id": "suite",
                     "workload_id": "bio",
+                    "workload_category": "synthetic_biography",
                     "config_id": "default",
                     "experimental_detection_strategy": "default",
                     "experimental_replacement_strategy": "default",
                     "dd_parser_compat": "raw_json",
+                    "entity_label_set_id": "agent",
+                    "entity_label_count": 4,
+                    "gliner_threshold": 0.3,
+                    "repetition": 0,
+                    "case_id": "bio__default__r000",
+                },
+            },
+            {
+                "record_type": "record",
+                "run_id": "bio__default__r000",
+                "text_length_tokens": 300,
+                "final_entity_count": 0,
+                "ground_truth_entity_count": 2,
+                "entity_true_positive_count": 0,
+                "entity_false_positive_count": 0,
+                "entity_false_negative_count": 2,
+                "entity_relaxed_gt_found_count": 0,
+                "entity_relaxed_detected_tp_count": 0,
+                "entity_relaxed_label_compatible_gt_found_count": 0,
+                "entity_relaxed_label_compatible_detected_tp_count": 0,
+                "replacement_count": 0,
+                "replacement_missing_final_entity_count": 0,
+                "replacement_missing_final_entity_label_counts": {},
+                "replacement_missing_final_value_count": 0,
+                "replacement_synthetic_original_collision_count": 0,
+                "replacement_synthetic_original_collision_label_counts": {},
+                "replacement_synthetic_original_collision_value_count": 0,
+                "original_value_leak_count": 0,
+                "original_value_leak_label_counts": {},
+                "run_tags": {
+                    "suite_id": "suite",
+                    "workload_id": "bio",
+                    "workload_category": "synthetic_biography",
+                    "config_id": "default",
+                    "experimental_detection_strategy": "default",
+                    "experimental_replacement_strategy": "default",
+                    "dd_parser_compat": "raw_json",
+                    "entity_label_set_id": "agent",
+                    "entity_label_count": 4,
+                    "gliner_threshold": 0.3,
                     "repetition": 0,
                     "case_id": "bio__default__r000",
                 },
@@ -119,6 +200,7 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
             {
                 "record_type": "record",
                 "run_id": "shell__rules-only__r000",
+                "text_length_tokens": 750,
                 "final_entity_count": 8,
                 "replacement_count": 8,
                 "replacement_missing_final_entity_count": 0,
@@ -261,6 +343,10 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert result.model_usage_count == 2
     assert result.model_usage_group_count == 2
     cases = {row.case_id: row for row in result.cases}
+    assert cases["bio__default__r000"].workload_category == "synthetic_biography"
+    assert cases["bio__default__r000"].entity_label_set_id == "agent"
+    assert cases["bio__default__r000"].entity_label_count == 4
+    assert cases["bio__default__r000"].gliner_threshold == pytest.approx(0.3)
     assert cases["bio__default__r000"].experimental_replacement_strategy == "default"
     assert cases["bio__default__r000"].observed_total_requests == 4
     assert cases["bio__default__r000"].observed_successful_requests == 3
@@ -275,6 +361,36 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert cases["bio__default__r000"].observed_non_bridge_total_requests == 3
     assert cases["bio__default__r000"].observed_non_bridge_failed_requests == 0
     assert cases["bio__default__r000"].observed_non_bridge_failed_request_rate == 0
+    assert cases["bio__default__r000"].record_count == 2
+    assert cases["bio__default__r000"].input_text_tokens_total == 1500
+    assert cases["bio__default__r000"].records_per_pipeline_sec == pytest.approx(0.2)
+    assert cases["bio__default__r000"].records_per_ndd_sec == pytest.approx(2 / 8.5)
+    assert cases["bio__default__r000"].input_text_tokens_per_pipeline_sec == 150
+    assert cases["bio__default__r000"].input_text_tokens_per_ndd_sec == pytest.approx(1500 / 8.5)
+    assert cases["bio__default__r000"].topology_endpoint_count == 2
+    assert cases["bio__default__r000"].topology_gpu_count == 4
+    assert cases["bio__default__r000"].topology_tensor_parallelism == 2
+    assert cases["bio__default__r000"].input_text_tokens_per_endpoint_sec == 75
+    assert cases["bio__default__r000"].input_text_tokens_per_gpu_sec == 37.5
+    assert cases["bio__default__r000"].empty_detection_count == 1
+    assert cases["bio__default__r000"].empty_detection_rate == 0.5
+    assert cases["bio__default__r000"].empty_detection_with_ground_truth_count == 1
+    assert cases["bio__default__r000"].empty_detection_with_ground_truth_rate == 0.5
+    assert cases["bio__default__r000"].ground_truth_record_count == 2
+    assert cases["bio__default__r000"].ground_truth_entity_count == 22
+    assert cases["bio__default__r000"].entity_true_positive_count == 10
+    assert cases["bio__default__r000"].entity_false_positive_count == 4
+    assert cases["bio__default__r000"].entity_false_negative_count == 12
+    assert cases["bio__default__r000"].entity_precision == pytest.approx(10 / 14)
+    assert cases["bio__default__r000"].entity_recall == pytest.approx(10 / 22)
+    assert cases["bio__default__r000"].entity_relaxed_gt_found_count == 15
+    assert cases["bio__default__r000"].entity_relaxed_detected_tp_count == 14
+    assert cases["bio__default__r000"].entity_relaxed_label_compatible_gt_found_count == 13
+    assert cases["bio__default__r000"].entity_relaxed_label_compatible_detected_tp_count == 12
+    assert cases["bio__default__r000"].entity_relaxed_precision == 1.0
+    assert cases["bio__default__r000"].entity_relaxed_recall == pytest.approx(15 / 22)
+    assert cases["bio__default__r000"].entity_relaxed_label_compatible_precision == pytest.approx(12 / 14)
+    assert cases["bio__default__r000"].entity_relaxed_label_compatible_recall == pytest.approx(13 / 22)
     assert cases["bio__default__r000"].validation_max_entities_per_call == 10
     assert cases["bio__default__r000"].original_value_leak_count == 0
     assert cases["bio__default__r000"].original_value_leak_record_count == 0
@@ -342,6 +458,10 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert nemotron_group.observed_failed_request_rate == pytest.approx(1 / 3)
     assert nemotron_group.median_observed_total_requests == 3
     bio_group = next(group for group in result.groups if group.workload_id == "bio")
+    assert bio_group.workload_category == "synthetic_biography"
+    assert bio_group.entity_label_set_id == "agent"
+    assert bio_group.entity_label_count == 4
+    assert bio_group.gliner_threshold == pytest.approx(0.3)
     assert bio_group.experimental_replacement_strategy == "default"
     assert bio_group.median_observed_bridge_fallback_requests == 1
     assert bio_group.median_observed_non_bridge_total_requests == 3
@@ -353,6 +473,30 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert bio_group.median_replacement_synthetic_original_collision_count == 1
     assert bio_group.median_replacement_synthetic_original_collision_value_count == 1
     assert bio_group.replacement_synthetic_original_collision_label_counts == {"date": 1}
+    assert bio_group.total_record_count == 2
+    assert bio_group.total_input_text_tokens == 1500
+    assert bio_group.median_input_text_tokens_per_pipeline_sec == 150
+    assert bio_group.median_input_text_tokens_per_endpoint_sec == 75
+    assert bio_group.median_input_text_tokens_per_gpu_sec == 37.5
+    assert bio_group.total_empty_detection_count == 1
+    assert bio_group.empty_detection_rate == 0.5
+    assert bio_group.total_empty_detection_with_ground_truth_count == 1
+    assert bio_group.empty_detection_with_ground_truth_rate == 0.5
+    assert bio_group.total_ground_truth_record_count == 2
+    assert bio_group.sum_ground_truth_entity_count == 22
+    assert bio_group.sum_entity_true_positive_count == 10
+    assert bio_group.sum_entity_false_positive_count == 4
+    assert bio_group.sum_entity_false_negative_count == 12
+    assert bio_group.micro_entity_precision == pytest.approx(10 / 14)
+    assert bio_group.micro_entity_recall == pytest.approx(10 / 22)
+    assert bio_group.sum_entity_relaxed_gt_found_count == 15
+    assert bio_group.sum_entity_relaxed_detected_tp_count == 14
+    assert bio_group.sum_entity_relaxed_label_compatible_gt_found_count == 13
+    assert bio_group.sum_entity_relaxed_label_compatible_detected_tp_count == 12
+    assert bio_group.micro_entity_relaxed_precision == 1.0
+    assert bio_group.micro_entity_relaxed_recall == pytest.approx(15 / 22)
+    assert bio_group.micro_entity_relaxed_label_compatible_precision == pytest.approx(12 / 14)
+    assert bio_group.micro_entity_relaxed_label_compatible_recall == pytest.approx(13 / 22)
     shell_group = next(group for group in result.groups if group.workload_id == "shell")
     assert shell_group.experimental_replacement_strategy == "local_structured_substitute"
     assert shell_group.sum_original_value_leak_count == 1

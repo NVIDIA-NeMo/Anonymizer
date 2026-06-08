@@ -37,6 +37,28 @@ _ACTIVE_COLLECTOR: ContextVar[MeasurementCollector | None] = ContextVar(
     default=None,
 )
 _GROUND_TRUTH_ENTITY_COLUMNS = ("ground_truth_entities", "gt_entities", "expected_entities")
+_ENTITY_LABEL_EQUIVALENCE_CLASSES = (
+    frozenset(
+        {
+            "access_token",
+            "api_key",
+            "auth_token",
+            "bearer_token",
+            "password",
+            "secret_key",
+            "session_id",
+            "unique_id",
+            "user_id",
+        }
+    ),
+    frozenset({"full_name", "person_name", "user", "user_name", "username"}),
+    frozenset({"phone", "phone_number", "telephone"}),
+    frozenset({"email", "email_address"}),
+    frozenset({"cookie", "http_cookie", "session_cookie"}),
+)
+_ENTITY_LABEL_EQUIVALENCE: dict[str, str] = {
+    label: sorted(labels)[0] for labels in _ENTITY_LABEL_EQUIVALENCE_CLASSES for label in labels
+}
 MEASUREMENT_SCHEMA_VERSION = 1
 DEFAULT_MEASUREMENT_ENV_PREFIX = "ANONYMIZER_MEASUREMENT_"
 DD_TRACE_MODES = {"none", "last_message", "all_messages"}
@@ -1102,6 +1124,16 @@ def _entity_ground_truth_metrics(
             "entity_precision": None,
             "entity_recall": None,
             "entity_f1": None,
+            "entity_relaxed_gt_found_count": None,
+            "entity_relaxed_detected_tp_count": None,
+            "entity_relaxed_label_compatible_gt_found_count": None,
+            "entity_relaxed_label_compatible_detected_tp_count": None,
+            "entity_relaxed_precision": None,
+            "entity_relaxed_recall": None,
+            "entity_relaxed_f1": None,
+            "entity_relaxed_label_compatible_precision": None,
+            "entity_relaxed_label_compatible_recall": None,
+            "entity_relaxed_label_compatible_f1": None,
         }
 
     predicted = _entity_identity_set(final_entities)
@@ -1111,11 +1143,6 @@ def _entity_ground_truth_metrics(
     false_negative = len(expected - predicted)
     precision = _safe_ratio(true_positive, true_positive + false_positive)
     recall = _safe_ratio(true_positive, true_positive + false_negative)
-    f1 = (
-        None
-        if precision is None or recall is None or precision + recall == 0
-        else 2 * precision * recall / (precision + recall)
-    )
     return {
         "ground_truth_entity_count": len(ground_truth_entities),
         "ground_truth_entity_label_counts": dict(
@@ -1126,7 +1153,8 @@ def _entity_ground_truth_metrics(
         "entity_false_negative_count": false_negative,
         "entity_precision": precision,
         "entity_recall": recall,
-        "entity_f1": f1,
+        "entity_f1": _f1(precision, recall),
+        **_entity_relaxed_ground_truth_metrics(final_entities, ground_truth_entities),
     }
 
 
@@ -1139,6 +1167,100 @@ def _entity_identity_set(entities: list[dict[str, Any]]) -> set[tuple[str, str]]
             continue
         identities.add((str(value), str(label)))
     return identities
+
+
+def _entity_relaxed_ground_truth_metrics(
+    final_entities: list[dict[str, Any]],
+    ground_truth_entities: list[dict[str, Any]],
+) -> dict[str, Any]:
+    gt_found = sum(
+        1 for ground_truth_entity in ground_truth_entities if _has_relaxed_entity_match(final_entities, ground_truth_entity)
+    )
+    detected_tp = sum(
+        1 for final_entity in final_entities if _has_relaxed_entity_match(ground_truth_entities, final_entity)
+    )
+    label_compatible_gt_found = sum(
+        1
+        for ground_truth_entity in ground_truth_entities
+        if _has_relaxed_entity_match(final_entities, ground_truth_entity, require_label_compatible=True)
+    )
+    label_compatible_detected_tp = sum(
+        1
+        for final_entity in final_entities
+        if _has_relaxed_entity_match(ground_truth_entities, final_entity, require_label_compatible=True)
+    )
+    precision = _safe_ratio(detected_tp, len(final_entities))
+    recall = _safe_ratio(gt_found, len(ground_truth_entities))
+    label_compatible_precision = _safe_ratio(label_compatible_detected_tp, len(final_entities))
+    label_compatible_recall = _safe_ratio(label_compatible_gt_found, len(ground_truth_entities))
+    return {
+        "entity_relaxed_gt_found_count": gt_found,
+        "entity_relaxed_detected_tp_count": detected_tp,
+        "entity_relaxed_label_compatible_gt_found_count": label_compatible_gt_found,
+        "entity_relaxed_label_compatible_detected_tp_count": label_compatible_detected_tp,
+        "entity_relaxed_precision": precision,
+        "entity_relaxed_recall": recall,
+        "entity_relaxed_f1": _f1(precision, recall),
+        "entity_relaxed_label_compatible_precision": label_compatible_precision,
+        "entity_relaxed_label_compatible_recall": label_compatible_recall,
+        "entity_relaxed_label_compatible_f1": _f1(label_compatible_precision, label_compatible_recall),
+    }
+
+
+def _has_relaxed_entity_match(
+    candidates: list[dict[str, Any]],
+    target: dict[str, Any],
+    *,
+    require_label_compatible: bool = False,
+) -> bool:
+    return any(
+        _entities_match_relaxed(candidate, target, require_label_compatible=require_label_compatible)
+        for candidate in candidates
+    )
+
+
+def _entities_match_relaxed(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    *,
+    require_label_compatible: bool,
+) -> bool:
+    if require_label_compatible and not _entity_labels_compatible(left.get("label"), right.get("label")):
+        return False
+    left_span = _entity_span(left)
+    right_span = _entity_span(right)
+    if left_span is not None and right_span is not None:
+        return left_span[0] < right_span[1] and right_span[0] < left_span[1]
+    left_value = left.get("value")
+    right_value = right.get("value")
+    return left_value is not None and right_value is not None and str(left_value) == str(right_value)
+
+
+def _entity_span(entity: dict[str, Any]) -> tuple[int, int] | None:
+    start = _coerce_float(entity.get("start_position", entity.get("start")))
+    end = _coerce_float(entity.get("end_position", entity.get("end")))
+    if start is None or end is None:
+        return None
+    start_int = int(start)
+    end_int = int(end)
+    if start_int < 0 or end_int <= start_int:
+        return None
+    return start_int, end_int
+
+
+def _entity_labels_compatible(left: object, right: object) -> bool:
+    left_key = _entity_label_key(left)
+    right_key = _entity_label_key(right)
+    return left_key is not None and right_key is not None and left_key == right_key
+
+
+def _entity_label_key(label: object) -> str | None:
+    if label is None:
+        return None
+    normalized = str(label).strip().lower()
+    if not normalized:
+        return None
+    return _ENTITY_LABEL_EQUIVALENCE.get(normalized, normalized)
 
 
 def _replacement_map_metrics(raw: object) -> dict[str, Any]:
@@ -1289,6 +1411,12 @@ def _safe_ratio(numerator: int | float | None, denominator: int | float | None) 
     if numerator is None or denominator is None or denominator == 0:
         return None
     return float(numerator) / float(denominator)
+
+
+def _f1(precision: float | None, recall: float | None) -> float | None:
+    if precision is None or recall is None or precision + recall == 0:
+        return None
+    return 2 * precision * recall / (precision + recall)
 
 
 def _size_bucket(value: int) -> str:
