@@ -53,11 +53,12 @@ with open("/tmp/preview.pkl", "rb") as f:
 evaluated = anonymizer.evaluate(loaded)
 ```
 
-All judges run per record. Records with no detected entities are skipped — judges return `valid=True` with an empty invalid list, meaning there was nothing to evaluate, not that quality was confirmed. The three replace judges additionally require a replacement map, so they only run on records processed by Substitute.
+Four LLM judges run: one that scores detection quality and three that score replacement quality (Substitute mode only). Note that all 4 scores are assigned per record.
 
 ---
+### Entity Detection judge:
 
-## Detection validity
+### Detection validity
 
 > "Are the detected entities actually correct (value, label) pairs in context?"
 
@@ -76,7 +77,7 @@ This judge runs during replace evaluation regardless of which replace mode was u
 
 ---
 
-## Replace judges
+### Entity Replacment judges
 
 When the source result used the **Substitute** mode, three additional LLM judges run in parallel — one per quality dimension.
 
