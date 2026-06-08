@@ -26,7 +26,6 @@ from analyze_detection_artifacts import _entity_signature_hash
 from pydantic import BaseModel, Field, ValidationError
 
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_TEXT
-from anonymizer.engine.detection.rules import detect_high_confidence_entities
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 
 app = cyclopts.App(help=__doc__)
@@ -52,7 +51,6 @@ class DeltaSide(StrEnum):
 class ContextResolution(StrEnum):
     parquet = "parquet"
     artifact_details = "artifact_details"
-    rule = "rule"
     metadata_only = "metadata_only"
 
 
@@ -304,9 +302,6 @@ def _resolve_signature_context(
     parquet_context = _parquet_entity_context(artifact_row, signature, artifact_root, context_window)
     if parquet_context is not None:
         return parquet_context
-    rule_context = _rule_entity_context(artifact_row, signature, label, artifact_root, context_window)
-    if rule_context is not None:
-        return rule_context
     detail_context = _artifact_detail_context(artifact_row, signature, label, artifact_root, context_window)
     return detail_context or {"resolution": ContextResolution.metadata_only}
 
@@ -324,24 +319,6 @@ def _parquet_entity_context(
     for entity in EntitiesSchema.from_raw(row.get(COL_DETECTED_ENTITIES)).entities:
         if _entity_signature_hash(entity, row_index=row_index) == signature:
             return _entity_context(entity, text, signature, context_window, ContextResolution.parquet)
-    return None
-
-
-def _rule_entity_context(
-    artifact_row: dict[str, object],
-    signature: str,
-    label: str | None,
-    artifact_root: Path,
-    context_window: int,
-) -> dict[str, object] | None:
-    record = _artifact_record(artifact_row, artifact_root)
-    if record is None or label is None:
-        return None
-    text, row_index, _row = record
-    for span in detect_high_confidence_entities(text, labels=[label]):
-        entity = EntitySchema.model_validate(span.as_dict())
-        if _entity_signature_hash(entity, row_index=row_index) == signature:
-            return _entity_context(entity, text, signature, context_window, ContextResolution.rule)
     return None
 
 

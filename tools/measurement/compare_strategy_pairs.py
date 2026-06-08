@@ -5,12 +5,12 @@
 
 Usage:
     uv run python tools/measurement/compare_strategy_pairs.py analysis/case_analysis.csv \
-      --baseline-strategy no_augment --candidate-strategy rules_filter_guardrail_no_augment
+      --baseline-strategy default --candidate-strategy detector_native_validate_no_augment
     uv run python tools/measurement/compare_strategy_pairs.py analysis/case_analysis.parquet \
       --baseline-config default --candidate-config no-augment --output comparisons.csv
     uv run python tools/measurement/compare_strategy_pairs.py baseline/case_analysis.csv \
       --candidate-case-analysis candidate/case_analysis.csv \
-      --baseline-strategy no_augment --candidate-strategy rules_guardrail_no_augment
+      --baseline-strategy default --candidate-strategy native_single_pass
 """
 
 from __future__ import annotations
@@ -165,8 +165,6 @@ class ComparisonRow(BaseModel):
     augmented_new_final_value_count_delta: float | None = None
     baseline_detector_entity_count: float | None = None
     candidate_detector_entity_count: float | None = None
-    baseline_rule_entity_count: float | None = None
-    candidate_rule_entity_count: float | None = None
     baseline_augmenter_entity_count: float | None = None
     candidate_augmenter_entity_count: float | None = None
     baseline_only_final_entity_signature_count: int | None = None
@@ -444,7 +442,6 @@ _NUMERIC_COLUMNS = [
     "augmented_entity_count",
     "augmented_new_final_value_count",
     "artifact_final_detector_entity_count",
-    "artifact_final_rule_entity_count",
     "artifact_final_augmenter_entity_count",
 ]
 
@@ -521,8 +518,6 @@ def _source_counts(baseline: dict[str, object], candidate: dict[str, object]) ->
     return {
         "baseline_detector_entity_count": _optional_float(baseline.get("artifact_final_detector_entity_count")),
         "candidate_detector_entity_count": _optional_float(candidate.get("artifact_final_detector_entity_count")),
-        "baseline_rule_entity_count": _optional_float(baseline.get("artifact_final_rule_entity_count")),
-        "candidate_rule_entity_count": _optional_float(candidate.get("artifact_final_rule_entity_count")),
         "baseline_augmenter_entity_count": _optional_float(baseline.get("artifact_final_augmenter_entity_count")),
         "candidate_augmenter_entity_count": _optional_float(candidate.get("artifact_final_augmenter_entity_count")),
         "baseline_original_value_leak_label_counts": _coerce_count_map(
@@ -608,8 +603,6 @@ def _comparison_flags(
     _append_if_positive(flags, metrics, "observed_total_requests_delta", "request_increase")
     if _candidate_lacks_detector_entities(metrics):
         flags.append("no_candidate_detector_entities")
-    if _optional_float(metrics.get("candidate_rule_entity_count")):
-        flags.append("candidate_uses_rule_entities")
     if candidate_strategy in _SKIPS_LLM_VALIDATION_STRATEGIES:
         flags.append("candidate_skips_llm_validation")
     if _replacement_only_detection_instability(
@@ -661,7 +654,7 @@ def _stable_signature_loss_metric(metrics: dict[str, object]) -> str:
     return "baseline_stable_candidate_unstable_final_entity_signature_count"
 
 
-_SKIPS_LLM_VALIDATION_STRATEGIES = {"detector_only", "rules_guardrail_detector_only", "rules_only"}
+_SKIPS_LLM_VALIDATION_STRATEGIES = {"detector_only"}
 
 
 def _has_metric_pair(metrics: dict[str, object], name: str) -> bool:
@@ -739,7 +732,6 @@ def _safety_verdict(metrics: dict[str, object]) -> SafetyVerdict:
         return SafetyVerdict.fail
     if flags & {
         "no_candidate_detector_entities",
-        "candidate_uses_rule_entities",
         "candidate_skips_llm_validation",
         "failed_request_increase",
         "bridge_fallback_increase",
@@ -812,7 +804,6 @@ def _candidate_lacks_detector_entities(metrics: dict[str, object]) -> bool:
 
 def _known_non_detector_candidate_count(metrics: dict[str, object]) -> float | None:
     known_counts = [
-        _optional_float(metrics.get("candidate_rule_entity_count")),
         _optional_float(metrics.get("candidate_augmenter_entity_count")),
     ]
     if all(value is None for value in known_counts):

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -18,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMTextColumnConfig
 from data_designer.config.models import ModelConfig
 from dd_parser_compat import _load_embedded_json
 from direct_detection_probe import DirectDetectionRequest, DirectGenerationRequest, PromptMode, build_direct_prompt
@@ -45,17 +44,14 @@ from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
-    COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
-    COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
-    COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     _jinja,
 )
@@ -73,14 +69,10 @@ from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     build_tagged_text,
     expand_entity_occurrences,
-    get_tag_notation,
-    parse_raw_entities,
     resolve_overlaps,
 )
-from anonymizer.engine.detection.rules import detect_high_confidence_entities
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import AugmentedEntitiesSchema, EntitiesSchema, ValidationCandidatesSchema
 from anonymizer.measurement import record_model_workflow
 
@@ -91,37 +83,14 @@ _DIRECT_MODEL_PROVIDER = "configured-native-provider"
 _DIRECT_MAX_TOKENS = 4096
 _DIRECT_TIMEOUT_SEC = 180.0
 _DIRECT_MAX_WORKERS = 4
-_STRUCTURED_ASSIGNMENT_RE = re.compile(
-    r"(?<![A-Za-z0-9_-])['\"]?"
-    r"(?P<key>"
-    r"api[_-]?key|aws[_-]?access[_-]?key[_-]?id|access[_-]?key[_-]?id|hf[_-]?token|"
-    r"token|auth[_-]?token|session[_-]?id|authorization|"
-    r"password|pass|secret|aws[_-]?secret[_-]?access[_-]?key|django[_-]?secret|database[_-]?url|"
-    r"pin|user(?:_?name)?|username|login|account|cookie|"
-    r"trace[-_]?id|request[-_]?id|req[-_]?id|order[-_]?id|tenant[-_]?id|unique[-_]?id|"
-    r"url|uri|endpoint|callback|email"
-    r")['\"]?\s*[:=]\s*"
-    r"(?:['\"](?P<quoted>[^'\"\r\n]+)['\"]|(?P<bare>[^\s'\",;]+))",
-    flags=re.IGNORECASE,
-)
 
 
 class ExperimentalDetectionStrategy(StrEnum):
     default = "default"
     prose_augment_focus = "prose_augment_focus"
     compact_validation = "compact_validation"
-    rules_guardrail_compact_validation = "rules_guardrail_compact_validation"
-    rules_guardrail = "rules_guardrail"
-    rules_filter_guardrail = "rules_filter_guardrail"
     no_augment = "no_augment"
-    rules_seed_no_augment = "rules_seed_no_augment"
-    rules_guardrail_no_augment = "rules_guardrail_no_augment"
-    rules_filter_guardrail_no_augment = "rules_filter_guardrail_no_augment"
-    rules_guardrail_detector_only = "rules_guardrail_detector_only"
     detector_only = "detector_only"
-    rules_only = "rules_only"
-    rules_covered_or_default = "rules_covered_or_default"
-    native_rules_router = "native_rules_router"
     native_candidate_validate_no_augment = "native_candidate_validate_no_augment"
     detector_native_validate_no_augment = "detector_native_validate_no_augment"
     detector_native_validate_native_augment = "detector_native_validate_native_augment"
@@ -135,7 +104,6 @@ class ExperimentalDetectionStrategy(StrEnum):
 
 _DetectAndValidate = Callable[..., dw.EntityDetectionResult]
 _AugmentPrompt = Callable[..., str]
-_MaterializeFinalEntities = Callable[..., dict]
 PROSE_AUGMENT_FOCUS_TEXT = """\
 Contextual prose recall focus:
 - Re-scan untagged narrative prose for organization and institution names, named facilities, labs, research centers, street or place names, self-described beliefs, occupations, titles, family member names, and other quasi-identifiers that combine with already tagged entities.
@@ -161,14 +129,6 @@ class NativeDetectionRuntime:
     gliner_api_key_env: str = "NVIDIA_API_KEY"
     gliner_threshold: float = 0.3
     max_workers: int = _DIRECT_MAX_WORKERS
-
-
-@dataclass(frozen=True)
-class _NoAugmentOptions:
-    include_rules: bool
-    final_rule_guardrail: bool = False
-    filter_rule_overlaps: bool = False
-    rule_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -232,7 +192,6 @@ class _DetectorNativeValidationRowResult:
 def experimental_detection_strategy_context(
     strategy: ExperimentalDetectionStrategy,
     *,
-    rule_labels: list[str] | None = None,
     native_client: DirectDetectionClient | None = None,
     gliner_seed_client: GlinerSeedClient | None = None,
     native_runtime: NativeDetectionRuntime | None = None,
@@ -244,19 +203,12 @@ def experimental_detection_strategy_context(
 
     original_method = dw.EntityDetectionWorkflow.detect_and_validate_entities
     original_augment_prompt = dw._get_augment_prompt
-    original_materialize_final_entities = dw._materialize_final_entities
-    if rule_labels:
-        dw._materialize_final_entities = _make_rule_label_materializer(  # type: ignore[assignment]
-            original_materialize_final_entities,
-            rule_labels=rule_labels,
-        )
     if strategy == ExperimentalDetectionStrategy.prose_augment_focus:
         dw._get_augment_prompt = _make_prose_augment_prompt(original_augment_prompt)  # type: ignore[assignment]
     else:
         dw.EntityDetectionWorkflow.detect_and_validate_entities = _method_for_strategy(  # type: ignore[method-assign]
             strategy,
             original=original_method,
-            rule_labels=rule_labels,
             native_client=native_client,
             gliner_seed_client=gliner_seed_client,
             native_runtime=native_runtime or NativeDetectionRuntime(),
@@ -266,20 +218,6 @@ def experimental_detection_strategy_context(
     finally:
         dw.EntityDetectionWorkflow.detect_and_validate_entities = original_method  # type: ignore[method-assign]
         dw._get_augment_prompt = original_augment_prompt  # type: ignore[assignment]
-        dw._materialize_final_entities = original_materialize_final_entities  # type: ignore[assignment]
-
-
-def _make_rule_label_materializer(
-    original: _MaterializeFinalEntities,
-    *,
-    rule_labels: list[str],
-) -> _MaterializeFinalEntities:
-    def materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:
-        if allowed_labels is None:
-            return original(raw, allowed_labels=allowed_labels)
-        return original(raw, allowed_labels={*allowed_labels, *rule_labels})
-
-    return materialize_final_entities
 
 
 def _make_prose_augment_prompt(original: _AugmentPrompt) -> _AugmentPrompt:
@@ -294,7 +232,6 @@ def _method_for_strategy(
     strategy: ExperimentalDetectionStrategy,
     *,
     original: _DetectAndValidate | None = None,
-    rule_labels: list[str] | None = None,
     native_client: DirectDetectionClient | None = None,
     gliner_seed_client: GlinerSeedClient | None = None,
     native_runtime: NativeDetectionRuntime | None = None,
@@ -304,49 +241,10 @@ def _method_for_strategy(
         if original is None:
             raise ValueError("compact_validation requires the original detection method")
         return _make_default_compact_validation_method(original)
-    if strategy == ExperimentalDetectionStrategy.rules_guardrail:
-        if original is None:
-            raise ValueError("rules_guardrail requires the original detection method")
-        return _make_default_with_rule_guardrail_method(original, rule_labels=rule_labels)
-    if strategy == ExperimentalDetectionStrategy.rules_filter_guardrail:
-        return _make_validated_augmented_rule_filter_guardrail_method(rule_labels=rule_labels)
-    if strategy == ExperimentalDetectionStrategy.rules_guardrail_compact_validation:
-        if original is None:
-            raise ValueError("rules_guardrail_compact_validation requires the original detection method")
-        return _make_default_with_rule_guardrail_method(
-            original,
-            rule_labels=rule_labels,
-            compact_validation=True,
-        )
     if strategy == ExperimentalDetectionStrategy.no_augment:
-        return _make_validated_no_augment_method(include_rules=False)
-    if strategy == ExperimentalDetectionStrategy.rules_seed_no_augment:
-        return _make_validated_no_augment_method(include_rules=True, rule_labels=rule_labels)
-    if strategy == ExperimentalDetectionStrategy.rules_guardrail_no_augment:
-        return _make_validated_no_augment_method(
-            include_rules=False,
-            final_rule_guardrail=True,
-            rule_labels=rule_labels,
-        )
-    if strategy == ExperimentalDetectionStrategy.rules_filter_guardrail_no_augment:
-        return _make_validated_no_augment_method(
-            include_rules=False,
-            final_rule_guardrail=True,
-            filter_rule_overlaps=True,
-            rule_labels=rule_labels,
-        )
-    if strategy == ExperimentalDetectionStrategy.rules_guardrail_detector_only:
-        return _make_detector_only_with_rule_guardrail_method(rule_labels=rule_labels)
+        return _make_validated_no_augment_method()
     if strategy == ExperimentalDetectionStrategy.detector_only:
         return _detect_with_detector_only
-    if strategy == ExperimentalDetectionStrategy.rules_covered_or_default:
-        if original is None:
-            raise ValueError("rules_covered_or_default requires the original detection method")
-        return _make_rules_covered_or_default_method(original)
-    if strategy == ExperimentalDetectionStrategy.rules_only:
-        return _detect_with_rules_only
-    if strategy == ExperimentalDetectionStrategy.native_rules_router:
-        return _make_native_rules_router_method(native_client=native_client, native_runtime=runtime)
     if strategy == ExperimentalDetectionStrategy.native_candidate_validate_no_augment:
         return _make_native_candidate_validate_no_augment_method(native_client=native_client, native_runtime=runtime)
     if strategy == ExperimentalDetectionStrategy.detector_native_validate_no_augment:
@@ -416,236 +314,7 @@ def _make_default_compact_validation_method(original: _DetectAndValidate) -> _De
     return detect_and_validate_entities
 
 
-def _make_default_with_rule_guardrail_method(
-    original: _DetectAndValidate,
-    *,
-    rule_labels: list[str] | None = None,
-    compact_validation: bool = False,
-) -> _DetectAndValidate:
-    def detect_and_validate_entities(
-        self: dw.EntityDetectionWorkflow,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = dw._DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = dw._DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        entity_labels: list[str] | None = None,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-    ) -> dw.EntityDetectionResult:
-        result = original(
-            self,
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=not compact_validation,
-            entity_labels=entity_labels,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-        )
-        output = _apply_rule_guardrail(
-            result.dataframe.copy(),
-            labels=_rule_labels_for_detection(entity_labels, extra_rule_labels=rule_labels),
-        )
-        return dw.EntityDetectionResult(dataframe=output, failed_records=result.failed_records)
-
-    return detect_and_validate_entities
-
-
-def _make_validated_augmented_rule_filter_guardrail_method(
-    *,
-    rule_labels: list[str] | None = None,
-) -> _DetectAndValidate:
-    def detect_and_validate_entities(
-        self: dw.EntityDetectionWorkflow,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = dw._DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = dw._DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        entity_labels: list[str] | None = None,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-    ) -> dw.EntityDetectionResult:
-        return _run_validated_augmented_rule_filter_guardrail_detection(
-            self,
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            preview_num_records=preview_num_records,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            entity_labels=entity_labels,
-            data_summary=data_summary,
-            rule_labels=rule_labels,
-        )
-
-    return detect_and_validate_entities
-
-
-def _run_validated_augmented_rule_filter_guardrail_detection(
-    workflow: dw.EntityDetectionWorkflow,
-    dataframe: pd.DataFrame,
-    *,
-    model_configs: list[ModelConfig],
-    selected_models: DetectionModelSelection,
-    gliner_detection_threshold: float,
-    preview_num_records: int | None,
-    validation_max_entities_per_call: int,
-    validation_excerpt_window_chars: int,
-    entity_labels: list[str] | None,
-    data_summary: str | None,
-    rule_labels: list[str] | None,
-) -> dw.EntityDetectionResult:
-    labels = dw._resolve_detection_labels(entity_labels)
-    workflow_model_configs = workflow._inject_detector_params(
-        model_configs=model_configs,
-        selected_models=selected_models,
-        labels=labels,
-        gliner_detection_threshold=gliner_detection_threshold,
-    )
-    detection_result = workflow._adapter.run_workflow(
-        dataframe,
-        model_configs=workflow_model_configs,
-        columns=_validated_augmented_rule_filter_guardrail_columns(
-            selected_models=selected_models,
-            labels=labels,
-            data_summary=data_summary,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            strict_labels=entity_labels is not None,
-            rule_labels=rule_labels,
-        ),
-        workflow_name="entity-detection-rules-filter-guardrail",
-        preview_num_records=preview_num_records,
-    )
-    return dw.EntityDetectionResult(
-        dataframe=detection_result.dataframe.copy(),
-        failed_records=detection_result.failed_records,
-    )
-
-
-def _validated_augmented_rule_filter_guardrail_columns(
-    *,
-    selected_models: DetectionModelSelection,
-    labels: list[str],
-    data_summary: str | None,
-    validation_max_entities_per_call: int,
-    validation_excerpt_window_chars: int,
-    strict_labels: bool,
-    rule_labels: list[str] | None,
-) -> list[LLMTextColumnConfig | LLMStructuredColumnConfig | CustomColumnConfig]:
-    validator_params = _validator_params(
-        selected_models=selected_models,
-        labels=labels,
-        data_summary=data_summary,
-        validation_max_entities_per_call=validation_max_entities_per_call,
-        validation_excerpt_window_chars=validation_excerpt_window_chars,
-    )
-    rule_detection_labels = _rule_labels_for_detection(labels, extra_rule_labels=rule_labels)
-    return [
-        LLMTextColumnConfig(
-            name=COL_RAW_DETECTED,
-            prompt=_jinja(COL_TEXT),
-            model_alias=_detector_alias(selected_models),
-        ),
-        CustomColumnConfig(
-            name=COL_SEED_ENTITIES,
-            generator_function=_make_parse_detected_entities_filtering_rules(rule_detection_labels),
-        ),
-        CustomColumnConfig(name=COL_SEED_VALIDATION_CANDIDATES, generator_function=prepare_validation_inputs),
-        _validation_decisions_column(selected_models, validator_params),
-        CustomColumnConfig(name=COL_VALIDATED_ENTITIES, generator_function=enrich_validation_decisions),
-        CustomColumnConfig(
-            name=COL_SEED_ENTITIES_JSON,
-            generator_function=_make_apply_validation_to_seed_entities_with_additive_rule_guardrail(
-                rule_detection_labels
-            ),
-        ),
-        LLMStructuredColumnConfig(
-            name=COL_AUGMENTED_ENTITIES,
-            prompt=dw._get_augment_prompt(data_summary=data_summary, labels=labels, strict_labels=strict_labels),
-            model_alias=resolve_model_alias("entity_augmenter", selected_models),
-            output_format=AugmentedEntitiesSchema,
-        ),
-        CustomColumnConfig(name=COL_MERGED_ENTITIES, generator_function=merge_and_build_candidates),
-        CustomColumnConfig(
-            name=COL_DETECTED_ENTITIES,
-            generator_function=_make_apply_validation_and_finalize_with_additive_rule_guardrail(rule_detection_labels),
-        ),
-    ]
-
-
-def _rule_labels_for_detection(
-    entity_labels: list[str] | None,
-    *,
-    extra_rule_labels: list[str] | tuple[str, ...] | None = None,
-) -> list[str]:
-    labels = set(dw._resolve_detection_labels(entity_labels))
-    labels.update(extra_rule_labels or [])
-    return sorted(labels)
-
-
-def _apply_rule_guardrail(dataframe: pd.DataFrame, *, labels: list[str]) -> pd.DataFrame:
-    if COL_TEXT not in dataframe.columns or COL_DETECTED_ENTITIES not in dataframe.columns:
-        return dataframe
-    dataframe[COL_DETECTED_ENTITIES] = dataframe[COL_DETECTED_ENTITIES].astype("object")
-    if COL_TAGGED_TEXT in dataframe.columns:
-        dataframe[COL_TAGGED_TEXT] = dataframe[COL_TAGGED_TEXT].astype("object")
-    for index, row in dataframe.iterrows():
-        guarded = _guarded_entities(
-            text=str(row.get(COL_TEXT, "")), raw_entities=row.get(COL_DETECTED_ENTITIES), labels=labels
-        )
-        dataframe.at[index, COL_DETECTED_ENTITIES] = EntitiesSchema(
-            entities=[entity.as_dict() for entity in guarded]
-        ).model_dump(mode="json")
-        if COL_TAGGED_TEXT in dataframe.columns:
-            dataframe.at[index, COL_TAGGED_TEXT] = build_tagged_text(text=str(row.get(COL_TEXT, "")), entities=guarded)
-    return dataframe
-
-
-def _guarded_entities(*, text: str, raw_entities: object, labels: list[str]) -> list[EntitySpan]:
-    final_spans = _entity_spans_from_payload(raw_entities)
-    rule_spans = detect_high_confidence_entities(text, labels=labels)
-    return _merge_rule_guardrail_spans(final_spans, rule_spans)
-
-
-def _merge_rule_guardrail_spans(final_spans: list[EntitySpan], rule_spans: list[EntitySpan]) -> list[EntitySpan]:
-    filtered_final = [
-        entity
-        for entity in final_spans
-        if not any(
-            rule.start_position == entity.start_position
-            and rule.end_position == entity.end_position
-            and rule.label != entity.label
-            for rule in rule_spans
-        )
-    ]
-    return resolve_overlaps([*filtered_final, *rule_spans])
-
-
-def _make_validated_no_augment_method(
-    *,
-    include_rules: bool,
-    final_rule_guardrail: bool = False,
-    filter_rule_overlaps: bool = False,
-    rule_labels: list[str] | None = None,
-) -> _DetectAndValidate:
-    options = _NoAugmentOptions(
-        include_rules=include_rules,
-        final_rule_guardrail=final_rule_guardrail,
-        filter_rule_overlaps=filter_rule_overlaps,
-        rule_labels=tuple(rule_labels or ()),
-    )
-
+def _make_validated_no_augment_method() -> _DetectAndValidate:
     def detect_and_validate_entities(
         self: dw.EntityDetectionWorkflow,
         dataframe: pd.DataFrame,
@@ -670,7 +339,6 @@ def _make_validated_no_augment_method(
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             entity_labels=entity_labels,
             data_summary=data_summary,
-            options=options,
         )
 
     return detect_and_validate_entities
@@ -688,7 +356,6 @@ def _run_validated_no_augment_detection(
     validation_excerpt_window_chars: int,
     entity_labels: list[str] | None,
     data_summary: str | None,
-    options: _NoAugmentOptions,
 ) -> dw.EntityDetectionResult:
     labels = dw._resolve_detection_labels(entity_labels)
     workflow_model_configs = workflow._inject_detector_params(
@@ -706,9 +373,8 @@ def _run_validated_no_augment_detection(
             data_summary=data_summary,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
-            options=options,
         ),
-        workflow_name=_workflow_name_for_no_augment(options),
+        workflow_name="entity-detection-no-augment",
         preview_num_records=preview_num_records,
     )
     return dw.EntityDetectionResult(
@@ -724,7 +390,6 @@ def _validated_no_augment_columns(
     data_summary: str | None,
     validation_max_entities_per_call: int,
     validation_excerpt_window_chars: int,
-    options: _NoAugmentOptions,
 ) -> list[LLMTextColumnConfig | CustomColumnConfig]:
     validator_params = _validator_params(
         selected_models=selected_models,
@@ -733,28 +398,18 @@ def _validated_no_augment_columns(
         validation_max_entities_per_call=validation_max_entities_per_call,
         validation_excerpt_window_chars=validation_excerpt_window_chars,
     )
-    parse_generator = _parse_generator(
-        labels=_rule_labels_for_detection(labels, extra_rule_labels=options.rule_labels),
-        include_rules=options.include_rules,
-        filter_rule_overlaps=options.filter_rule_overlaps,
-    )
     return [
         LLMTextColumnConfig(
             name=COL_RAW_DETECTED, prompt=_jinja(COL_TEXT), model_alias=_detector_alias(selected_models)
         ),
-        CustomColumnConfig(name=COL_SEED_ENTITIES, generator_function=parse_generator),
+        CustomColumnConfig(name=COL_SEED_ENTITIES, generator_function=parse_detected_entities),
         CustomColumnConfig(name=COL_SEED_VALIDATION_CANDIDATES, generator_function=prepare_validation_inputs),
         _validation_decisions_column(selected_models, validator_params),
         CustomColumnConfig(name=COL_VALIDATED_ENTITIES, generator_function=enrich_validation_decisions),
         CustomColumnConfig(name=COL_SEED_ENTITIES_JSON, generator_function=apply_validation_to_seed_entities),
         CustomColumnConfig(name=COL_AUGMENTED_ENTITIES, generator_function=_empty_augmentation),
         CustomColumnConfig(name=COL_MERGED_ENTITIES, generator_function=merge_and_build_candidates),
-        CustomColumnConfig(
-            name=COL_DETECTED_ENTITIES,
-            generator_function=_finalizer(
-                _rule_labels_for_detection(labels, extra_rule_labels=options.rule_labels), options
-            ),
-        ),
+        CustomColumnConfig(name=COL_DETECTED_ENTITIES, generator_function=apply_validation_and_finalize),
     ]
 
 
@@ -770,24 +425,6 @@ def _validation_decisions_column(
         generator_params=validator_params,
         drop=True,
     )
-
-
-def _finalizer(labels: list[str], options: _NoAugmentOptions) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    if options.filter_rule_overlaps:
-        return _make_apply_validation_and_finalize_with_additive_rule_guardrail(labels)
-    if options.final_rule_guardrail:
-        return _make_apply_validation_and_finalize_with_rule_guardrail(labels)
-    return apply_validation_and_finalize
-
-
-def _workflow_name_for_no_augment(options: _NoAugmentOptions) -> str:
-    if options.filter_rule_overlaps:
-        return "entity-detection-rules-filter-guardrail-no-augment"
-    if options.final_rule_guardrail:
-        return "entity-detection-rules-guardrail-no-augment"
-    if options.include_rules:
-        return "entity-detection-rules-no-augment"
-    return "entity-detection-no-augment"
 
 
 def _validator_params(
@@ -833,39 +470,8 @@ def _detect_with_detector_only(
         gliner_detection_threshold=gliner_detection_threshold,
         entity_labels=entity_labels,
         preview_num_records=preview_num_records,
-        rule_labels=None,
         workflow_name="entity-detection-detector-only",
     )
-
-
-def _make_detector_only_with_rule_guardrail_method(rule_labels: list[str] | None) -> _DetectAndValidate:
-    def detect_and_validate_entities(
-        self: dw.EntityDetectionWorkflow,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = dw._DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = dw._DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        validation_single_chunk_full_text: bool = True,
-        entity_labels: list[str] | None = None,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-    ) -> dw.EntityDetectionResult:
-        return _run_detector_only_detection(
-            self,
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            entity_labels=entity_labels,
-            preview_num_records=preview_num_records,
-            rule_labels=_rule_labels_for_detection(entity_labels, extra_rule_labels=rule_labels),
-            workflow_name="entity-detection-rules-guardrail-detector-only",
-        )
-
-    return detect_and_validate_entities
 
 
 def _run_detector_only_detection(
@@ -877,7 +483,6 @@ def _run_detector_only_detection(
     gliner_detection_threshold: float,
     entity_labels: list[str] | None,
     preview_num_records: int | None,
-    rule_labels: list[str] | None,
     workflow_name: str,
 ) -> dw.EntityDetectionResult:
     labels = dw._resolve_detection_labels(entity_labels)
@@ -890,7 +495,7 @@ def _run_detector_only_detection(
     detection_result = workflow._adapter.run_workflow(
         dataframe,
         model_configs=workflow_model_configs,
-        columns=_detector_only_columns(selected_models, rule_labels=rule_labels),
+        columns=_detector_only_columns(selected_models),
         workflow_name=workflow_name,
         preview_num_records=preview_num_records,
     )
@@ -900,11 +505,7 @@ def _run_detector_only_detection(
     )
 
 
-def _detector_only_columns(
-    selected_models: DetectionModelSelection,
-    *,
-    rule_labels: list[str] | None,
-) -> list[LLMTextColumnConfig | CustomColumnConfig]:
+def _detector_only_columns(selected_models: DetectionModelSelection) -> list[LLMTextColumnConfig | CustomColumnConfig]:
     return [
         LLMTextColumnConfig(
             name=COL_RAW_DETECTED,
@@ -913,14 +514,8 @@ def _detector_only_columns(
         ),
         CustomColumnConfig(name=COL_SEED_ENTITIES, generator_function=parse_detected_entities),
         CustomColumnConfig(name=COL_SEED_ENTITIES_JSON, generator_function=_copy_seed_entities_json),
-        CustomColumnConfig(name=COL_DETECTED_ENTITIES, generator_function=_detector_only_finalizer(rule_labels)),
+        CustomColumnConfig(name=COL_DETECTED_ENTITIES, generator_function=_finalize_detector_only),
     ]
-
-
-def _detector_only_finalizer(rule_labels: list[str] | None) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    if rule_labels is None:
-        return _finalize_detector_only
-    return _make_finalize_detector_only_with_rule_guardrail(rule_labels)
 
 
 @custom_column_generator(required_columns=[COL_SEED_ENTITIES])
@@ -943,189 +538,10 @@ def _finalize_detector_only(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def _make_finalize_detector_only_with_rule_guardrail(labels: list[str]) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    @custom_column_generator(
-        required_columns=[COL_TEXT, COL_SEED_ENTITIES],
-        side_effect_columns=[COL_TAGGED_TEXT],
-    )
-    def finalize_detector_only_with_rule_guardrail(row: dict[str, Any]) -> dict[str, Any]:
-        row = _finalize_detector_only(row)
-        text = str(row.get(COL_TEXT, ""))
-        final_spans = _entity_spans_from_payload(row.get(COL_DETECTED_ENTITIES, {}))
-        rule_spans = detect_high_confidence_entities(text, labels=labels)
-        guarded = _merge_rule_guardrail_spans(final_spans, rule_spans)
-        row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[span.as_dict() for span in guarded]).model_dump(
-            mode="json"
-        )
-        row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=guarded)
-        return row
-
-    return finalize_detector_only_with_rule_guardrail
-
-
 @custom_column_generator(required_columns=[COL_TEXT])
 def _empty_augmentation(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_AUGMENTED_ENTITIES] = AugmentedEntitiesSchema().model_dump(mode="json")
     return row
-
-
-def _parse_generator(
-    *,
-    labels: list[str],
-    include_rules: bool,
-    filter_rule_overlaps: bool,
-) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    if filter_rule_overlaps:
-        return _make_parse_detected_entities_filtering_rules(labels)
-    if include_rules:
-        return _make_parse_detected_entities_with_rules(labels)
-    return parse_detected_entities
-
-
-def _make_parse_detected_entities_with_rules(labels: list[str]) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    @custom_column_generator(
-        required_columns=[COL_TEXT, COL_RAW_DETECTED],
-        side_effect_columns=[COL_TAG_NOTATION],
-    )
-    def parse_detected_entities_with_rules(row: dict[str, Any]) -> dict[str, Any]:
-        text = str(row.get(COL_TEXT, ""))
-        detected = parse_raw_entities(raw_response=str(row.get(COL_RAW_DETECTED, "")), text=text)
-        rule_spans = detect_high_confidence_entities(text, labels=labels)
-        row[COL_SEED_ENTITIES] = EntitiesSchema(
-            entities=[entity.as_dict() for entity in resolve_overlaps([*detected, *rule_spans])]
-        ).model_dump(mode="json")
-        row[COL_TAG_NOTATION] = get_tag_notation(text=text)
-        return row
-
-    return parse_detected_entities_with_rules
-
-
-def _make_parse_detected_entities_filtering_rules(labels: list[str]) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    @custom_column_generator(
-        required_columns=[COL_TEXT, COL_RAW_DETECTED],
-        side_effect_columns=[COL_TAG_NOTATION],
-    )
-    def parse_detected_entities_filtering_rules(row: dict[str, Any]) -> dict[str, Any]:
-        text = str(row.get(COL_TEXT, ""))
-        detected = parse_raw_entities(raw_response=str(row.get(COL_RAW_DETECTED, "")), text=text)
-        rule_spans = detect_high_confidence_entities(text, labels=labels)
-        filtered = [entity for entity in detected if not _is_rule_covered_detector_span(entity, rule_spans)]
-        row[COL_SEED_ENTITIES] = EntitiesSchema(
-            entities=[entity.as_dict() for entity in resolve_overlaps(filtered)]
-        ).model_dump(mode="json")
-        row[COL_TAG_NOTATION] = get_tag_notation(text=text)
-        return row
-
-    return parse_detected_entities_filtering_rules
-
-
-def _make_apply_validation_and_finalize_with_rule_guardrail(
-    labels: list[str],
-) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    @custom_column_generator(
-        required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
-        side_effect_columns=[COL_TAGGED_TEXT],
-    )
-    def apply_validation_and_finalize_with_rule_guardrail(row: dict[str, Any]) -> dict[str, Any]:
-        row = apply_validation_and_finalize(row)
-        text = str(row.get(COL_TEXT, ""))
-        final_spans = _entity_spans_from_payload(row.get(COL_DETECTED_ENTITIES, {}))
-        rule_spans = detect_high_confidence_entities(text, labels=labels)
-        guarded = _merge_rule_guardrail_spans(final_spans, rule_spans)
-        row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in guarded]).model_dump(
-            mode="json"
-        )
-        row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=guarded)
-        return row
-
-    return apply_validation_and_finalize_with_rule_guardrail
-
-
-def _make_apply_validation_and_finalize_with_additive_rule_guardrail(
-    labels: list[str],
-) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    @custom_column_generator(
-        required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
-        side_effect_columns=[COL_TAGGED_TEXT],
-    )
-    def apply_validation_and_finalize_with_additive_rule_guardrail(row: dict[str, Any]) -> dict[str, Any]:
-        row = apply_validation_and_finalize(row)
-        text = str(row.get(COL_TEXT, ""))
-        final_spans = _entity_spans_from_payload(row.get(COL_DETECTED_ENTITIES, {}))
-        rule_spans = detect_high_confidence_entities(text, labels=labels)
-        guarded = _add_non_overlapping_rule_spans(final_spans, rule_spans)
-        row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in guarded]).model_dump(
-            mode="json"
-        )
-        row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=guarded)
-        return row
-
-    return apply_validation_and_finalize_with_additive_rule_guardrail
-
-
-def _make_apply_validation_to_seed_entities_with_rule_guardrail(
-    labels: list[str],
-) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    @custom_column_generator(
-        required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
-        side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
-    )
-    def apply_validation_to_seed_entities_with_rule_guardrail(row: dict[str, Any]) -> dict[str, Any]:
-        row = apply_validation_to_seed_entities(row)
-        text = str(row.get(COL_TEXT, ""))
-        validated_seed = _entity_spans_from_payload(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
-        rule_spans = detect_high_confidence_entities(text, labels=labels)
-        guarded = _merge_rule_guardrail_spans(validated_seed, rule_spans)
-        seed_entities = [entity.as_dict() for entity in guarded]
-        row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
-        row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
-        row[COL_INITIAL_TAGGED_TEXT] = build_tagged_text(text=text, entities=guarded)
-        return row
-
-    return apply_validation_to_seed_entities_with_rule_guardrail
-
-
-def _make_apply_validation_to_seed_entities_with_additive_rule_guardrail(
-    labels: list[str],
-) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    @custom_column_generator(
-        required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
-        side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
-    )
-    def apply_validation_to_seed_entities_with_additive_rule_guardrail(row: dict[str, Any]) -> dict[str, Any]:
-        row = apply_validation_to_seed_entities(row)
-        text = str(row.get(COL_TEXT, ""))
-        validated_seed = _entity_spans_from_payload(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
-        rule_spans = detect_high_confidence_entities(text, labels=labels)
-        guarded = _add_non_overlapping_rule_spans(validated_seed, rule_spans)
-        seed_entities = [entity.as_dict() for entity in guarded]
-        row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
-        row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
-        row[COL_INITIAL_TAGGED_TEXT] = build_tagged_text(text=text, entities=guarded)
-        return row
-
-    return apply_validation_to_seed_entities_with_additive_rule_guardrail
-
-
-def _is_rule_covered_detector_span(entity: EntitySpan, spans: list[EntitySpan]) -> bool:
-    return any(
-        entity.label == span.label
-        and span.start_position <= entity.start_position
-        and span.end_position >= entity.end_position
-        for span in spans
-    )
-
-
-def _add_non_overlapping_rule_spans(
-    existing_spans: list[EntitySpan],
-    rule_spans: list[EntitySpan],
-) -> list[EntitySpan]:
-    additions = [rule for rule in rule_spans if not any(_spans_overlap(rule, existing) for existing in existing_spans)]
-    return resolve_overlaps([*existing_spans, *additions])
-
-
-def _spans_overlap(left: EntitySpan, right: EntitySpan) -> bool:
-    return max(left.start_position, right.start_position) < min(left.end_position, right.end_position)
 
 
 def _entity_spans_from_payload(raw_payload: object) -> list[EntitySpan]:
@@ -1266,7 +682,7 @@ def _execute_native_single_pass_row(
         failed_record_count=0,
         runtime=runtime,
     )
-    return _native_single_pass_result_row(row, spans=spans, labels=labels), None
+    return _native_single_pass_result_row(row, spans=spans), None
 
 
 def _complete_native_single_pass(
@@ -1418,15 +834,13 @@ def _native_single_pass_span(*, value: str, label: str, start: int, end: int) ->
     )
 
 
-def _native_single_pass_result_row(row: pd.Series, *, spans: list[EntitySpan], labels: list[str]) -> dict[str, Any]:
+def _native_single_pass_result_row(row: pd.Series, *, spans: list[EntitySpan]) -> dict[str, Any]:
     text = str(row.get(COL_TEXT, ""))
-    rule_spans = detect_high_confidence_entities(text, labels=labels)
-    guarded = _add_non_overlapping_rule_spans(spans, rule_spans)
     output_row = row.to_dict()
-    output_row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[span.as_dict() for span in guarded]).model_dump(
+    output_row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[span.as_dict() for span in spans]).model_dump(
         mode="json"
     )
-    output_row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=guarded)
+    output_row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=spans)
     return output_row
 
 
@@ -1522,21 +936,6 @@ def _require_native_endpoint(runtime: NativeDetectionRuntime) -> None:
         )
 
 
-def _make_native_rules_router_method(
-    *,
-    native_client: DirectDetectionClient | None,
-    native_runtime: NativeDetectionRuntime,
-) -> _DetectAndValidate:
-    return _make_native_staged_method(
-        native_client=native_client,
-        gliner_seed_client=None,
-        native_runtime=native_runtime,
-        seed_source=SeedSource.rules_router,
-        workflow_name="entity-detection-native-rules-router",
-        skip_augmentation=False,
-    )
-
-
 def _make_native_candidate_validate_no_augment_method(
     *,
     native_client: DirectDetectionClient | None,
@@ -1546,7 +945,7 @@ def _make_native_candidate_validate_no_augment_method(
         native_client=native_client,
         gliner_seed_client=None,
         native_runtime=native_runtime,
-        seed_source=SeedSource.rules_plus_direct_llm,
+        seed_source=SeedSource.direct_llm,
         workflow_name="entity-detection-native-candidate-validate-no-augment",
         skip_augmentation=True,
     )
@@ -2257,7 +1656,7 @@ def _native_staged_request(
     data_summary: str | None,
 ) -> StagedDetectionRequest:
     return StagedDetectionRequest(
-        case_id=f"native-rules-router-{ordinal}",
+        case_id=f"native-staged-{ordinal}",
         text=str(row.get(COL_TEXT, "")),
         labels=labels,
         row_index=_safe_row_index(index, fallback=ordinal),
@@ -2294,280 +1693,3 @@ def _native_output_dataframe(
     output[COL_DETECTED_ENTITIES] = pd.Series(dtype="object")
     output[COL_TAGGED_TEXT] = pd.Series(dtype="object")
     return output
-
-
-def _detect_with_rules_only(
-    self: dw.EntityDetectionWorkflow,
-    dataframe: pd.DataFrame,
-    *,
-    model_configs: list[ModelConfig],
-    selected_models: DetectionModelSelection,
-    gliner_detection_threshold: float,
-    validation_max_entities_per_call: int = dw._DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-    validation_excerpt_window_chars: int = dw._DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-    validation_single_chunk_full_text: bool = True,
-    entity_labels: list[str] | None = None,
-    data_summary: str | None = None,
-    preview_num_records: int | None = None,
-) -> dw.EntityDetectionResult:
-    return self.detect_with_high_confidence_rules(dataframe, entity_labels=entity_labels)
-
-
-def _make_rules_covered_or_default_method(original: _DetectAndValidate) -> _DetectAndValidate:
-    def detect_and_validate_entities(
-        self: dw.EntityDetectionWorkflow,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = dw._DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = dw._DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        validation_single_chunk_full_text: bool = True,
-        entity_labels: list[str] | None = None,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-    ) -> dw.EntityDetectionResult:
-        labels = dw._resolve_detection_labels(entity_labels)
-        if _labels_are_rules_only(labels):
-            return _detect_rules_covered_rows_or_default(
-                original,
-                self,
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                gliner_detection_threshold=gliner_detection_threshold,
-                validation_max_entities_per_call=validation_max_entities_per_call,
-                validation_excerpt_window_chars=validation_excerpt_window_chars,
-                validation_single_chunk_full_text=validation_single_chunk_full_text,
-                entity_labels=entity_labels,
-                data_summary=data_summary,
-                preview_num_records=preview_num_records,
-                labels=labels,
-            )
-        return original(
-            self,
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=validation_single_chunk_full_text,
-            entity_labels=entity_labels,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-        )
-
-    return detect_and_validate_entities
-
-
-def _detect_rules_covered_rows_or_default(
-    original: _DetectAndValidate,
-    self: dw.EntityDetectionWorkflow,
-    dataframe: pd.DataFrame,
-    *,
-    model_configs: list[ModelConfig],
-    selected_models: DetectionModelSelection,
-    gliner_detection_threshold: float,
-    validation_max_entities_per_call: int,
-    validation_excerpt_window_chars: int,
-    validation_single_chunk_full_text: bool,
-    entity_labels: list[str] | None,
-    data_summary: str | None,
-    preview_num_records: int | None,
-    labels: list[str],
-) -> dw.EntityDetectionResult:
-    started = time.perf_counter()
-    if dataframe.empty:
-        result = _detect_with_rules_only(
-            self,
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=validation_single_chunk_full_text,
-            entity_labels=entity_labels,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-        )
-        _record_rules_covered_route(
-            started=started,
-            total_row_count=0,
-            rule_row_count=0,
-            fallback_row_count=0,
-            result=result,
-        )
-        return result
-
-    coverage_mask = dataframe[COL_TEXT].apply(
-        lambda text: _structured_assignments_are_rule_covered(str(text), labels=labels)
-    )
-    if bool(coverage_mask.all()):
-        result = _detect_with_rules_only(
-            self,
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=validation_single_chunk_full_text,
-            entity_labels=entity_labels,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-        )
-        _record_rules_covered_route(
-            started=started,
-            total_row_count=len(dataframe),
-            rule_row_count=len(dataframe),
-            fallback_row_count=0,
-            result=result,
-        )
-        return result
-    if not bool(coverage_mask.any()):
-        result = original(
-            self,
-            dataframe,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=validation_single_chunk_full_text,
-            entity_labels=entity_labels,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-        )
-        _record_rules_covered_route(
-            started=started,
-            total_row_count=len(dataframe),
-            rule_row_count=0,
-            fallback_row_count=len(dataframe),
-            result=result,
-        )
-        return result
-
-    rule_rows, default_rows = split_rows(
-        dataframe,
-        column=COL_TEXT,
-        predicate=lambda text: _structured_assignments_are_rule_covered(str(text), labels=labels),
-    )
-
-    rule_result = _detect_with_rules_only(
-        self,
-        rule_rows,
-        model_configs=model_configs,
-        selected_models=selected_models,
-        gliner_detection_threshold=gliner_detection_threshold,
-        validation_max_entities_per_call=validation_max_entities_per_call,
-        validation_excerpt_window_chars=validation_excerpt_window_chars,
-        validation_single_chunk_full_text=validation_single_chunk_full_text,
-        entity_labels=entity_labels,
-        data_summary=data_summary,
-        preview_num_records=preview_num_records,
-    )
-    default_result = original(
-        self,
-        default_rows,
-        model_configs=model_configs,
-        selected_models=selected_models,
-        gliner_detection_threshold=gliner_detection_threshold,
-        validation_max_entities_per_call=validation_max_entities_per_call,
-        validation_excerpt_window_chars=validation_excerpt_window_chars,
-        validation_single_chunk_full_text=validation_single_chunk_full_text,
-        entity_labels=entity_labels,
-        data_summary=data_summary,
-        preview_num_records=preview_num_records,
-    )
-    result = dw.EntityDetectionResult(
-        dataframe=merge_and_reorder(rule_result.dataframe, default_result.dataframe),
-        failed_records=[*rule_result.failed_records, *default_result.failed_records],
-    )
-    _record_rules_covered_route(
-        started=started,
-        total_row_count=len(dataframe),
-        rule_row_count=len(rule_rows),
-        fallback_row_count=len(default_rows),
-        result=result,
-    )
-    return result
-
-
-def _record_rules_covered_route(
-    *,
-    started: float,
-    total_row_count: int,
-    rule_row_count: int,
-    fallback_row_count: int,
-    result: dw.EntityDetectionResult,
-) -> None:
-    record_model_workflow(
-        workflow_name="entity-detection-rules-covered-router",
-        model_aliases=[],
-        input_row_count=total_row_count,
-        output_row_count=len(result.dataframe),
-        failed_record_count=len(result.failed_records),
-        elapsed_sec=time.perf_counter() - started,
-        status="completed" if not result.failed_records else "partial",
-        extra_fields={
-            "route_total_row_count": total_row_count,
-            "route_rule_row_count": rule_row_count,
-            "route_fallback_row_count": fallback_row_count,
-        },
-    )
-
-
-def _structured_assignments_are_rule_covered(text: str, *, labels: list[str]) -> bool:
-    allowed_labels = set(labels)
-    rule_spans = detect_high_confidence_entities(text, labels=labels)
-    covered_ranges = [(span.start_position, span.end_position) for span in rule_spans]
-    for match in _STRUCTURED_ASSIGNMENT_RE.finditer(text):
-        label = _structured_assignment_label(match.group("key"))
-        if label not in allowed_labels:
-            continue
-        start, end = _structured_assignment_value_span(match)
-        if not _range_overlaps_any(start, end, covered_ranges):
-            return False
-    return True
-
-
-def _structured_assignment_value_span(match: re.Match[str]) -> tuple[int, int]:
-    if match.group("quoted") is not None:
-        return match.span("quoted")
-    return match.span("bare")
-
-
-def _range_overlaps_any(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
-    return any(start < range_end and end > range_start for range_start, range_end in ranges)
-
-
-def _structured_assignment_label(key: str) -> str:
-    normalized = key.lower().replace("-", "_")
-    if normalized in {"api_key", "aws_access_key_id", "access_key_id", "hf_token", "token", "auth_token", "session_id"}:
-        return "api_key"
-    if normalized == "authorization":
-        return "api_key"
-    if normalized in {"password", "pass", "secret", "aws_secret_access_key", "django_secret"}:
-        return "password"
-    if normalized == "database_url":
-        return "url"
-    if normalized == "pin":
-        return "pin"
-    if normalized in {"user", "username", "user_name", "login", "account"}:
-        return "user_name"
-    if normalized == "cookie":
-        return "http_cookie"
-    if normalized in {"trace_id", "request_id", "req_id", "order_id", "tenant_id", "unique_id"}:
-        return "unique_id"
-    if normalized in {"url", "uri", "endpoint", "callback"}:
-        return "url"
-    if normalized == "email":
-        return "email"
-    return ""
-
-
-def _labels_are_rules_only(labels: list[str]) -> bool:
-    return dw.labels_are_supported_by_structured_rule_fast_lane(labels)

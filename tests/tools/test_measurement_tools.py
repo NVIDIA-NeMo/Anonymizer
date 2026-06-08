@@ -98,152 +98,6 @@ def test_benchmark_exports_detection_artifact_analysis(tmp_path: Path) -> None:
     assert "Alice" not in output_path.read_text(encoding="utf-8")
 
 
-def test_benchmark_exports_rules_only_synthetic_detection_artifacts(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_only_synthetic_artifacts",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    secret = "sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"
-    pd.DataFrame({"text": [f"export API_KEY={secret}"]}).to_csv(input_path, index=False)
-    config = tool.ConfigSpec(
-        id="rules-only-redact",
-        replace="redact",
-        detect={"entity_labels": ["api_key", "email", "password", "url"]},
-        experimental_detection_strategy="rules_only",
-    )
-    case = tool.BenchmarkCase(
-        suite_id="rules-suite",
-        workload_id="input",
-        config_id="rules-only-redact",
-        repetition=0,
-        case_id="input__rules-only-redact__r000",
-    )
-    output_path = tmp_path / "raw" / "input__rules-only-redact__r000.detection-artifacts.jsonl"
-
-    result = tool.export_rules_only_case_detection_artifacts(
-        config,
-        tool.AnonymizerInput(source=str(input_path), text_column="text"),
-        output_path,
-        case=case,
-    )
-
-    assert result == output_path
-    text = output_path.read_text(encoding="utf-8")
-    assert secret not in text
-    row = json.loads(text)
-    assert row["workflow_name"] == "entity-detection-rules-only"
-    assert row["final_entity_count"] == 1
-    assert row["final_entity_signature_count"] == 1
-    assert row["final_label_counts.api_key"] == 1
-    assert row["final_source_counts.rule"] == 1
-    assert any(key.startswith("final_entity_signature_labels.") for key in row)
-
-
-def test_benchmark_exports_rules_covered_or_default_synthetic_artifacts_for_structured_fast_lane_labels(
-    tmp_path: Path,
-) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_covered_synthetic_artifacts",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    secret = "sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"
-    pd.DataFrame({"text": [f"export API_KEY={secret}"]}).to_csv(input_path, index=False)
-    config = tool.ConfigSpec(
-        id="rules-covered-redact",
-        replace="redact",
-        detect={"entity_labels": ["api_key", "email", "password", "url"]},
-        experimental_detection_strategy="rules_covered_or_default",
-    )
-    case = tool.BenchmarkCase(
-        suite_id="rules-suite",
-        workload_id="input",
-        config_id="rules-covered-redact",
-        repetition=0,
-        case_id="input__rules-covered-redact__r000",
-    )
-    output_path = tmp_path / "raw" / "input__rules-covered-redact__r000.detection-artifacts.jsonl"
-
-    result = tool.export_rules_only_case_detection_artifacts(
-        config,
-        tool.AnonymizerInput(source=str(input_path), text_column="text"),
-        output_path,
-        case=case,
-    )
-
-    assert result == output_path
-    row = json.loads(output_path.read_text(encoding="utf-8"))
-    assert row["workflow_name"] == "entity-detection-rules-only"
-    assert row["final_entity_count"] == 1
-    assert row["final_label_counts.api_key"] == 1
-
-
-def test_benchmark_does_not_export_rules_covered_or_default_artifacts_for_contextual_labels(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_covered_contextual_artifacts",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice has token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
-    config = tool.ConfigSpec(
-        id="rules-covered-redact",
-        replace="redact",
-        detect={"entity_labels": ["api_key", "person"]},
-        experimental_detection_strategy="rules_covered_or_default",
-    )
-    case = tool.BenchmarkCase(
-        suite_id="rules-suite",
-        workload_id="input",
-        config_id="rules-covered-redact",
-        repetition=0,
-        case_id="input__rules-covered-redact__r000",
-    )
-
-    result = tool.export_rules_only_case_detection_artifacts(
-        config,
-        tool.AnonymizerInput(source=str(input_path), text_column="text"),
-        tmp_path / "raw" / "input__rules-covered-redact__r000.detection-artifacts.jsonl",
-        case=case,
-    )
-
-    assert result is None
-
-
-def test_benchmark_does_not_export_rules_covered_artifacts_for_narrow_prose_rule_labels(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_covered_prose_rule_artifacts",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Jordan worked at Acme Research Center and lived on Maple Street."]}).to_csv(
-        input_path,
-        index=False,
-    )
-    config = tool.ConfigSpec(
-        id="rules-covered-redact",
-        replace="redact",
-        detect={"entity_labels": ["organization_name", "street_address"]},
-        experimental_detection_strategy="rules_covered_or_default",
-    )
-    case = tool.BenchmarkCase(
-        suite_id="rules-suite",
-        workload_id="input",
-        config_id="rules-covered-redact",
-        repetition=0,
-        case_id="input__rules-covered-redact__r000",
-    )
-
-    result = tool.export_rules_only_case_detection_artifacts(
-        config,
-        tool.AnonymizerInput(source=str(input_path), text_column="text"),
-        tmp_path / "raw" / "input__rules-covered-redact__r000.detection-artifacts.jsonl",
-        case=case,
-    )
-
-    assert result is None
-
-
 def test_benchmark_detection_artifact_analysis_ignores_stale_artifacts(tmp_path: Path) -> None:
     tool = load_tool("measurement_benchmark_tool_artifact_delta", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     artifact_root = tmp_path / "artifacts"
@@ -408,89 +262,6 @@ def test_benchmark_patches_detection_artifacts_from_final_trace_dataframe(tmp_pa
     assert row["final_source_counts.rule"] == 1
     assert any(key.startswith("final_entity_signature_details.") for key in row)
     assert "final_entity_signature_labels.stale" not in row
-
-
-def test_rules_covered_or_default_detection_artifacts_use_final_trace_dataframe(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_covered_trace_artifacts",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    case = tool.BenchmarkCase(
-        suite_id="suite-a",
-        workload_id="input",
-        config_id="rules-covered",
-        repetition=0,
-        case_id="input__rules-covered__r000",
-    )
-    config = tool.ConfigSpec(
-        id="rules-covered",
-        replace="redact",
-        detect={"entity_labels": ["api_key", "password"]},
-        experimental_detection_strategy="rules_covered_or_default",
-    )
-    trace_dataframe = pd.DataFrame(
-        {
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {
-                            "value": "sk-test-AAAAAAAAAAAAAAAAAAAAAAAA",
-                            "label": "api_key",
-                            "start_position": 6,
-                            "end_position": 38,
-                            "source": "rule",
-                        }
-                    ]
-                },
-                {
-                    "entities": [
-                        {
-                            "value": "SecretNoRule123!",
-                            "label": "password",
-                            "start_position": 14,
-                            "end_position": 30,
-                            "source": "detector",
-                        }
-                    ]
-                },
-            ]
-        }
-    )
-    paths = tool._CaseRunPaths(
-        raw_path=tmp_path / "raw" / "case.jsonl",
-        artifact_output_path=tmp_path / "raw" / "case.detection-artifacts.jsonl",
-        trace_path=None,
-        artifact_snapshot={},
-    )
-    tool.write_detection_artifact_payloads([_stale_detection_artifact_payload()], paths.artifact_output_path)
-    contexts = {"artifact_path": tmp_path / "artifacts"}
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
-    execution = tool._CaseExecution(
-        input_data=tool.AnonymizerInput(source=str(input_path), text_column="text"),
-        trace_dataframe=trace_dataframe,
-    )
-
-    result = tool._case_detection_artifact_path(
-        contexts,
-        paths,
-        case=case,
-        config=config,
-        execution=execution,
-    )
-
-    assert result == paths.artifact_output_path
-    rows = [json.loads(line) for line in paths.artifact_output_path.read_text(encoding="utf-8").splitlines()]
-    assert len(rows) == 2
-    assert [row["workflow_name"] for row in rows] == [
-        "entity-detection-final-trace",
-        "entity-detection-final-trace",
-    ]
-    assert [row["row_index"] for row in rows] == [0, 1]
-    assert [row["final_source_counts.rule"] for row in rows] == [1.0, None]
-    assert [row["final_source_counts.detector"] for row in rows] == [None, 1.0]
-    assert "sk-test" not in paths.artifact_output_path.read_text(encoding="utf-8")
-    assert "SecretNoRule123!" not in paths.artifact_output_path.read_text(encoding="utf-8")
 
 
 def test_run_suite_records_detection_artifact_analysis_path(
@@ -1379,16 +1150,6 @@ def test_benchmark_config_accepts_experimental_detection_strategy() -> None:
         "measurement_benchmark_tool_detection_strategy_config", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
 
-    config = tool.ConfigSpec(
-        id="rules-only",
-        replace="redact",
-        experimental_detection_strategy="rules_only",
-    )
-
-    assert config.experimental_detection_strategy == tool.ExperimentalDetectionStrategy.rules_only
-    anonymizer_config = tool.build_anonymizer_config(config)
-    assert not hasattr(anonymizer_config.detect, "experimental_detection_strategy")
-
     detector_only = tool.ConfigSpec(
         id="detector-only",
         replace="redact",
@@ -1396,22 +1157,8 @@ def test_benchmark_config_accepts_experimental_detection_strategy() -> None:
     )
 
     assert detector_only.experimental_detection_strategy == tool.ExperimentalDetectionStrategy.detector_only
-
-    rules_covered = tool.ConfigSpec(
-        id="rules-covered",
-        replace="redact",
-        experimental_detection_strategy="rules_covered_or_default",
-    )
-
-    assert rules_covered.experimental_detection_strategy == tool.ExperimentalDetectionStrategy.rules_covered_or_default
-
-    native_rules_router = tool.ConfigSpec(
-        id="native-rules-router",
-        replace="redact",
-        experimental_detection_strategy="native_rules_router",
-    )
-
-    assert native_rules_router.experimental_detection_strategy == tool.ExperimentalDetectionStrategy.native_rules_router
+    anonymizer_config = tool.build_anonymizer_config(detector_only)
+    assert not hasattr(anonymizer_config.detect, "experimental_detection_strategy")
 
     native_candidate_validate = tool.ConfigSpec(
         id="native-candidate-validate",
@@ -1510,30 +1257,6 @@ def test_benchmark_config_accepts_experimental_detection_strategy() -> None:
     )
 
 
-def test_benchmark_config_accepts_experimental_rule_labels() -> None:
-    tool = load_tool("measurement_benchmark_tool_rule_labels_config", REPO_ROOT / "tools/measurement/run_benchmarks.py")
-
-    config = tool.ConfigSpec(
-        id="rules-guardrail",
-        replace="redact",
-        experimental_detection_strategy="rules_guardrail",
-        experimental_rule_labels=["street_address"],
-    )
-
-    assert config.experimental_rule_labels == ["street_address"]
-    anonymizer_config = tool.build_anonymizer_config(config)
-    assert not hasattr(anonymizer_config.detect, "experimental_rule_labels")
-
-    detector_only = tool.ConfigSpec(
-        id="rules-guardrail-detector-only",
-        replace="redact",
-        experimental_detection_strategy="rules_guardrail_detector_only",
-        experimental_rule_labels=["api_key"],
-    )
-
-    assert detector_only.experimental_rule_labels == ["api_key"]
-
-
 def test_benchmark_spec_accepts_dd_parser_compat() -> None:
     tool = load_tool(
         "measurement_benchmark_tool_dd_parser_compat_config", REPO_ROOT / "tools/measurement/run_benchmarks.py"
@@ -1549,200 +1272,6 @@ def test_benchmark_spec_accepts_dd_parser_compat() -> None:
     assert spec.dd_parser_compat == tool.DDParserCompatMode.raw_json
 
 
-def test_benchmark_preflight_rejects_rules_only_without_explicit_labels(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_only_without_labels", REPO_ROOT / "tools/measurement/run_benchmarks.py"
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
-    spec_path = tmp_path / "suite.yaml"
-    spec_path.write_text(
-        """
-suite_id: rules-only-no-labels
-workloads:
-  - id: input
-    source: input.csv
-configs:
-  - id: rules-only-redact
-    experimental_detection_strategy: rules_only
-    replace: redact
-""",
-        encoding="utf-8",
-    )
-    spec = tool.load_spec(spec_path)
-
-    with pytest.raises(ValueError, match="requires explicit detect.entity_labels"):
-        tool.preflight_suite(spec, spec_path=spec_path)
-
-
-def test_benchmark_preflight_rejects_rules_only_unsupported_labels(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_only_unsupported_labels", REPO_ROOT / "tools/measurement/run_benchmarks.py"
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
-    spec_path = tmp_path / "suite.yaml"
-    spec_path.write_text(
-        """
-suite_id: rules-only-unsupported-labels
-workloads:
-  - id: input
-    source: input.csv
-configs:
-  - id: rules-only-redact
-    experimental_detection_strategy: rules_only
-    detect:
-      entity_labels: [api_key, person]
-    replace: redact
-""",
-        encoding="utf-8",
-    )
-    spec = tool.load_spec(spec_path)
-
-    with pytest.raises(ValueError, match="unsupported high-confidence rule labels.*person"):
-        tool.preflight_suite(spec, spec_path=spec_path)
-
-
-def test_benchmark_preflight_accepts_rules_only_supported_labels(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_only_supported_labels", REPO_ROOT / "tools/measurement/run_benchmarks.py"
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
-    spec_path = tmp_path / "suite.yaml"
-    spec_path.write_text(
-        """
-suite_id: rules-only-supported-labels
-workloads:
-  - id: input
-    source: input.csv
-configs:
-  - id: rules-only-redact
-    experimental_detection_strategy: rules_only
-    detect:
-      entity_labels: [api_key, email, http_cookie, password, pin, unique_id, url, user_name]
-    replace: redact
-""",
-        encoding="utf-8",
-    )
-    spec = tool.load_spec(spec_path)
-
-    tool.preflight_suite(spec, spec_path=spec_path)
-
-
-def test_benchmark_preflight_accepts_rules_covered_or_default_contextual_labels(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rules_covered_contextual_labels",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice has token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
-    spec_path = tmp_path / "suite.yaml"
-    spec_path.write_text(
-        """
-suite_id: rules-covered-contextual-labels
-workloads:
-  - id: input
-    source: input.csv
-configs:
-  - id: rules-covered-redact
-    experimental_detection_strategy: rules_covered_or_default
-    detect:
-      entity_labels: [api_key, person]
-    replace: redact
-""",
-        encoding="utf-8",
-    )
-    spec = tool.load_spec(spec_path)
-
-    tool.preflight_suite(spec, spec_path=spec_path)
-
-
-def test_benchmark_preflight_rejects_experimental_rule_labels_for_non_rule_strategy(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rule_labels_non_rule_strategy",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice"]}).to_csv(input_path, index=False)
-    spec_path = tmp_path / "suite.yaml"
-    spec_path.write_text(
-        """
-suite_id: rule-labels-non-rule-strategy
-workloads:
-  - id: input
-    source: input.csv
-configs:
-  - id: redact
-    experimental_detection_strategy: prose_augment_focus
-    experimental_rule_labels: [street_address]
-    replace: redact
-""",
-        encoding="utf-8",
-    )
-    spec = tool.load_spec(spec_path)
-
-    with pytest.raises(ValueError, match="experimental_rule_labels requires a rule-backed strategy"):
-        tool.preflight_suite(spec, spec_path=spec_path)
-
-
-def test_benchmark_preflight_accepts_experimental_rule_labels_for_compact_rule_guardrail(
-    tmp_path: Path,
-) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rule_labels_compact_rule_guardrail",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice lives on West Roberts Drive."]}).to_csv(input_path, index=False)
-    spec_path = tmp_path / "suite.yaml"
-    spec_path.write_text(
-        """
-suite_id: rule-labels-compact-rule-guardrail
-workloads:
-  - id: input
-    source: input.csv
-configs:
-  - id: redact
-    experimental_detection_strategy: rules_guardrail_compact_validation
-    experimental_rule_labels: [street_address]
-    replace: redact
-""",
-        encoding="utf-8",
-    )
-    spec = tool.load_spec(spec_path)
-
-    tool.preflight_suite(spec, spec_path=spec_path)
-
-
-def test_benchmark_preflight_rejects_unsupported_experimental_rule_labels(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_tool_rule_labels_unsupported",
-        REPO_ROOT / "tools/measurement/run_benchmarks.py",
-    )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice"]}).to_csv(input_path, index=False)
-    spec_path = tmp_path / "suite.yaml"
-    spec_path.write_text(
-        """
-suite_id: rule-labels-unsupported
-workloads:
-  - id: input
-    source: input.csv
-configs:
-  - id: redact
-    experimental_detection_strategy: rules_guardrail
-    experimental_rule_labels: [person]
-    replace: redact
-""",
-        encoding="utf-8",
-    )
-    spec = tool.load_spec(spec_path)
-
-    with pytest.raises(ValueError, match="unsupported experimental_rule_labels.*person"):
-        tool.preflight_suite(spec, spec_path=spec_path)
-
-
 def test_benchmark_case_enters_experimental_detection_strategy_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1753,7 +1282,7 @@ def test_benchmark_case_enters_experimental_detection_strategy_context(
     captured_measurements: list[Any] = []
     captured_parser_compat: list[Any] = []
     captured_strategies: list[Any] = []
-    captured_rule_labels: list[Any] = []
+    captured_context_kwargs: list[dict[str, Any]] = []
 
     @contextmanager
     def fake_measurement_session(config: Any) -> Iterator[None]:
@@ -1761,9 +1290,9 @@ def test_benchmark_case_enters_experimental_detection_strategy_context(
         yield None
 
     @contextmanager
-    def fake_detection_strategy_context(strategy: Any, *, rule_labels: list[str] | None = None) -> Iterator[None]:
+    def fake_detection_strategy_context(strategy: Any, **kwargs: Any) -> Iterator[None]:
         captured_strategies.append(strategy)
-        captured_rule_labels.append(rule_labels)
+        captured_context_kwargs.append(kwargs)
         yield None
 
     @contextmanager
@@ -1781,32 +1310,36 @@ def test_benchmark_case_enters_experimental_detection_strategy_context(
     monkeypatch.setattr(tool, "experimental_detection_strategy_context", fake_detection_strategy_context)
 
     spec = tool.BenchmarkSpec(
-        suite_id="rules-suite",
+        suite_id="native-suite",
         dd_parser_compat="raw_json",
+        native_runtime=tool.NativeRuntimeSpec(
+            runtime_id="native-test",
+            endpoint="http://runtime.example/v1",
+            model="test-model",
+        ),
         workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
         configs=[
             tool.ConfigSpec(
-                id="rules-only-redact",
+                id="native-single-pass-redact",
                 replace="redact",
-                experimental_detection_strategy="rules_only",
-                experimental_rule_labels=["api_key"],
+                experimental_detection_strategy="native_single_pass",
             )
         ],
     )
     pd.DataFrame({"text": ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(tmp_path / "input.csv", index=False)
     case = tool.BenchmarkCase(
-        suite_id="rules-suite",
+        suite_id="native-suite",
         workload_id="input",
-        config_id="rules-only-redact",
+        config_id="native-single-pass-redact",
         repetition=0,
-        case_id="input__rules-only-redact__r000",
+        case_id="input__native-single-pass-redact__r000",
     )
 
     tool._execute_case(
         FakeAnonymizer(),
         spec.workloads[0],
         spec.configs[0],
-        raw_path=tmp_path / "raw" / "input__rules-only-redact__r000.jsonl",
+        raw_path=tmp_path / "raw" / "input__native-single-pass-redact__r000.jsonl",
         trace_path=None,
         case=case,
         spec=spec,
@@ -1816,8 +1349,9 @@ def test_benchmark_case_enters_experimental_detection_strategy_context(
     )
 
     assert captured_parser_compat == [tool.DDParserCompatMode.raw_json]
-    assert captured_strategies == [tool.ExperimentalDetectionStrategy.rules_only]
-    assert captured_rule_labels == [["api_key"]]
-    assert captured_measurements[0].run_tags["experimental_detection_strategy"] == "rules_only"
-    assert captured_measurements[0].run_tags["experimental_rule_labels"] == ["api_key"]
+    assert captured_strategies == [tool.ExperimentalDetectionStrategy.native_single_pass]
+    assert captured_context_kwargs[0]["native_runtime"].endpoint == "http://runtime.example/v1"
+    assert captured_context_kwargs[0]["native_runtime"].model == "test-model"
+    assert captured_measurements[0].run_tags["experimental_detection_strategy"] == "native_single_pass"
+    assert captured_measurements[0].run_tags["native_runtime_id"] == "native-test"
     assert captured_measurements[0].run_tags["dd_parser_compat"] == "raw_json"

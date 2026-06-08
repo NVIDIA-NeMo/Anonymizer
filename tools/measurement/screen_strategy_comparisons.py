@@ -662,8 +662,6 @@ def group_recommendation(group: ScreenGroup) -> str:
             return "reliability_review"
         if is_label_policy_review_group(group):
             return "label_policy_review"
-        if is_fast_lane_review_group(group):
-            return "fast_lane_review"
         if group.performance_verdict_counts.get("improved", 0) == group.review_count:
             return "review_only"
         if group.performance_verdict_counts.get("improved", 0) or group.performance_verdict_counts.get("mixed", 0):
@@ -755,36 +753,6 @@ def is_label_policy_review_group(group: ScreenGroup) -> bool:
     if group.signature_parity_verdict_counts.get("review", 0) != group.review_count:
         return False
     return bool(group.label_mismatch_label_counts or group.flag_counts.get("covered_label_mismatch"))
-
-
-_FAST_LANE_REVIEW_STRATEGIES = {"rules_only", "rules_covered_or_default"}
-_FAST_LANE_REVIEW_FLAGS = {
-    "candidate_skips_llm_validation",
-    "candidate_uses_rule_entities",
-    "entity_count_loss",
-    "no_candidate_detector_entities",
-    "span_boundary_mismatch",
-}
-
-
-def is_fast_lane_review_group(group: ScreenGroup) -> bool:
-    if group.candidate_strategy not in _FAST_LANE_REVIEW_STRATEGIES:
-        return False
-    if group.review_count != group.row_count:
-        return False
-    if group.performance_verdict_counts.get("improved", 0) != group.review_count:
-        return False
-    leak_count = group.sum_candidate_original_value_leak_count
-    if leak_count is None or leak_count != 0:
-        return False
-    if (
-        group.baseline_only_label_counts
-        or group.stable_lost_label_counts
-        or group.candidate_original_value_leak_label_counts
-    ):
-        return False
-    flags = set(group.flag_counts)
-    return bool(flags) and flags.issubset(_FAST_LANE_REVIEW_FLAGS)
 
 
 def group_performance_summary(group: ScreenGroup) -> str:

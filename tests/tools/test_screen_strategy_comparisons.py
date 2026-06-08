@@ -35,9 +35,9 @@ def test_screen_strategy_comparisons_reads_comparison_csvs_only(tmp_path: Path) 
             {
                 "workload_id": "shell-3",
                 "baseline_config_id": "default",
-                "candidate_config_id": "rules-only",
+                "candidate_config_id": "detector-only",
                 "baseline_strategy": "default",
-                "candidate_strategy": "rules_only",
+                "candidate_strategy": "detector_only",
                 "baseline_replacement_strategy": "default",
                 "candidate_replacement_strategy": "local_structured_substitute",
                 "baseline_case_count": 3,
@@ -91,7 +91,7 @@ def test_screen_strategy_comparisons_reads_comparison_csvs_only(tmp_path: Path) 
                 "source_path": "analysis/default-vs-candidates.csv",
                 "workload_id": "shell-3",
                 "baseline_config_id": "default",
-                "candidate_config_id": "rules-only",
+                "candidate_config_id": "detector-only",
                 "safety_verdict": "review",
                 "performance_verdict": "improved",
                 "candidate_verdict": "review",
@@ -121,13 +121,13 @@ def test_screen_strategy_comparisons_reads_comparison_csvs_only(tmp_path: Path) 
     assert shell.baseline_case_count == 3
     assert shell.candidate_case_count == 3
     assert shell.shared_stable_final_entity_signature_count == 12
-    rules_local = next(
+    detector_local = next(
         group
         for group in result.groups
-        if group.group_key == "strategy:rules_only|replacement:local_structured_substitute"
+        if group.group_key == "strategy:detector_only|replacement:local_structured_substitute"
     )
-    assert rules_local.candidate_replacement_strategy == "local_structured_substitute"
-    assert rules_local.row_count == 1
+    assert detector_local.candidate_replacement_strategy == "local_structured_substitute"
+    assert detector_local.row_count == 1
     no_augment = next(group for group in result.groups if group.group_key == "strategy:no_augment")
     assert no_augment.row_count == 1
     assert no_augment.reject_count == 1
@@ -141,10 +141,10 @@ def test_screen_strategy_comparisons_writes_csv(tmp_path: Path) -> None:
     )
     rows = [
         tool.ScreenRow(
-            source_path="analysis/default-vs-rules.csv",
+            source_path="analysis/default-vs-detector-only.csv",
             workload_id="shell",
             baseline_config_id="default",
-            candidate_config_id="rules",
+            candidate_config_id="detector-only",
             baseline_replacement_strategy="default",
             candidate_replacement_strategy="local_structured_substitute",
             safety_verdict="review",
@@ -248,8 +248,8 @@ def test_screen_strategy_comparisons_surfaces_candidate_original_value_leaks(tmp
             {
                 "workload_id": "structured-secrets",
                 "baseline_config_id": "default",
-                "candidate_config_id": "rules-covered",
-                "candidate_strategy": "rules_covered_or_default",
+                "candidate_config_id": "native-single-pass",
+                "candidate_strategy": "native_single_pass",
                 "safety_verdict": "fail",
                 "performance_verdict": "improved",
                 "candidate_verdict": "reject",
@@ -289,78 +289,6 @@ def test_screen_strategy_comparisons_surfaces_candidate_original_value_leaks(tmp
     assert "candidate_replacement_collisions=1.0" in rendered
     assert "leak_labels=api_key:1,password:1" in rendered
     assert "collision_labels=date:1" in rendered
-
-
-def test_screen_strategy_comparisons_marks_rule_fast_lane_review_when_only_provenance_flags_remain(
-    tmp_path: Path,
-) -> None:
-    tool = load_tool(
-        "measurement_screen_strategy_comparisons_fast_lane_review",
-        REPO_ROOT / "tools/measurement/screen_strategy_comparisons.py",
-    )
-    pd.DataFrame(
-        [
-            {
-                "workload_id": "structured-secrets",
-                "baseline_config_id": "default",
-                "candidate_config_id": "rules-covered",
-                "candidate_strategy": "rules_covered_or_default",
-                "safety_verdict": "review",
-                "performance_verdict": "improved",
-                "candidate_verdict": "review",
-                "candidate_original_value_leak_count": 0,
-                "candidate_original_value_leak_record_count": 0,
-                "flags": '["no_candidate_detector_entities", "candidate_uses_rule_entities"]',
-            }
-        ]
-    ).to_csv(tmp_path / "comparison.csv", index=False)
-
-    result = tool.screen_comparison_paths([tmp_path])
-
-    assert result.groups[0].recommendation == "fast_lane_review"
-
-
-def test_screen_strategy_comparisons_treats_covered_boundary_deltas_as_fast_lane_review(
-    tmp_path: Path,
-) -> None:
-    tool = load_tool(
-        "measurement_screen_strategy_comparisons_fast_lane_boundary_review",
-        REPO_ROOT / "tools/measurement/screen_strategy_comparisons.py",
-    )
-    pd.DataFrame(
-        [
-            {
-                "workload_id": "structured-identifiers",
-                "baseline_config_id": "default",
-                "candidate_config_id": "rules-local",
-                "candidate_strategy": "rules_covered_or_default",
-                "candidate_replacement_strategy": "local_structured_substitute",
-                "safety_verdict": "review",
-                "performance_verdict": "improved",
-                "candidate_verdict": "review",
-                "candidate_original_value_leak_count": 0,
-                "candidate_original_value_leak_record_count": 0,
-                "flags": (
-                    '["entity_count_loss", "span_boundary_mismatch", '
-                    '"no_candidate_detector_entities", "candidate_uses_rule_entities"]'
-                ),
-                "baseline_only_final_entity_signature_label_counts.api_key": 2,
-                "baseline_only_final_entity_signature_label_counts.http_cookie": 3,
-                "baseline_only_candidate_covered_signature_label_counts.api_key": 2,
-                "baseline_only_candidate_covered_signature_label_counts.http_cookie": 3,
-                "baseline_only_candidate_overlapping_signature_label_counts.http_cookie": 1,
-                "baseline_only_candidate_uncovered_signature_count": 0,
-                "baseline_stable_candidate_uncovered_signature_count": 0,
-            }
-        ]
-    ).to_csv(tmp_path / "comparison.csv", index=False)
-
-    result = tool.screen_comparison_paths([tmp_path])
-
-    row = result.rows[0]
-    assert row.baseline_only_label_counts == {}
-    assert result.groups[0].baseline_only_label_counts == {}
-    assert result.groups[0].recommendation == "fast_lane_review"
 
 
 def test_screen_strategy_comparisons_surfaces_label_policy_review(tmp_path: Path) -> None:
@@ -568,18 +496,18 @@ def test_screen_strategy_comparisons_groups_default_detection_by_replacement_str
     assert tool.group_base_for_row(row, config_aliases={}) == "replacement:local_structured_substitute"
 
 
-def test_screen_strategy_comparisons_keeps_stale_rule_review_generic_without_leak_metrics() -> None:
+def test_screen_strategy_comparisons_keeps_generic_review_without_leak_metrics() -> None:
     tool = load_tool(
-        "measurement_screen_strategy_comparisons_fast_lane_review_stale",
+        "measurement_screen_strategy_comparisons_generic_review",
         REPO_ROOT / "tools/measurement/screen_strategy_comparisons.py",
     )
     group = tool.ScreenGroup(
-        group_key="strategy:rules_covered_or_default",
-        candidate_strategy="rules_covered_or_default",
+        group_key="strategy:detector_only",
+        candidate_strategy="detector_only",
         row_count=1,
         review_count=1,
         performance_verdict_counts={"improved": 1},
-        flag_counts={"candidate_uses_rule_entities": 1, "no_candidate_detector_entities": 1},
+        flag_counts={"candidate_skips_llm_validation": 1},
     )
 
     assert tool.group_recommendation(group) == "review_only"
@@ -680,8 +608,8 @@ def test_screen_strategy_comparisons_groups_candidate_strategy_conflicts(tmp_pat
             {
                 "workload_id": "shell",
                 "baseline_config_id": "default",
-                "candidate_config_id": "rules",
-                "candidate_strategy": "rules_only",
+                "candidate_config_id": "detector-only",
+                "candidate_strategy": "detector_only",
                 "safety_verdict": "review",
                 "performance_verdict": "improved",
                 "candidate_verdict": "review",
@@ -696,7 +624,7 @@ def test_screen_strategy_comparisons_groups_candidate_strategy_conflicts(tmp_pat
     result = tool.screen_comparison_paths([tmp_path])
 
     groups = {group.group_key: group for group in result.groups}
-    assert list(groups) == ["strategy:rules_only", "strategy:no_augment"]
+    assert list(groups) == ["strategy:detector_only", "strategy:no_augment"]
     no_augment = groups["strategy:no_augment"]
     assert no_augment.row_count == 2
     assert no_augment.viable_count == 1
@@ -836,20 +764,20 @@ def test_screen_strategy_comparisons_can_group_by_strategy_and_workload_family(t
             {
                 "workload_id": "shell-secrets-3",
                 "baseline_config_id": "default",
-                "candidate_config_id": "rules-only-shell",
-                "candidate_strategy": "rules_only",
+                "candidate_config_id": "detector-only-shell",
+                "candidate_strategy": "detector_only",
                 "safety_verdict": "review",
                 "performance_verdict": "improved",
                 "candidate_verdict": "review",
                 "pipeline_elapsed_sec_delta_pct": -99.9,
                 "observed_total_tokens_delta": -11000,
-                "flags": '["candidate_uses_rule_entities"]',
+                "flags": '["candidate_skips_llm_validation"]',
             },
             {
                 "workload_id": "biographies-r5-offset5",
                 "baseline_config_id": "default",
-                "candidate_config_id": "rules-only-bio",
-                "candidate_strategy": "rules_only",
+                "candidate_config_id": "detector-only-bio",
+                "candidate_strategy": "detector_only",
                 "safety_verdict": "fail",
                 "performance_verdict": "improved",
                 "candidate_verdict": "reject",
@@ -865,11 +793,11 @@ def test_screen_strategy_comparisons_can_group_by_strategy_and_workload_family(t
     result = tool.screen_comparison_paths([tmp_path], group_by=tool.GroupBy.strategy_workload_family)
 
     groups = {group.group_key: group for group in result.groups}
-    assert list(groups) == ["strategy:rules_only|family:shell-secrets", "strategy:rules_only|family:biographies"]
-    assert groups["strategy:rules_only|family:shell-secrets"].recommendation == "review_only"
-    assert groups["strategy:rules_only|family:shell-secrets"].workload_families == ["shell-secrets"]
-    assert groups["strategy:rules_only|family:biographies"].recommendation == "reject"
-    assert groups["strategy:rules_only|family:biographies"].baseline_only_label_counts == {"first_name": 4}
+    assert list(groups) == ["strategy:detector_only|family:shell-secrets", "strategy:detector_only|family:biographies"]
+    assert groups["strategy:detector_only|family:shell-secrets"].recommendation == "review_only"
+    assert groups["strategy:detector_only|family:shell-secrets"].workload_families == ["shell-secrets"]
+    assert groups["strategy:detector_only|family:biographies"].recommendation == "reject"
+    assert groups["strategy:detector_only|family:biographies"].baseline_only_label_counts == {"first_name": 4}
 
 
 def test_workload_family_normalizes_slice_and_offset_suffixes() -> None:

@@ -40,9 +40,6 @@ class LogFormat(StrEnum):
 
 
 _log_format = LogFormat.plain
-_FAST_LANE_MIN_CASES = 3
-
-
 class StagedCaseAnalysisRow(BaseModel):
     source_path: str
     case_id: str
@@ -54,7 +51,6 @@ class StagedCaseAnalysisRow(BaseModel):
     model_elapsed_sec: float | None = None
     model_phase_count: int = 0
     model_request_count: int = 0
-    rule_covered_label_set: bool = False
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -82,7 +78,6 @@ class StagedGroupAnalysisRow(BaseModel):
     completed_case_count: int = 0
     error_case_count: int = 0
     failed_case_rate: float | None = None
-    rule_covered_case_count: int = 0
     elapsed_sec_sum: float | None = None
     elapsed_sec_mean: float | None = None
     model_elapsed_sec_sum: float | None = None
@@ -100,8 +95,6 @@ class StagedGroupAnalysisRow(BaseModel):
     direct_only_final_entity_signature_count_sum: int = 0
     baseline_shared_signature_rate: float | None = None
     baseline_loss_signature_rate: float | None = None
-    fast_lane_verdict: str = "review"
-    flags: list[str] = Field(default_factory=list)
 
 
 class LabelDeltaAnalysisRow(BaseModel):
@@ -213,7 +206,6 @@ def _build_case_row(record: dict[str, Any], *, source_path: Path) -> StagedCaseA
         model_elapsed_sec=_optional_float(record.get("model_elapsed_sec")),
         model_phase_count=_int_value(record.get("model_phase_count")),
         model_request_count=_int_value(record.get("model_request_count")),
-        rule_covered_label_set=bool(record.get("rule_covered_label_set")),
         **_usage_fields(_dict_value(record.get("total_usage"))),
         **_entity_count_fields(record),
         baseline_final_entity_signature_count=baseline_count,
@@ -264,22 +256,12 @@ def _build_group_row(seed_source: str | None, rows: list[StagedCaseAnalysisRow])
     shared_total = _sum_optional_int(rows, "shared_final_entity_signature_count")
     baseline_only_total = _sum_optional_int(rows, "baseline_only_final_entity_signature_count")
     model_request_count = sum(row.model_request_count for row in rows)
-    rule_covered_count = sum(1 for row in rows if row.rule_covered_label_set)
-    flags = _fast_lane_flags(
-        case_count=case_count,
-        error_count=error_count,
-        baseline_total=baseline_total,
-        baseline_only_total=baseline_only_total,
-        model_request_count=model_request_count,
-        rule_covered_count=rule_covered_count,
-    )
     return StagedGroupAnalysisRow(
         seed_source=seed_source,
         case_count=case_count,
         completed_case_count=case_count - error_count,
         error_case_count=error_count,
         failed_case_rate=_rate(error_count, case_count),
-        rule_covered_case_count=rule_covered_count,
         elapsed_sec_sum=_sum_optional_float(rows, "elapsed_sec"),
         elapsed_sec_mean=_mean_optional_float(rows, "elapsed_sec"),
         model_elapsed_sec_sum=_sum_optional_float(rows, "model_elapsed_sec"),
@@ -299,46 +281,11 @@ def _build_group_row(seed_source: str | None, rows: list[StagedCaseAnalysisRow])
         ),
         baseline_shared_signature_rate=_rate(shared_total, baseline_total),
         baseline_loss_signature_rate=_rate(baseline_only_total, baseline_total),
-        fast_lane_verdict=_fast_lane_verdict(flags),
-        flags=flags,
     )
 
 
 def _group_sort_key(item: tuple[str | None, list[StagedCaseAnalysisRow]]) -> str:
     return item[0] or ""
-
-
-def _fast_lane_flags(
-    *,
-    case_count: int,
-    error_count: int,
-    baseline_total: int,
-    baseline_only_total: int,
-    model_request_count: int,
-    rule_covered_count: int,
-) -> list[str]:
-    flags: list[str] = []
-    if case_count < _FAST_LANE_MIN_CASES:
-        flags.append("too_few_cases")
-    if error_count:
-        flags.append("case_errors")
-    if baseline_total == 0:
-        flags.append("missing_baseline_comparison")
-    if baseline_only_total:
-        flags.append("baseline_signature_loss")
-    if model_request_count:
-        flags.append("uses_model")
-    if rule_covered_count != case_count:
-        flags.append("not_fully_rule_covered")
-    return flags
-
-
-def _fast_lane_verdict(flags: list[str]) -> str:
-    if "case_errors" in flags or "baseline_signature_loss" in flags:
-        return "reject"
-    if not flags:
-        return "fast_lane_candidate"
-    return "review"
 
 
 def build_label_delta_rows(cases: list[StagedCaseAnalysisRow]) -> list[LabelDeltaAnalysisRow]:
@@ -477,7 +424,6 @@ def _render_group_line(group: StagedGroupAnalysisRow, label_deltas: list[LabelDe
     lost = _top_labels(label_deltas, seed_source=group.seed_source, delta_type="baseline_only")
     return (
         f"- {label}: cases={group.case_count}, errors={group.error_case_count}, "
-        f"verdict={group.fast_lane_verdict}, flags={_label_count_summary(group.flags)}, "
         f"elapsed_sum={_fmt_float(group.elapsed_sec_sum)}s, "
         f"model_elapsed_sum={_fmt_float(group.model_elapsed_sec_sum)}s, "
         f"requests={group.model_request_count_sum}, tokens={group.total_tokens_sum}, "
@@ -486,11 +432,6 @@ def _render_group_line(group: StagedGroupAnalysisRow, label_deltas: list[LabelDe
         f"baseline_only={group.baseline_only_final_entity_signature_count_sum}, "
         f"direct_only={group.direct_only_final_entity_signature_count_sum}, lost_labels={lost}"
     )
-
-
-def _label_count_summary(items: list[str]) -> str:
-    return "[]" if not items else "[" + ", ".join(items) + "]"
-
 
 def _top_labels(label_deltas: list[LabelDeltaAnalysisRow], *, seed_source: str | None, delta_type: str) -> str:
     matches = [delta for delta in label_deltas if delta.seed_source == seed_source and delta.delta_type == delta_type]

@@ -99,9 +99,6 @@ class CaseAnalysisRow(BaseModel):
     topology_shard_count: float | None = None
     input_text_tokens_per_endpoint_sec: float | None = None
     input_text_tokens_per_gpu_sec: float | None = None
-    route_total_row_count: float | None = None
-    route_rule_row_count: float | None = None
-    route_fallback_row_count: float | None = None
     final_entity_count: float | None = None
     empty_detection_count: int = 0
     empty_detection_rate: float | None = None
@@ -144,7 +141,6 @@ class CaseAnalysisRow(BaseModel):
     augmented_new_final_value_count: float | None = None
     artifact_final_entity_count: float | None = None
     artifact_final_detector_entity_count: float | None = None
-    artifact_final_rule_entity_count: float | None = None
     artifact_final_augmenter_entity_count: float | None = None
     artifact_final_entity_signature_count: float | None = None
     artifact_final_entity_signature_hashes: list[str] = Field(default_factory=list)
@@ -194,9 +190,6 @@ class GroupAnalysisRow(BaseModel):
     median_topology_shard_count: float | None = None
     median_input_text_tokens_per_endpoint_sec: float | None = None
     median_input_text_tokens_per_gpu_sec: float | None = None
-    median_route_total_row_count: float | None = None
-    median_route_rule_row_count: float | None = None
-    median_route_fallback_row_count: float | None = None
     median_final_entity_count: float | None = None
     total_empty_detection_count: int = 0
     empty_detection_rate: float | None = None
@@ -238,7 +231,6 @@ class GroupAnalysisRow(BaseModel):
     median_augmented_new_final_value_count: float | None = None
     median_artifact_final_entity_count: float | None = None
     median_artifact_final_detector_entity_count: float | None = None
-    median_artifact_final_rule_entity_count: float | None = None
     median_artifact_final_augmenter_entity_count: float | None = None
     median_artifact_final_entity_signature_count: float | None = None
 
@@ -511,9 +503,6 @@ def _build_case_row(
             measurement_rows,
             input_text_tokens_per_pipeline_sec=input_text_tokens_per_pipeline_sec,
         ),
-        route_total_row_count=_sum_or_none(model_rows, "route_total_row_count"),
-        route_rule_row_count=_sum_or_none(model_rows, "route_rule_row_count"),
-        route_fallback_row_count=_sum_or_none(model_rows, "route_fallback_row_count"),
         final_entity_count=final_entity_count,
         **_case_empty_detection_metrics(record_rows, record_count=record_count),
         **_case_ground_truth_metrics(record_rows, final_entity_count=final_entity_count),
@@ -754,7 +743,6 @@ def _case_artifact_metrics(
         "augmented_new_final_value_count": _sum_or_none(artifact_rows, "augmented_new_final_value_count"),
         "artifact_final_entity_count": _sum_or_none(artifact_rows, "final_entity_count"),
         "artifact_final_detector_entity_count": _sum_or_none(artifact_rows, "final_source_counts.detector"),
-        "artifact_final_rule_entity_count": _sum_or_none(artifact_rows, "final_source_counts.rule"),
         "artifact_final_augmenter_entity_count": _sum_or_none(artifact_rows, "final_source_counts.augmenter"),
         "artifact_final_entity_signature_count": _signature_count(artifact_rows, signature_hashes=signature_hashes),
         "artifact_final_entity_signature_hashes": signature_hashes,
@@ -1294,9 +1282,6 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
         median_topology_shard_count=_median_or_none(group, "topology_shard_count"),
         median_input_text_tokens_per_endpoint_sec=_median_or_none(group, "input_text_tokens_per_endpoint_sec"),
         median_input_text_tokens_per_gpu_sec=_median_or_none(group, "input_text_tokens_per_gpu_sec"),
-        median_route_total_row_count=_median_or_none(group, "route_total_row_count"),
-        median_route_rule_row_count=_median_or_none(group, "route_rule_row_count"),
-        median_route_fallback_row_count=_median_or_none(group, "route_fallback_row_count"),
         median_final_entity_count=_median_or_none(group, "final_entity_count"),
         total_empty_detection_count=total_empty_detection_count,
         empty_detection_rate=_safe_ratio(total_empty_detection_count, total_record_count),
@@ -1359,7 +1344,6 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
         median_augmented_new_final_value_count=_median_or_none(group, "augmented_new_final_value_count"),
         median_artifact_final_entity_count=_median_or_none(group, "artifact_final_entity_count"),
         median_artifact_final_detector_entity_count=_median_or_none(group, "artifact_final_detector_entity_count"),
-        median_artifact_final_rule_entity_count=_median_or_none(group, "artifact_final_rule_entity_count"),
         median_artifact_final_augmenter_entity_count=_median_or_none(group, "artifact_final_augmenter_entity_count"),
         median_artifact_final_entity_signature_count=_median_or_none(group, "artifact_final_entity_signature_count"),
     )

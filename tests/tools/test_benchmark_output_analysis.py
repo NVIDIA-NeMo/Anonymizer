@@ -199,7 +199,7 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
             },
             {
                 "record_type": "record",
-                "run_id": "shell__rules-only__r000",
+                "run_id": "shell__native-local__r000",
                 "text_length_tokens": 750,
                 "final_entity_count": 8,
                 "replacement_count": 8,
@@ -214,12 +214,12 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
                 "run_tags": {
                     "suite_id": "suite",
                     "workload_id": "shell",
-                    "config_id": "rules-only",
-                    "experimental_detection_strategy": "rules_only",
+                    "config_id": "native-local",
+                    "experimental_detection_strategy": "native_single_pass",
                     "experimental_replacement_strategy": "local_structured_substitute",
                     "dd_parser_compat": "raw_json",
                     "repetition": 0,
-                    "case_id": "shell__rules-only__r000",
+                    "case_id": "shell__native-local__r000",
                 },
             },
         ],
@@ -259,23 +259,23 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
             {
                 "suite_id": "suite",
                 "workload_id": "shell",
-                "config_id": "rules-only",
+                "config_id": "native-local",
                 "repetition": 0,
-                "case_id": "shell__rules-only__r000",
-                "run_id": "shell__rules-only__r000",
-                "workflow_name": "rules-only",
+                "case_id": "shell__native-local__r000",
+                "run_id": "shell__native-local__r000",
+                "workflow_name": "native-single-pass",
                 "seed_entity_count": 8,
                 "seed_validation_candidate_count": 0,
                 "augmented_entity_count": 0,
                 "augmented_new_final_value_count": 0,
                 "final_entity_count": 8,
-                "final_source_counts": {"rule": 8},
+                "final_source_counts": {"augmenter": 8},
                 "final_entity_signature_hashes": ["shell-hash-a"],
                 "final_entity_signature_labels": {"shell-hash-a": "api_key"},
                 "final_entity_signature_details": {
                     "shell-hash-a": {
                         "label": "api_key",
-                        "source": "rule",
+                        "source": "native",
                         "row_index": 0,
                         "start_position": 12,
                         "end_position": 32,
@@ -422,25 +422,25 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
         }
     }
     assert cases["bio__default__r000"].artifact_final_entity_signature_count == 2
-    assert cases["shell__rules-only__r000"].observed_total_requests == 0
-    assert cases["shell__rules-only__r000"].experimental_replacement_strategy == "local_structured_substitute"
-    assert cases["shell__rules-only__r000"].observed_failed_request_rate is None
-    assert cases["shell__rules-only__r000"].observed_bridge_fallback_requests is None
-    assert cases["shell__rules-only__r000"].observed_non_bridge_failed_requests is None
-    assert cases["shell__rules-only__r000"].final_entity_count == 8
-    assert cases["shell__rules-only__r000"].replacement_missing_final_entity_count == 0
-    assert cases["shell__rules-only__r000"].replacement_missing_final_entity_label_counts == {}
-    assert cases["shell__rules-only__r000"].replacement_missing_final_value_count == 0
-    assert cases["shell__rules-only__r000"].replacement_synthetic_original_collision_count == 0
-    assert cases["shell__rules-only__r000"].replacement_synthetic_original_collision_label_counts == {}
-    assert cases["shell__rules-only__r000"].replacement_synthetic_original_collision_value_count == 0
-    assert cases["shell__rules-only__r000"].original_value_leak_count == 1
-    assert cases["shell__rules-only__r000"].original_value_leak_record_count == 1
-    assert cases["shell__rules-only__r000"].original_value_leak_label_counts == {"api_key": 1}
-    assert cases["shell__rules-only__r000"].artifact_final_rule_entity_count == 8
-    assert cases["shell__rules-only__r000"].artifact_final_entity_signature_hashes == ["shell-hash-a"]
-    assert cases["shell__rules-only__r000"].artifact_final_entity_signature_labels == {"shell-hash-a": "api_key"}
-    assert cases["shell__rules-only__r000"].artifact_final_entity_signature_details["shell-hash-a"]["source"] == "rule"
+    assert cases["shell__native-local__r000"].observed_total_requests == 0
+    assert cases["shell__native-local__r000"].experimental_replacement_strategy == "local_structured_substitute"
+    assert cases["shell__native-local__r000"].observed_failed_request_rate is None
+    assert cases["shell__native-local__r000"].observed_bridge_fallback_requests is None
+    assert cases["shell__native-local__r000"].observed_non_bridge_failed_requests is None
+    assert cases["shell__native-local__r000"].final_entity_count == 8
+    assert cases["shell__native-local__r000"].replacement_missing_final_entity_count == 0
+    assert cases["shell__native-local__r000"].replacement_missing_final_entity_label_counts == {}
+    assert cases["shell__native-local__r000"].replacement_missing_final_value_count == 0
+    assert cases["shell__native-local__r000"].replacement_synthetic_original_collision_count == 0
+    assert cases["shell__native-local__r000"].replacement_synthetic_original_collision_label_counts == {}
+    assert cases["shell__native-local__r000"].replacement_synthetic_original_collision_value_count == 0
+    assert cases["shell__native-local__r000"].original_value_leak_count == 1
+    assert cases["shell__native-local__r000"].original_value_leak_record_count == 1
+    assert cases["shell__native-local__r000"].original_value_leak_label_counts == {"api_key": 1}
+    assert cases["shell__native-local__r000"].artifact_final_augmenter_entity_count == 8
+    assert cases["shell__native-local__r000"].artifact_final_entity_signature_hashes == ["shell-hash-a"]
+    assert cases["shell__native-local__r000"].artifact_final_entity_signature_labels == {"shell-hash-a": "api_key"}
+    assert cases["shell__native-local__r000"].artifact_final_entity_signature_details["shell-hash-a"]["source"] == "native"
     model_rows = {row.model_name: row for row in result.model_usage}
     assert model_rows["nvidia/gliner-pii"].observed_failed_requests == 0
     assert model_rows["nvidia/gliner-pii"].observed_failed_request_rate == 0
@@ -521,7 +521,7 @@ def test_analyze_benchmark_output_counts_generic_model_workflow_records(tmp_path
             {
                 "record_type": "model_workflow",
                 "run_id": "bio__native__r000",
-                "workflow_name": "entity-detection-native-rules-router",
+                "workflow_name": "entity-detection-native-single-pass",
                 "elapsed_sec": 0.25,
                 "observed_total_requests": 3,
                 "observed_successful_requests": 3,
@@ -550,7 +550,7 @@ def test_analyze_benchmark_output_counts_generic_model_workflow_records(tmp_path
                     "suite_id": "suite",
                     "workload_id": "bio",
                     "config_id": "native",
-                    "experimental_detection_strategy": "native_rules_router",
+                    "experimental_detection_strategy": "native_single_pass",
                     "experimental_replacement_strategy": "default",
                     "dd_parser_compat": "raw_json",
                     "repetition": 0,
@@ -568,7 +568,7 @@ def test_analyze_benchmark_output_counts_generic_model_workflow_records(tmp_path
                     "suite_id": "suite",
                     "workload_id": "bio",
                     "config_id": "native",
-                    "experimental_detection_strategy": "native_rules_router",
+                    "experimental_detection_strategy": "native_single_pass",
                     "experimental_replacement_strategy": "default",
                     "dd_parser_compat": "raw_json",
                     "repetition": 0,
@@ -587,7 +587,7 @@ def test_analyze_benchmark_output_counts_generic_model_workflow_records(tmp_path
     assert case.observed_failed_request_rate == 0
     assert result.model_usage_count == 1
     model_row = result.model_usage[0]
-    assert model_row.workflow_name == "entity-detection-native-rules-router"
+    assert model_row.workflow_name == "entity-detection-native-single-pass"
     assert model_row.model_alias == "native-direct"
     assert model_row.model_name == "nvidia/nemotron-3-super"
     assert model_row.observed_total_tokens == 42
@@ -690,21 +690,21 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
             tool.CaseAnalysisRow(
                 suite_id="suite",
                 workload_id="shell",
-                config_id="rules",
-                experimental_detection_strategy="rules_only",
+                config_id="native",
+                experimental_detection_strategy="native_single_pass",
                 experimental_replacement_strategy="local_structured_substitute",
                 dd_parser_compat="raw_json",
                 repetition=0,
-                case_id="shell__rules__r000",
-                run_id="shell__rules__r000",
+                case_id="shell__native__r000",
+                run_id="shell__native__r000",
                 final_entity_count=8,
             )
         ],
         groups=[
             tool.GroupAnalysisRow(
                 workload_id="shell",
-                config_id="rules",
-                experimental_detection_strategy="rules_only",
+                config_id="native",
+                experimental_detection_strategy="native_single_pass",
                 experimental_replacement_strategy="local_structured_substitute",
                 case_count=1,
                 median_final_entity_count=8,
@@ -713,18 +713,17 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
                 median_observed_output_tokens=0,
                 median_observed_failed_request_rate=0,
                 median_artifact_final_entity_count=8,
-                median_artifact_final_rule_entity_count=8,
             )
         ],
         model_usage=[
             tool.ModelUsageAnalysisRow(
                 workload_id="shell",
-                config_id="rules",
-                experimental_detection_strategy="rules_only",
+                config_id="native",
+                experimental_detection_strategy="native_single_pass",
                 experimental_replacement_strategy="local_structured_substitute",
                 dd_parser_compat="raw_json",
-                case_id="shell__rules__r000",
-                run_id="shell__rules__r000",
+                case_id="shell__native__r000",
+                run_id="shell__native__r000",
                 workflow_name="entity-detection",
                 model_name="nvidia/gliner-pii",
                 observed_total_requests=1,
@@ -735,8 +734,8 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
         model_usage_groups=[
             tool.ModelUsageGroupAnalysisRow(
                 workload_id="shell",
-                config_id="rules",
-                experimental_detection_strategy="rules_only",
+                config_id="native",
+                experimental_detection_strategy="native_single_pass",
                 experimental_replacement_strategy="local_structured_substitute",
                 dd_parser_compat="raw_json",
                 workflow_name="entity-detection",
@@ -755,7 +754,7 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
     output_dir = tmp_path / "tables"
     tool.write_analysis_tables(result, output_dir, tool.ExportFormat.csv)
 
-    assert pd.read_csv(output_dir / "case_analysis.csv")["case_id"].tolist() == ["shell__rules__r000"]
+    assert pd.read_csv(output_dir / "case_analysis.csv")["case_id"].tolist() == ["shell__native__r000"]
     assert pd.read_csv(output_dir / "case_analysis.csv")["experimental_replacement_strategy"].tolist() == [
         "local_structured_substitute"
     ]
@@ -813,7 +812,7 @@ def test_analyze_benchmark_output_groups_replacement_strategies_separately(tmp_p
                 "run_tags": {
                     "workload_id": "secrets",
                     "config_id": "candidate",
-                    "experimental_detection_strategy": "rules_covered_or_default",
+                    "experimental_detection_strategy": "native_single_pass",
                     "experimental_replacement_strategy": "default",
                     "case_id": "secrets__candidate__r000",
                 },
@@ -825,7 +824,7 @@ def test_analyze_benchmark_output_groups_replacement_strategies_separately(tmp_p
                 "run_tags": {
                     "workload_id": "secrets",
                     "config_id": "candidate",
-                    "experimental_detection_strategy": "rules_covered_or_default",
+                    "experimental_detection_strategy": "native_single_pass",
                     "experimental_replacement_strategy": "local_structured_substitute",
                     "case_id": "secrets__candidate__r001",
                 },
@@ -840,57 +839,6 @@ def test_analyze_benchmark_output_groups_replacement_strategies_separately(tmp_p
         "default",
         "local_structured_substitute",
     }
-
-
-def test_analyze_benchmark_output_surfaces_route_counts(tmp_path: Path) -> None:
-    tool = load_tool(
-        "measurement_benchmark_output_analysis_route_counts",
-        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
-    )
-    benchmark_dir = tmp_path / "benchmark"
-    benchmark_dir.mkdir()
-    _write_jsonl(
-        benchmark_dir / "measurements.jsonl",
-        [
-            {
-                "record_type": "model_workflow",
-                "run_id": "mixed__router__r000",
-                "workflow_name": "entity-detection-rules-covered-router",
-                "status": "completed",
-                "input_row_count": 2,
-                "output_row_count": 2,
-                "failed_record_count": 0,
-                "elapsed_sec": 0.01,
-                "observed_total_requests": 0,
-                "observed_successful_requests": 0,
-                "observed_failed_requests": 0,
-                "observed_input_tokens": 0,
-                "observed_output_tokens": 0,
-                "observed_total_tokens": 0,
-                "route_total_row_count": 2,
-                "route_rule_row_count": 1,
-                "route_fallback_row_count": 1,
-                "run_tags": {
-                    "workload_id": "mixed",
-                    "config_id": "router",
-                    "experimental_detection_strategy": "rules_covered_or_default",
-                    "experimental_replacement_strategy": "default",
-                    "case_id": "mixed__router__r000",
-                },
-            }
-        ],
-    )
-
-    result = tool.analyze_benchmark_output(benchmark_dir)
-
-    case = result.cases[0]
-    assert case.route_total_row_count == 2
-    assert case.route_rule_row_count == 1
-    assert case.route_fallback_row_count == 1
-    group = result.groups[0]
-    assert group.median_route_total_row_count == 2
-    assert group.median_route_rule_row_count == 1
-    assert group.median_route_fallback_row_count == 1
 
 
 def test_analyze_benchmark_output_surfaces_failed_cases(tmp_path: Path) -> None:
@@ -912,7 +860,7 @@ def test_analyze_benchmark_output_surfaces_failed_cases(tmp_path: Path) -> None:
                 "run_tags": {
                     "workload_id": "shell",
                     "config_id": "candidate",
-                    "experimental_detection_strategy": "rules_guardrail_detector_only",
+                    "experimental_detection_strategy": "detector_only",
                     "repetition": 0,
                     "case_id": "shell__candidate__r000",
                 },
@@ -926,7 +874,7 @@ def test_analyze_benchmark_output_surfaces_failed_cases(tmp_path: Path) -> None:
                 "run_tags": {
                     "workload_id": "shell",
                     "config_id": "candidate",
-                    "experimental_detection_strategy": "rules_guardrail_detector_only",
+                    "experimental_detection_strategy": "detector_only",
                     "repetition": 1,
                     "case_id": "shell__candidate__r001",
                 },
@@ -940,7 +888,7 @@ def test_analyze_benchmark_output_surfaces_failed_cases(tmp_path: Path) -> None:
                 "run_tags": {
                     "workload_id": "shell",
                     "config_id": "candidate",
-                    "experimental_detection_strategy": "rules_guardrail_detector_only",
+                    "experimental_detection_strategy": "detector_only",
                     "repetition": 1,
                     "case_id": "shell__candidate__r001",
                 },
