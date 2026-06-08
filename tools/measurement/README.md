@@ -214,6 +214,37 @@ more parser- and recall-sensitive. Any malformed JSON response becomes a failed
 case in analysis, and any missed baseline signature should be treated as a
 rejection rather than a latency win.
 
+## Replacement strategy probes
+
+Replacement-map generation has a separate benchmark-only knob:
+
+```yaml
+configs:
+  - id: structured-local-substitute
+    experimental_replacement_strategy: local_structured_substitute
+    detect:
+      entity_labels: [api_key, email, password, url]
+    replace:
+      strategy: substitute
+```
+
+Supported replacement strategy values:
+
+- `default`: run normal replacement behavior. `Substitute` uses the configured
+  `replacement_generator` role through DataDesigner.
+- `local_structured_substitute`: for `replace: substitute`, build deterministic
+  synthetic replacement maps locally for supported structured labels. Text
+  replacement still uses Anonymizer's normal replacement-map application code.
+
+`local_structured_substitute` requires `replace: substitute` and explicit
+`detect.entity_labels`. Every label must be one of the structured substitute
+labels: `api_key`, `date_of_birth`, `email`, `organization_name`, `password`,
+`http_cookie`, `pin`, `religious_belief`, `street_address`, `unique_id`, `url`,
+or `user_name`. The preflight rejects contextual labels such as `person`. This
+is deliberate. The local substitute map generator does not understand names,
+social relations, cultural consistency, or prose semantics; use the default
+DataDesigner-backed `Substitute` path for those workloads.
+
 ## DataDesigner traces
 
 For debugging DataDesigner calls, pass `--dd-trace last-message` or
