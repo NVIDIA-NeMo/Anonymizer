@@ -858,12 +858,8 @@ def _llm_record_fields(
 
 
 def _replace_map_generation_uses_llm(row: Any, *, columns: set[str]) -> bool:
-    from anonymizer.engine.constants import COL_REPLACEMENT_MAP_SOURCE
-    from anonymizer.engine.replace.structured_substitute import REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
-
-    if COL_REPLACEMENT_MAP_SOURCE not in columns:
-        return True
-    return row.get(COL_REPLACEMENT_MAP_SOURCE) != REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
+    del row, columns
+    return True
 
 
 def _detected_candidate_count(row: Any, *, columns: set[str]) -> int | None:
@@ -1174,7 +1170,9 @@ def _entity_relaxed_ground_truth_metrics(
     ground_truth_entities: list[dict[str, Any]],
 ) -> dict[str, Any]:
     gt_found = sum(
-        1 for ground_truth_entity in ground_truth_entities if _has_relaxed_entity_match(final_entities, ground_truth_entity)
+        1
+        for ground_truth_entity in ground_truth_entities
+        if _has_relaxed_entity_match(final_entities, ground_truth_entity)
     )
     detected_tp = sum(
         1 for final_entity in final_entities if _has_relaxed_entity_match(ground_truth_entities, final_entity)

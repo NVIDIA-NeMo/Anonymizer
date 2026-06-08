@@ -39,7 +39,7 @@ def test_screen_strategy_comparisons_reads_comparison_csvs_only(tmp_path: Path) 
                 "baseline_strategy": "default",
                 "candidate_strategy": "detector_only",
                 "baseline_replacement_strategy": "default",
-                "candidate_replacement_strategy": "local_structured_substitute",
+                "candidate_replacement_strategy": "custom_replacement_strategy",
                 "baseline_case_count": 3,
                 "candidate_case_count": 3,
                 "safety_verdict": "review",
@@ -117,16 +117,16 @@ def test_screen_strategy_comparisons_reads_comparison_csvs_only(tmp_path: Path) 
     assert legal.augmented_new_final_value_count_delta == -2
     shell = next(row for row in result.rows if row.workload_id == "shell-3")
     assert shell.baseline_replacement_strategy == "default"
-    assert shell.candidate_replacement_strategy == "local_structured_substitute"
+    assert shell.candidate_replacement_strategy == "custom_replacement_strategy"
     assert shell.baseline_case_count == 3
     assert shell.candidate_case_count == 3
     assert shell.shared_stable_final_entity_signature_count == 12
     detector_local = next(
         group
         for group in result.groups
-        if group.group_key == "strategy:detector_only|replacement:local_structured_substitute"
+        if group.group_key == "strategy:detector_only|replacement:custom_replacement_strategy"
     )
-    assert detector_local.candidate_replacement_strategy == "local_structured_substitute"
+    assert detector_local.candidate_replacement_strategy == "custom_replacement_strategy"
     assert detector_local.row_count == 1
     no_augment = next(group for group in result.groups if group.group_key == "strategy:no_augment")
     assert no_augment.row_count == 1
@@ -146,7 +146,7 @@ def test_screen_strategy_comparisons_writes_csv(tmp_path: Path) -> None:
             baseline_config_id="default",
             candidate_config_id="detector-only",
             baseline_replacement_strategy="default",
-            candidate_replacement_strategy="local_structured_substitute",
+            candidate_replacement_strategy="custom_replacement_strategy",
             safety_verdict="review",
             performance_verdict="improved",
             candidate_verdict="review",
@@ -159,7 +159,7 @@ def test_screen_strategy_comparisons_writes_csv(tmp_path: Path) -> None:
 
     exported = pd.read_csv(output)
     assert exported["workload_id"].tolist() == ["shell"]
-    assert exported["candidate_replacement_strategy"].tolist() == ["local_structured_substitute"]
+    assert exported["candidate_replacement_strategy"].tolist() == ["custom_replacement_strategy"]
     assert exported["flags"].tolist() == ['["candidate_skips_llm_validation"]']
 
 
@@ -205,7 +205,7 @@ def test_screen_strategy_comparisons_surfaces_evidence_level_counts(tmp_path: Pa
                 "baseline_config_id": "default",
                 "candidate_config_id": "local-substitute",
                 "baseline_replacement_strategy": "default",
-                "candidate_replacement_strategy": "local_structured_substitute",
+                "candidate_replacement_strategy": "custom_replacement_strategy",
                 "value_protection_verdict": "pass",
                 "signature_parity_verdict": "review",
                 "safety_verdict": "review",
@@ -217,7 +217,7 @@ def test_screen_strategy_comparisons_surfaces_evidence_level_counts(tmp_path: Pa
                 "baseline_config_id": "default",
                 "candidate_config_id": "local-substitute-legacy",
                 "baseline_replacement_strategy": "default",
-                "candidate_replacement_strategy": "local_structured_substitute",
+                "candidate_replacement_strategy": "custom_replacement_strategy",
                 "safety_verdict": "pass",
                 "performance_verdict": "improved",
                 "candidate_verdict": "candidate_viable",
@@ -348,7 +348,7 @@ def test_screen_strategy_comparisons_surfaces_reliability_review(tmp_path: Path)
                 "baseline_config_id": "default-substitute",
                 "candidate_config_id": "local-substitute",
                 "baseline_replacement_strategy": "default",
-                "candidate_replacement_strategy": "local_structured_substitute",
+                "candidate_replacement_strategy": "custom_replacement_strategy",
                 "value_protection_verdict": "pass",
                 "signature_parity_verdict": "pass",
                 "safety_verdict": "review",
@@ -380,7 +380,7 @@ def test_screen_strategy_comparisons_surfaces_replacement_replay_review(tmp_path
                 "baseline_strategy": "default",
                 "candidate_strategy": "default",
                 "baseline_replacement_strategy": "default",
-                "candidate_replacement_strategy": "local_structured_substitute",
+                "candidate_replacement_strategy": "custom_replacement_strategy",
                 "value_protection_verdict": "pass",
                 "signature_parity_verdict": "review",
                 "safety_verdict": "review",
@@ -416,7 +416,7 @@ def test_screen_strategy_comparisons_surfaces_baseline_defect_improvement_review
                 "baseline_strategy": "default",
                 "candidate_strategy": "default",
                 "baseline_replacement_strategy": "default",
-                "candidate_replacement_strategy": "local_structured_substitute",
+                "candidate_replacement_strategy": "custom_replacement_strategy",
                 "value_protection_verdict": "pass",
                 "signature_parity_verdict": "review",
                 "safety_verdict": "review",
@@ -487,13 +487,13 @@ def test_screen_strategy_comparisons_groups_default_detection_by_replacement_str
         candidate_config_id="substitute-local",
         candidate_strategy="default",
         baseline_replacement_strategy="default",
-        candidate_replacement_strategy="local_structured_substitute",
+        candidate_replacement_strategy="custom_replacement_strategy",
         safety_verdict="pass",
         performance_verdict="improved",
         candidate_verdict="candidate_viable",
     )
 
-    assert tool.group_base_for_row(row, config_aliases={}) == "replacement:local_structured_substitute"
+    assert tool.group_base_for_row(row, config_aliases={}) == "replacement:custom_replacement_strategy"
 
 
 def test_screen_strategy_comparisons_keeps_generic_review_without_leak_metrics() -> None:

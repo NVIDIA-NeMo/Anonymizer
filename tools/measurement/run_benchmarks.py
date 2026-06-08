@@ -38,10 +38,6 @@ from detection_strategies import (
 )
 from export_measurements import ExportFormat, export_tables, read_measurements
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from replacement_strategies import (
-    ExperimentalReplacementStrategy,
-    experimental_replacement_strategy_context,
-)
 
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
@@ -56,7 +52,6 @@ from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEX
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
-from anonymizer.engine.replace.structured_substitute import SUPPORTED_STRUCTURED_SUBSTITUTE_LABELS
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
@@ -164,7 +159,6 @@ class ConfigSpec(BaseModel):
     rewrite: RewriteSpec | None = None
     emit_telemetry: bool = False
     experimental_detection_strategy: ExperimentalDetectionStrategy = ExperimentalDetectionStrategy.default
-    experimental_replacement_strategy: ExperimentalReplacementStrategy = ExperimentalReplacementStrategy.default
     native_runtime: NativeRuntimeSpec | None = None
 
     @model_validator(mode="after")
@@ -432,10 +426,6 @@ def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) 
             _preflight_native_runtime(config, spec=spec)
         except Exception as exc:
             errors.append(f"config '{config.id}' native_runtime invalid: {exc}")
-        try:
-            _preflight_experimental_replacement_strategy(config, anonymizer_config)
-        except Exception as exc:
-            errors.append(f"config '{config.id}' experimental_replacement_strategy invalid: {exc}")
         if parsed_models is None:
             continue
         try:
@@ -514,30 +504,6 @@ def _native_detection_runtime(spec: BenchmarkSpec, config: ConfigSpec) -> Native
         gliner_threshold=runtime.gliner_threshold,
         max_workers=runtime.max_workers,
     )
-
-
-def _preflight_experimental_replacement_strategy(
-    config: ConfigSpec,
-    anonymizer_config: AnonymizerConfig,
-) -> None:
-    if config.experimental_replacement_strategy == ExperimentalReplacementStrategy.default:
-        return
-    if config.experimental_replacement_strategy != ExperimentalReplacementStrategy.local_structured_substitute:
-        raise ValueError(f"unsupported strategy: {config.experimental_replacement_strategy}")
-    if not isinstance(anonymizer_config.replace, Substitute):
-        raise ValueError("local_structured_substitute requires replace: substitute")
-    entity_labels = anonymizer_config.detect.entity_labels
-    supported = ", ".join(sorted(SUPPORTED_STRUCTURED_SUBSTITUTE_LABELS))
-    if entity_labels is None:
-        raise ValueError(
-            "`local_structured_substitute` requires explicit detect.entity_labels limited to "
-            f"structured substitute labels: {supported}"
-        )
-    unsupported = sorted(set(entity_labels) - SUPPORTED_STRUCTURED_SUBSTITUTE_LABELS)
-    if unsupported:
-        raise ValueError(
-            f"unsupported local structured substitute labels: {', '.join(unsupported)}; supported labels: {supported}"
-        )
 
 
 def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
@@ -1085,11 +1051,10 @@ def _execute_case(
                 config.experimental_detection_strategy,
                 **detection_context_kwargs,
             ):
-                with experimental_replacement_strategy_context(config.experimental_replacement_strategy):
-                    result = anonymizer.run(
-                        config=anonymizer_config,
-                        data=input_data,
-                    )
+                result = anonymizer.run(
+                    config=anonymizer_config,
+                    data=input_data,
+                )
     return _CaseExecution(input_data=input_data, trace_dataframe=getattr(result, "trace_dataframe", None))
 
 
@@ -1361,7 +1326,6 @@ def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
         "repetition": case.repetition,
         "case_id": case.case_id,
         "experimental_detection_strategy": config.experimental_detection_strategy.value,
-        "experimental_replacement_strategy": config.experimental_replacement_strategy.value,
         "dd_parser_compat": spec.dd_parser_compat.value,
     }
     if config.experimental_detection_strategy in _NATIVE_RUNTIME_STRATEGIES:

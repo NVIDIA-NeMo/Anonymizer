@@ -34,7 +34,6 @@ from anonymizer.engine.constants import (
     COL_REPAIR_ITERATIONS,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
-    COL_REPLACEMENT_MAP_SOURCE,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TEXT,
     COL_UTILITY_SCORE,
@@ -43,7 +42,6 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
-from anonymizer.engine.replace.structured_substitute import REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import (
@@ -1119,34 +1117,6 @@ def test_record_metrics_counts_standalone_short_value_replacement_leaks() -> Non
     record = collector.records[0]
     assert record["original_value_leak_count"] == 1
     assert record["original_value_leak_label_counts"] == {"age": 1}
-
-
-def test_record_metrics_do_not_estimate_llm_replace_map_call_for_local_structured_source() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"],
-            COL_FINAL_ENTITIES: [{"entities": [{"value": "sk-test-AAAAAAAAAAAAAAAAAAAAAAAA", "label": "api_key"}]}],
-            COL_REPLACEMENT_MAP: [{"replacements": []}],
-            COL_REPLACEMENT_MAP_SOURCE: [REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED],
-        }
-    )
-    collector = MeasurementCollector(record_hash_key="test-key")
-
-    with measurement_session(collector):
-        record_record_metrics(
-            dataframe,
-            mode="replace",
-            strategy="Substitute",
-            text_column=COL_TEXT,
-            validation_max_entities_per_call=100,
-        )
-
-    record = collector.records[0]
-    assert record["llm_calls_estimated_by_stage"] == {
-        "entity_detection": None,
-        "replace_map_generation": 0,
-    }
-    assert record["llm_calls_estimated_total"] is None
 
 
 def test_record_metrics_normalizes_integral_row_index_types() -> None:

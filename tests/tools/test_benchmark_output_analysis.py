@@ -216,7 +216,7 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
                     "workload_id": "shell",
                     "config_id": "native-local",
                     "experimental_detection_strategy": "native_single_pass",
-                    "experimental_replacement_strategy": "local_structured_substitute",
+                    "experimental_replacement_strategy": "custom_replacement_strategy",
                     "dd_parser_compat": "raw_json",
                     "repetition": 0,
                     "case_id": "shell__native-local__r000",
@@ -423,7 +423,7 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     }
     assert cases["bio__default__r000"].artifact_final_entity_signature_count == 2
     assert cases["shell__native-local__r000"].observed_total_requests == 0
-    assert cases["shell__native-local__r000"].experimental_replacement_strategy == "local_structured_substitute"
+    assert cases["shell__native-local__r000"].experimental_replacement_strategy == "custom_replacement_strategy"
     assert cases["shell__native-local__r000"].observed_failed_request_rate is None
     assert cases["shell__native-local__r000"].observed_bridge_fallback_requests is None
     assert cases["shell__native-local__r000"].observed_non_bridge_failed_requests is None
@@ -440,7 +440,9 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert cases["shell__native-local__r000"].artifact_final_augmenter_entity_count == 8
     assert cases["shell__native-local__r000"].artifact_final_entity_signature_hashes == ["shell-hash-a"]
     assert cases["shell__native-local__r000"].artifact_final_entity_signature_labels == {"shell-hash-a": "api_key"}
-    assert cases["shell__native-local__r000"].artifact_final_entity_signature_details["shell-hash-a"]["source"] == "native"
+    assert (
+        cases["shell__native-local__r000"].artifact_final_entity_signature_details["shell-hash-a"]["source"] == "native"
+    )
     model_rows = {row.model_name: row for row in result.model_usage}
     assert model_rows["nvidia/gliner-pii"].observed_failed_requests == 0
     assert model_rows["nvidia/gliner-pii"].observed_failed_request_rate == 0
@@ -498,7 +500,7 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert bio_group.micro_entity_relaxed_label_compatible_precision == pytest.approx(12 / 14)
     assert bio_group.micro_entity_relaxed_label_compatible_recall == pytest.approx(13 / 22)
     shell_group = next(group for group in result.groups if group.workload_id == "shell")
-    assert shell_group.experimental_replacement_strategy == "local_structured_substitute"
+    assert shell_group.experimental_replacement_strategy == "custom_replacement_strategy"
     assert shell_group.sum_original_value_leak_count == 1
     assert shell_group.leaking_case_count == 1
     assert shell_group.median_original_value_leak_count == 1
@@ -692,7 +694,7 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
                 workload_id="shell",
                 config_id="native",
                 experimental_detection_strategy="native_single_pass",
-                experimental_replacement_strategy="local_structured_substitute",
+                experimental_replacement_strategy="custom_replacement_strategy",
                 dd_parser_compat="raw_json",
                 repetition=0,
                 case_id="shell__native__r000",
@@ -705,7 +707,7 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
                 workload_id="shell",
                 config_id="native",
                 experimental_detection_strategy="native_single_pass",
-                experimental_replacement_strategy="local_structured_substitute",
+                experimental_replacement_strategy="custom_replacement_strategy",
                 case_count=1,
                 median_final_entity_count=8,
                 median_observed_successful_requests=0,
@@ -720,7 +722,7 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
                 workload_id="shell",
                 config_id="native",
                 experimental_detection_strategy="native_single_pass",
-                experimental_replacement_strategy="local_structured_substitute",
+                experimental_replacement_strategy="custom_replacement_strategy",
                 dd_parser_compat="raw_json",
                 case_id="shell__native__r000",
                 run_id="shell__native__r000",
@@ -736,7 +738,7 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
                 workload_id="shell",
                 config_id="native",
                 experimental_detection_strategy="native_single_pass",
-                experimental_replacement_strategy="local_structured_substitute",
+                experimental_replacement_strategy="custom_replacement_strategy",
                 dd_parser_compat="raw_json",
                 workflow_name="entity-detection",
                 model_name="nvidia/gliner-pii",
@@ -756,7 +758,7 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
 
     assert pd.read_csv(output_dir / "case_analysis.csv")["case_id"].tolist() == ["shell__native__r000"]
     assert pd.read_csv(output_dir / "case_analysis.csv")["experimental_replacement_strategy"].tolist() == [
-        "local_structured_substitute"
+        "custom_replacement_strategy"
     ]
     assert pd.read_csv(output_dir / "group_analysis.csv")["case_count"].tolist() == [1]
     assert pd.read_csv(output_dir / "model_analysis.csv")["model_name"].tolist() == ["nvidia/gliner-pii"]
@@ -825,7 +827,7 @@ def test_analyze_benchmark_output_groups_replacement_strategies_separately(tmp_p
                     "workload_id": "secrets",
                     "config_id": "candidate",
                     "experimental_detection_strategy": "native_single_pass",
-                    "experimental_replacement_strategy": "local_structured_substitute",
+                    "experimental_replacement_strategy": "custom_replacement_strategy",
                     "case_id": "secrets__candidate__r001",
                 },
             },
@@ -837,7 +839,7 @@ def test_analyze_benchmark_output_groups_replacement_strategies_separately(tmp_p
     assert result.group_count == 2
     assert {group.experimental_replacement_strategy for group in result.groups} == {
         "default",
-        "local_structured_substitute",
+        "custom_replacement_strategy",
     }
 
 
