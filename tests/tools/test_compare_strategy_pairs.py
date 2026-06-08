@@ -48,7 +48,7 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
                 "workload_id": "shell-1",
                 "config_id": "shell-native",
                 "experimental_detection_strategy": "native_candidate_validate_no_augment",
-                "experimental_replacement_strategy": "custom_replacement_strategy",
+                "experimental_replacement_strategy": "local_structured_substitute",
                 "case_id": "shell__candidate",
                 "pipeline_elapsed_sec": 0.8,
                 "observed_total_requests": 1,
@@ -78,7 +78,7 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
                 "workload_id": "legal-1",
                 "config_id": "legal-native",
                 "experimental_detection_strategy": "native_candidate_validate_no_augment",
-                "experimental_replacement_strategy": "custom_replacement_strategy",
+                "experimental_replacement_strategy": "local_structured_substitute",
                 "case_id": "legal__candidate",
                 "pipeline_elapsed_sec": 20.9,
                 "observed_total_requests": 3,
@@ -100,7 +100,7 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
     by_workload = {row.workload_id: row for row in rows}
     shell = by_workload["shell-1"]
     assert shell.baseline_replacement_strategy == "default"
-    assert shell.candidate_replacement_strategy == "custom_replacement_strategy"
+    assert shell.candidate_replacement_strategy == "local_structured_substitute"
     assert shell.final_entity_count_delta == 4
     assert shell.observed_total_requests_delta == -2
     assert shell.observed_total_tokens_delta == -2774
@@ -119,7 +119,7 @@ def test_compare_case_analysis_by_strategy_reports_safety_and_cost_deltas() -> N
 
     legal = by_workload["legal-1"]
     assert legal.baseline_replacement_strategy == "default"
-    assert legal.candidate_replacement_strategy == "custom_replacement_strategy"
+    assert legal.candidate_replacement_strategy == "local_structured_substitute"
     assert legal.final_entity_count_delta == 0
     assert legal.observed_total_tokens_delta == 0
     assert legal.candidate_detector_entity_count == 26
@@ -896,7 +896,7 @@ def test_compare_case_analysis_flags_replacement_only_detection_instability() ->
                 "workload_id": "structured-identifiers",
                 "config_id": "local-substitute",
                 "experimental_detection_strategy": "default",
-                "experimental_replacement_strategy": "custom_replacement_strategy",
+                "experimental_replacement_strategy": "local_structured_substitute",
                 "case_id": "candidate-r0",
                 "pipeline_elapsed_sec": 7,
                 "observed_total_requests": 3,
@@ -1374,7 +1374,7 @@ def test_compare_strategy_pairs_writes_csv(tmp_path: Path) -> None:
             baseline_config_id="base",
             candidate_config_id="candidate",
             baseline_replacement_strategy="default",
-            candidate_replacement_strategy="custom_replacement_strategy",
+            candidate_replacement_strategy="local_structured_substitute",
             baseline_case_count=1,
             candidate_case_count=1,
             value_protection_verdict="review",
@@ -1394,7 +1394,7 @@ def test_compare_strategy_pairs_writes_csv(tmp_path: Path) -> None:
 
     exported = pd.read_csv(output)
     assert exported["workload_id"].tolist() == ["shell-1"]
-    assert exported["candidate_replacement_strategy"].tolist() == ["custom_replacement_strategy"]
+    assert exported["candidate_replacement_strategy"].tolist() == ["local_structured_substitute"]
     assert exported["final_entity_count_delta"].tolist() == [4]
     assert exported["flags"].tolist() == ['["candidate_skips_llm_validation"]']
 

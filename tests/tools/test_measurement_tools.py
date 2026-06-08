@@ -753,6 +753,63 @@ configs:
         tool.preflight_suite(spec, spec_path=spec_path)
 
 
+def test_benchmark_preflight_rejects_local_structured_substitute_for_contextual_labels(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_local_substitute_contextual_labels",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice has token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: local-substitute-suite
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: local-substitute
+    detect:
+      entity_labels: [api_key, person]
+    replace: substitute
+    experimental_replacement_strategy: local_structured_substitute
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="unsupported local structured substitute labels: person"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_preflight_accepts_local_structured_substitute_supported_labels(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_local_substitute_supported_labels",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(input_path, index=False)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: local-substitute-suite
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: local-substitute
+    detect:
+      entity_labels: [api_key, email, http_cookie, password, pin, unique_id, url, user_name]
+    replace: substitute
+    experimental_replacement_strategy: local_structured_substitute
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    tool.preflight_suite(spec, spec_path=spec_path)
+
+
 def test_benchmark_example_suites_are_portable() -> None:
     example_paths = sorted((REPO_ROOT / "tools/measurement/examples").glob("*.yaml"))
     assert example_paths

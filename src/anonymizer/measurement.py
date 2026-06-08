@@ -858,8 +858,12 @@ def _llm_record_fields(
 
 
 def _replace_map_generation_uses_llm(row: Any, *, columns: set[str]) -> bool:
-    del row, columns
-    return True
+    from anonymizer.engine.constants import COL_REPLACEMENT_MAP_SOURCE
+    from anonymizer.engine.replace.structured_substitute import REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
+
+    if COL_REPLACEMENT_MAP_SOURCE not in columns:
+        return True
+    return row.get(COL_REPLACEMENT_MAP_SOURCE) != REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
 
 
 def _detected_candidate_count(row: Any, *, columns: set[str]) -> int | None:
