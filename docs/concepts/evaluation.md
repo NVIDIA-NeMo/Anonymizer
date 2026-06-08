@@ -77,7 +77,7 @@ This judge runs during replace evaluation regardless of which replace mode was u
 
 ---
 
-### Entity Replacment judges
+### Entity Replacement judges
 
 When the source result used the **Substitute** mode, three additional LLM judges run in parallel — one per quality dimension.
 
