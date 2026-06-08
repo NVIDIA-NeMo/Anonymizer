@@ -45,6 +45,7 @@ COL_TAGGED_TEXT = "tagged_text"
 COL_ENTITIES_BY_VALUE = "_entities_by_value"
 COL_REPLACED_TEXT = "__nemo_anonymizer_text_output__"
 COL_REPLACEMENT_MAP = "_replacement_map"
+COL_REPLACEMENT_MAP_SOURCE = "_replacement_map_source"
 
 # LlmReplaceWorkflow internal prompt-construction columns. Created by
 # `LlmReplaceWorkflow.generate_map_only` for the replacement-generator prompt

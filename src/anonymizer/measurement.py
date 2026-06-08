@@ -440,6 +440,81 @@ def record_ndd_workflow(
     model_usage: Mapping[str, Any] | None = None,
 ) -> None:
     """Record one DataDesigner workflow execution through the adapter boundary."""
+    _record_model_workflow(
+        workflow_name=workflow_name,
+        model_aliases=model_aliases,
+        input_row_count=input_row_count,
+        output_row_count=output_row_count,
+        failed_record_count=failed_record_count,
+        elapsed_sec=elapsed_sec,
+        status=status,
+        seed_row_count=seed_row_count,
+        preview_num_records=preview_num_records,
+        column_count=column_count,
+        column_names=column_names,
+        model_usage=model_usage,
+        record_type="ndd_workflow",
+        extra_fields=None,
+    )
+
+
+def record_model_workflow(
+    *,
+    workflow_name: str,
+    model_aliases: list[str],
+    input_row_count: int,
+    output_row_count: int | None,
+    failed_record_count: int | None,
+    elapsed_sec: float,
+    status: str = "completed",
+    seed_row_count: int | None = None,
+    preview_num_records: int | None = None,
+    column_count: int | None = None,
+    column_names: list[str] | None = None,
+    model_usage: Mapping[str, Any] | None = None,
+    extra_fields: Mapping[str, Any] | None = None,
+) -> None:
+    """Record one sanitized model-backed workflow execution.
+
+    Use this for non-DataDesigner model calls that still need benchmark
+    accounting. Raw prompts, text, responses, and replacement values do not
+    belong in ``model_usage``.
+    """
+    _record_model_workflow(
+        workflow_name=workflow_name,
+        model_aliases=model_aliases,
+        input_row_count=input_row_count,
+        output_row_count=output_row_count,
+        failed_record_count=failed_record_count,
+        elapsed_sec=elapsed_sec,
+        status=status,
+        seed_row_count=seed_row_count,
+        preview_num_records=preview_num_records,
+        column_count=column_count,
+        column_names=column_names,
+        model_usage=model_usage,
+        record_type="model_workflow",
+        extra_fields=extra_fields,
+    )
+
+
+def _record_model_workflow(
+    *,
+    workflow_name: str,
+    model_aliases: list[str],
+    input_row_count: int,
+    output_row_count: int | None,
+    failed_record_count: int | None,
+    elapsed_sec: float,
+    status: str,
+    seed_row_count: int | None,
+    preview_num_records: int | None,
+    column_count: int | None,
+    column_names: list[str] | None,
+    model_usage: Mapping[str, Any] | None,
+    record_type: str,
+    extra_fields: Mapping[str, Any] | None,
+) -> None:
     collector = current_collector()
     if collector is None:
         return
@@ -457,14 +532,19 @@ def record_ndd_workflow(
         "column_count": column_count,
         "column_names": column_names or [],
         "model_usage": dict(model_usage or {}),
+        **dict(extra_fields or {}),
     }
-    collector.record("ndd_workflow", **_ndd_workflow_fields(workflow_fields, observed_usage))
+    collector.record(record_type, **_model_workflow_fields(workflow_fields, observed_usage))
 
 
-def _ndd_workflow_fields(fields: dict[str, Any], observed_usage: dict[str, int | None]) -> dict[str, Any]:
+def _model_workflow_fields(fields: dict[str, Any], observed_usage: dict[str, int | None]) -> dict[str, Any]:
     return {
         **fields,
         **observed_usage,
+        "observed_failed_request_rate": _safe_ratio(
+            observed_usage["observed_failed_requests"],
+            observed_usage["observed_total_requests"],
+        ),
         **_throughput_fields(
             elapsed_sec=cast(float, fields["elapsed_sec"]),
             input_row_count=cast(int, fields["input_row_count"]),
@@ -540,8 +620,9 @@ def record_record_metrics(
                 strategy=strategy,
             ),
             **_entity_record_fields(row, final_entities=final_entities, ground_truth_column=ground_truth_column),
-            **_replacement_record_fields(row, columns=columns),
+            **_replacement_record_fields(row, columns=columns, final_entities=final_entities),
             **_rewrite_record_fields(row, columns=columns),
+            **_original_value_leak_record_fields(row, columns=columns, final_entities=final_entities),
             **_llm_record_fields(
                 row,
                 columns=columns,
@@ -612,12 +693,22 @@ def _entity_record_fields(
     }
 
 
-def _replacement_record_fields(row: Any, *, columns: set[str]) -> dict[str, Any]:
+def _replacement_record_fields(
+    row: Any,
+    *,
+    columns: set[str],
+    final_entities: list[dict[str, Any]],
+) -> dict[str, Any]:
     from anonymizer.engine.constants import COL_REPLACEMENT_MAP
 
     if COL_REPLACEMENT_MAP not in columns:
         return {}
-    return _replacement_map_metrics(row.get(COL_REPLACEMENT_MAP))
+    raw_map = row.get(COL_REPLACEMENT_MAP)
+    return {
+        **_replacement_map_metrics(raw_map),
+        **_replacement_coverage_metrics(raw_map, final_entities),
+        **_replacement_collision_metrics(raw_map, final_entities),
+    }
 
 
 def _rewrite_record_fields(row: Any, *, columns: set[str]) -> dict[str, Any]:
@@ -644,6 +735,67 @@ def _rewrite_record_fields(row: Any, *, columns: set[str]) -> dict[str, Any]:
     }
 
 
+def _original_value_leak_record_fields(
+    row: Any,
+    *,
+    columns: set[str],
+    final_entities: list[dict[str, Any]],
+) -> dict[str, Any]:
+    output_column = _output_text_column(columns)
+    if output_column is None:
+        return {"original_value_leak_count": None, "original_value_leak_label_counts": {}}
+    output_text = str(row.get(output_column, ""))
+    leaked = [
+        entity
+        for entity in final_entities
+        if entity.get("value") and _output_contains_original_value(output_text, str(entity.get("value")))
+    ]
+    return {
+        "original_value_leak_count": len(leaked),
+        "original_value_leak_label_counts": dict(
+            sorted(Counter(str(entity.get("label") or "") for entity in leaked if entity.get("label")).items())
+        ),
+    }
+
+
+def _output_contains_original_value(output_text: str, value: str) -> bool:
+    if _needs_boundary_sensitive_leak_match(value):
+        return _contains_with_alnum_boundaries(output_text, value)
+    return value in output_text
+
+
+def _needs_boundary_sensitive_leak_match(value: str) -> bool:
+    return len(value) <= 4 or value.isdigit()
+
+
+def _contains_with_alnum_boundaries(output_text: str, value: str) -> bool:
+    start = 0
+    while True:
+        match_start = output_text.find(value, start)
+        if match_start < 0:
+            return False
+        match_end = match_start + len(value)
+        if _has_alnum_boundaries(output_text, match_start, match_end):
+            return True
+        start = match_start + 1
+
+
+def _has_alnum_boundaries(text: str, start: int, end: int) -> bool:
+    before_is_alnum = start > 0 and text[start - 1].isalnum()
+    after_is_alnum = end < len(text) and text[end].isalnum()
+    return not before_is_alnum and not after_is_alnum
+
+
+def _output_text_column(columns: set[str]) -> str | None:
+    from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_REWRITTEN_TEXT
+
+    if COL_REPLACED_TEXT in columns:
+        return COL_REPLACED_TEXT
+    if COL_REWRITTEN_TEXT in columns:
+        return COL_REWRITTEN_TEXT
+    return None
+
+
 def _llm_record_fields(
     row: Any,
     *,
@@ -662,12 +814,14 @@ def _llm_record_fields(
     )
     grouped_entity_count = _grouped_entity_count(row, columns=columns, final_entity_count=final_entity_count)
     repair_iterations = _coerce_int(row.get(COL_REPAIR_ITERATIONS, 0), default=0)
+    replace_map_generation_uses_llm = _replace_map_generation_uses_llm(row, columns=columns)
     calls_by_stage = estimate_llm_calls_by_stage(
         mode=mode,
         strategy=strategy,
         has_grouped_entities=grouped_entity_count > 0,
         validation_chunk_count=validation_chunk_count,
         repair_iterations=repair_iterations,
+        replace_map_generation_uses_llm=replace_map_generation_uses_llm,
     )
     total_estimated = (
         sum(calls_by_stage.values()) if all(value is not None for value in calls_by_stage.values()) else None
@@ -679,6 +833,15 @@ def _llm_record_fields(
         "llm_calls_estimated_by_stage": calls_by_stage,
         "llm_calls_estimated_total": total_estimated,
     }
+
+
+def _replace_map_generation_uses_llm(row: Any, *, columns: set[str]) -> bool:
+    from anonymizer.engine.constants import COL_REPLACEMENT_MAP_SOURCE
+    from anonymizer.engine.replace.structured_substitute import REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
+
+    if COL_REPLACEMENT_MAP_SOURCE not in columns:
+        return True
+    return row.get(COL_REPLACEMENT_MAP_SOURCE) != REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
 
 
 def _detected_candidate_count(row: Any, *, columns: set[str]) -> int | None:
@@ -816,11 +979,12 @@ def estimate_llm_calls_by_stage(
     has_grouped_entities: bool,
     validation_chunk_count: int | None,
     repair_iterations: int = 0,
+    replace_map_generation_uses_llm: bool = True,
 ) -> dict[str, int | None]:
     """Estimate nominal model calls for one record, split by workflow stage."""
     detection_calls = None if validation_chunk_count is None else 2 + validation_chunk_count
     replace_map_generation = 0
-    if has_grouped_entities and (mode == "rewrite" or strategy == "Substitute"):
+    if replace_map_generation_uses_llm and has_grouped_entities and (mode == "rewrite" or strategy == "Substitute"):
         replace_map_generation = 1
 
     if mode != "rewrite":
@@ -978,16 +1142,7 @@ def _entity_identity_set(entities: list[dict[str, Any]]) -> set[tuple[str, str]]
 
 
 def _replacement_map_metrics(raw: object) -> dict[str, Any]:
-    payload = _coerce_payload(raw)
-    if isinstance(payload, Mapping):
-        replacements_raw = cast(Mapping[str, Any], payload).get("replacements")
-        replacements = replacements_raw if isinstance(replacements_raw, list) else []
-    elif isinstance(payload, list):
-        replacements = payload
-    else:
-        replacements = []
-
-    replacement_maps = [cast(Mapping[str, Any], item) for item in replacements if isinstance(item, Mapping)]
+    replacement_maps = _replacement_maps_from_raw(raw)
     synthetic_values = []
     for item in replacement_maps:
         synthetic = item.get("replacement", item.get("synthetic"))
@@ -1000,6 +1155,65 @@ def _replacement_map_metrics(raw: object) -> dict[str, Any]:
         ),
         "replacement_duplicate_value_count": max(0, len(synthetic_values) - len(set(synthetic_values))),
     }
+
+
+def _replacement_coverage_metrics(raw: object, final_entities: list[dict[str, Any]]) -> dict[str, Any]:
+    replacement_original_values = {
+        str(original)
+        for item in _replacement_maps_from_raw(raw)
+        if (original := item.get("original")) is not None and str(original)
+    }
+    missing_entities = [
+        entity
+        for entity in final_entities
+        if entity.get("value") and str(entity.get("value")) not in replacement_original_values
+    ]
+    missing_values = {str(entity.get("value")) for entity in missing_entities if entity.get("value")}
+    return {
+        "replacement_missing_final_entity_count": len(missing_entities),
+        "replacement_missing_final_entity_label_counts": dict(
+            sorted(
+                Counter(str(entity.get("label") or "") for entity in missing_entities if entity.get("label")).items()
+            )
+        ),
+        "replacement_missing_final_value_count": len(missing_values),
+    }
+
+
+def _replacement_collision_metrics(raw: object, final_entities: list[dict[str, Any]]) -> dict[str, Any]:
+    synthetic_values = {
+        str(synthetic)
+        for item in _replacement_maps_from_raw(raw)
+        if (synthetic := item.get("replacement", item.get("synthetic"))) is not None and str(synthetic)
+    }
+    collided_entities = [
+        entity for entity in final_entities if entity.get("value") and str(entity.get("value")) in synthetic_values
+    ]
+    collided_values = {str(entity.get("value")) for entity in collided_entities if entity.get("value")}
+    return {
+        "replacement_synthetic_original_collision_count": len(collided_entities),
+        "replacement_synthetic_original_collision_label_counts": dict(
+            sorted(
+                Counter(str(entity.get("label") or "") for entity in collided_entities if entity.get("label")).items()
+            )
+        ),
+        "replacement_synthetic_original_collision_value_count": len(collided_values),
+    }
+
+
+def _replacement_maps_from_raw(raw: object) -> list[Mapping[str, Any]]:
+    payload = _coerce_payload(raw)
+    if isinstance(payload, Mapping):
+        replacements_raw = cast(Mapping[str, Any], payload).get("replacements")
+        tolist = getattr(replacements_raw, "tolist", None)
+        if callable(tolist):
+            replacements_raw = tolist()
+        replacements = replacements_raw if isinstance(replacements_raw, list) else []
+    elif isinstance(payload, list):
+        replacements = payload
+    else:
+        replacements = []
+    return [cast(Mapping[str, Any], item) for item in replacements if isinstance(item, Mapping)]
 
 
 def _count_items(raw: object, *, primary_key: str, fallback_keys: tuple[str, ...] = ()) -> int:

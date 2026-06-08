@@ -13,6 +13,7 @@ import logging
 import shutil
 import sys
 import time
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -21,10 +22,24 @@ import cyclopts
 import pandas as pd
 import pyarrow.parquet as pq
 import yaml
+from analyze_detection_artifacts import (
+    analyze_artifacts,
+    build_detection_artifact_row_from_entities,
+    iter_detection_parquet_files,
+)
 from data_designer.config.models import ModelProvider
 from data_designer.config.utils.io_helpers import load_config_file
+from dd_parser_compat import DDParserCompatMode, dd_parser_compat_context
+from detection_strategies import (
+    ExperimentalDetectionStrategy,
+    experimental_detection_strategy_context,
+)
 from export_measurements import ExportFormat, export_tables, read_measurements
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from replacement_strategies import (
+    ExperimentalReplacementStrategy,
+    experimental_replacement_strategy_context,
+)
 
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
@@ -36,8 +51,16 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT, PrivacyGoal, RiskTolerance
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
+from anonymizer.engine.detection.rules import (
+    STRUCTURED_RULE_FAST_LANE_LABELS,
+    SUPPORTED_RULE_LABELS,
+    detect_high_confidence_entities,
+)
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
+from anonymizer.engine.replace.structured_substitute import SUPPORTED_STRUCTURED_SUBSTITUTE_LABELS
+from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
 
@@ -80,6 +103,8 @@ class WorkloadSpec(BaseModel):
     text_column: str = "text"
     id_column: str | None = None
     data_summary: str | None = None
+    row_limit: int | None = Field(default=None, ge=1)
+    row_offset: int = Field(default=0, ge=0)
 
 
 class ReplaceSpec(BaseModel):
@@ -112,6 +137,9 @@ class ConfigSpec(BaseModel):
     replace: str | ReplaceSpec | None = None
     rewrite: RewriteSpec | None = None
     emit_telemetry: bool = False
+    experimental_detection_strategy: ExperimentalDetectionStrategy = ExperimentalDetectionStrategy.default
+    experimental_replacement_strategy: ExperimentalReplacementStrategy = ExperimentalReplacementStrategy.default
+    experimental_rule_labels: list[str] | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> "ConfigSpec":
@@ -147,6 +175,9 @@ class BenchmarkSpec(BaseModel):
     model_configs: str | None = None
     model_providers: str | None = None
     artifact_path: str | None = None
+    dd_parser_compat: DDParserCompatMode = DDParserCompatMode.none
+    case_retries: int = Field(default=0, ge=0)
+    case_retry_backoff_sec: float = Field(default=0.0, ge=0.0)
     workloads: list[WorkloadSpec] = Field(min_length=1)
     configs: list[ConfigSpec] = Field(min_length=1)
     matrix: list[MatrixEntry] | None = Field(default=None, min_length=1)
@@ -182,8 +213,11 @@ class BenchmarkCase(BaseModel):
     status: CaseStatus = CaseStatus.planned
     elapsed_sec: float | None = None
     measurement_path: str | None = None
+    detection_artifact_path: str | None = None
     trace_path: str | None = None
     error: str | None = None
+    attempt_count: int = 0
+    attempt_errors: list[str] = Field(default_factory=list)
 
 
 class BenchmarkResult(BaseModel):
@@ -192,7 +226,64 @@ class BenchmarkResult(BaseModel):
     measurement_path: str
     summary_path: str
     table_dir: str | None
+    detection_artifact_analysis_path: str | None = None
     cases: list[BenchmarkCase]
+
+
+@dataclass(frozen=True)
+class _CaseRunPaths:
+    raw_path: Path
+    artifact_output_path: Path
+    trace_path: Path | None
+    artifact_snapshot: dict[str, int] | None
+
+
+@dataclass(frozen=True)
+class _CaseExecution:
+    input_data: AnonymizerInput
+    trace_dataframe: pd.DataFrame | None = None
+
+
+_TRACE_FINAL_ARTIFACT_STRATEGIES = {
+    ExperimentalDetectionStrategy.rules_guardrail,
+    ExperimentalDetectionStrategy.rules_covered_or_default,
+    ExperimentalDetectionStrategy.rules_guardrail_compact_validation,
+    ExperimentalDetectionStrategy.rules_filter_guardrail,
+    ExperimentalDetectionStrategy.native_rules_router,
+    ExperimentalDetectionStrategy.native_candidate_validate_no_augment,
+    ExperimentalDetectionStrategy.detector_native_validate_no_augment,
+    ExperimentalDetectionStrategy.detector_native_validate_native_augment,
+    ExperimentalDetectionStrategy.gliner_native_validate_no_augment,
+    ExperimentalDetectionStrategy.gliner_native_validate_native_augment,
+    ExperimentalDetectionStrategy.native_single_pass,
+    ExperimentalDetectionStrategy.native_single_pass_recall,
+    ExperimentalDetectionStrategy.native_single_pass_values,
+    ExperimentalDetectionStrategy.native_single_pass_values_recall,
+}
+_RULE_BACKED_STRATEGIES = {
+    ExperimentalDetectionStrategy.rules_guardrail,
+    ExperimentalDetectionStrategy.rules_guardrail_compact_validation,
+    ExperimentalDetectionStrategy.rules_filter_guardrail,
+    ExperimentalDetectionStrategy.rules_seed_no_augment,
+    ExperimentalDetectionStrategy.rules_guardrail_no_augment,
+    ExperimentalDetectionStrategy.rules_filter_guardrail_no_augment,
+    ExperimentalDetectionStrategy.rules_guardrail_detector_only,
+    ExperimentalDetectionStrategy.rules_only,
+}
+
+_FINAL_ARTIFACT_KEYS = {
+    "final_entity_count",
+    "weak_api_key_shape_count",
+    "final_entity_signature_count",
+    "final_entity_signature_hashes",
+    "final_entity_signature_labels",
+    "final_entity_signature_details",
+    "weak_api_key_shape_label_counts",
+    "final_label_counts",
+    "final_source_counts",
+}
+
+_FINAL_ARTIFACT_PREFIXES = tuple(f"{key}." for key in _FINAL_ARTIFACT_KEYS if key != "final_entity_signature_hashes")
 
 
 def configure_logging(log_format: LogFormat) -> None:
@@ -260,30 +351,61 @@ def preflight_suite(spec: BenchmarkSpec, *, spec_path: Path) -> None:
     """Validate cheap suite inputs before any benchmark case consumes model time."""
     base_dir = spec_path.parent
     errors: list[str] = []
-    parsed_models = None
+    parsed_models = _preflight_model_configs(spec, base_dir=base_dir, errors=errors)
 
+    _preflight_model_providers_with_errors(spec, base_dir=base_dir, errors=errors)
+    errors.extend(_preflight_workload_errors(spec, base_dir=base_dir))
+    errors.extend(_preflight_config_errors(spec, parsed_models=parsed_models))
+    if errors:
+        raise ValueError("Benchmark preflight failed:\n- " + "\n- ".join(errors))
+
+
+def _preflight_model_configs(spec: BenchmarkSpec, *, base_dir: Path, errors: list[str]) -> Any | None:
     try:
-        parsed_models = parse_model_configs(_resolve_config_source(spec.model_configs, base_dir))
+        return parse_model_configs(_resolve_config_source(spec.model_configs, base_dir))
     except Exception as exc:
         errors.append(f"model_configs invalid: {exc}")
+        return None
 
+
+def _preflight_model_providers_with_errors(
+    spec: BenchmarkSpec,
+    *,
+    base_dir: Path,
+    errors: list[str],
+) -> None:
     try:
         _preflight_model_providers(spec, base_dir=base_dir)
     except Exception as exc:
         errors.append(f"model_providers invalid: {exc}")
 
+
+def _preflight_workload_errors(spec: BenchmarkSpec, *, base_dir: Path) -> list[str]:
+    errors: list[str] = []
     for workload in spec.workloads:
         try:
             _preflight_workload(workload, base_dir=base_dir)
         except Exception as exc:
             errors.append(str(exc))
+    return errors
 
+
+def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) -> list[str]:
+    errors: list[str] = []
     for config in spec.configs:
         try:
             anonymizer_config = build_anonymizer_config(config)
         except Exception as exc:
             errors.append(f"config '{config.id}' invalid: {exc}")
             continue
+        try:
+            _preflight_experimental_detection_strategy(config, anonymizer_config)
+        except Exception as exc:
+            errors.append(f"config '{config.id}' experimental_detection_strategy invalid: {exc}")
+        try:
+            _preflight_experimental_replacement_strategy(config, anonymizer_config)
+        except Exception as exc:
+            errors.append(f"config '{config.id}' experimental_replacement_strategy invalid: {exc}")
         if parsed_models is None:
             continue
         try:
@@ -296,9 +418,64 @@ def preflight_suite(spec: BenchmarkSpec, *, spec_path: Path) -> None:
             )
         except ValueError as exc:
             errors.append(f"config '{config.id}' model aliases invalid: {exc}")
+    return errors
 
-    if errors:
-        raise ValueError("Benchmark preflight failed:\n- " + "\n- ".join(errors))
+
+def _preflight_experimental_detection_strategy(config: ConfigSpec, anonymizer_config: AnonymizerConfig) -> None:
+    _preflight_experimental_rule_labels(config)
+    if config.experimental_detection_strategy != ExperimentalDetectionStrategy.rules_only:
+        return
+    entity_labels = anonymizer_config.detect.entity_labels
+    supported = ", ".join(sorted(SUPPORTED_RULE_LABELS))
+    if entity_labels is None:
+        raise ValueError(
+            f"`rules_only` requires explicit detect.entity_labels limited to deterministic rule labels: {supported}"
+        )
+    unsupported = sorted(set(entity_labels) - SUPPORTED_RULE_LABELS)
+    if unsupported:
+        raise ValueError(
+            f"unsupported high-confidence rule labels: {', '.join(unsupported)}; supported labels: {supported}"
+        )
+
+
+def _preflight_experimental_rule_labels(config: ConfigSpec) -> None:
+    if not config.experimental_rule_labels:
+        return
+    supported = ", ".join(sorted(SUPPORTED_RULE_LABELS))
+    if config.experimental_detection_strategy not in _RULE_BACKED_STRATEGIES:
+        raise ValueError(
+            "experimental_rule_labels requires a rule-backed strategy: "
+            + ", ".join(sorted(strategy.value for strategy in _RULE_BACKED_STRATEGIES))
+        )
+    unsupported = sorted(set(config.experimental_rule_labels) - SUPPORTED_RULE_LABELS)
+    if unsupported:
+        raise ValueError(
+            f"unsupported experimental_rule_labels: {', '.join(unsupported)}; supported labels: {supported}"
+        )
+
+
+def _preflight_experimental_replacement_strategy(
+    config: ConfigSpec,
+    anonymizer_config: AnonymizerConfig,
+) -> None:
+    if config.experimental_replacement_strategy == ExperimentalReplacementStrategy.default:
+        return
+    if config.experimental_replacement_strategy != ExperimentalReplacementStrategy.local_structured_substitute:
+        raise ValueError(f"unsupported strategy: {config.experimental_replacement_strategy}")
+    if not isinstance(anonymizer_config.replace, Substitute):
+        raise ValueError("local_structured_substitute requires replace: substitute")
+    entity_labels = anonymizer_config.detect.entity_labels
+    supported = ", ".join(sorted(SUPPORTED_STRUCTURED_SUBSTITUTE_LABELS))
+    if entity_labels is None:
+        raise ValueError(
+            "`local_structured_substitute` requires explicit detect.entity_labels limited to "
+            f"structured substitute labels: {supported}"
+        )
+    unsupported = sorted(set(entity_labels) - SUPPORTED_STRUCTURED_SUBSTITUTE_LABELS)
+    if unsupported:
+        raise ValueError(
+            f"unsupported local structured substitute labels: {', '.join(unsupported)}; supported labels: {supported}"
+        )
 
 
 def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
@@ -322,6 +499,8 @@ def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
 
 def _preflight_workload(workload: WorkloadSpec, *, base_dir: Path) -> None:
     resolved_source = _resolve_input_source(workload.source, base_dir)
+    if _workload_has_row_slice(workload) and not _is_local_input_source(str(resolved_source)):
+        raise ValueError(f"workload '{workload.id}' row slicing requires a local workload source")
     input_data = AnonymizerInput(
         source=str(resolved_source),
         text_column=workload.text_column,
@@ -373,23 +552,85 @@ def run_suite(
         trace_dir=trace_dir,
     )
     anonymizer = Anonymizer(**contexts["anonymizer_kwargs"])
-    cases = [
-        _run_case(case, spec, contexts=contexts, anonymizer=anonymizer, fail_fast=fail_fast)
+    cases = _run_cases(spec, contexts=contexts, anonymizer=anonymizer, fail_fast=fail_fast, export=export)
+    measurement_path = combine_measurements(cases, output_dir / "measurements.jsonl")
+    should_export = _should_export_measurements(export=export, measurement_path=measurement_path)
+    table_dir = _export_suite_tables(measurement_path, output_dir=output_dir, should_export=should_export)
+    artifact_analysis_path = _combine_suite_detection_artifacts(
+        cases, output_dir=output_dir, should_export=should_export
+    )
+    result = _benchmark_result(
+        spec,
+        output_dir=output_dir,
+        measurement_path=measurement_path,
+        table_dir=table_dir,
+        artifact_analysis_path=artifact_analysis_path,
+        cases=cases,
+    )
+    write_summary(result)
+    return result
+
+
+def _run_cases(
+    spec: BenchmarkSpec,
+    *,
+    contexts: dict[str, Any],
+    anonymizer: Anonymizer,
+    fail_fast: bool,
+    export: bool,
+) -> list[BenchmarkCase]:
+    return [
+        _run_case(
+            case,
+            spec,
+            contexts=contexts,
+            anonymizer=anonymizer,
+            fail_fast=fail_fast,
+            export_detection_artifacts=export,
+        )
         for case in build_cases(spec)
     ]
-    measurement_path = combine_measurements(cases, output_dir / "measurements.jsonl")
-    should_export = export and measurement_path.stat().st_size > 0
-    table_dir = export_measurement_tables(measurement_path, output_dir / "tables") if should_export else None
-    result = BenchmarkResult(
+
+
+def _should_export_measurements(*, export: bool, measurement_path: Path) -> bool:
+    return export and measurement_path.stat().st_size > 0
+
+
+def _export_suite_tables(measurement_path: Path, *, output_dir: Path, should_export: bool) -> Path | None:
+    if not should_export:
+        return None
+    return export_measurement_tables(measurement_path, output_dir / "tables")
+
+
+def _combine_suite_detection_artifacts(
+    cases: list[BenchmarkCase],
+    *,
+    output_dir: Path,
+    should_export: bool,
+) -> Path | None:
+    if not should_export:
+        return None
+    return combine_detection_artifact_analysis(cases, output_dir / "detection-artifacts.jsonl")
+
+
+def _benchmark_result(
+    spec: BenchmarkSpec,
+    *,
+    output_dir: Path,
+    measurement_path: Path,
+    table_dir: Path | None,
+    artifact_analysis_path: Path | None,
+    cases: list[BenchmarkCase],
+) -> BenchmarkResult:
+    return BenchmarkResult(
         suite_id=spec.suite_id,
         output_dir=str(output_dir),
         measurement_path=str(measurement_path),
         summary_path=str(output_dir / "summary.json"),
         table_dir=str(table_dir) if table_dir is not None else None,
+        detection_artifact_analysis_path=str(artifact_analysis_path) if artifact_analysis_path is not None else None,
         cases=cases,
     )
-    write_summary(result)
-    return result
 
 
 def _build_contexts(
@@ -409,6 +650,8 @@ def _build_contexts(
         "raw_dir": output_dir / "raw",
         "dd_trace": dd_trace,
         "trace_dir": trace_dir or output_dir / "traces",
+        "dd_parser_compat": spec.dd_parser_compat,
+        "artifact_path": artifact_path,
         "anonymizer_kwargs": {
             "model_configs": _resolve_config_source(spec.model_configs, base_dir),
             "model_providers": _resolve_config_source(spec.model_providers, base_dir),
@@ -424,44 +667,326 @@ def _run_case(
     contexts: dict[str, Any],
     anonymizer: Anonymizer,
     fail_fast: bool,
+    export_detection_artifacts: bool,
 ) -> BenchmarkCase:
-    raw_path = contexts["raw_dir"] / f"{case.case_id}.jsonl"
-    trace_path = _case_trace_path(case, contexts=contexts)
     started = time.perf_counter()
-    try:
-        workload = _get_item(contexts["workloads"], case.workload_id, "workload")
-        config = _get_item(contexts["configs"], case.config_id, "config")
-        _execute_case(
-            anonymizer,
-            workload,
-            config,
-            raw_path=raw_path,
-            trace_path=trace_path,
-            case=case,
-            spec=spec,
-            base_dir=contexts["base_dir"],
-            dd_trace=contexts["dd_trace"],
-        )
-        return case.model_copy(
-            update={
-                "status": CaseStatus.completed,
-                "elapsed_sec": time.perf_counter() - started,
-                "measurement_path": str(raw_path),
-                "trace_path": str(trace_path) if trace_path is not None else None,
-            }
-        )
-    except Exception as exc:
-        if fail_fast:
-            raise
-        return case.model_copy(
-            update={
-                "status": CaseStatus.error,
-                "elapsed_sec": time.perf_counter() - started,
-                "measurement_path": str(raw_path),
-                "trace_path": str(trace_path) if trace_path is not None else None,
-                "error": str(exc),
-            }
-        )
+    attempt_errors: list[str] = []
+    max_attempts = 1 if fail_fast else spec.case_retries + 1
+    for attempt_number in range(1, max_attempts + 1):
+        paths = _case_run_paths(case, contexts=contexts, export_detection_artifacts=export_detection_artifacts)
+        try:
+            return _run_case_success(
+                case,
+                spec,
+                contexts=contexts,
+                anonymizer=anonymizer,
+                paths=paths,
+                started=started,
+                attempt_count=attempt_number,
+                attempt_errors=attempt_errors,
+            )
+        except Exception as exc:
+            if fail_fast:
+                raise
+            attempt_errors.append(str(exc))
+            if attempt_number >= max_attempts:
+                return _run_case_error(
+                    case,
+                    contexts=contexts,
+                    paths=paths,
+                    started=started,
+                    error=exc,
+                    attempt_count=attempt_number,
+                    attempt_errors=attempt_errors,
+                )
+            _sleep_before_case_retry(spec, case=case, attempt_number=attempt_number, error=exc)
+
+    raise RuntimeError("unreachable benchmark retry state")
+
+
+def _sleep_before_case_retry(
+    spec: BenchmarkSpec,
+    *,
+    case: BenchmarkCase,
+    attempt_number: int,
+    error: Exception,
+) -> None:
+    logger.warning(
+        "case %s attempt %d failed; retrying after %.2fs: %s",
+        case.case_id,
+        attempt_number,
+        spec.case_retry_backoff_sec,
+        error,
+    )
+    if spec.case_retry_backoff_sec > 0:
+        time.sleep(spec.case_retry_backoff_sec)
+
+
+def _case_run_paths(
+    case: BenchmarkCase,
+    *,
+    contexts: dict[str, Any],
+    export_detection_artifacts: bool,
+) -> _CaseRunPaths:
+    return _CaseRunPaths(
+        raw_path=contexts["raw_dir"] / f"{case.case_id}.jsonl",
+        artifact_output_path=contexts["raw_dir"] / f"{case.case_id}.detection-artifacts.jsonl",
+        trace_path=_case_trace_path(case, contexts=contexts),
+        artifact_snapshot=snapshot_detection_artifacts(contexts["artifact_path"])
+        if export_detection_artifacts
+        else None,
+    )
+
+
+def _run_case_success(
+    case: BenchmarkCase,
+    spec: BenchmarkSpec,
+    *,
+    contexts: dict[str, Any],
+    anonymizer: Anonymizer,
+    paths: _CaseRunPaths,
+    started: float,
+    attempt_count: int,
+    attempt_errors: list[str],
+) -> BenchmarkCase:
+    workload = _get_item(contexts["workloads"], case.workload_id, "workload")
+    config = _get_item(contexts["configs"], case.config_id, "config")
+    execution = _execute_case(
+        anonymizer,
+        workload,
+        config,
+        raw_path=paths.raw_path,
+        trace_path=paths.trace_path,
+        case=case,
+        spec=spec,
+        base_dir=contexts["base_dir"],
+        dd_trace=contexts["dd_trace"],
+        dd_parser_compat=contexts["dd_parser_compat"],
+    )
+    detection_artifact_path = _case_detection_artifact_path(
+        contexts,
+        paths,
+        case=case,
+        config=config,
+        execution=execution,
+    )
+    return _case_with_result(
+        case,
+        status=CaseStatus.completed,
+        started=started,
+        raw_path=paths.raw_path,
+        detection_artifact_path=detection_artifact_path,
+        trace_path=paths.trace_path,
+        attempt_count=attempt_count,
+        attempt_errors=attempt_errors,
+    )
+
+
+def _run_case_error(
+    case: BenchmarkCase,
+    *,
+    contexts: dict[str, Any],
+    paths: _CaseRunPaths,
+    started: float,
+    error: Exception,
+    attempt_count: int,
+    attempt_errors: list[str],
+) -> BenchmarkCase:
+    detection_artifact_path = _export_case_detection_artifacts_if_requested(
+        contexts,
+        paths.artifact_output_path,
+        case=case,
+        artifact_snapshot=paths.artifact_snapshot,
+    )
+    return _case_with_result(
+        case,
+        status=CaseStatus.error,
+        started=started,
+        raw_path=paths.raw_path,
+        detection_artifact_path=detection_artifact_path,
+        trace_path=paths.trace_path,
+        error=str(error),
+        attempt_count=attempt_count,
+        attempt_errors=attempt_errors,
+    )
+
+
+def _case_detection_artifact_path(
+    contexts: dict[str, Any],
+    paths: _CaseRunPaths,
+    *,
+    case: BenchmarkCase,
+    config: ConfigSpec,
+    execution: _CaseExecution,
+) -> Path | None:
+    detection_artifact_path = _export_case_detection_artifacts_if_requested(
+        contexts,
+        paths.artifact_output_path,
+        case=case,
+        artifact_snapshot=paths.artifact_snapshot,
+    )
+    detection_artifact_path = _trace_final_artifact_path_if_requested(
+        config,
+        detection_artifact_path,
+        paths.artifact_output_path,
+        case=case,
+        trace_dataframe=execution.trace_dataframe,
+    )
+    if detection_artifact_path is not None or paths.artifact_snapshot is None:
+        return detection_artifact_path
+    return export_rules_only_case_detection_artifacts(
+        config,
+        execution.input_data,
+        paths.artifact_output_path,
+        case=case,
+    )
+
+
+def _trace_final_artifact_path_if_requested(
+    config: ConfigSpec,
+    detection_artifact_path: Path | None,
+    output_path: Path,
+    *,
+    case: BenchmarkCase,
+    trace_dataframe: pd.DataFrame | None,
+) -> Path | None:
+    if config.experimental_detection_strategy not in _TRACE_FINAL_ARTIFACT_STRATEGIES:
+        return detection_artifact_path
+    if trace_dataframe is None:
+        return detection_artifact_path
+    return patch_case_detection_artifacts_from_trace_dataframe(
+        detection_artifact_path or output_path,
+        trace_dataframe,
+        case=case,
+        replace_existing=config.experimental_detection_strategy
+        == ExperimentalDetectionStrategy.rules_covered_or_default,
+    )
+
+
+def patch_case_detection_artifacts_from_trace_dataframe(
+    output_path: Path,
+    trace_dataframe: pd.DataFrame,
+    *,
+    case: BenchmarkCase | None = None,
+    replace_existing: bool = False,
+) -> Path | None:
+    final_rows = _final_entity_artifact_rows_from_trace_dataframe(trace_dataframe)
+    if not final_rows:
+        return None
+    if replace_existing:
+        patched = final_rows
+    else:
+        rows = _read_detection_artifact_payloads(output_path) if output_path.exists() else []
+        patched = _merge_final_entity_artifact_rows(rows, final_rows)
+    if case is not None:
+        patched = [_with_case_metadata(row, case=case) for row in patched]
+    write_detection_artifact_payloads(patched, output_path)
+    return output_path
+
+
+def _final_entity_artifact_rows_from_trace_dataframe(trace_dataframe: pd.DataFrame) -> list[dict[str, Any]]:
+    entities_column = _trace_final_entities_column(trace_dataframe)
+    if entities_column is None:
+        return []
+    return [
+        _final_entity_artifact_row(raw_entities, row_index=row_index)
+        for row_index, raw_entities in enumerate(trace_dataframe[entities_column])
+    ]
+
+
+def _trace_final_entities_column(trace_dataframe: pd.DataFrame) -> str | None:
+    if COL_FINAL_ENTITIES in trace_dataframe.columns:
+        return COL_FINAL_ENTITIES
+    if COL_DETECTED_ENTITIES in trace_dataframe.columns:
+        return COL_DETECTED_ENTITIES
+    return None
+
+
+def _final_entity_artifact_row(raw_entities: object, *, row_index: int) -> dict[str, Any]:
+    entities = EntitiesSchema.from_raw(raw_entities).entities
+    return build_detection_artifact_row_from_entities(
+        workflow_name="entity-detection-final-trace",
+        batch_file="trace_dataframe",
+        row_index=row_index,
+        seed_entities=[],
+        seed_validation_candidate_count=0,
+        merged_validation_candidate_count=0,
+        augmented_entities=[],
+        final_entities=entities,
+    ).model_dump()
+
+
+def _read_detection_artifact_payloads(output_path: Path) -> list[dict[str, Any]]:
+    with output_path.open(encoding="utf-8") as source:
+        return [json.loads(line) for line in source if line.strip()]
+
+
+def _merge_final_entity_artifact_rows(
+    rows: list[dict[str, Any]],
+    final_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    patched = [_patch_final_entity_artifact_row(row, final_row) for row, final_row in zip(rows, final_rows)]
+    return patched + rows[len(final_rows) :] + final_rows[len(rows) :]
+
+
+def _patch_final_entity_artifact_row(row: dict[str, Any], final_row: dict[str, Any]) -> dict[str, Any]:
+    clean_row = _without_final_entity_artifact_fields(row)
+    return {**clean_row, **_final_entity_artifact_fields(final_row)}
+
+
+def _without_final_entity_artifact_fields(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in _FINAL_ARTIFACT_KEYS and not key.startswith(_FINAL_ARTIFACT_PREFIXES)
+    }
+
+
+def _final_entity_artifact_fields(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: row[key] for key in _FINAL_ARTIFACT_KEYS}
+
+
+def _case_with_result(
+    case: BenchmarkCase,
+    *,
+    status: CaseStatus,
+    started: float,
+    raw_path: Path,
+    detection_artifact_path: Path | None,
+    trace_path: Path | None,
+    attempt_count: int,
+    attempt_errors: list[str],
+    error: str | None = None,
+) -> BenchmarkCase:
+    return case.model_copy(
+        update={
+            "status": status,
+            "elapsed_sec": time.perf_counter() - started,
+            "measurement_path": str(raw_path),
+            "detection_artifact_path": (str(detection_artifact_path) if detection_artifact_path is not None else None),
+            "trace_path": str(trace_path) if trace_path is not None else None,
+            "error": error,
+            "attempt_count": attempt_count,
+            "attempt_errors": list(attempt_errors),
+        }
+    )
+
+
+def _export_case_detection_artifacts_if_requested(
+    contexts: dict[str, Any],
+    output_path: Path,
+    *,
+    case: BenchmarkCase,
+    artifact_snapshot: dict[str, int] | None,
+) -> Path | None:
+    if artifact_snapshot is None:
+        return None
+    return export_case_detection_artifact_analysis(
+        contexts["artifact_path"],
+        output_path,
+        case=case,
+        artifact_snapshot=artifact_snapshot,
+    )
 
 
 def _case_trace_path(case: BenchmarkCase, *, contexts: dict[str, Any]) -> Path | None:
@@ -481,7 +1006,15 @@ def _execute_case(
     spec: BenchmarkSpec,
     base_dir: Path,
     dd_trace: DDTraceMode,
-) -> None:
+    dd_parser_compat: DDParserCompatMode,
+) -> _CaseExecution:
+    anonymizer_config = build_anonymizer_config(config)
+    input_data = build_input(
+        workload,
+        base_dir,
+        slice_dir=raw_path.parent / "inputs",
+        case_id=case.case_id,
+    )
     measurement = MeasurementConfig(
         output_path=raw_path,
         run_id=case.case_id,
@@ -493,16 +1026,97 @@ def _execute_case(
         fail_on_write_error=True,
     )
     with configured_measurement_session(measurement):
-        anonymizer.run(config=build_anonymizer_config(config), data=build_input(workload, base_dir))
+        with dd_parser_compat_context(dd_parser_compat):
+            with experimental_detection_strategy_context(
+                config.experimental_detection_strategy,
+                rule_labels=config.experimental_rule_labels,
+            ):
+                with experimental_replacement_strategy_context(config.experimental_replacement_strategy):
+                    result = anonymizer.run(
+                        config=anonymizer_config,
+                        data=input_data,
+                    )
+    return _CaseExecution(input_data=input_data, trace_dataframe=getattr(result, "trace_dataframe", None))
 
 
-def build_input(workload: WorkloadSpec, base_dir: Path) -> AnonymizerInput:
+def build_input(
+    workload: WorkloadSpec,
+    base_dir: Path,
+    *,
+    slice_dir: Path | None = None,
+    case_id: str | None = None,
+) -> AnonymizerInput:
+    resolved_source = _resolve_input_source(workload.source, base_dir)
+    source = (
+        _materialize_sliced_source(workload, resolved_source, slice_dir=slice_dir, case_id=case_id)
+        if _workload_has_row_slice(workload)
+        else resolved_source
+    )
     return AnonymizerInput(
-        source=str(_resolve_input_source(workload.source, base_dir)),
+        source=str(source),
         text_column=workload.text_column,
         id_column=workload.id_column,
         data_summary=workload.data_summary,
     )
+
+
+def _workload_has_row_slice(workload: WorkloadSpec) -> bool:
+    return workload.row_limit is not None or workload.row_offset > 0
+
+
+def _is_local_input_source(source: str) -> bool:
+    return "://" not in source
+
+
+def _materialize_sliced_source(
+    workload: WorkloadSpec,
+    source: str | Path,
+    *,
+    slice_dir: Path | None,
+    case_id: str | None,
+) -> Path:
+    if not _is_local_input_source(str(source)):
+        raise ValueError(f"workload '{workload.id}' row slicing requires a local workload source")
+    if slice_dir is None or case_id is None:
+        raise ValueError("row slicing requires slice_dir and case_id")
+    source_path = Path(source)
+    suffix = infer_input_source_suffix(str(source_path))
+    dataframe = _read_local_input_dataframe(source_path, suffix=suffix)
+    sliced = dataframe.iloc[_slice_bounds(workload)]
+    slice_dir.mkdir(parents=True, exist_ok=True)
+    destination = slice_dir / f"{_safe_case_filename(case_id)}{suffix}"
+    _write_local_input_dataframe(sliced, destination, suffix=suffix)
+    return destination
+
+
+def _slice_bounds(workload: WorkloadSpec) -> slice:
+    start = workload.row_offset
+    stop = start + workload.row_limit if workload.row_limit is not None else None
+    return slice(start, stop)
+
+
+def _read_local_input_dataframe(source: Path, *, suffix: str) -> pd.DataFrame:
+    if suffix == ".csv":
+        return pd.read_csv(source)
+    if suffix == ".parquet":
+        return pd.read_parquet(source)
+    supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
+    raise ValueError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
+
+
+def _write_local_input_dataframe(dataframe: pd.DataFrame, destination: Path, *, suffix: str) -> None:
+    if suffix == ".csv":
+        dataframe.to_csv(destination, index=False)
+        return
+    if suffix == ".parquet":
+        dataframe.to_parquet(destination, index=False)
+        return
+    supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
+    raise ValueError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
+
+
+def _safe_case_filename(case_id: str) -> str:
+    return "".join(char if char.isalnum() or char in "._-" else "_" for char in case_id)
 
 
 def build_anonymizer_config(config: ConfigSpec) -> AnonymizerConfig:
@@ -566,12 +1180,165 @@ def combine_measurements(cases: list[BenchmarkCase], destination: Path) -> Path:
     return destination
 
 
+def combine_detection_artifact_analysis(cases: list[BenchmarkCase], destination: Path) -> Path | None:
+    chunks: list[str] = []
+    for case in cases:
+        if case.detection_artifact_path is None:
+            continue
+        source = Path(case.detection_artifact_path)
+        if source.exists():
+            chunks.append(_jsonl_chunk(source.read_text(encoding="utf-8")))
+    if not chunks:
+        return None
+    destination.write_text("".join(chunks), encoding="utf-8")
+    return destination
+
+
+def _jsonl_chunk(text: str) -> str:
+    if not text or text.endswith("\n"):
+        return text
+    return text + "\n"
+
+
 def export_measurement_tables(measurement_path: Path, table_dir: Path) -> Path:
     dataframe = read_measurements(measurement_path)
     export_tables(
         dataframe, input_path=measurement_path, output_dir=table_dir, export_format=ExportFormat.parquet, overwrite=True
     )
     return table_dir
+
+
+def snapshot_detection_artifacts(artifact_path: Path) -> dict[str, int]:
+    if not artifact_path.exists():
+        return {}
+    return {
+        str(parquet_file.relative_to(artifact_path)): parquet_file.stat().st_mtime_ns
+        for parquet_file in iter_detection_parquet_files(artifact_path)
+    }
+
+
+def changed_detection_artifact_files(artifact_path: Path, snapshot: dict[str, int]) -> list[Path]:
+    if not artifact_path.exists():
+        return []
+    changed: list[Path] = []
+    for parquet_file in iter_detection_parquet_files(artifact_path):
+        key = str(parquet_file.relative_to(artifact_path))
+        if snapshot.get(key) != parquet_file.stat().st_mtime_ns:
+            changed.append(parquet_file)
+    return changed
+
+
+def export_detection_artifact_analysis(
+    artifact_path: Path,
+    output_path: Path,
+    *,
+    artifact_snapshot: dict[str, int] | None = None,
+) -> Path | None:
+    if not artifact_path.exists():
+        return None
+    parquet_files = (
+        changed_detection_artifact_files(artifact_path, artifact_snapshot) if artifact_snapshot is not None else None
+    )
+    analysis = analyze_artifacts(artifact_path, parquet_files=parquet_files)
+    if not analysis.rows:
+        return None
+    write_detection_artifact_payloads([row.model_dump() for row in analysis.rows], output_path)
+    return output_path
+
+
+def export_case_detection_artifact_analysis(
+    artifact_path: Path,
+    output_path: Path,
+    *,
+    case: BenchmarkCase,
+    artifact_snapshot: dict[str, int],
+) -> Path | None:
+    if not artifact_path.exists():
+        return None
+    parquet_files = changed_detection_artifact_files(artifact_path, artifact_snapshot)
+    analysis = analyze_artifacts(artifact_path, parquet_files=parquet_files)
+    if not analysis.rows:
+        return None
+    write_detection_artifact_payloads(
+        [_with_case_metadata(row.model_dump(), case=case) for row in analysis.rows],
+        output_path,
+    )
+    return output_path
+
+
+def export_rules_only_case_detection_artifacts(
+    config: ConfigSpec,
+    input_data: AnonymizerInput,
+    output_path: Path,
+    *,
+    case: BenchmarkCase,
+) -> Path | None:
+    if not _is_local_input_source(input_data.source):
+        return None
+    labels = build_anonymizer_config(config).detect.entity_labels
+    if not _uses_rules_only_artifact_export(config, labels):
+        return None
+    source = Path(input_data.source)
+    dataframe = _read_local_input_dataframe(source, suffix=infer_input_source_suffix(str(source)))
+    rows = [
+        _with_case_metadata(
+            _rules_only_artifact_row(
+                text=record[input_data.text_column],
+                labels=labels,
+                row_index=int(row_index),
+            ),
+            case=case,
+        )
+        for row_index, record in dataframe.iterrows()
+    ]
+    if not rows:
+        return None
+    write_detection_artifact_payloads(rows, output_path)
+    return output_path
+
+
+def _uses_rules_only_artifact_export(config: ConfigSpec, labels: list[str] | None) -> bool:
+    if labels is None:
+        return False
+    if config.experimental_detection_strategy == ExperimentalDetectionStrategy.rules_only:
+        return True
+    if config.experimental_detection_strategy != ExperimentalDetectionStrategy.rules_covered_or_default:
+        return False
+    return set(labels).issubset(STRUCTURED_RULE_FAST_LANE_LABELS)
+
+
+def _rules_only_artifact_row(*, text: object, labels: list[str], row_index: int) -> dict[str, Any]:
+    entities = [
+        EntitySchema.model_validate(span.as_dict())
+        for span in detect_high_confidence_entities(str(text), labels=labels)
+    ]
+    return build_detection_artifact_row_from_entities(
+        workflow_name="entity-detection-rules-only",
+        batch_file="synthetic-rules-only",
+        row_index=row_index,
+        seed_entities=entities,
+        seed_validation_candidate_count=len(entities),
+        merged_validation_candidate_count=len(entities),
+        augmented_entities=[],
+        final_entities=entities,
+    ).model_dump()
+
+
+def _with_case_metadata(row: dict[str, Any], *, case: BenchmarkCase) -> dict[str, Any]:
+    return {
+        "suite_id": case.suite_id,
+        "workload_id": case.workload_id,
+        "config_id": case.config_id,
+        "repetition": case.repetition,
+        "case_id": case.case_id,
+        "run_id": case.case_id,
+        **row,
+    }
+
+
+def write_detection_artifact_payloads(rows: list[dict[str, Any]], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.json_normalize(rows, sep=".").to_json(output_path, orient="records", lines=True)
 
 
 def write_summary(result: BenchmarkResult) -> None:
@@ -590,12 +1357,17 @@ def render_result(result: BenchmarkResult, *, json_output: bool) -> str:
 
 
 def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
+    config = next(item for item in spec.configs if item.id == case.config_id)
     return {
         "suite_id": spec.suite_id,
         "workload_id": case.workload_id,
         "config_id": case.config_id,
         "repetition": case.repetition,
         "case_id": case.case_id,
+        "experimental_detection_strategy": config.experimental_detection_strategy.value,
+        "experimental_replacement_strategy": config.experimental_replacement_strategy.value,
+        "experimental_rule_labels": config.experimental_rule_labels,
+        "dd_parser_compat": spec.dd_parser_compat.value,
     }
 
 
@@ -655,6 +1427,7 @@ def dry_run_result(
         measurement_path=str(output_dir / "measurements.jsonl"),
         summary_path=str(output_dir / "summary.json"),
         table_dir=str(output_dir / "tables") if export else None,
+        detection_artifact_analysis_path=str(output_dir / "detection-artifacts.jsonl") if export else None,
         cases=cases,
     )
 

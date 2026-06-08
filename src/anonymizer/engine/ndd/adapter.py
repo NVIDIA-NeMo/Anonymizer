@@ -329,6 +329,10 @@ class _DataDesignerUsageProbe:
 
 
 def _get_model_usage_snapshot(model_registry: object) -> Mapping[str, object] | None:
+    alias_snapshot = _get_model_usage_snapshot_by_alias(model_registry)
+    if alias_snapshot:
+        return alias_snapshot
+
     get_snapshot = getattr(model_registry, "get_model_usage_snapshot", None)
     if not callable(get_snapshot):
         return None
@@ -336,6 +340,28 @@ def _get_model_usage_snapshot(model_registry: object) -> Mapping[str, object] | 
     if isinstance(snapshot, Mapping):
         return snapshot
     return None
+
+
+def _get_model_usage_snapshot_by_alias(model_registry: object) -> Mapping[str, object] | None:
+    models = getattr(model_registry, "_models", None)
+    if not isinstance(models, Mapping):
+        return None
+
+    snapshot: dict[str, object] = {}
+    for model_alias, model_facade in models.items():
+        stats = getattr(model_facade, "usage_stats", None)
+        if stats is None or not getattr(stats, "has_usage", False):
+            continue
+        payload = _model_usage_as_json(stats)
+        if isinstance(payload, Mapping):
+            payload = {
+                **payload,
+                "model_alias": getattr(model_facade, "model_alias", str(model_alias)),
+                "model_name": getattr(model_facade, "model_name", None),
+                "model_provider_name": getattr(model_facade, "model_provider_name", None),
+            }
+        snapshot[str(model_alias)] = payload
+    return snapshot or None
 
 
 def _model_usage_as_json(stats: object) -> Any:
@@ -484,8 +510,6 @@ def _record_dd_message_trace(
     error_type: str | None,
     is_async: bool,
 ) -> None:
-    if error_type == "SyncClientUnavailableError":
-        return
     collector.record_dd_message_trace(
         workflow_name=workflow_name,
         model_alias=getattr(model_facade, "model_alias", None),

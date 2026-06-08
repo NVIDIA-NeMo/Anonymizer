@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
     COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_SOURCE,
     ENTITY_LABEL_EXAMPLES,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
@@ -28,6 +29,7 @@ from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
+REPLACEMENT_MAP_SOURCE_LLM = "llm"
 
 # Workflow-internal scratch columns used only to build the replacement-generator
 # prompt. Created in `generate_map_only` and dropped before returning — nothing
@@ -71,6 +73,7 @@ class LlmReplaceWorkflow:
         # Partition: rows with an empty entity list bypass replacement-map generation.
         entity_rows, passthrough_rows = split_rows(working_df, column=COL_ENTITIES_FOR_REPLACE, predicate=bool)
         passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
+        passthrough_rows[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
 
         if entity_rows.empty:
             passthrough_only = merge_and_reorder(passthrough_rows)
@@ -110,6 +113,7 @@ class LlmReplaceWorkflow:
             ),
             axis=1,
         )
+        output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
 
         combined = merge_and_reorder(output_df, passthrough_rows)
         return LlmReplaceResult(
@@ -160,28 +164,56 @@ def _filter_replacement_map_to_input_entities(
         for label in entity.labels
         if entity.value and label
     }
+    protected_original_values = {value for value, _ in allowed_pairs}
     filtered: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
+    synthetic_collision_labels: Counter[str] = Counter()
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
         if key not in allowed_pairs or key in seen:
             continue
+        if replacement.synthetic in protected_original_values:
+            synthetic_collision_labels[replacement.label] += 1
+            seen.add(key)
+            filtered.append(
+                {
+                    "original": replacement.original,
+                    "label": replacement.label,
+                    "synthetic": _collision_safe_synthetic(
+                        replacement.label,
+                        index=synthetic_collision_labels[replacement.label],
+                        protected_original_values=protected_original_values,
+                    ),
+                }
+            )
+            continue
         seen.add(key)
         filtered.append(replacement.model_dump())
 
+    if synthetic_collision_labels:
+        logger.warning(
+            "Replacement map repaired synthetic-original collision entries for record %s; repaired=%d "
+            "(repaired_by_label=%s)",
+            record_id or "<unknown>",
+            sum(synthetic_collision_labels.values()),
+            dict(synthetic_collision_labels),
+        )
     if logger.isEnabledFor(logging.DEBUG):
         raw_pairs = {(r.original, r.label) for r in parsed_map.replacements}
         filtered_pairs = {(f["original"], f["label"]) for f in filtered}
         unrequested_labels = Counter(label for _, label in (raw_pairs - allowed_pairs))
         unfilled_labels = Counter(label for _, label in (allowed_pairs - filtered_pairs))
         logger.debug(
-            "Replacement map record %s: requested=%d raw=%d filtered=%d%s%s",
+            "Replacement map record %s: requested=%d raw=%d filtered=%d%s%s%s",
             record_id or "<unknown>",
             len(allowed_pairs),
             len(parsed_map.replacements),
             len(filtered),
             f" unrequested_by_label={dict(unrequested_labels)}" if unrequested_labels else "",
             f" unfilled_by_label={dict(unfilled_labels)}" if unfilled_labels else "",
+            f" synthetic_original_collision_by_label={dict(synthetic_collision_labels)}"
+            if synthetic_collision_labels
+            else "",
         )
     if not filtered and allowed_pairs:
         requested_labels = Counter(label for _, label in allowed_pairs)
@@ -193,6 +225,15 @@ def _filter_replacement_map_to_input_entities(
             dict(requested_labels),
         )
     return {"replacements": filtered}
+
+
+def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: set[str]) -> str:
+    label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+    while True:
+        candidate = f"[SUBSTITUTE_{label_token}_{index}]"
+        if candidate not in protected_original_values:
+            return candidate
+        index += 1
 
 
 def _get_replacement_mapping_prompt(*, entities_column: str, instructions: str | None = None) -> str:

@@ -20,6 +20,7 @@ from data_designer.engine.models.facade import ModelFacade
 from data_designer.engine.models.utils import ChatMessage
 from data_designer.interface.data_designer import DataDesigner
 
+import anonymizer.measurement as measurement
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
@@ -32,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_REPAIR_ITERATIONS,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_SOURCE,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TEXT,
     COL_UTILITY_SCORE,
@@ -40,6 +42,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
+from anonymizer.engine.replace.structured_substitute import REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import (
@@ -169,6 +172,149 @@ def test_ndd_adapter_records_datadesigner_model_usage() -> None:
     assert record["observed_tokens_per_successful_request"] == 8
 
 
+def test_ndd_adapter_records_datadesigner_model_usage_by_alias_for_shared_model_names() -> None:
+    input_df = pd.DataFrame(
+        {
+            "text": ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["record-a"],
+        }
+    )
+
+    class UsageStats:
+        has_usage = True
+
+        def __init__(self, *, input_tokens: int, output_tokens: int, successful: int, failed: int) -> None:
+            self.input_tokens = input_tokens
+            self.output_tokens = output_tokens
+            self.successful = successful
+            self.failed = failed
+
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "token_usage": {
+                    "input_tokens": self.input_tokens,
+                    "output_tokens": self.output_tokens,
+                    "total_tokens": self.input_tokens + self.output_tokens,
+                },
+                "request_usage": {
+                    "successful_requests": self.successful,
+                    "failed_requests": self.failed,
+                    "total_requests": self.successful + self.failed,
+                },
+            }
+
+    class ModelRegistry:
+        def __init__(self) -> None:
+            self._models = {
+                "validator": SimpleNamespace(
+                    model_alias="validator",
+                    model_name="shared-model",
+                    model_provider_name="local-vllm",
+                    usage_stats=UsageStats(input_tokens=12, output_tokens=4, successful=2, failed=1),
+                ),
+                "augmenter": SimpleNamespace(
+                    model_alias="augmenter",
+                    model_name="shared-model",
+                    model_provider_name="local-vllm",
+                    usage_stats=UsageStats(input_tokens=20, output_tokens=8, successful=1, failed=0),
+                ),
+            }
+
+        def get_model_usage_snapshot(self) -> dict[str, UsageStats]:
+            return {
+                "shared-model": UsageStats(input_tokens=999, output_tokens=999, successful=99, failed=99),
+            }
+
+    class UsageDataDesigner:
+        def _create_resource_provider(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(model_registry=ModelRegistry())
+
+        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+            self._create_resource_provider("preview-dataset", _config_builder)
+            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[ModelConfig(alias="validator", model="shared-model")],
+            columns=[
+                LLMTextColumnConfig(
+                    name="raw_detected",
+                    prompt="{{ text }}",
+                    model_alias="validator",
+                )
+            ],
+            workflow_name="entity-detection",
+            preview_num_records=1,
+        )
+
+    record = next(record for record in collector.records if record["record_type"] == "ndd_workflow")
+    assert sorted(record["model_usage"]) == ["augmenter", "validator"]
+    assert record["model_usage"]["validator"]["model_alias"] == "validator"
+    assert record["model_usage"]["validator"]["model_name"] == "shared-model"
+    assert record["model_usage"]["validator"]["model_provider_name"] == "local-vllm"
+    assert record["model_usage"]["validator"]["token_usage"]["input_tokens"] == 12
+    assert record["model_usage"]["augmenter"]["token_usage"]["input_tokens"] == 20
+    assert record["observed_input_tokens"] == 32
+    assert record["observed_output_tokens"] == 12
+    assert record["observed_total_tokens"] == 44
+    assert record["observed_successful_requests"] == 3
+    assert record["observed_failed_requests"] == 1
+    assert record["observed_total_requests"] == 4
+
+
+def test_records_generic_model_workflow_usage_without_raw_text() -> None:
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        assert hasattr(measurement, "record_model_workflow")
+        measurement.record_model_workflow(
+            workflow_name="entity-detection-native-rules-router",
+            model_aliases=["native-direct"],
+            input_row_count=1,
+            output_row_count=1,
+            failed_record_count=0,
+            elapsed_sec=0.25,
+            model_usage={
+                "native-direct": {
+                    "model_alias": "native-direct",
+                    "model_name": "nvidia/nemotron-3-super",
+                    "model_provider_name": "local-vllm",
+                    "request_usage": {
+                        "successful_requests": 3,
+                        "failed_requests": 0,
+                        "total_requests": 3,
+                    },
+                    "token_usage": {
+                        "input_tokens": 30,
+                        "output_tokens": 12,
+                        "total_tokens": 42,
+                    },
+                },
+            },
+        )
+
+    records = [record for record in collector.records if record["record_type"] == "model_workflow"]
+    assert len(records) == 1
+    record = records[0]
+    assert record["workflow_name"] == "entity-detection-native-rules-router"
+    assert record["model_aliases"] == ["native-direct"]
+    assert record["observed_total_requests"] == 3
+    assert record["observed_input_tokens"] == 30
+    assert record["observed_output_tokens"] == 12
+    assert record["observed_total_tokens"] == 42
+    assert record["observed_failed_request_rate"] == 0
+    assert record["observed_tokens_per_successful_request"] == 14
+
+    serialized = json.dumps(record)
+    assert "Alice" not in serialized
+    assert "sk-test" not in serialized
+
+
 def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Path) -> None:
     input_csv = tmp_path / "input.csv"
     pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_csv, index=False)
@@ -235,6 +381,8 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
     assert record["final_entity_label_counts"] == {"company_name": 1, "first_name": 1}
     assert record["detected_candidate_count"] == 2
     assert record["validation_chunk_count"] == 1
+    assert record["original_value_leak_count"] == 0
+    assert record["original_value_leak_label_counts"] == {}
     assert record["llm_calls_estimated_by_stage"] == {
         "entity_detection": 3,
         "replace_map_generation": 0,
@@ -655,6 +803,12 @@ def test_record_metrics_capture_generic_counts_without_raw_values() -> None:
     assert record["replacement_count"] == 2
     assert record["replacement_label_counts"] == {"company_name": 1, "first_name": 1}
     assert record["replacement_duplicate_value_count"] == 1
+    assert record["replacement_missing_final_entity_count"] == 0
+    assert record["replacement_missing_final_entity_label_counts"] == {}
+    assert record["replacement_missing_final_value_count"] == 0
+    assert record["replacement_synthetic_original_collision_count"] == 0
+    assert record["replacement_synthetic_original_collision_label_counts"] == {}
+    assert record["replacement_synthetic_original_collision_value_count"] == 0
     assert record["repair_iterations"] == 2
     assert record["utility_score"] == 0.82
     assert record["leakage_mass"] == 0.2
@@ -668,6 +822,196 @@ def test_record_metrics_capture_generic_counts_without_raw_values() -> None:
     assert "Acme" not in serialized
     assert "Beta" not in serialized
     assert "Maya" not in serialized
+
+
+def test_record_metrics_counts_missing_replacement_map_entries_without_raw_values() -> None:
+    final_entities = {
+        "entities": [
+            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+            {"value": "2030-01-01", "label": "date", "start_position": 13, "end_position": 23},
+            {"value": "2030-01-01", "label": "date", "start_position": 27, "end_position": 37},
+        ]
+    }
+    replacement_map = {
+        "replacements": [
+            {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+        ]
+    }
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice filed 2030-01-01 and 2030-01-01"],
+            COL_FINAL_ENTITIES: [final_entities],
+            COL_REPLACEMENT_MAP: [replacement_map],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Substitute",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["replacement_missing_final_entity_count"] == 2
+    assert record["replacement_missing_final_entity_label_counts"] == {"date": 2}
+    assert record["replacement_missing_final_value_count"] == 1
+    assert record["replacement_synthetic_original_collision_count"] == 0
+    assert record["replacement_synthetic_original_collision_label_counts"] == {}
+    assert record["replacement_synthetic_original_collision_value_count"] == 0
+
+    serialized = json.dumps(collector.records)
+    assert "Alice" not in serialized
+    assert "2030-01-01" not in serialized
+    assert "Maya" not in serialized
+
+
+def test_record_metrics_counts_synthetic_original_collisions_without_raw_values() -> None:
+    final_entities = {
+        "entities": [
+            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+            {"value": "2030-01-01", "label": "date", "start_position": 13, "end_position": 23},
+        ]
+    }
+    replacement_map = {
+        "replacements": [
+            {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+            {"original": "2029-12-01", "label": "date", "synthetic": "2030-01-01"},
+        ]
+    }
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice filed 2030-01-01"],
+            COL_FINAL_ENTITIES: [final_entities],
+            COL_REPLACEMENT_MAP: [replacement_map],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Substitute",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["replacement_synthetic_original_collision_count"] == 1
+    assert record["replacement_synthetic_original_collision_label_counts"] == {"date": 1}
+    assert record["replacement_synthetic_original_collision_value_count"] == 1
+
+    serialized = json.dumps(collector.records)
+    assert "Alice" not in serialized
+    assert "2030-01-01" not in serialized
+    assert "2029-12-01" not in serialized
+    assert "Maya" not in serialized
+
+
+def test_record_metrics_counts_original_value_replacement_leaks_without_raw_values() -> None:
+    leaked_key = "sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: [f"token={leaked_key}"],
+            COL_REPLACED_TEXT: [f"still token={leaked_key}"],
+            COL_FINAL_ENTITIES: [{"entities": [{"value": leaked_key, "label": "api_key"}]}],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Hash",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["original_value_leak_count"] == 1
+    assert record["original_value_leak_label_counts"] == {"api_key": 1}
+    assert leaked_key not in json.dumps(collector.records)
+
+
+def test_record_metrics_ignores_short_value_inside_hash_replacement_token() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice is 34 years old."],
+            COL_REPLACED_TEXT: ["Alice is <HASH_AGE_ab34cd> years old."],
+            COL_FINAL_ENTITIES: [{"entities": [{"value": "34", "label": "age"}]}],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Hash",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["original_value_leak_count"] == 0
+    assert record["original_value_leak_label_counts"] == {}
+
+
+def test_record_metrics_counts_standalone_short_value_replacement_leaks() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice is 34 years old."],
+            COL_REPLACED_TEXT: ["Alice is 34 years old."],
+            COL_FINAL_ENTITIES: [{"entities": [{"value": "34", "label": "age"}]}],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Hash",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["original_value_leak_count"] == 1
+    assert record["original_value_leak_label_counts"] == {"age": 1}
+
+
+def test_record_metrics_do_not_estimate_llm_replace_map_call_for_local_structured_source() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"],
+            COL_FINAL_ENTITIES: [{"entities": [{"value": "sk-test-AAAAAAAAAAAAAAAAAAAAAAAA", "label": "api_key"}]}],
+            COL_REPLACEMENT_MAP: [{"replacements": []}],
+            COL_REPLACEMENT_MAP_SOURCE: [REPLACEMENT_MAP_SOURCE_LOCAL_STRUCTURED],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Substitute",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["llm_calls_estimated_by_stage"] == {
+        "entity_detection": None,
+        "replace_map_generation": 0,
+    }
+    assert record["llm_calls_estimated_total"] is None
 
 
 def test_record_metrics_normalizes_integral_row_index_types() -> None:
