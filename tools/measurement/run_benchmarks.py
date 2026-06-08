@@ -54,10 +54,15 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT, PrivacyGoal, RiskTolerance
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
+from anonymizer.engine.detection.rules import (
+    STRUCTURED_RULE_FAST_LANE_LABELS,
+    SUPPORTED_RULE_LABELS,
+    detect_high_confidence_entities,
+)
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.engine.replace.structured_substitute import SUPPORTED_STRUCTURED_SUBSTITUTE_LABELS
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
 
@@ -165,6 +170,7 @@ class ConfigSpec(BaseModel):
     emit_telemetry: bool = False
     experimental_detection_strategy: ExperimentalDetectionStrategy = ExperimentalDetectionStrategy.default
     experimental_replacement_strategy: ExperimentalReplacementStrategy = ExperimentalReplacementStrategy.default
+    experimental_rule_labels: list[str] | None = None
     native_runtime: NativeRuntimeSpec | None = None
 
     @model_validator(mode="after")
@@ -272,6 +278,11 @@ class _CaseExecution:
 
 
 _TRACE_FINAL_ARTIFACT_STRATEGIES = {
+    ExperimentalDetectionStrategy.rules_guardrail,
+    ExperimentalDetectionStrategy.rules_covered_or_default,
+    ExperimentalDetectionStrategy.rules_guardrail_compact_validation,
+    ExperimentalDetectionStrategy.rules_filter_guardrail,
+    ExperimentalDetectionStrategy.native_rules_router,
     ExperimentalDetectionStrategy.native_candidate_validate_no_augment,
     ExperimentalDetectionStrategy.detector_native_validate_no_augment,
     ExperimentalDetectionStrategy.detector_native_validate_native_augment,
@@ -282,7 +293,18 @@ _TRACE_FINAL_ARTIFACT_STRATEGIES = {
     ExperimentalDetectionStrategy.native_single_pass_values,
     ExperimentalDetectionStrategy.native_single_pass_values_recall,
 }
+_RULE_BACKED_STRATEGIES = {
+    ExperimentalDetectionStrategy.rules_guardrail,
+    ExperimentalDetectionStrategy.rules_guardrail_compact_validation,
+    ExperimentalDetectionStrategy.rules_filter_guardrail,
+    ExperimentalDetectionStrategy.rules_seed_no_augment,
+    ExperimentalDetectionStrategy.rules_guardrail_no_augment,
+    ExperimentalDetectionStrategy.rules_filter_guardrail_no_augment,
+    ExperimentalDetectionStrategy.rules_guardrail_detector_only,
+    ExperimentalDetectionStrategy.rules_only,
+}
 _NATIVE_RUNTIME_STRATEGIES = {
+    ExperimentalDetectionStrategy.native_rules_router,
     ExperimentalDetectionStrategy.native_candidate_validate_no_augment,
     ExperimentalDetectionStrategy.detector_native_validate_no_augment,
     ExperimentalDetectionStrategy.detector_native_validate_native_augment,
@@ -429,6 +451,10 @@ def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) 
             errors.append(f"config '{config.id}' invalid: {exc}")
             continue
         try:
+            _preflight_experimental_detection_strategy(config, anonymizer_config)
+        except Exception as exc:
+            errors.append(f"config '{config.id}' experimental_detection_strategy invalid: {exc}")
+        try:
             _preflight_native_runtime(config, spec=spec)
         except Exception as exc:
             errors.append(f"config '{config.id}' native_runtime invalid: {exc}")
@@ -455,6 +481,39 @@ def _active_config_ids(spec: BenchmarkSpec) -> set[str]:
     if spec.matrix is None:
         return {config.id for config in spec.configs}
     return {entry.config for entry in spec.matrix}
+
+
+def _preflight_experimental_detection_strategy(config: ConfigSpec, anonymizer_config: AnonymizerConfig) -> None:
+    _preflight_experimental_rule_labels(config)
+    if config.experimental_detection_strategy != ExperimentalDetectionStrategy.rules_only:
+        return
+    entity_labels = anonymizer_config.detect.entity_labels
+    supported = ", ".join(sorted(SUPPORTED_RULE_LABELS))
+    if entity_labels is None:
+        raise ValueError(
+            f"`rules_only` requires explicit detect.entity_labels limited to deterministic rule labels: {supported}"
+        )
+    unsupported = sorted(set(entity_labels) - SUPPORTED_RULE_LABELS)
+    if unsupported:
+        raise ValueError(
+            f"unsupported high-confidence rule labels: {', '.join(unsupported)}; supported labels: {supported}"
+        )
+
+
+def _preflight_experimental_rule_labels(config: ConfigSpec) -> None:
+    if not config.experimental_rule_labels:
+        return
+    supported = ", ".join(sorted(SUPPORTED_RULE_LABELS))
+    if config.experimental_detection_strategy not in _RULE_BACKED_STRATEGIES:
+        raise ValueError(
+            "experimental_rule_labels requires a rule-backed strategy: "
+            + ", ".join(sorted(strategy.value for strategy in _RULE_BACKED_STRATEGIES))
+        )
+    unsupported = sorted(set(config.experimental_rule_labels) - SUPPORTED_RULE_LABELS)
+    if unsupported:
+        raise ValueError(
+            f"unsupported experimental_rule_labels: {', '.join(unsupported)}; supported labels: {supported}"
+        )
 
 
 def _preflight_native_runtime(config: ConfigSpec, *, spec: BenchmarkSpec) -> None:
@@ -896,7 +955,12 @@ def _case_detection_artifact_path(
     )
     if detection_artifact_path is not None or paths.artifact_snapshot is None:
         return detection_artifact_path
-    return None
+    return export_rules_only_case_detection_artifacts(
+        config,
+        execution.input_data,
+        paths.artifact_output_path,
+        case=case,
+    )
 
 
 def _trace_final_artifact_path_if_requested(
@@ -915,6 +979,8 @@ def _trace_final_artifact_path_if_requested(
         detection_artifact_path or output_path,
         trace_dataframe,
         case=case,
+        replace_existing=config.experimental_detection_strategy
+        == ExperimentalDetectionStrategy.rules_covered_or_default,
     )
 
 
@@ -923,12 +989,16 @@ def patch_case_detection_artifacts_from_trace_dataframe(
     trace_dataframe: pd.DataFrame,
     *,
     case: BenchmarkCase | None = None,
+    replace_existing: bool = False,
 ) -> Path | None:
     final_rows = _final_entity_artifact_rows_from_trace_dataframe(trace_dataframe)
     if not final_rows:
         return None
-    rows = _read_detection_artifact_payloads(output_path) if output_path.exists() else []
-    patched = _merge_final_entity_artifact_rows(rows, final_rows)
+    if replace_existing:
+        patched = final_rows
+    else:
+        rows = _read_detection_artifact_payloads(output_path) if output_path.exists() else []
+        patched = _merge_final_entity_artifact_rows(rows, final_rows)
     if case is not None:
         patched = [_with_case_metadata(row, case=case) for row in patched]
     write_detection_artifact_payloads(patched, output_path)
@@ -1078,7 +1148,7 @@ def _execute_case(
     )
     with configured_measurement_session(measurement):
         with dd_parser_compat_context(dd_parser_compat):
-            detection_context_kwargs: dict[str, Any] = {}
+            detection_context_kwargs: dict[str, Any] = {"rule_labels": config.experimental_rule_labels}
             if config.experimental_detection_strategy in _NATIVE_RUNTIME_STRATEGIES:
                 detection_context_kwargs["native_runtime"] = _native_detection_runtime(spec, config)
             with experimental_detection_strategy_context(
@@ -1320,6 +1390,64 @@ def export_case_detection_artifact_analysis(
     return output_path
 
 
+def export_rules_only_case_detection_artifacts(
+    config: ConfigSpec,
+    input_data: AnonymizerInput,
+    output_path: Path,
+    *,
+    case: BenchmarkCase,
+) -> Path | None:
+    if not _is_local_input_source(input_data.source):
+        return None
+    labels = build_anonymizer_config(config).detect.entity_labels
+    if not _uses_rules_only_artifact_export(config, labels):
+        return None
+    source = Path(input_data.source)
+    dataframe = _read_local_input_dataframe(source, suffix=infer_input_source_suffix(str(source)))
+    rows = [
+        _with_case_metadata(
+            _rules_only_artifact_row(
+                text=record[input_data.text_column],
+                labels=labels,
+                row_index=int(row_index),
+            ),
+            case=case,
+        )
+        for row_index, record in dataframe.iterrows()
+    ]
+    if not rows:
+        return None
+    write_detection_artifact_payloads(rows, output_path)
+    return output_path
+
+
+def _uses_rules_only_artifact_export(config: ConfigSpec, labels: list[str] | None) -> bool:
+    if labels is None:
+        return False
+    if config.experimental_detection_strategy == ExperimentalDetectionStrategy.rules_only:
+        return True
+    if config.experimental_detection_strategy != ExperimentalDetectionStrategy.rules_covered_or_default:
+        return False
+    return set(labels).issubset(STRUCTURED_RULE_FAST_LANE_LABELS)
+
+
+def _rules_only_artifact_row(*, text: object, labels: list[str], row_index: int) -> dict[str, Any]:
+    entities = [
+        EntitySchema.model_validate(span.as_dict())
+        for span in detect_high_confidence_entities(str(text), labels=labels)
+    ]
+    return build_detection_artifact_row_from_entities(
+        workflow_name="entity-detection-rules-only",
+        batch_file="synthetic-rules-only",
+        row_index=row_index,
+        seed_entities=entities,
+        seed_validation_candidate_count=len(entities),
+        merged_validation_candidate_count=len(entities),
+        augmented_entities=[],
+        final_entities=entities,
+    ).model_dump()
+
+
 def _with_case_metadata(row: dict[str, Any], *, case: BenchmarkCase) -> dict[str, Any]:
     return {
         "suite_id": case.suite_id,
@@ -1362,6 +1490,7 @@ def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
         "case_id": case.case_id,
         "experimental_detection_strategy": config.experimental_detection_strategy.value,
         "experimental_replacement_strategy": config.experimental_replacement_strategy.value,
+        "experimental_rule_labels": config.experimental_rule_labels,
         "dd_parser_compat": spec.dd_parser_compat.value,
     }
     if config.experimental_detection_strategy in _NATIVE_RUNTIME_STRATEGIES:

@@ -507,6 +507,86 @@ def test_staged_detection_augmentation_prompt_discourages_grouped_person_and_sur
     assert "also return the surname substring as last_name" in prompt
 
 
+def test_staged_detection_can_seed_from_rules_without_llm_seed_prompt() -> None:
+    tool = load_tool(
+        "measurement_staged_detection_probe_rules_seed",
+        REPO_ROOT / "tools/measurement/staged_detection_probe.py",
+    )
+    llm_client = SequencedClient(
+        tool,
+        [
+            '{"decisions": [{"id": "email_6_23", "decision": "keep", "reason": "email address"}]}',
+            '{"entities": [{"value": "NVIDIA", "label": "organization_name", "reason": "employer"}]}',
+        ],
+    )
+
+    result = tool.run_staged_detection_case(
+        tool.StagedDetectionRequest(
+            case_id="case-1",
+            text="Email alice@example.com at NVIDIA.",
+            labels=["email", "organization_name"],
+            row_index=0,
+        ),
+        client=llm_client,
+        seed_source=tool.SeedSource.rules,
+    )
+
+    assert result.status == tool.CaseStatus.completed
+    assert result.seed_source == tool.SeedSource.rules
+    assert result.phase_usage.seed == {}
+    assert result.phase_model_work == tool.PhaseModelWork(seed=False, validation=True, augmentation=True)
+    assert result.phase_skip_reasons.seed == "deterministic_rules"
+    assert result.phase_skip_reasons.validation is None
+    assert result.model_phase_count == 2
+    assert result.phase_model_requests == tool.PhaseModelRequests(seed=0, validation=1, augmentation=1)
+    assert result.model_request_count == 2
+    assert result.seed_suggestion_count == 1
+    assert result.seed_entity_count == 1
+    assert result.final_label_counts == {"email": 1, "organization_name": 1}
+    assert result.artifact.final_source_counts == {"augmenter": 1, "rule": 1}
+    assert result.total_usage == {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
+    assert len(llm_client.prompts) == 2
+
+
+def test_staged_detection_can_add_rules_to_direct_llm_seed_without_validating_rules() -> None:
+    tool = load_tool(
+        "measurement_staged_detection_probe_rules_plus_direct_seed",
+        REPO_ROOT / "tools/measurement/staged_detection_probe.py",
+    )
+    llm_client = SequencedClient(
+        tool,
+        [
+            '{"entities": [{"value": "NVIDIA", "label": "organization_name", "reason": "employer"}]}',
+            '{"decisions": [{"id": "organization_name_27_33", "decision": "keep", "reason": "employer"}]}',
+            '{"entities": []}',
+        ],
+    )
+
+    result = tool.run_staged_detection_case(
+        tool.StagedDetectionRequest(
+            case_id="case-1",
+            text="Email alice@example.com at NVIDIA.",
+            labels=["email", "organization_name"],
+            row_index=0,
+        ),
+        client=llm_client,
+        seed_source=tool.SeedSource.rules_plus_direct_llm,
+    )
+
+    assert result.status == tool.CaseStatus.completed
+    assert result.seed_source == tool.SeedSource.rules_plus_direct_llm
+    assert result.seed_suggestion_count == 2
+    assert result.seed_entity_count == 2
+    assert result.validation_candidate_count == 1
+    assert result.validation_decision_count == 1
+    assert result.final_label_counts == {"email": 1, "organization_name": 1}
+    assert result.artifact.final_source_counts == {"direct_seed": 1, "rule": 1}
+    assert result.phase_model_requests == tool.PhaseModelRequests(seed=1, validation=1, augmentation=1)
+    assert result.model_request_count == 3
+    assert '"label":"email"' not in llm_client.prompts[1]
+    assert '"label":"organization_name"' in llm_client.prompts[1]
+
+
 def test_staged_detection_baseline_comparison_skips_rows_without_signature_hashes() -> None:
     tool = load_tool(
         "measurement_staged_detection_probe_missing_baseline_signatures",
@@ -533,6 +613,159 @@ def test_staged_detection_baseline_comparison_skips_rows_without_signature_hashe
     compared = tool._case_with_comparison(case, {"row_index": 0, "final_entity_count": 1})
 
     assert compared.comparison is None
+
+
+def test_staged_detection_can_trust_rules_without_validation_prompt() -> None:
+    tool = load_tool(
+        "measurement_staged_detection_probe_rules_trusted_seed",
+        REPO_ROOT / "tools/measurement/staged_detection_probe.py",
+    )
+    llm_client = SequencedClient(tool, ['{"entities": []}'])
+
+    result = tool.run_staged_detection_case(
+        tool.StagedDetectionRequest(
+            case_id="case-1",
+            text=(
+                "$ docker run -e DATABASE_URL='postgres://app_user:fakeDbPass123!@db.example.test:5432/app' "
+                "-e API_KEY=ghp_FAKEtoken1234567890abcdef myapp:latest\nPassword: fakeLoginPass!"
+            ),
+            labels=["api_key", "password", "email", "url"],
+            row_index=0,
+        ),
+        client=llm_client,
+        seed_source=tool.SeedSource.rules_trusted,
+    )
+
+    assert result.status == tool.CaseStatus.completed
+    assert result.seed_source == tool.SeedSource.rules_trusted
+    assert result.phase_usage.seed == {}
+    assert result.phase_usage.validation == {}
+    assert result.phase_model_work == tool.PhaseModelWork(seed=False, validation=False, augmentation=True)
+    assert result.phase_skip_reasons.seed == "deterministic_rules"
+    assert result.phase_skip_reasons.validation == "trusted_rules"
+    assert result.phase_skip_reasons.augmentation is None
+    assert result.model_phase_count == 1
+    assert result.phase_model_requests == tool.PhaseModelRequests(seed=0, validation=0, augmentation=1)
+    assert result.model_request_count == 1
+    assert result.rule_covered_label_set is True
+    assert result.validation_decision_count == 3
+    assert result.final_label_counts == {"api_key": 1, "password": 1, "url": 1}
+    assert result.artifact.final_source_counts == {"rule": 3}
+    assert result.total_usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    assert len(llm_client.prompts) == 1
+
+
+def test_staged_detection_can_skip_augmentation_when_all_labels_are_rule_covered() -> None:
+    tool = load_tool(
+        "measurement_staged_detection_probe_rules_trusted_no_augment",
+        REPO_ROOT / "tools/measurement/staged_detection_probe.py",
+    )
+    llm_client = SequencedClient(tool, [])
+
+    result = tool.run_staged_detection_case(
+        tool.StagedDetectionRequest(
+            case_id="case-1",
+            text="Email alice@example.com",
+            labels=["email"],
+            row_index=0,
+        ),
+        client=llm_client,
+        seed_source=tool.SeedSource.rules_trusted,
+        skip_augmentation_when_rule_covered=True,
+    )
+
+    assert result.status == tool.CaseStatus.completed
+    assert result.phase_usage.augmentation == {}
+    assert result.phase_model_work == tool.PhaseModelWork(seed=False, validation=False, augmentation=False)
+    assert result.phase_skip_reasons == tool.PhaseSkipReasons(
+        seed="deterministic_rules",
+        validation="trusted_rules",
+        augmentation="rule_covered_labels",
+    )
+    assert result.model_phase_count == 0
+    assert result.phase_model_requests == tool.PhaseModelRequests(seed=0, validation=0, augmentation=0)
+    assert result.model_request_count == 0
+    assert result.rule_covered_label_set is True
+    assert result.augmented_suggestion_count == 0
+    assert result.final_label_counts == {"email": 1}
+    assert result.total_usage == {}
+    assert len(llm_client.prompts) == 0
+
+
+def test_staged_detection_rules_router_short_circuits_rule_covered_labels() -> None:
+    tool = load_tool(
+        "measurement_staged_detection_probe_rules_router_short_circuit",
+        REPO_ROOT / "tools/measurement/staged_detection_probe.py",
+    )
+    llm_client = SequencedClient(tool, [])
+
+    result = tool.run_staged_detection_case(
+        tool.StagedDetectionRequest(
+            case_id="case-1",
+            text="Email alice@example.com and token ghp_FAKEtoken1234567890abcdef",
+            labels=["email", "api_key"],
+            row_index=0,
+        ),
+        client=llm_client,
+        seed_source=tool.SeedSource.rules_router,
+    )
+
+    assert result.status == tool.CaseStatus.completed
+    assert result.seed_source == tool.SeedSource.rules_router
+    assert result.phase_model_work == tool.PhaseModelWork(seed=False, validation=False, augmentation=False)
+    assert result.phase_skip_reasons == tool.PhaseSkipReasons(
+        seed="deterministic_rules",
+        validation="trusted_rules",
+        augmentation="rule_covered_labels",
+    )
+    assert result.model_phase_count == 0
+    assert result.phase_model_requests == tool.PhaseModelRequests(seed=0, validation=0, augmentation=0)
+    assert result.model_request_count == 0
+    assert result.elapsed_sec is not None and result.elapsed_sec > 0.0
+    assert result.model_elapsed_sec == 0.0
+    assert result.rule_covered_label_set is True
+    assert result.final_label_counts == {"api_key": 1, "email": 1}
+    assert result.artifact.final_source_counts == {"rule": 2}
+    assert result.total_usage == {}
+    assert len(llm_client.prompts) == 0
+
+
+def test_staged_detection_rules_router_uses_direct_seed_for_contextual_labels() -> None:
+    tool = load_tool(
+        "measurement_staged_detection_probe_rules_router_mixed_labels",
+        REPO_ROOT / "tools/measurement/staged_detection_probe.py",
+    )
+    llm_client = SequencedClient(
+        tool,
+        [
+            '{"entities": [{"value": "Alice", "label": "first_name", "reason": "person name"}]}',
+            '{"decisions": [{"id": "first_name_0_5", "decision": "keep", "reason": "person name"}]}',
+            '{"entities": []}',
+        ],
+    )
+
+    result = tool.run_staged_detection_case(
+        tool.StagedDetectionRequest(
+            case_id="case-1",
+            text="Alice emails alice@example.com.",
+            labels=["email", "first_name"],
+            row_index=0,
+        ),
+        client=llm_client,
+        seed_source=tool.SeedSource.rules_router,
+    )
+
+    assert result.status == tool.CaseStatus.completed
+    assert result.seed_source == tool.SeedSource.rules_router
+    assert result.rule_covered_label_set is False
+    assert result.phase_model_work == tool.PhaseModelWork(seed=True, validation=True, augmentation=True)
+    assert result.phase_skip_reasons == tool.PhaseSkipReasons()
+    assert result.phase_model_requests == tool.PhaseModelRequests(seed=1, validation=1, augmentation=1)
+    assert result.model_request_count == 3
+    assert result.final_label_counts == {"email": 1, "first_name": 1}
+    assert result.artifact.final_source_counts == {"direct_seed": 1, "rule": 1}
+    assert '"label":"email"' not in llm_client.prompts[1]
+    assert '"label":"first_name"' in llm_client.prompts[1]
 
 
 def test_staged_detection_can_chunk_validation_into_local_excerpts() -> None:

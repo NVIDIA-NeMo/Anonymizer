@@ -49,7 +49,12 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
-from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
+from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text, group_entities_by_value
+from anonymizer.engine.detection.rules import (
+    STRUCTURED_RULE_FAST_LANE_LABELS,
+    SUPPORTED_RULE_LABELS,
+    detect_high_confidence_entities,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
@@ -85,6 +90,33 @@ class EntityDetectionWorkflow:
 
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
+
+    def detect_with_high_confidence_rules(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        entity_labels: list[str] | None = None,
+    ) -> EntityDetectionResult:
+        """Detect only deterministic high-confidence rule spans without DataDesigner.
+
+        This is an internal fast-lane primitive for benchmark probes and
+        future routing work. It is intentionally limited to labels with narrow
+        deterministic coverage and does not attempt contextual PII detection.
+        """
+        labels = _resolve_detection_labels(entity_labels)
+        _ensure_high_confidence_rule_labels(labels)
+        output = dataframe.copy()
+        output[COL_DETECTED_ENTITIES] = output[COL_TEXT].apply(
+            lambda text: _high_confidence_rule_payload(text, labels=labels)
+        )
+        output[COL_TAGGED_TEXT] = output.apply(
+            lambda row: _tagged_text_from_entities(
+                text=row.get(COL_TEXT, ""),
+                raw_entities=row.get(COL_DETECTED_ENTITIES, {}),
+            ),
+            axis=1,
+        )
+        return EntityDetectionResult(dataframe=output, failed_records=[])
 
     def detect_and_validate_entities(
         self,
@@ -355,6 +387,47 @@ def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
     if entity_labels is None:
         return list(DEFAULT_ENTITY_LABELS)
     return list(entity_labels)
+
+
+def labels_are_supported_by_high_confidence_rules(labels: list[str]) -> bool:
+    """Return True when every label can be handled by deterministic rules."""
+    return set(labels).issubset(SUPPORTED_RULE_LABELS)
+
+
+def labels_are_supported_by_structured_rule_fast_lane(labels: list[str]) -> bool:
+    """Return True when every label is safe for the structured no-model fast lane."""
+    return set(labels).issubset(STRUCTURED_RULE_FAST_LANE_LABELS)
+
+
+def _ensure_high_confidence_rule_labels(labels: list[str]) -> None:
+    unsupported = sorted(set(labels) - SUPPORTED_RULE_LABELS)
+    if unsupported:
+        supported = ", ".join(sorted(SUPPORTED_RULE_LABELS))
+        raise ValueError(
+            f"unsupported high-confidence rule labels: {', '.join(unsupported)}; supported labels: {supported}"
+        )
+
+
+def _high_confidence_rule_payload(text: object, *, labels: list[str]) -> dict:
+    spans = detect_high_confidence_entities(str(text), labels=labels)
+    return EntitiesSchema(entities=[span.as_dict() for span in spans]).model_dump(mode="json")
+
+
+def _tagged_text_from_entities(*, text: object, raw_entities: object) -> str:
+    parsed = EntitiesSchema.from_raw(raw_entities)
+    spans = [
+        EntitySpan(
+            entity_id=e.id,
+            value=e.value,
+            label=e.label,
+            start_position=e.start_position,
+            end_position=e.end_position,
+            score=e.score,
+            source=e.source,
+        )
+        for e in parsed.entities
+    ]
+    return build_tagged_text(text=str(text), entities=spans)
 
 
 def _materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:

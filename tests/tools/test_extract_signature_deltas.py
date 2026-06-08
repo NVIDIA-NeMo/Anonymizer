@@ -113,21 +113,21 @@ def test_extract_signature_deltas_masks_candidate_only_context(tmp_path: Path) -
     assert "[ORGANIZATION_NAME:" in row.masked_context
 
 
-def test_extract_signature_deltas_recovers_artifact_detail_context(tmp_path: Path) -> None:
+def test_extract_signature_deltas_recovers_guardrail_rule_context(tmp_path: Path) -> None:
     analyzer = load_tool(
-        "measurement_detection_artifact_context_builder", REPO_ROOT / "tools/measurement/analyze_detection_artifacts.py"
+        "measurement_detection_artifact_rule_builder", REPO_ROOT / "tools/measurement/analyze_detection_artifacts.py"
     )
     tool = load_tool(
-        "measurement_extract_signature_deltas_context", REPO_ROOT / "tools/measurement/extract_signature_deltas.py"
+        "measurement_extract_signature_deltas_rule", REPO_ROOT / "tools/measurement/extract_signature_deltas.py"
     )
     baseline_root = tmp_path / "baseline"
     candidate_root = tmp_path / "candidate"
     baseline = _write_artifact_case(baseline_root, analyzer, [], "The applicant was born in 1990.")
     candidate = _write_artifact_case(candidate_root, analyzer, [], "The applicant was born in 1990.")
-    detail_entity = analyzer.EntitySchema(
+    rule_entity = analyzer.EntitySchema(
         value="1990", label="date_of_birth", start_position=26, end_position=30, source="rule"
     )
-    detail_row = analyzer.build_detection_artifact_row_from_entities(
+    rule_row = analyzer.build_detection_artifact_row_from_entities(
         workflow_name="entity-detection",
         batch_file="entity-detection/parquet-files/batch_00000.parquet",
         row_index=0,
@@ -135,9 +135,9 @@ def test_extract_signature_deltas_recovers_artifact_detail_context(tmp_path: Pat
         seed_validation_candidate_count=0,
         merged_validation_candidate_count=0,
         augmented_entities=[],
-        final_entities=[detail_entity],
+        final_entities=[rule_entity],
     ).model_dump()
-    pd.json_normalize([{**_case_metadata(), **detail_row}], sep=".").to_json(candidate, orient="records", lines=True)
+    pd.json_normalize([{**_case_metadata(), **rule_row}], sep=".").to_json(candidate, orient="records", lines=True)
 
     result = tool.extract_signature_deltas(
         baseline,
@@ -150,7 +150,7 @@ def test_extract_signature_deltas_recovers_artifact_detail_context(tmp_path: Pat
     row = result.rows[0]
     assert row.label == "date_of_birth"
     assert row.source == "rule"
-    assert row.resolution == "artifact_details"
+    assert row.resolution == "rule"
     assert "1990" not in row.masked_context
     assert "[DATE_OF_BIRTH:" in row.masked_context
 
