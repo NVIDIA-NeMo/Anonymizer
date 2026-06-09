@@ -114,6 +114,21 @@ DD_TRACE_MODE=all-messages \
   /tmp/anonymizer-repo-data-smoke-dd-traces-full
 ```
 
+## Benchmark CI
+
+`.github/workflows/benchmark-ci.yml` runs the same benchmark runner from a
+manual GitHub Actions dispatch. It targets the self-hosted
+`anonymizer-evals` runner, checks out the requested ref, installs the project
+environment, runs a suite, appends a short case summary to the GitHub step
+summary, and uploads the full output directory as a workflow artifact.
+
+The default suite is `tools/measurement/examples/repo-data-smoke.yaml`. Dispatch
+inputs let operators choose the ref, suite path, output directory,
+DataDesigner message trace mode, sanitized scheduler task traces, and
+fail-fast behavior. The workflow requires the repository secret
+`NVIDIA_API_KEY` because the default model configuration uses NVIDIA-hosted
+models.
+
 Benchmark suites are YAML files with three parts:
 
 - `workloads`: input datasets and text-column metadata.

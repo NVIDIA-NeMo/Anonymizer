@@ -108,6 +108,7 @@ ai/tmp/
 
 # Anonymizer execution artifacts
 .anonymizer-artifacts/
+benchmark-results/
 docs/notebook_source/data/synth_bios_sample10_anonymized.csv
 
 # TLS certs and keys (if any)

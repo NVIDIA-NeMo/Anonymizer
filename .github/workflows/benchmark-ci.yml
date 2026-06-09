@@ -1,0 +1,174 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Benchmark CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA, branch, or tag to benchmark"
+        required: true
+        default: "main"
+      suite:
+        description: "Benchmark suite YAML path"
+        required: true
+        default: "tools/measurement/examples/repo-data-smoke.yaml"
+      output_dir:
+        description: "Output directory for benchmark artifacts"
+        required: true
+        default: "benchmark-results"
+      dd_trace:
+        description: "Capture DataDesigner message traces"
+        required: true
+        type: choice
+        options:
+          - "none"
+          - "last-message"
+          - "all-messages"
+        default: "none"
+      dd_task_trace:
+        description: "Capture sanitized DataDesigner scheduler task traces"
+        required: true
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
+      fail_fast:
+        description: "Stop at the first failed benchmark case"
+        required: true
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
+
+permissions:
+  contents: read
+
+env:
+  NEMO_TELEMETRY_ENABLED: "false"
+  BENCHMARK_REF: ${{ inputs.ref }}
+  BENCHMARK_SUITE: ${{ inputs.suite }}
+  BENCHMARK_OUTPUT_DIR: ${{ inputs.output_dir }}
+  BENCHMARK_DD_TRACE: ${{ inputs.dd_trace }}
+  BENCHMARK_DD_TASK_TRACE: ${{ inputs.dd_task_trace }}
+  BENCHMARK_FAIL_FAST: ${{ inputs.fail_fast }}
+
+jobs:
+  benchmark:
+    name: Benchmark
+    runs-on: [self-hosted, anonymizer-evals]
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout benchmark target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BENCHMARK_REF }}
+          fetch-depth: "0"
+
+      - name: Resolve benchmark target commit
+        id: target
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Check NVIDIA API key
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          if [ -z "${NVIDIA_API_KEY:-}" ]; then
+            echo "::error::NVIDIA_API_KEY secret is required for benchmark CI"
+            exit 1
+          fi
+
+      - name: Run benchmark suite
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          TRACE_ARGS=(--dd-trace "$BENCHMARK_DD_TRACE")
+          if [ "$BENCHMARK_DD_TRACE" != "none" ]; then
+            TRACE_ARGS+=(--trace-dir "$BENCHMARK_OUTPUT_DIR/traces")
+          fi
+
+          TASK_TRACE_ARGS=()
+          if [ "$BENCHMARK_DD_TASK_TRACE" = "true" ]; then
+            TASK_TRACE_ARGS+=(--dd-task-trace --task-trace-dir "$BENCHMARK_OUTPUT_DIR/task-traces")
+          fi
+
+          FAIL_FAST_ARGS=()
+          if [ "$BENCHMARK_FAIL_FAST" = "true" ]; then
+            FAIL_FAST_ARGS+=(--fail-fast)
+          fi
+
+          uv run python tools/measurement/run_benchmarks.py \
+            "$BENCHMARK_SUITE" \
+            --output "$BENCHMARK_OUTPUT_DIR" \
+            --overwrite \
+            "${TRACE_ARGS[@]}" \
+            "${TASK_TRACE_ARGS[@]}" \
+            "${FAIL_FAST_ARGS[@]}"
+
+      - name: Add benchmark summary
+        if: always()
+        env:
+          BENCHMARK_COMMIT: ${{ steps.target.outputs.commit }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          output_dir = Path(os.environ["BENCHMARK_OUTPUT_DIR"])
+          summary_path = output_dir / "summary.json"
+          step_summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          with step_summary.open("a", encoding="utf-8") as handle:
+              handle.write("# Anonymizer Benchmark\n\n")
+              handle.write(f"- Ref: `{os.environ['BENCHMARK_REF']}`\n")
+              handle.write(f"- Commit: `{os.environ.get('BENCHMARK_COMMIT', 'unknown')}`\n")
+              handle.write(f"- Suite: `{os.environ['BENCHMARK_SUITE']}`\n")
+              handle.write(f"- Output: `{output_dir}`\n")
+              handle.write(f"- DD traces: `{os.environ['BENCHMARK_DD_TRACE']}`\n")
+              handle.write(f"- DD task traces: `{os.environ['BENCHMARK_DD_TASK_TRACE']}`\n\n")
+
+              if not summary_path.exists():
+                  handle.write("`summary.json` was not produced. Check job logs for setup or preflight failures.\n")
+                  raise SystemExit(0)
+
+              summary = json.loads(summary_path.read_text(encoding="utf-8"))
+              cases = summary.get("cases", [])
+              completed = sum(1 for case in cases if case.get("status") == "completed")
+              errors = sum(1 for case in cases if case.get("status") == "error")
+              handle.write(f"Ran {completed}/{len(cases)} case(s); errors={errors}.\n\n")
+              handle.write("| Case | Status | Elapsed | Attempts |\n")
+              handle.write("| --- | --- | ---: | ---: |\n")
+              for case in cases:
+                  elapsed = case.get("elapsed_sec")
+                  elapsed_text = "" if elapsed is None else f"{elapsed:.2f}s"
+                  handle.write(
+                      f"| `{case.get('case_id')}` | {case.get('status')} | {elapsed_text} | "
+                      f"{case.get('attempt_count', 0)} |\n"
+                  )
+          PY
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anonymizer-benchmark-${{ steps.target.outputs.commit }}
+          path: ${{ env.BENCHMARK_OUTPUT_DIR }}/
+          if-no-files-found: warn
