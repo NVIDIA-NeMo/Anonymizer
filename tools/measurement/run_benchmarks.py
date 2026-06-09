@@ -217,6 +217,10 @@ class BenchmarkSpec(BaseModel):
             raise ValueError(f"matrix references unknown workload id(s): {', '.join(missing_workloads)}")
         if missing_configs:
             raise ValueError(f"matrix references unknown config id(s): {', '.join(missing_configs)}")
+        duplicate_entries = _duplicate_matrix_entries(self.matrix)
+        if duplicate_entries:
+            formatted = ", ".join(f"{workload}/{config}" for workload, config in duplicate_entries)
+            raise ValueError(f"duplicate matrix workload/config entry(s): {formatted}; use repetitions for repeats")
 
 
 class BenchmarkCase(BaseModel):
@@ -251,6 +255,7 @@ class _CaseRunPaths:
     artifact_output_path: Path
     trace_path: Path | None
     artifact_snapshot: dict[str, int] | None
+    export_detection_artifacts: bool
 
 
 @dataclass(frozen=True)
@@ -331,6 +336,17 @@ def _cross_product_matrix(spec: BenchmarkSpec) -> list[MatrixEntry]:
         for workload in spec.workloads
         for config in spec.configs
     ]
+
+
+def _duplicate_matrix_entries(matrix: list[MatrixEntry]) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    duplicates: set[tuple[str, str]] = set()
+    for entry in matrix:
+        key = (entry.workload, entry.config)
+        if key in seen:
+            duplicates.add(key)
+        seen.add(key)
+    return sorted(duplicates)
 
 
 def prepare_output_dir(output_dir: Path, *, overwrite: bool, dry_run: bool) -> None:
@@ -742,6 +758,7 @@ def _case_run_paths(
         artifact_snapshot=snapshot_detection_artifacts(contexts["artifact_path"])
         if export_detection_artifacts
         else None,
+        export_detection_artifacts=export_detection_artifacts,
     )
 
 
@@ -832,13 +849,14 @@ def _case_detection_artifact_path(
         case=case,
         artifact_snapshot=paths.artifact_snapshot,
     )
-    detection_artifact_path = _trace_final_artifact_path_if_requested(
-        config,
-        detection_artifact_path,
-        paths.artifact_output_path,
-        case=case,
-        trace_dataframe=execution.trace_dataframe,
-    )
+    if paths.export_detection_artifacts:
+        detection_artifact_path = _trace_final_artifact_path_if_requested(
+            config,
+            detection_artifact_path,
+            paths.artifact_output_path,
+            case=case,
+            trace_dataframe=execution.trace_dataframe,
+        )
     if detection_artifact_path is not None or paths.artifact_snapshot is None:
         return detection_artifact_path
     return None

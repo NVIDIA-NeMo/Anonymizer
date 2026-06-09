@@ -194,10 +194,17 @@ class MeasurementCollector:
 
     def close(self) -> None:
         """Close any streaming measurement sink attached to this collector."""
-        if self._record_sink is not None:
-            self._record_sink.close()
-        if self._dd_trace_sink is not None:
-            self._dd_trace_sink.close()
+        close_error: Exception | None = None
+        for sink in (self._record_sink, self._dd_trace_sink):
+            if sink is None:
+                continue
+            try:
+                sink.close()
+            except Exception as exc:
+                if close_error is None:
+                    close_error = exc
+        if close_error is not None:
+            raise close_error
 
     @property
     def dd_trace_mode(self) -> DDTraceMode:
@@ -391,8 +398,18 @@ def configured_measurement_session(config: MeasurementConfig | None) -> Iterator
             if config.streaming:
                 _close_collector_safely(config=config, collector=collector, body_error=body_error)
             else:
-                _write_collector_safely(config=config, collector=collector, body_error=body_error)
-                _close_collector_safely(config=config, collector=collector, body_error=body_error)
+                write_error: BaseException | None = None
+                try:
+                    _write_collector_safely(config=config, collector=collector, body_error=body_error)
+                except BaseException as exc:
+                    write_error = exc
+                    raise
+                finally:
+                    _close_collector_safely(
+                        config=config,
+                        collector=collector,
+                        body_error=body_error or write_error,
+                    )
 
 
 def current_collector() -> MeasurementCollector | None:
@@ -1136,11 +1153,11 @@ def _entity_ground_truth_metrics(
             "entity_relaxed_label_compatible_f1": None,
         }
 
-    predicted = _entity_identity_set(final_entities)
-    expected = _entity_identity_set(ground_truth_entities)
-    true_positive = len(predicted & expected)
-    false_positive = len(predicted - expected)
-    false_negative = len(expected - predicted)
+    predicted = _entity_identity_counts(final_entities)
+    expected = _entity_identity_counts(ground_truth_entities)
+    true_positive = sum((predicted & expected).values())
+    false_positive = sum((predicted - expected).values())
+    false_negative = sum((expected - predicted).values())
     precision = _safe_ratio(true_positive, true_positive + false_positive)
     recall = _safe_ratio(true_positive, true_positive + false_negative)
     return {
@@ -1158,14 +1175,14 @@ def _entity_ground_truth_metrics(
     }
 
 
-def _entity_identity_set(entities: list[dict[str, Any]]) -> set[tuple[str, str]]:
-    identities: set[tuple[str, str]] = set()
+def _entity_identity_counts(entities: list[dict[str, Any]]) -> Counter[tuple[str, str]]:
+    identities: Counter[tuple[str, str]] = Counter()
     for entity in entities:
         label = entity.get("label")
         value = entity.get("value")
         if label is None or value is None:
             continue
-        identities.add((str(value), str(label)))
+        identities[(str(value), str(label))] += 1
     return identities
 
 
@@ -1173,24 +1190,16 @@ def _entity_relaxed_ground_truth_metrics(
     final_entities: list[dict[str, Any]],
     ground_truth_entities: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    gt_found = sum(
-        1
-        for ground_truth_entity in ground_truth_entities
-        if _has_relaxed_entity_match(final_entities, ground_truth_entity)
+    relaxed_match_count = _relaxed_entity_match_count(final_entities, ground_truth_entities)
+    label_compatible_match_count = _relaxed_entity_match_count(
+        final_entities,
+        ground_truth_entities,
+        require_label_compatible=True,
     )
-    detected_tp = sum(
-        1 for final_entity in final_entities if _has_relaxed_entity_match(ground_truth_entities, final_entity)
-    )
-    label_compatible_gt_found = sum(
-        1
-        for ground_truth_entity in ground_truth_entities
-        if _has_relaxed_entity_match(final_entities, ground_truth_entity, require_label_compatible=True)
-    )
-    label_compatible_detected_tp = sum(
-        1
-        for final_entity in final_entities
-        if _has_relaxed_entity_match(ground_truth_entities, final_entity, require_label_compatible=True)
-    )
+    gt_found = relaxed_match_count
+    detected_tp = relaxed_match_count
+    label_compatible_gt_found = label_compatible_match_count
+    label_compatible_detected_tp = label_compatible_match_count
     precision = _safe_ratio(detected_tp, len(final_entities))
     recall = _safe_ratio(gt_found, len(ground_truth_entities))
     label_compatible_precision = _safe_ratio(label_compatible_detected_tp, len(final_entities))
@@ -1209,16 +1218,40 @@ def _entity_relaxed_ground_truth_metrics(
     }
 
 
-def _has_relaxed_entity_match(
-    candidates: list[dict[str, Any]],
-    target: dict[str, Any],
+def _relaxed_entity_match_count(
+    final_entities: list[dict[str, Any]],
+    ground_truth_entities: list[dict[str, Any]],
     *,
     require_label_compatible: bool = False,
-) -> bool:
-    return any(
-        _entities_match_relaxed(candidate, target, require_label_compatible=require_label_compatible)
-        for candidate in candidates
-    )
+) -> int:
+    matches_by_ground_truth = [
+        [
+            final_index
+            for final_index, final_entity in enumerate(final_entities)
+            if _entities_match_relaxed(
+                final_entity,
+                ground_truth_entity,
+                require_label_compatible=require_label_compatible,
+            )
+        ]
+        for ground_truth_entity in ground_truth_entities
+    ]
+    matched_ground_truth_by_final: dict[int, int] = {}
+
+    def assign(ground_truth_index: int, seen: set[int]) -> bool:
+        for final_index in matches_by_ground_truth[ground_truth_index]:
+            if final_index in seen:
+                continue
+            seen.add(final_index)
+            if final_index not in matched_ground_truth_by_final or assign(
+                matched_ground_truth_by_final[final_index],
+                seen,
+            ):
+                matched_ground_truth_by_final[final_index] = ground_truth_index
+                return True
+        return False
+
+    return sum(1 for ground_truth_index in range(len(ground_truth_entities)) if assign(ground_truth_index, set()))
 
 
 def _entities_match_relaxed(

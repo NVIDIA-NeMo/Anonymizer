@@ -54,6 +54,21 @@ def _copy_biography_data(tmp_path: Path, filename: str = "input.csv") -> Path:
     return destination
 
 
+def test_benchmark_spec_rejects_duplicate_matrix_entries() -> None:
+    tool = load_tool("measurement_benchmark_tool_duplicate_matrix", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+
+    with pytest.raises(ValidationError, match="duplicate matrix workload/config entry"):
+        tool.BenchmarkSpec(
+            suite_id="duplicate-suite",
+            workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+            configs=[tool.ConfigSpec(id="redact", replace="redact")],
+            matrix=[
+                tool.MatrixEntry(workload="input", config="redact"),
+                tool.MatrixEntry(workload="input", config="redact"),
+            ],
+        )
+
+
 def test_export_measurements_groups_records_by_type(tmp_path: Path) -> None:
     tool = load_tool("measurement_export_tool", REPO_ROOT / "tools/measurement/export_measurements.py")
     dataframe = pd.DataFrame(
@@ -269,6 +284,50 @@ def test_benchmark_patches_detection_artifacts_from_final_trace_dataframe(tmp_pa
     assert row["final_source_counts.rule"] == 1
     assert any(key.startswith("final_entity_signature_details.") for key in row)
     assert "final_entity_signature_labels.stale" not in row
+
+
+def test_benchmark_no_export_disables_trace_detection_artifact_sidecar(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_no_export_trace_artifact",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    spec = tool.BenchmarkSpec(
+        suite_id="no-export-suite",
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=[
+            tool.ConfigSpec(
+                id="native-single-pass-redact",
+                replace="redact",
+                experimental_detection_strategy="native_single_pass",
+            )
+        ],
+    )
+    case = tool.BenchmarkCase(
+        suite_id="no-export-suite",
+        workload_id="input",
+        config_id="native-single-pass-redact",
+        repetition=0,
+        case_id="input__native-single-pass-redact__r000",
+    )
+    contexts = _minimal_case_contexts(tool, spec, tmp_path)
+    paths = tool._case_run_paths(case, contexts=contexts, export_detection_artifacts=False)
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice"]}).to_csv(input_path, index=False)
+    execution = tool._CaseExecution(
+        input_data=tool.AnonymizerInput(source=str(input_path)),
+        trace_dataframe=_final_trace_dataframe_with_rule_entity(),
+    )
+
+    result = tool._case_detection_artifact_path(
+        contexts,
+        paths,
+        case=case,
+        config=spec.configs[0],
+        execution=execution,
+    )
+
+    assert result is None
+    assert not paths.artifact_output_path.exists()
 
 
 def test_run_suite_records_detection_artifact_analysis_path(

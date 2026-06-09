@@ -8,7 +8,7 @@ import logging
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import Mock
 
 import numpy as np
@@ -630,6 +630,35 @@ def test_measurement_config_strict_write_errors_can_fail_clean_body(
             collector.record("example")
 
 
+def test_measurement_config_strict_write_errors_still_close_collector(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    closed_run_ids: list[str] = []
+
+    def raise_write_error(_self: MeasurementConfig, _collector: MeasurementCollector) -> None:
+        raise OSError("cannot write")
+
+    def close_collector(self: MeasurementCollector) -> None:
+        closed_run_ids.append(self.run_id)
+
+    monkeypatch.setattr(MeasurementConfig, "write_collector", raise_write_error)
+    monkeypatch.setattr(MeasurementCollector, "close", close_collector)
+
+    with pytest.raises(OSError, match="cannot write"):
+        with configured_measurement_session(
+            MeasurementConfig(
+                output_path=tmp_path / "measurements.jsonl",
+                fail_on_write_error=True,
+                run_id="strict-write-run",
+            )
+        ) as collector:
+            assert collector is not None
+            collector.record("example")
+
+    assert closed_run_ids == ["strict-write-run"]
+
+
 def test_measurement_config_write_errors_do_not_mask_body_errors(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -665,6 +694,33 @@ def test_streaming_measurement_session_writes_jsonl_without_retaining_records(tm
     lines = output_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert [json.loads(line)["value"] for line in lines] == [1, 2]
+
+
+def test_measurement_collector_close_attempts_all_sinks_after_failure() -> None:
+    close_events: list[str] = []
+
+    class FakeSink:
+        def __init__(self, name: str, *, fail: bool = False) -> None:
+            self.name = name
+            self.fail = fail
+
+        def write_record(self, _record: dict[str, Any]) -> None:
+            pass
+
+        def close(self) -> None:
+            close_events.append(self.name)
+            if self.fail:
+                raise OSError(f"{self.name} close failed")
+
+    collector = MeasurementCollector(
+        record_sink=FakeSink("records", fail=True),
+        dd_trace_sink=FakeSink("dd-trace"),
+    )
+
+    with pytest.raises(OSError, match="records close failed"):
+        collector.close()
+
+    assert close_events == ["records", "dd-trace"]
 
 
 def test_streaming_measurement_requires_jsonl_output(tmp_path: Path) -> None:
@@ -906,6 +962,51 @@ def test_record_metrics_capture_generic_counts_without_raw_values() -> None:
     assert "Acme" not in serialized
     assert "Beta" not in serialized
     assert "Maya" not in serialized
+
+
+def test_record_metrics_counts_duplicate_ground_truth_entities_by_occurrence() -> None:
+    final_entities = {
+        "entities": [
+            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+        ]
+    }
+    ground_truth_entities = {
+        "entities": [
+            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+            {"value": "Alice", "label": "first_name", "start_position": 18, "end_position": 23},
+        ]
+    }
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice talked with Alice"],
+            COL_FINAL_ENTITIES: [final_entities],
+            "ground_truth_entities": [ground_truth_entities],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Redact",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=2,
+        )
+
+    record = collector.records[0]
+    assert record["ground_truth_entity_count"] == 2
+    assert record["ground_truth_entity_label_counts"] == {"first_name": 2}
+    assert record["entity_true_positive_count"] == 1
+    assert record["entity_false_positive_count"] == 0
+    assert record["entity_false_negative_count"] == 1
+    assert record["entity_precision"] == 1.0
+    assert record["entity_recall"] == 0.5
+    assert record["entity_f1"] == pytest.approx(2 / 3)
+    assert record["entity_relaxed_gt_found_count"] == 1
+    assert record["entity_relaxed_detected_tp_count"] == 1
+    assert record["entity_relaxed_precision"] == 1.0
+    assert record["entity_relaxed_recall"] == 0.5
 
 
 def test_record_metrics_capture_relaxed_gt_label_equivalence_without_raw_values() -> None:
