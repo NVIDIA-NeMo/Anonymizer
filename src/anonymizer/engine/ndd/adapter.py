@@ -15,7 +15,7 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any, cast
 
-from data_designer.config.column_configs import CustomColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("anonymizer.ndd")
 
 RECORD_ID_COLUMN = "_anonymizer_record_id"
+_TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 
 
 @dataclass(frozen=True)
@@ -455,7 +456,7 @@ def _configure_native_dd_message_traces(
     trace_type = _native_dd_trace_type()
 
     for column in columns:
-        if isinstance(column, LLMTextColumnConfig):
+        if isinstance(column, _TRACEABLE_LLM_COLUMN_TYPES):
             configured_column = cast(ColumnConfigT, column.model_copy(update={"with_trace": trace_type}))
             configured_columns.append(configured_column)
             model_config = model_configs_by_alias.get(column.model_alias)

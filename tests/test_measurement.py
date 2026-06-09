@@ -13,7 +13,7 @@ from unittest.mock import Mock
 import numpy as np
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import CustomColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.custom_column import custom_column_generator
 from data_designer.config.models import ModelConfig
 from data_designer.config.run_config import RunConfig
@@ -735,7 +735,12 @@ def test_dd_message_trace_requires_trace_path(tmp_path: Path) -> None:
         MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_trace="last_message")
 
 
-def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(tmp_path: Path) -> None:
+@pytest.mark.parametrize("structured", [False, True])
+def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(
+    tmp_path: Path,
+    *,
+    structured: bool,
+) -> None:
     input_df = pd.DataFrame(
         {
             "text": ["Alice works at Acme"],
@@ -743,10 +748,19 @@ def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(tmp
             RECORD_ID_COLUMN: ["record-a"],
         }
     )
-    original_column = LLMTextColumnConfig(
-        name="raw_detected",
-        prompt="{{ text }}",
-        model_alias="alias",
+    original_column = (
+        LLMStructuredColumnConfig(
+            name="raw_detected",
+            prompt="{{ text }}",
+            model_alias="alias",
+            output_format={"type": "object", "properties": {"entities": {"type": "array"}}},
+        )
+        if structured
+        else LLMTextColumnConfig(
+            name="raw_detected",
+            prompt="{{ text }}",
+            model_alias="alias",
+        )
     )
     captured_columns: list[LLMTextColumnConfig] = []
 
