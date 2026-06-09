@@ -16,6 +16,7 @@ import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMTextColumnConfig
 from data_designer.config.custom_column import custom_column_generator
 from data_designer.config.models import ModelConfig
+from data_designer.config.run_config import RunConfig
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 from data_designer.interface.data_designer import DataDesigner
@@ -43,6 +44,7 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import (
     DEFAULT_MEASUREMENT_ENV_PREFIX,
     MEASUREMENT_SCHEMA_VERSION,
@@ -714,12 +716,13 @@ def test_measurement_collector_close_attempts_all_sinks_after_failure() -> None:
     collector = MeasurementCollector(
         record_sink=FakeSink("records", fail=True),
         dd_trace_sink=FakeSink("dd-trace"),
+        dd_task_trace_sink=FakeSink("dd-task-trace"),
     )
 
     with pytest.raises(OSError, match="records close failed"):
         collector.close()
 
-    assert close_events == ["records", "dd-trace"]
+    assert close_events == ["records", "dd-trace", "dd-task-trace"]
 
 
 def test_streaming_measurement_requires_jsonl_output(tmp_path: Path) -> None:
@@ -848,6 +851,102 @@ def test_ndd_adapter_records_custom_column_dd_trace_coverage_gap(tmp_path: Path)
     assert coverage[0]["unsupported_column_count"] == 1
     assert coverage[0]["unsupported_column_names"] == ["raw_detected"]
     assert coverage[0]["unsupported_column_types"] == ["custom"]
+
+
+def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(tmp_path: Path) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+
+    class TraceDataDesigner:
+        def __init__(self) -> None:
+            self.run_config = RunConfig(async_trace=False)
+            self.async_trace_values: list[bool] = []
+
+        def set_run_config(self, run_config: RunConfig) -> None:
+            self.async_trace_values.append(run_config.async_trace)
+            self.run_config = run_config
+
+        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+            assert self.run_config.async_trace is True
+            task_trace = SimpleNamespace(
+                column="raw_detected",
+                row_group=0,
+                row_index=7,
+                task_type="llm",
+                dispatched_at=10.0,
+                slot_acquired_at=10.25,
+                completed_at=12.0,
+                status="error",
+                error="raw secret token Alice",
+            )
+            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy(), task_traces=[task_trace])
+
+    data_designer = TraceDataDesigner()
+    adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
+    task_trace_path = tmp_path / "task-trace.jsonl"
+
+    with configured_measurement_session(
+        MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_task_trace_path=task_trace_path)
+    ):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
+            columns=[LLMTextColumnConfig(name="raw_detected", prompt="{{ text }}", model_alias="alias")],
+            workflow_name="entity-detection",
+            preview_num_records=1,
+        )
+
+    assert data_designer.async_trace_values == [True, False]
+    assert data_designer.run_config.async_trace is False
+    task_trace = json.loads(task_trace_path.read_text(encoding="utf-8").strip())
+    assert task_trace["record_type"] == "dd_task_trace"
+    assert task_trace["workflow_name"] == "entity-detection"
+    assert task_trace["column"] == "raw_detected"
+    assert task_trace["row_group"] == 0
+    assert task_trace["row_index"] == 7
+    assert task_trace["task_type"] == "llm"
+    assert task_trace["status"] == "error"
+    assert task_trace["error_present"] is True
+    assert task_trace["queue_wait_sec"] == pytest.approx(0.25)
+    assert task_trace["execution_sec"] == pytest.approx(1.75)
+    assert task_trace["total_sec"] == pytest.approx(2.0)
+    assert "raw secret token Alice" not in task_trace_path.read_text(encoding="utf-8")
+    assert "raw secret token Alice" not in (tmp_path / "measurements.jsonl").read_text(encoding="utf-8")
+
+
+def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(tmp_path: Path) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+
+    class TraceDataDesigner:
+        def __init__(self) -> None:
+            self.run_config = RunConfig(async_trace=False)
+            self.async_trace_values: list[bool] = []
+
+        def set_run_config(self, run_config: RunConfig) -> None:
+            self.async_trace_values.append(run_config.async_trace)
+            self.run_config = run_config
+
+        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+            assert self.run_config.async_trace is True
+            _ = num_records
+            raise RuntimeError("raw secret failure")
+
+    data_designer = TraceDataDesigner()
+    adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
+
+    with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
+        with configured_measurement_session(
+            MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_task_trace_path=tmp_path / "task.jsonl")
+        ):
+            adapter.run_workflow(
+                input_df,
+                model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
+                columns=[LLMTextColumnConfig(name="raw_detected", prompt="{{ text }}", model_alias="alias")],
+                workflow_name="entity-detection",
+                preview_num_records=1,
+            )
+
+    assert data_designer.async_trace_values == [True, False]
+    assert data_designer.run_config.async_trace is False
 
 
 def test_record_metrics_capture_generic_counts_without_raw_values() -> None:

@@ -42,6 +42,8 @@ def _minimal_case_contexts(tool: ModuleType, spec: Any, tmp_path: Path) -> dict[
         "raw_dir": tmp_path / "raw",
         "dd_trace": tool.DDTraceMode.none,
         "trace_dir": tmp_path / "traces",
+        "dd_task_trace": False,
+        "task_trace_dir": tmp_path / "task-traces",
         "dd_parser_compat": spec.dd_parser_compat,
         "artifact_path": tmp_path / "artifacts",
     }
@@ -1134,6 +1136,7 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
         case_id="input__redact__r000",
     )
     trace_path = tmp_path / "traces" / "input__redact__r000.jsonl"
+    task_trace_path = tmp_path / "task-traces" / "input__redact__r000.jsonl"
 
     tool._execute_case(
         FakeAnonymizer(),
@@ -1141,6 +1144,7 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
         spec.configs[0],
         raw_path=tmp_path / "raw" / "input__redact__r000.jsonl",
         trace_path=trace_path,
+        task_trace_path=task_trace_path,
         case=case,
         spec=spec,
         base_dir=tmp_path,
@@ -1151,6 +1155,7 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
     assert len(captured) == 1
     assert captured[0].dd_trace == "all_messages"
     assert captured[0].dd_trace_path == trace_path
+    assert captured[0].dd_task_trace_path == task_trace_path
     assert captured[0].streaming is True
     assert captured[0].keep_records is False
 
@@ -1351,6 +1356,7 @@ def test_benchmark_case_enters_experimental_detection_strategy_context(
         spec.configs[0],
         raw_path=tmp_path / "raw" / "input__native-single-pass-redact__r000.jsonl",
         trace_path=None,
+        task_trace_path=None,
         case=case,
         spec=spec,
         base_dir=tmp_path,

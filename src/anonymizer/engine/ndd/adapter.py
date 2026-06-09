@@ -8,15 +8,18 @@ import logging
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING, Any, cast
 
 from data_designer.config.column_configs import CustomColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
+from data_designer.config.run_config import RunConfig
 from data_designer.config.seed import SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
@@ -65,6 +68,7 @@ class NddAdapter:
 
     def __init__(self, data_designer: DataDesigner) -> None:
         self._data_designer = data_designer
+        self._run_lock = RLock()
         logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
 
     def run_workflow(
@@ -133,19 +137,22 @@ class NddAdapter:
                 config_builder.add_column(column)
 
             try:
-                with usage_probe:
+                task_traces: list[Any] = []
+                with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
                             num_records=len(workflow_input_df),
                             dataset_name=workflow_name,
                         )
+                        task_traces = list(getattr(run_results, "task_traces", []) or [])
                         output_df = run_results.load_dataset()
                     else:
                         preview_results = self._data_designer.preview(
                             config_builder,
                             num_records=record_count,
                         )
+                        task_traces = list(getattr(preview_results, "task_traces", []) or [])
                         if preview_results.dataset is None:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
@@ -155,6 +162,11 @@ class NddAdapter:
                         workflow_name=workflow_name,
                         collector=collector,
                         native_trace_columns=native_trace_columns,
+                    )
+                    _record_dd_task_traces(
+                        workflow_name=workflow_name,
+                        collector=collector,
+                        task_traces=task_traces,
                     )
             except Exception as exc:
                 logger.warning(
@@ -398,6 +410,35 @@ def _model_usage_as_json(stats: object) -> Any:
     return stats
 
 
+@contextmanager
+def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
+    if collector is None or not collector.dd_task_trace_enabled:
+        yield
+        return
+
+    original_run_config = getattr(data_designer, "run_config", None)
+    set_run_config = getattr(data_designer, "set_run_config", None)
+    if original_run_config is None or not callable(set_run_config):
+        yield
+        return
+
+    traced_run_config = _run_config_with_async_trace(original_run_config)
+    set_run_config(traced_run_config)
+    try:
+        yield
+    finally:
+        set_run_config(original_run_config)
+
+
+def _run_config_with_async_trace(run_config: Any) -> Any:
+    model_copy = getattr(run_config, "model_copy", None)
+    if callable(model_copy):
+        return model_copy(update={"async_trace": True})
+    if isinstance(run_config, RunConfig):
+        return run_config.model_copy(update={"async_trace": True})
+    return run_config
+
+
 def _configure_native_dd_message_traces(
     *,
     columns: list[ColumnConfigT],
@@ -555,3 +596,45 @@ def _trace_tool_calls(tool_calls: Any) -> list[Any]:
     if isinstance(tool_calls, list):
         return [getattr(tool_call, "__dict__", tool_call) for tool_call in tool_calls]
     return []
+
+
+def _record_dd_task_traces(*, workflow_name: str, collector: Any | None, task_traces: list[Any]) -> None:
+    if collector is None or not collector.dd_task_trace_enabled:
+        return
+    for task_trace in task_traces:
+        collector.record_dd_task_trace(
+            workflow_name=workflow_name,
+            trace_source="data_designer_scheduler",
+            column=_trace_attr(task_trace, "column"),
+            row_group=_trace_attr(task_trace, "row_group"),
+            row_index=_trace_attr(task_trace, "row_index"),
+            task_type=_trace_attr(task_trace, "task_type"),
+            status=_trace_attr(task_trace, "status"),
+            error_present=bool(_trace_attr(task_trace, "error")),
+            queue_wait_sec=_trace_duration(
+                _trace_attr(task_trace, "dispatched_at"),
+                _trace_attr(task_trace, "slot_acquired_at"),
+            ),
+            execution_sec=_trace_duration(
+                _trace_attr(task_trace, "slot_acquired_at"),
+                _trace_attr(task_trace, "completed_at"),
+            ),
+            total_sec=_trace_duration(
+                _trace_attr(task_trace, "dispatched_at"),
+                _trace_attr(task_trace, "completed_at"),
+            ),
+        )
+
+
+def _trace_attr(task_trace: Any, name: str) -> Any:
+    if isinstance(task_trace, Mapping):
+        return task_trace.get(name)
+    return getattr(task_trace, name, None)
+
+
+def _trace_duration(start: Any, end: Any) -> float | None:
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return None
+    if start <= 0 or end <= 0 or end < start:
+        return None
+    return float(end - start)

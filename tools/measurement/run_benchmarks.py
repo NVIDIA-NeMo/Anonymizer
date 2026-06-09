@@ -234,6 +234,7 @@ class BenchmarkCase(BaseModel):
     measurement_path: str | None = None
     detection_artifact_path: str | None = None
     trace_path: str | None = None
+    task_trace_path: str | None = None
     error: str | None = None
     attempt_count: int = 0
     attempt_errors: list[str] = Field(default_factory=list)
@@ -254,6 +255,7 @@ class _CaseRunPaths:
     raw_path: Path
     artifact_output_path: Path
     trace_path: Path | None
+    task_trace_path: Path | None
     artifact_snapshot: dict[str, int] | None
     export_detection_artifacts: bool
 
@@ -566,6 +568,8 @@ def run_suite(
     fail_fast: bool,
     dd_trace: DDTraceMode,
     trace_dir: Path | None,
+    dd_task_trace: bool = False,
+    task_trace_dir: Path | None = None,
 ) -> BenchmarkResult:
     contexts = _build_contexts(
         spec,
@@ -573,6 +577,8 @@ def run_suite(
         output_dir=output_dir,
         dd_trace=dd_trace,
         trace_dir=trace_dir,
+        dd_task_trace=dd_task_trace,
+        task_trace_dir=task_trace_dir,
     )
     anonymizer = Anonymizer(**contexts["anonymizer_kwargs"])
     cases = _run_cases(spec, contexts=contexts, anonymizer=anonymizer, fail_fast=fail_fast, export=export)
@@ -663,6 +669,8 @@ def _build_contexts(
     output_dir: Path,
     dd_trace: DDTraceMode,
     trace_dir: Path | None,
+    dd_task_trace: bool = False,
+    task_trace_dir: Path | None = None,
 ) -> dict[str, Any]:
     base_dir = spec_path.parent
     artifact_path = _resolve_optional_path(spec.artifact_path, base_dir) or output_dir / "artifacts"
@@ -673,6 +681,8 @@ def _build_contexts(
         "raw_dir": output_dir / "raw",
         "dd_trace": dd_trace,
         "trace_dir": trace_dir or output_dir / "traces",
+        "dd_task_trace": dd_task_trace,
+        "task_trace_dir": task_trace_dir or output_dir / "task-traces",
         "dd_parser_compat": spec.dd_parser_compat,
         "artifact_path": artifact_path,
         "anonymizer_kwargs": {
@@ -755,6 +765,7 @@ def _case_run_paths(
         raw_path=contexts["raw_dir"] / f"{case.case_id}.jsonl",
         artifact_output_path=contexts["raw_dir"] / f"{case.case_id}.detection-artifacts.jsonl",
         trace_path=_case_trace_path(case, contexts=contexts),
+        task_trace_path=_case_task_trace_path(case, contexts=contexts),
         artifact_snapshot=snapshot_detection_artifacts(contexts["artifact_path"])
         if export_detection_artifacts
         else None,
@@ -781,6 +792,7 @@ def _run_case_success(
         config,
         raw_path=paths.raw_path,
         trace_path=paths.trace_path,
+        task_trace_path=paths.task_trace_path,
         case=case,
         spec=spec,
         base_dir=contexts["base_dir"],
@@ -801,6 +813,7 @@ def _run_case_success(
         raw_path=paths.raw_path,
         detection_artifact_path=detection_artifact_path,
         trace_path=paths.trace_path,
+        task_trace_path=paths.task_trace_path,
         attempt_count=attempt_count,
         attempt_errors=attempt_errors,
     )
@@ -829,6 +842,7 @@ def _run_case_error(
         raw_path=paths.raw_path,
         detection_artifact_path=detection_artifact_path,
         trace_path=paths.trace_path,
+        task_trace_path=paths.task_trace_path,
         error=str(error),
         attempt_count=attempt_count,
         attempt_errors=attempt_errors,
@@ -968,6 +982,7 @@ def _case_with_result(
     raw_path: Path,
     detection_artifact_path: Path | None,
     trace_path: Path | None,
+    task_trace_path: Path | None,
     attempt_count: int,
     attempt_errors: list[str],
     error: str | None = None,
@@ -979,6 +994,7 @@ def _case_with_result(
             "measurement_path": str(raw_path),
             "detection_artifact_path": (str(detection_artifact_path) if detection_artifact_path is not None else None),
             "trace_path": str(trace_path) if trace_path is not None else None,
+            "task_trace_path": str(task_trace_path) if task_trace_path is not None else None,
             "error": error,
             "attempt_count": attempt_count,
             "attempt_errors": list(attempt_errors),
@@ -1009,6 +1025,12 @@ def _case_trace_path(case: BenchmarkCase, *, contexts: dict[str, Any]) -> Path |
     return contexts["trace_dir"] / f"{case.case_id}.jsonl"
 
 
+def _case_task_trace_path(case: BenchmarkCase, *, contexts: dict[str, Any]) -> Path | None:
+    if not contexts["dd_task_trace"]:
+        return None
+    return contexts["task_trace_dir"] / f"{case.case_id}.jsonl"
+
+
 def _execute_case(
     anonymizer: Anonymizer,
     workload: WorkloadSpec,
@@ -1016,6 +1038,7 @@ def _execute_case(
     *,
     raw_path: Path,
     trace_path: Path | None,
+    task_trace_path: Path | None,
     case: BenchmarkCase,
     spec: BenchmarkSpec,
     base_dir: Path,
@@ -1037,6 +1060,7 @@ def _execute_case(
         keep_records=False,
         dd_trace=dd_trace.value,
         dd_trace_path=trace_path,
+        dd_task_trace_path=task_trace_path,
         fail_on_write_error=True,
     )
     with configured_measurement_session(measurement):
@@ -1396,12 +1420,20 @@ def dry_run_result(
     export: bool,
     dd_trace: DDTraceMode,
     trace_dir: Path | None,
+    dd_task_trace: bool = False,
+    task_trace_dir: Path | None = None,
 ) -> BenchmarkResult:
     cases = build_cases(spec)
     if dd_trace != DDTraceMode.none:
         resolved_trace_dir = trace_dir or output_dir / "traces"
         cases = [
             case.model_copy(update={"trace_path": str(resolved_trace_dir / f"{case.case_id}.jsonl")}) for case in cases
+        ]
+    if dd_task_trace:
+        resolved_task_trace_dir = task_trace_dir or output_dir / "task-traces"
+        cases = [
+            case.model_copy(update={"task_trace_path": str(resolved_task_trace_dir / f"{case.case_id}.jsonl")})
+            for case in cases
         ]
     return BenchmarkResult(
         suite_id=spec.suite_id,
@@ -1425,6 +1457,8 @@ def main(
     fail_fast: Annotated[bool, cyclopts.Parameter("--fail-fast")] = False,
     dd_trace: Annotated[DDTraceMode, cyclopts.Parameter("--dd-trace")] = DDTraceMode.none,
     trace_dir: Annotated[Path | None, cyclopts.Parameter("--trace-dir")] = None,
+    dd_task_trace: Annotated[bool, cyclopts.Parameter("--dd-task-trace")] = False,
+    task_trace_dir: Annotated[Path | None, cyclopts.Parameter("--task-trace-dir")] = None,
     json_output: Annotated[bool, cyclopts.Parameter("--json")] = False,
     log_format: Annotated[LogFormat, cyclopts.Parameter("--log-format")] = LogFormat.plain,
 ) -> None:
@@ -1439,6 +1473,8 @@ def main(
             fail_fast=fail_fast,
             dd_trace=dd_trace,
             trace_dir=trace_dir,
+            dd_task_trace=dd_task_trace,
+            task_trace_dir=task_trace_dir,
         )
     except (ValueError, ValidationError) as exc:
         log_bad_input(logger, str(exc))
@@ -1458,11 +1494,15 @@ def run_or_plan(
     fail_fast: bool,
     dd_trace: DDTraceMode = DDTraceMode.none,
     trace_dir: Path | None = None,
+    dd_task_trace: bool = False,
+    task_trace_dir: Path | None = None,
 ) -> BenchmarkResult:
     benchmark_spec = load_spec(spec_path)
     output_dir = output or Path("benchmark-runs") / benchmark_spec.suite_id
     if trace_dir is not None and dd_trace == DDTraceMode.none:
         raise ValueError("--trace-dir requires --dd-trace")
+    if task_trace_dir is not None and not dd_task_trace:
+        raise ValueError("--task-trace-dir requires --dd-task-trace")
     preflight_suite(benchmark_spec, spec_path=spec_path)
     if dry_run:
         return dry_run_result(
@@ -1471,6 +1511,8 @@ def run_or_plan(
             export=export,
             dd_trace=dd_trace,
             trace_dir=trace_dir,
+            dd_task_trace=dd_task_trace,
+            task_trace_dir=task_trace_dir,
         )
     prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
     return run_suite(
@@ -1481,6 +1523,8 @@ def run_or_plan(
         fail_fast=fail_fast,
         dd_trace=dd_trace,
         trace_dir=trace_dir,
+        dd_task_trace=dd_task_trace,
+        task_trace_dir=task_trace_dir,
     )
 
 

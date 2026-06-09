@@ -127,6 +127,7 @@ class _MeasurementEnvSettings(BaseSettings):
     keep_records: bool = True
     dd_trace: DDTraceMode = "none"
     dd_trace_path: str | None = None
+    dd_task_trace_path: str | None = None
     fail_on_write_error: bool = False
     run_id: str | None = None
     run_tags: dict[str, Any] = Field(default_factory=dict)
@@ -151,6 +152,7 @@ class MeasurementCollector:
         keep_records: bool = True,
         dd_trace_mode: DDTraceMode = "none",
         dd_trace_sink: _MeasurementSink | None = None,
+        dd_task_trace_sink: _MeasurementSink | None = None,
         fail_on_write_error: bool = False,
     ) -> None:
         self.run_id = run_id or uuid.uuid4().hex
@@ -160,9 +162,11 @@ class MeasurementCollector:
         self._keep_records = keep_records
         self._dd_trace_mode = dd_trace_mode
         self._dd_trace_sink = dd_trace_sink
+        self._dd_task_trace_sink = dd_task_trace_sink
         self._fail_on_write_error = fail_on_write_error
         self._sink_failed = False
         self._dd_trace_failed = False
+        self._dd_task_trace_failed = False
         if record_hash_key is None:
             self._record_hash_key = secrets.token_bytes(32)
         elif isinstance(record_hash_key, str):
@@ -195,7 +199,7 @@ class MeasurementCollector:
     def close(self) -> None:
         """Close any streaming measurement sink attached to this collector."""
         close_error: Exception | None = None
-        for sink in (self._record_sink, self._dd_trace_sink):
+        for sink in (self._record_sink, self._dd_trace_sink, self._dd_task_trace_sink):
             if sink is None:
                 continue
             try:
@@ -213,6 +217,10 @@ class MeasurementCollector:
     @property
     def dd_trace_enabled(self) -> bool:
         return self._dd_trace_mode != "none" and self._dd_trace_sink is not None
+
+    @property
+    def dd_task_trace_enabled(self) -> bool:
+        return self._dd_task_trace_sink is not None
 
     def record_dd_message_trace(self, **fields: Any) -> None:
         """Write an explicitly opt-in DataDesigner message trace record.
@@ -239,6 +247,29 @@ class MeasurementCollector:
         except Exception:
             self._dd_trace_failed = True
             logger.warning("Failed to write DataDesigner message trace records")
+            if self._fail_on_write_error:
+                raise
+
+    def record_dd_task_trace(self, **fields: Any) -> None:
+        """Write an opt-in sanitized DataDesigner scheduler task trace record."""
+        if not self.dd_task_trace_enabled or self._dd_task_trace_failed:
+            return
+
+        record = _json_safe(
+            {
+                **fields,
+                "schema_version": MEASUREMENT_SCHEMA_VERSION,
+                "record_type": "dd_task_trace",
+                "run_id": self.run_id,
+                "run_tags": self.run_tags,
+                "timestamp_unix_sec": time.time(),
+            }
+        )
+        try:
+            cast(_MeasurementSink, self._dd_task_trace_sink).write_record(record)
+        except Exception:
+            self._dd_task_trace_failed = True
+            logger.warning("Failed to write DataDesigner task trace records")
             if self._fail_on_write_error:
                 raise
 
@@ -289,6 +320,7 @@ class MeasurementConfig:
     keep_records: bool = True
     dd_trace: DDTraceMode = "none"
     dd_trace_path: str | Path | None = None
+    dd_task_trace_path: str | Path | None = None
     run_id: str | None = None
     record_hash_key: bytes | str | None = None
     run_tags: Mapping[str, Any] | None = None
@@ -327,6 +359,7 @@ class MeasurementConfig:
             keep_records=settings.keep_records,
             dd_trace=settings.dd_trace,
             dd_trace_path=settings.dd_trace_path,
+            dd_task_trace_path=settings.dd_task_trace_path,
             run_id=settings.run_id,
             run_tags=settings.run_tags,
             fail_on_write_error=settings.fail_on_write_error,
@@ -376,6 +409,7 @@ def configured_measurement_session(config: MeasurementConfig | None) -> Iterator
         if config.dd_trace_path is None:
             raise ValueError("dd_trace_path is required when dd_trace is enabled")
         dd_trace_sink = _JsonlMeasurementSink(config.dd_trace_path)
+    dd_task_trace_sink = _JsonlMeasurementSink(config.dd_task_trace_path) if config.dd_task_trace_path else None
     collector = MeasurementCollector(
         run_id=config.run_id,
         record_hash_key=config.record_hash_key,
@@ -385,6 +419,7 @@ def configured_measurement_session(config: MeasurementConfig | None) -> Iterator
         keep_records=config.keep_records,
         dd_trace_mode=config.dd_trace,
         dd_trace_sink=dd_trace_sink,
+        dd_task_trace_sink=dd_task_trace_sink,
         fail_on_write_error=config.fail_on_write_error,
     )
     with measurement_session(collector):

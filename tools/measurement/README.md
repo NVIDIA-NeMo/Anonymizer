@@ -93,6 +93,9 @@ uv run python tools/measurement/run_benchmarks.py suite.yaml --dry-run --json
 uv run python tools/measurement/run_benchmarks.py suite.yaml \
   --output benchmark-runs/suite \
   --dd-trace last-message
+uv run python tools/measurement/run_benchmarks.py suite.yaml \
+  --output benchmark-runs/suite \
+  --dd-task-trace
 ```
 
 The repo-data smoke suite can be run with DataDesigner traces enabled:
@@ -284,6 +287,14 @@ values, replacement values, secrets, and PII. Treat them as debug artifacts:
 keep them out of shared benchmark bundles unless they have been reviewed or
 redacted.
 
+Anonymizer requests these traces through DataDesigner native LLM column trace
+side effects. That covers `LLMTextColumnConfig` and
+`LLMStructuredColumnConfig`, but not model calls made inside
+`CustomColumnConfig` generator functions. Safe measurement output includes a
+`dd_trace_coverage` record with unsupported custom columns so trace-enabled
+runs can detect this gap. Full custom-column message tracing would need a
+DataDesigner hook; it is a good candidate for an upstream DataDesigner PR.
+
 Summarize traced calls without copying raw prompts or responses into analysis
 output:
 
@@ -298,6 +309,26 @@ This writes `trace_analysis.*` and `trace_group_analysis.*`. The row table
 captures run tags, workflow/model metadata, status, elapsed time, prompt and
 response lengths, token counts, and response-shape flags such as `raw_json`,
 `fenced_json`, `embedded_json`, `text`, and `none`.
+
+## DataDesigner Scheduler Task Traces
+
+Pass `--dd-task-trace` to collect sanitized DataDesigner async scheduler task
+timing records. The benchmark runner writes one sidecar per case under
+`task-traces/{case_id}.jsonl` by default; use `--task-trace-dir` to choose
+another directory.
+
+Task trace records are separate from raw message traces. They include scheduler
+metadata such as workflow name, column, row group, row index, task type, status,
+queue wait time, execution time, total time, and whether an error was present.
+They intentionally do not store raw DataDesigner error strings because those
+can contain prompts, outputs, or source values.
+
+```bash
+uv run python tools/measurement/run_benchmarks.py \
+  suite.yaml \
+  --output benchmark-runs/suite \
+  --dd-task-trace
+```
 
 ## Direct probes
 
