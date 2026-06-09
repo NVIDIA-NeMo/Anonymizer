@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -14,11 +13,11 @@ from unittest.mock import Mock
 import numpy as np
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMTextColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMTextColumnConfig
+from data_designer.config.custom_column import custom_column_generator
 from data_designer.config.models import ModelConfig
-from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionResponse, Usage
-from data_designer.engine.models.facade import ModelFacade
-from data_designer.engine.models.utils import ChatMessage
+from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
+from data_designer.config.utils.trace_type import TraceType
 from data_designer.interface.data_designer import DataDesigner
 
 import anonymizer.measurement as measurement
@@ -733,36 +732,35 @@ def test_dd_message_trace_requires_trace_path(tmp_path: Path) -> None:
         MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_trace="last_message")
 
 
-def test_ndd_adapter_writes_opt_in_dd_message_trace(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
-
-    def fake_completion(
-        _self: object,
-        _messages: list[ChatMessage],
-        skip_usage_tracking: bool = False,
-        **_kwargs: object,
-    ) -> ChatCompletionResponse:
-        assert skip_usage_tracking is False
-        return ChatCompletionResponse(
-            message=AssistantMessage(content="secret response"),
-            usage=Usage(input_tokens=3, output_tokens=2, total_tokens=5),
-        )
-
-    monkeypatch.setattr(ModelFacade, "completion", fake_completion)
+def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(tmp_path: Path) -> None:
+    input_df = pd.DataFrame(
+        {
+            "text": ["Alice works at Acme"],
+            f"notes{TRACE_COLUMN_POSTFIX}": ["user supplied trace-looking column"],
+            RECORD_ID_COLUMN: ["record-a"],
+        }
+    )
+    original_column = LLMTextColumnConfig(
+        name="raw_detected",
+        prompt="{{ text }}",
+        model_alias="alias",
+    )
+    captured_columns: list[LLMTextColumnConfig] = []
 
     class TraceDataDesigner:
-        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-            ModelFacade.completion(
-                SimpleNamespace(model_alias="alias", model_name="dummy-model", model_provider_name="provider"),
+        def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
+            traced_column = cast(Any, config_builder).get_column_config("raw_detected")
+            captured_columns.append(traced_column)
+            output = input_df.iloc[:num_records].copy()
+            output["raw_detected"] = "[]"
+            output[f"raw_detected{TRACE_COLUMN_POSTFIX}"] = [
                 [
-                    ChatMessage.as_system("system secret"),
-                    ChatMessage.as_user("prompt secret"),
-                ],
-            )
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+                    {"role": "system", "content": [{"type": "text", "text": "system secret"}]},
+                    {"role": "user", "content": [{"type": "text", "text": "prompt secret"}]},
+                    {"role": "assistant", "content": "secret response", "reasoning_content": "scratch"},
+                ]
+            ]
+            return SimpleNamespace(dataset=output)
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, TraceDataDesigner()))
     trace_path = tmp_path / "trace.jsonl"
@@ -772,79 +770,59 @@ def test_ndd_adapter_writes_opt_in_dd_message_trace(
             output_path=tmp_path / "measurements.jsonl", dd_trace="last_message", dd_trace_path=trace_path
         )
     ):
-        adapter.run_workflow(
+        result = adapter.run_workflow(
             input_df,
-            model_configs=[ModelConfig(alias="alias", model="dummy")],
-            columns=[
-                LLMTextColumnConfig(
-                    name="raw_detected",
-                    prompt="{{ text }}",
-                    model_alias="alias",
-                )
-            ],
+            model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
+            columns=[original_column],
             workflow_name="entity-detection",
             preview_num_records=1,
         )
 
+    assert original_column.with_trace == TraceType.NONE
+    assert captured_columns[0].with_trace == TraceType.ALL_MESSAGES
+    assert f"raw_detected{TRACE_COLUMN_POSTFIX}" not in result.dataframe.columns
+    assert f"notes{TRACE_COLUMN_POSTFIX}" in result.dataframe.columns
+
     trace = json.loads(trace_path.read_text(encoding="utf-8").strip())
     assert trace["record_type"] == "dd_message_trace"
+    assert trace["trace_source"] == "data_designer_column"
     assert trace["workflow_name"] == "entity-detection"
     assert trace["model_alias"] == "alias"
+    assert trace["model_name"] == "dummy-model"
+    assert trace["model_provider_name"] == "provider"
     assert trace["status"] == "completed"
     assert trace["messages"] == [{"role": "user", "content": [{"type": "text", "text": "prompt secret"}]}]
     assert trace["response"]["content"] == "secret response"
-    assert trace["usage"] == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+    assert trace["usage"] is None
 
-    serialized_measurements = (tmp_path / "measurements.jsonl").read_text(encoding="utf-8")
+    measurements = [json.loads(line) for line in (tmp_path / "measurements.jsonl").read_text().splitlines()]
+    coverage = [record for record in measurements if record["record_type"] == "dd_trace_coverage"]
+    assert len(coverage) == 1
+    assert coverage[0]["traced_column_count"] == 1
+    assert coverage[0]["unsupported_column_count"] == 0
+
+    serialized_measurements = json.dumps(measurements)
     assert "prompt secret" not in serialized_measurements
     assert "secret response" not in serialized_measurements
 
 
-def test_dd_message_trace_does_not_capture_concurrent_unmeasured_calls(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def test_ndd_adapter_records_custom_column_dd_trace_coverage_gap(tmp_path: Path) -> None:
     input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
 
-    def fake_completion(
-        _self: object,
-        _messages: list[ChatMessage],
-        **_kwargs: object,
-    ) -> ChatCompletionResponse:
-        return ChatCompletionResponse(
-            message=AssistantMessage(content="response"),
-            usage=Usage(input_tokens=3, output_tokens=2, total_tokens=5),
-        )
-
-    monkeypatch.setattr(ModelFacade, "completion", fake_completion)
+    @custom_column_generator(required_columns=["text"], model_aliases=["alias"])
+    def custom_generator(
+        row: dict[str, Any],
+        generator_params: Any,
+        models: dict[str, Any],
+    ) -> dict[str, str]:
+        _ = row, generator_params, models
+        return {"raw_detected": "[]"}
 
     class TraceDataDesigner:
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-            errors: list[BaseException] = []
-
-            def concurrent_call_without_measurement_context() -> None:
-                try:
-                    ModelFacade.completion(
-                        SimpleNamespace(
-                            model_alias="outside",
-                            model_name="outside-model",
-                            model_provider_name="provider",
-                        ),
-                        [ChatMessage.as_user("outside prompt")],
-                    )
-                except BaseException as exc:
-                    errors.append(exc)
-
-            thread = threading.Thread(target=concurrent_call_without_measurement_context)
-            thread.start()
-            thread.join()
-            assert errors == []
-
-            ModelFacade.completion(
-                SimpleNamespace(model_alias="inside", model_name="inside-model", model_provider_name="provider"),
-                [ChatMessage.as_user("inside prompt")],
-            )
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+            output = input_df.iloc[:num_records].copy()
+            output["raw_detected"] = "[]"
+            return SimpleNamespace(dataset=output)
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, TraceDataDesigner()))
     trace_path = tmp_path / "trace.jsonl"
@@ -856,23 +834,20 @@ def test_dd_message_trace_does_not_capture_concurrent_unmeasured_calls(
     ):
         adapter.run_workflow(
             input_df,
-            model_configs=[ModelConfig(alias="inside", model="dummy")],
-            columns=[
-                LLMTextColumnConfig(
-                    name="raw_detected",
-                    prompt="{{ text }}",
-                    model_alias="inside",
-                )
-            ],
+            model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
+            columns=[CustomColumnConfig(name="raw_detected", generator_function=custom_generator)],
             workflow_name="entity-detection",
             preview_num_records=1,
         )
 
-    traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
-    assert [trace["model_alias"] for trace in traces] == ["inside"]
-    serialized_traces = json.dumps(traces)
-    assert "inside prompt" in serialized_traces
-    assert "outside prompt" not in serialized_traces
+    assert trace_path.read_text(encoding="utf-8") == ""
+    measurements = [json.loads(line) for line in (tmp_path / "measurements.jsonl").read_text().splitlines()]
+    coverage = [record for record in measurements if record["record_type"] == "dd_trace_coverage"]
+    assert len(coverage) == 1
+    assert coverage[0]["traced_column_count"] == 0
+    assert coverage[0]["unsupported_column_count"] == 1
+    assert coverage[0]["unsupported_column_names"] == ["raw_detected"]
+    assert coverage[0]["unsupported_column_types"] == ["custom"]
 
 
 def test_record_metrics_capture_generic_counts_without_raw_values() -> None:

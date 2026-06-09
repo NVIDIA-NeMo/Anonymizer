@@ -8,18 +8,19 @@ import logging
 import tempfile
 import time
 import uuid
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from threading import RLock
 from typing import TYPE_CHECKING, Any, cast
 
+from data_designer.config.column_configs import CustomColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 from data_designer.config.seed import SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
+from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
+from data_designer.config.utils.trace_type import TraceType
 
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("anonymizer.ndd")
 
 RECORD_ID_COLUMN = "_anonymizer_record_id"
-_DD_MESSAGE_TRACE_PATCH_LOCK = RLock()
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,15 @@ class WorkflowRunResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+
+
+@dataclass(frozen=True)
+class _NativeTraceColumn:
+    column_name: str
+    trace_column_name: str
+    model_alias: str | None
+    model_name: str | None
+    model_provider_name: str | None
 
 
 class NddAdapter:
@@ -100,7 +109,19 @@ class NddAdapter:
             else len(workflow_input_df)
         )
         started = time.perf_counter()
-        usage_probe = _DataDesignerUsageProbe(self._data_designer, enabled=current_collector() is not None)
+        collector = current_collector()
+        usage_probe = _DataDesignerUsageProbe(self._data_designer, enabled=collector is not None)
+        columns, native_trace_columns, unsupported_trace_columns = _configure_native_dd_message_traces(
+            columns=columns,
+            model_configs=model_configs,
+            collector=collector,
+        )
+        _record_dd_trace_coverage(
+            workflow_name=workflow_name,
+            collector=collector,
+            native_trace_columns=native_trace_columns,
+            unsupported_trace_columns=unsupported_trace_columns,
+        )
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
@@ -112,7 +133,7 @@ class NddAdapter:
                 config_builder.add_column(column)
 
             try:
-                with usage_probe, _dd_message_trace(workflow_name=workflow_name):
+                with usage_probe:
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
@@ -129,6 +150,12 @@ class NddAdapter:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
                             output_df = preview_results.dataset
+                    output_df = _record_and_strip_native_dd_message_traces(
+                        output_df=output_df,
+                        workflow_name=workflow_name,
+                        collector=collector,
+                        native_trace_columns=native_trace_columns,
+                    )
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s) on model(s) %s: %s",
@@ -371,182 +398,148 @@ def _model_usage_as_json(stats: object) -> Any:
     return stats
 
 
-@contextmanager
-def _dd_message_trace(*, workflow_name: str) -> Iterator[None]:
-    """Trace DataDesigner model messages for the active measurement context.
-
-    DataDesigner constructs ``ModelFacade`` instances internally, so this hook
-    wraps the facade class while a traced workflow runs. The wrappers re-check
-    the active collector before writing a trace record so unrelated concurrent
-    workflows pass through without contaminating the traced collector.
-    """
-    collector = current_collector()
+def _configure_native_dd_message_traces(
+    *,
+    columns: list[ColumnConfigT],
+    model_configs: list[ModelConfig],
+    collector: Any | None,
+) -> tuple[list[ColumnConfigT], list[_NativeTraceColumn], list[ColumnConfigT]]:
     if collector is None or not collector.dd_trace_enabled:
-        yield
+        return columns, [], []
+
+    model_configs_by_alias = {model_config.alias: model_config for model_config in model_configs}
+    traced_columns: list[_NativeTraceColumn] = []
+    unsupported_columns: list[ColumnConfigT] = []
+    configured_columns: list[ColumnConfigT] = []
+    trace_type = _native_dd_trace_type()
+
+    for column in columns:
+        if isinstance(column, LLMTextColumnConfig):
+            configured_column = cast(ColumnConfigT, column.model_copy(update={"with_trace": trace_type}))
+            configured_columns.append(configured_column)
+            model_config = model_configs_by_alias.get(column.model_alias)
+            traced_columns.append(
+                _NativeTraceColumn(
+                    column_name=column.name,
+                    trace_column_name=f"{column.name}{TRACE_COLUMN_POSTFIX}",
+                    model_alias=column.model_alias,
+                    model_name=getattr(model_config, "model", None),
+                    model_provider_name=getattr(model_config, "provider", None),
+                )
+            )
+            continue
+
+        configured_columns.append(column)
+        if _column_has_untraced_model_calls(column):
+            unsupported_columns.append(column)
+
+    return configured_columns, traced_columns, unsupported_columns
+
+
+def _native_dd_trace_type() -> TraceType:
+    # Preserve Anonymizer's existing dd_trace=last_message semantics: the trace
+    # sink records the final prompt message and response separately, while DD's
+    # native LAST_MESSAGE side effect only keeps the final assistant message.
+    return TraceType.ALL_MESSAGES
+
+
+def _column_has_untraced_model_calls(column: ColumnConfigT) -> bool:
+    return isinstance(column, CustomColumnConfig) and bool(_extract_workflow_model_aliases([column]))
+
+
+def _record_dd_trace_coverage(
+    *,
+    workflow_name: str,
+    collector: Any,
+    native_trace_columns: list[_NativeTraceColumn],
+    unsupported_trace_columns: list[ColumnConfigT],
+) -> Any:
+    if collector is None or not collector.dd_trace_enabled:
         return
-
-    from data_designer.engine.models.facade import ModelFacade
-
-    with _DD_MESSAGE_TRACE_PATCH_LOCK:
-        original_completion = ModelFacade.completion
-        original_acompletion = ModelFacade.acompletion
-        ModelFacade.completion = _traced_completion(
-            original_completion, collector=collector, workflow_name=workflow_name
-        )
-        ModelFacade.acompletion = _traced_acompletion(
-            original_acompletion,
-            collector=collector,
-            workflow_name=workflow_name,
-        )
-        try:
-            yield
-        finally:
-            ModelFacade.completion = original_completion
-            ModelFacade.acompletion = original_acompletion
-
-
-def _traced_completion(original_completion: Any, *, collector: Any, workflow_name: str) -> Any:
-    def traced(model_facade: Any, messages: list[Any], *args: Any, **kwargs: Any) -> Any:
-        return _run_traced_completion(
-            original_completion,
-            collector=collector,
-            workflow_name=workflow_name,
-            model_facade=model_facade,
-            messages=messages,
-            args=args,
-            kwargs=kwargs,
-        )
-
-    return traced
-
-
-def _run_traced_completion(
-    completion: Any,
-    *,
-    collector: Any,
-    workflow_name: str,
-    model_facade: Any,
-    messages: list[Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-) -> Any:
-    started = time.perf_counter()
-    response: Any | None = None
-    status = "completed"
-    error_type: str | None = None
-    try:
-        response = completion(model_facade, messages, *args, **kwargs)
-        return response
-    except BaseException as exc:
-        status = "error"
-        error_type = type(exc).__name__
-        raise
-    finally:
-        active_collector = _active_trace_collector(collector)
-        if active_collector is not None:
-            _record_dd_message_trace(
-                collector=active_collector,
-                workflow_name=workflow_name,
-                model_facade=model_facade,
-                messages=messages,
-                response=response,
-                elapsed_sec=time.perf_counter() - started,
-                status=status,
-                error_type=error_type,
-                is_async=False,
-            )
-
-
-def _traced_acompletion(original_acompletion: Any, *, collector: Any, workflow_name: str) -> Any:
-    async def traced(model_facade: Any, messages: list[Any], *args: Any, **kwargs: Any) -> Any:
-        return await _run_traced_acompletion(
-            original_acompletion,
-            collector=collector,
-            workflow_name=workflow_name,
-            model_facade=model_facade,
-            messages=messages,
-            args=args,
-            kwargs=kwargs,
-        )
-
-    return traced
-
-
-async def _run_traced_acompletion(
-    acompletion: Any,
-    *,
-    collector: Any,
-    workflow_name: str,
-    model_facade: Any,
-    messages: list[Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-) -> Any:
-    started = time.perf_counter()
-    response: Any | None = None
-    status = "completed"
-    error_type: str | None = None
-    try:
-        response = await acompletion(model_facade, messages, *args, **kwargs)
-        return response
-    except BaseException as exc:
-        status = "error"
-        error_type = type(exc).__name__
-        raise
-    finally:
-        active_collector = _active_trace_collector(collector)
-        if active_collector is not None:
-            _record_dd_message_trace(
-                collector=active_collector,
-                workflow_name=workflow_name,
-                model_facade=model_facade,
-                messages=messages,
-                response=response,
-                elapsed_sec=time.perf_counter() - started,
-                status=status,
-                error_type=error_type,
-                is_async=True,
-            )
-
-
-def _active_trace_collector(expected_collector: Any) -> Any | None:
-    active_collector = current_collector()
-    if active_collector is expected_collector and active_collector.dd_trace_enabled:
-        return active_collector
-    return None
-
-
-def _record_dd_message_trace(
-    *,
-    collector: Any,
-    workflow_name: str,
-    model_facade: Any,
-    messages: list[Any],
-    response: Any | None,
-    elapsed_sec: float,
-    status: str,
-    error_type: str | None,
-    is_async: bool,
-) -> None:
-    collector.record_dd_message_trace(
+    collector.record(
+        "dd_trace_coverage",
         workflow_name=workflow_name,
-        model_alias=getattr(model_facade, "model_alias", None),
-        model_name=getattr(model_facade, "model_name", None),
-        model_provider_name=getattr(model_facade, "model_provider_name", None),
-        modality="chat",
-        is_async=is_async,
-        status=status,
-        error_type=error_type,
-        elapsed_sec=elapsed_sec,
-        messages=_trace_messages(messages, mode=collector.dd_trace_mode),
-        response=_trace_response(response),
-        usage=_trace_usage(getattr(response, "usage", None) if response is not None else None),
+        trace_backend="data_designer_column",
+        trace_mode=collector.dd_trace_mode,
+        native_trace_type=_native_dd_trace_type().value,
+        traced_column_count=len(native_trace_columns),
+        traced_column_names=[column.column_name for column in native_trace_columns],
+        unsupported_column_count=len(unsupported_trace_columns),
+        unsupported_column_names=[column.name for column in unsupported_trace_columns],
+        unsupported_column_types=[_column_type_name(column) for column in unsupported_trace_columns],
     )
 
 
-def _trace_messages(messages: list[Any], *, mode: str) -> list[dict[str, Any]]:
-    selected = messages if mode == "all_messages" else messages[-1:]
-    return [_trace_message(message) for message in selected]
+def _column_type_name(column: ColumnConfigT) -> str:
+    column_type = getattr(column, "column_type", None)
+    return str(column_type) if column_type is not None else type(column).__name__
+
+
+def _record_and_strip_native_dd_message_traces(
+    *,
+    output_df: pd.DataFrame,
+    workflow_name: str,
+    collector: Any,
+    native_trace_columns: list[_NativeTraceColumn],
+) -> pd.DataFrame:
+    if not native_trace_columns:
+        return output_df
+
+    trace_column_names = [column.trace_column_name for column in native_trace_columns]
+    if collector is not None and collector.dd_trace_enabled:
+        for _, row in output_df.iterrows():
+            for trace_column in native_trace_columns:
+                if trace_column.trace_column_name not in output_df.columns:
+                    continue
+                trace_messages = _native_trace_messages(row.get(trace_column.trace_column_name))
+                if not trace_messages:
+                    continue
+                collector.record_dd_message_trace(
+                    workflow_name=workflow_name,
+                    trace_source="data_designer_column",
+                    column_name=trace_column.column_name,
+                    trace_column_name=trace_column.trace_column_name,
+                    model_alias=trace_column.model_alias,
+                    model_name=trace_column.model_name,
+                    model_provider_name=trace_column.model_provider_name,
+                    modality="chat",
+                    is_async=None,
+                    status="completed",
+                    error_type=None,
+                    elapsed_sec=None,
+                    messages=_select_native_trace_messages(trace_messages, mode=collector.dd_trace_mode),
+                    response=_native_trace_response(trace_messages),
+                    usage=None,
+                )
+
+    existing_trace_columns = [column_name for column_name in trace_column_names if column_name in output_df.columns]
+    if not existing_trace_columns:
+        return output_df
+    return output_df.drop(columns=existing_trace_columns)
+
+
+def _native_trace_messages(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [_trace_message(message) for message in value]
+
+
+def _select_native_trace_messages(messages: list[dict[str, Any]], *, mode: str) -> list[dict[str, Any]]:
+    if mode == "all_messages":
+        return messages
+    last_prompt = next((message for message in reversed(messages) if message.get("role") != "assistant"), None)
+    return [last_prompt] if last_prompt is not None else []
+
+
+def _native_trace_response(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    assistant_message = next((message for message in reversed(messages) if message.get("role") == "assistant"), None)
+    if assistant_message is None:
+        return None
+    return {
+        "content": assistant_message.get("content"),
+        "reasoning_content": assistant_message.get("reasoning_content"),
+        "tool_calls": _trace_tool_calls(assistant_message.get("tool_calls", [])),
+    }
 
 
 def _trace_message(message: Any) -> dict[str, Any]:
@@ -558,30 +551,7 @@ def _trace_message(message: Any) -> dict[str, Any]:
     return {"role": getattr(message, "role", None), "content": getattr(message, "content", None)}
 
 
-def _trace_response(response: Any | None) -> dict[str, Any] | None:
-    if response is None:
-        return None
-    message = getattr(response, "message", None)
-    if message is None:
-        return None
-    return {
-        "content": getattr(message, "content", None),
-        "reasoning_content": getattr(message, "reasoning_content", None),
-        "tool_calls": _trace_tool_calls(getattr(message, "tool_calls", [])),
-    }
-
-
 def _trace_tool_calls(tool_calls: Any) -> list[Any]:
     if isinstance(tool_calls, list):
         return [getattr(tool_call, "__dict__", tool_call) for tool_call in tool_calls]
     return []
-
-
-def _trace_usage(usage: Any | None) -> dict[str, Any] | None:
-    if usage is None:
-        return None
-    return {
-        "input_tokens": getattr(usage, "input_tokens", None),
-        "output_tokens": getattr(usage, "output_tokens", None),
-        "total_tokens": getattr(usage, "total_tokens", None),
-    }
