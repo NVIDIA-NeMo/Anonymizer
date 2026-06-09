@@ -47,6 +47,13 @@ def _minimal_case_contexts(tool: ModuleType, spec: Any, tmp_path: Path) -> dict[
     }
 
 
+def _copy_biography_data(tmp_path: Path, filename: str = "input.csv") -> Path:
+    source = REPO_ROOT / "docs" / "data" / "NVIDIA_synthetic_biographies.csv"
+    destination = tmp_path / filename
+    destination.write_bytes(source.read_bytes())
+    return destination
+
+
 def test_export_measurements_groups_records_by_type(tmp_path: Path) -> None:
     tool = load_tool("measurement_export_tool", REPO_ROOT / "tools/measurement/export_measurements.py")
     dataframe = pd.DataFrame(
@@ -609,6 +616,7 @@ suite_id: smoke-suite
 workloads:
   - id: biography
     source: biographies.csv
+    text_column: biography
 configs:
   - id: redact
     replace: redact
@@ -619,7 +627,7 @@ matrix:
 """,
         encoding="utf-8",
     )
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(tmp_path / "biographies.csv", index=False)
+    _copy_biography_data(tmp_path, "biographies.csv")
     output_dir = tmp_path / "dry-run-output"
 
     result = tool.run_or_plan(
@@ -717,8 +725,7 @@ configs:
 
 def test_benchmark_preflight_rejects_bad_model_alias_references(tmp_path: Path) -> None:
     tool = load_tool("measurement_benchmark_tool_preflight_models", REPO_ROOT / "tools/measurement/run_benchmarks.py")
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    _copy_biography_data(tmp_path)
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
         """
@@ -741,6 +748,7 @@ model_configs: |
 workloads:
   - id: biography
     source: input.csv
+    text_column: biography
 configs:
   - id: substitute
     replace: substitute
@@ -794,8 +802,7 @@ def test_benchmark_preflight_rejects_bad_provider_config(tmp_path: Path) -> None
     tool = load_tool(
         "measurement_benchmark_tool_preflight_providers", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    _copy_biography_data(tmp_path)
     provider_path = tmp_path / "providers.yaml"
     provider_path.write_text("not_providers: []\n", encoding="utf-8")
     spec_path = tmp_path / "suite.yaml"
@@ -806,6 +813,7 @@ model_providers: providers.yaml
 workloads:
   - id: biography
     source: input.csv
+    text_column: biography
 configs:
   - id: redact
     replace: redact
@@ -822,8 +830,7 @@ def test_benchmark_preflight_accepts_provider_config_path(tmp_path: Path) -> Non
     tool = load_tool(
         "measurement_benchmark_tool_preflight_provider_path", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    _copy_biography_data(tmp_path)
     provider_path = tmp_path / "providers.yaml"
     provider_path.write_text(
         """
@@ -843,6 +850,7 @@ model_providers: providers.yaml
 workloads:
   - id: biography
     source: input.csv
+    text_column: biography
 configs:
   - id: redact
     replace: redact
@@ -864,8 +872,7 @@ def test_benchmark_preflight_rejects_native_strategy_without_runtime(
     )
     monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", raising=False)
     monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_MODEL", raising=False)
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    _copy_biography_data(tmp_path)
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
         """
@@ -873,6 +880,7 @@ suite_id: native-runtime-suite
 workloads:
   - id: input
     source: input.csv
+    text_column: biography
 configs:
   - id: native-single-pass
     experimental_detection_strategy: native_single_pass
@@ -928,8 +936,7 @@ def test_benchmark_preflight_rejects_native_strategy_without_endpoint_or_model(
     )
     monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", raising=False)
     monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_MODEL", raising=False)
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    _copy_biography_data(tmp_path)
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
         """
@@ -939,6 +946,7 @@ native_runtime:
 workloads:
   - id: input
     source: input.csv
+    text_column: biography
 configs:
   - id: native-single-pass
     experimental_detection_strategy: native_single_pass
@@ -962,8 +970,7 @@ def test_benchmark_native_runtime_resolves_endpoint_and_model_from_env(
     )
     monkeypatch.setenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", "http://runtime-from-env/v1")
     monkeypatch.setenv("ANONYMIZER_BENCH_NATIVE_MODEL", "env-model")
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    _copy_biography_data(tmp_path)
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
         """
@@ -973,6 +980,7 @@ native_runtime:
 workloads:
   - id: input
     source: input.csv
+    text_column: biography
 configs:
   - id: native-single-pass
     experimental_detection_strategy: native_single_pass
@@ -1008,8 +1016,7 @@ def test_benchmark_preflight_skips_inactive_native_configs(tmp_path: Path) -> No
         "measurement_benchmark_tool_inactive_native_runtime",
         REPO_ROOT / "tools/measurement/run_benchmarks.py",
     )
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(input_path, index=False)
+    _copy_biography_data(tmp_path)
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
         """
@@ -1017,6 +1024,7 @@ suite_id: inactive-native-suite
 workloads:
   - id: input
     source: input.csv
+    text_column: biography
 configs:
   - id: redact
     replace: redact

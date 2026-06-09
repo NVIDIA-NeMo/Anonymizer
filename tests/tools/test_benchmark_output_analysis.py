@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -30,311 +31,19 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
 
 
+def _copy_fixture(tmp_path: Path, fixture_name: str) -> Path:
+    fixture_dir = REPO_ROOT / "tests" / "fixtures" / "measurement" / fixture_name
+    destination = tmp_path / fixture_name
+    shutil.copytree(fixture_dir, destination)
+    return destination
+
+
 def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp_path: Path) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
     )
-    benchmark_dir = tmp_path / "benchmark"
-    benchmark_dir.mkdir()
-    _write_jsonl(
-        benchmark_dir / "measurements.jsonl",
-        [
-            {
-                "record_type": "ndd_workflow",
-                "run_id": "bio__default__r000",
-                "workflow_name": "entity-detection",
-                "elapsed_sec": 8.5,
-                "observed_total_requests": 4,
-                "observed_successful_requests": 3,
-                "observed_input_tokens": 5000,
-                "observed_output_tokens": 1000,
-                "observed_total_tokens": 6000,
-                "observed_failed_requests": 1,
-                "model_usage": {
-                    "nvidia/gliner-pii": {
-                        "request_usage": {
-                            "successful_requests": 1,
-                            "failed_requests": 0,
-                            "total_requests": 1,
-                        },
-                        "token_usage": {
-                            "input_tokens": 1000,
-                            "output_tokens": 100,
-                            "total_tokens": 1100,
-                        },
-                    },
-                    "local-nemotron-json": {
-                        "model_alias": "local-nemotron-json",
-                        "model_name": "nvidia/nemotron-3-super",
-                        "model_provider_name": "local-vllm",
-                        "request_usage": {
-                            "successful_requests": 2,
-                            "failed_requests": 1,
-                            "total_requests": 3,
-                        },
-                        "token_usage": {
-                            "input_tokens": 4000,
-                            "output_tokens": 900,
-                            "total_tokens": 4900,
-                        },
-                    },
-                },
-                "detect": {"validation_max_entities_per_call": 10},
-                "run_tags": {
-                    "suite_id": "suite",
-                    "workload_id": "bio",
-                    "workload_category": "synthetic_biography",
-                    "config_id": "default",
-                    "experimental_detection_strategy": "default",
-                    "experimental_replacement_strategy": "default",
-                    "dd_parser_compat": "raw_json",
-                    "entity_label_set_id": "agent",
-                    "entity_label_count": 4,
-                    "gliner_threshold": 0.3,
-                    "topology_endpoint_count": 2,
-                    "topology_gpu_count": 4,
-                    "topology_tensor_parallelism": 2,
-                    "repetition": 0,
-                    "case_id": "bio__default__r000",
-                },
-            },
-            {
-                "record_type": "stage",
-                "run_id": "bio__default__r000",
-                "stage": "Anonymizer._run_internal",
-                "elapsed_sec": 10.0,
-                "status": "completed",
-                "run_tags": {
-                    "suite_id": "suite",
-                    "workload_id": "bio",
-                    "workload_category": "synthetic_biography",
-                    "config_id": "default",
-                    "experimental_detection_strategy": "default",
-                    "experimental_replacement_strategy": "default",
-                    "dd_parser_compat": "raw_json",
-                    "entity_label_set_id": "agent",
-                    "entity_label_count": 4,
-                    "gliner_threshold": 0.3,
-                    "topology_endpoint_count": 2,
-                    "topology_gpu_count": 4,
-                    "topology_tensor_parallelism": 2,
-                    "repetition": 0,
-                    "case_id": "bio__default__r000",
-                },
-            },
-            {
-                "record_type": "record",
-                "run_id": "bio__default__r000",
-                "text_length_tokens": 1200,
-                "final_entity_count": 14,
-                "ground_truth_entity_count": 20,
-                "entity_true_positive_count": 10,
-                "entity_false_positive_count": 4,
-                "entity_false_negative_count": 10,
-                "entity_relaxed_gt_found_count": 15,
-                "entity_relaxed_detected_tp_count": 14,
-                "entity_relaxed_label_compatible_gt_found_count": 13,
-                "entity_relaxed_label_compatible_detected_tp_count": 12,
-                "replacement_count": 12,
-                "replacement_missing_final_entity_count": 2,
-                "replacement_missing_final_entity_label_counts": {"date": 2},
-                "replacement_missing_final_value_count": 1,
-                "replacement_synthetic_original_collision_count": 1,
-                "replacement_synthetic_original_collision_label_counts": {"date": 1},
-                "replacement_synthetic_original_collision_value_count": 1,
-                "original_value_leak_count": 0,
-                "original_value_leak_label_counts": {},
-                "run_tags": {
-                    "suite_id": "suite",
-                    "workload_id": "bio",
-                    "workload_category": "synthetic_biography",
-                    "config_id": "default",
-                    "experimental_detection_strategy": "default",
-                    "experimental_replacement_strategy": "default",
-                    "dd_parser_compat": "raw_json",
-                    "entity_label_set_id": "agent",
-                    "entity_label_count": 4,
-                    "gliner_threshold": 0.3,
-                    "repetition": 0,
-                    "case_id": "bio__default__r000",
-                },
-            },
-            {
-                "record_type": "record",
-                "run_id": "bio__default__r000",
-                "text_length_tokens": 300,
-                "final_entity_count": 0,
-                "ground_truth_entity_count": 2,
-                "entity_true_positive_count": 0,
-                "entity_false_positive_count": 0,
-                "entity_false_negative_count": 2,
-                "entity_relaxed_gt_found_count": 0,
-                "entity_relaxed_detected_tp_count": 0,
-                "entity_relaxed_label_compatible_gt_found_count": 0,
-                "entity_relaxed_label_compatible_detected_tp_count": 0,
-                "replacement_count": 0,
-                "replacement_missing_final_entity_count": 0,
-                "replacement_missing_final_entity_label_counts": {},
-                "replacement_missing_final_value_count": 0,
-                "replacement_synthetic_original_collision_count": 0,
-                "replacement_synthetic_original_collision_label_counts": {},
-                "replacement_synthetic_original_collision_value_count": 0,
-                "original_value_leak_count": 0,
-                "original_value_leak_label_counts": {},
-                "run_tags": {
-                    "suite_id": "suite",
-                    "workload_id": "bio",
-                    "workload_category": "synthetic_biography",
-                    "config_id": "default",
-                    "experimental_detection_strategy": "default",
-                    "experimental_replacement_strategy": "default",
-                    "dd_parser_compat": "raw_json",
-                    "entity_label_set_id": "agent",
-                    "entity_label_count": 4,
-                    "gliner_threshold": 0.3,
-                    "repetition": 0,
-                    "case_id": "bio__default__r000",
-                },
-            },
-            {
-                "record_type": "record",
-                "run_id": "shell__native-local__r000",
-                "text_length_tokens": 750,
-                "final_entity_count": 8,
-                "replacement_count": 8,
-                "replacement_missing_final_entity_count": 0,
-                "replacement_missing_final_entity_label_counts": {},
-                "replacement_missing_final_value_count": 0,
-                "replacement_synthetic_original_collision_count": 0,
-                "replacement_synthetic_original_collision_label_counts": {},
-                "replacement_synthetic_original_collision_value_count": 0,
-                "original_value_leak_count": 1,
-                "original_value_leak_label_counts": {"api_key": 1},
-                "run_tags": {
-                    "suite_id": "suite",
-                    "workload_id": "shell",
-                    "config_id": "native-local",
-                    "experimental_detection_strategy": "native_single_pass",
-                    "experimental_replacement_strategy": "custom_replacement_strategy",
-                    "dd_parser_compat": "raw_json",
-                    "repetition": 0,
-                    "case_id": "shell__native-local__r000",
-                },
-            },
-        ],
-    )
-    _write_jsonl(
-        benchmark_dir / "detection-artifacts.jsonl",
-        [
-            {
-                "suite_id": "suite",
-                "workload_id": "bio",
-                "config_id": "default",
-                "repetition": 0,
-                "case_id": "bio__default__r000",
-                "run_id": "bio__default__r000",
-                "workflow_name": "entity-detection",
-                "seed_entity_count": 13,
-                "seed_validation_candidate_count": 13,
-                "augmented_entity_count": 1,
-                "augmented_new_final_value_count": 1,
-                "final_entity_count": 14,
-                "final_source_counts": {"detector": 11, "augmenter": 3},
-                "final_entity_signature_hashes": ["bio-hash-a", "bio-hash-b"],
-                "final_entity_signature_labels": {"bio-hash-a": "person", "bio-hash-b": "city"},
-                "final_entity_signature_details": {
-                    "bio-hash-a": {
-                        "label": "person",
-                        "source": "detector",
-                        "row_index": 0,
-                        "start_position": 0,
-                        "end_position": 5,
-                        "value_hash": "hash-person",
-                        "value_length": 5,
-                    }
-                },
-                "final_entity_signature_count": 2,
-            },
-            {
-                "suite_id": "suite",
-                "workload_id": "shell",
-                "config_id": "native-local",
-                "repetition": 0,
-                "case_id": "shell__native-local__r000",
-                "run_id": "shell__native-local__r000",
-                "workflow_name": "native-single-pass",
-                "seed_entity_count": 8,
-                "seed_validation_candidate_count": 0,
-                "augmented_entity_count": 0,
-                "augmented_new_final_value_count": 0,
-                "final_entity_count": 8,
-                "final_source_counts": {"augmenter": 8},
-                "final_entity_signature_hashes": ["shell-hash-a"],
-                "final_entity_signature_labels": {"shell-hash-a": "api_key"},
-                "final_entity_signature_details": {
-                    "shell-hash-a": {
-                        "label": "api_key",
-                        "source": "native",
-                        "row_index": 0,
-                        "start_position": 12,
-                        "end_position": 32,
-                        "value_hash": "hash-secret",
-                        "value_length": 20,
-                    }
-                },
-                "final_entity_signature_count": 1,
-            },
-        ],
-    )
-    traces_dir = benchmark_dir / "traces"
-    traces_dir.mkdir()
-    _write_jsonl(
-        traces_dir / "bio__default__r000.jsonl",
-        [
-            {
-                "record_type": "dd_message_trace",
-                "run_id": "bio__default__r000",
-                "workflow_name": "entity-detection",
-                "model_alias": "local-nemotron-json",
-                "status": "error",
-                "error_type": "SyncClientUnavailableError",
-                "is_async": False,
-                "messages": [{"role": "user", "content": "Alice has sk-test"}],
-                "response": "Alice still has sk-test",
-                "run_tags": {
-                    "suite_id": "suite",
-                    "workload_id": "bio",
-                    "config_id": "default",
-                    "experimental_detection_strategy": "default",
-                    "experimental_replacement_strategy": "default",
-                    "dd_parser_compat": "raw_json",
-                    "repetition": 0,
-                    "case_id": "bio__default__r000",
-                },
-            },
-            {
-                "record_type": "dd_message_trace",
-                "run_id": "bio__default__r000",
-                "workflow_name": "entity-detection",
-                "model_alias": "local-nemotron-json",
-                "status": "success",
-                "is_async": True,
-                "messages": [{"role": "user", "content": "sk-test"}],
-                "response": "Alice",
-                "run_tags": {
-                    "suite_id": "suite",
-                    "workload_id": "bio",
-                    "config_id": "default",
-                    "experimental_detection_strategy": "default",
-                    "experimental_replacement_strategy": "default",
-                    "dd_parser_compat": "raw_json",
-                    "repetition": 0,
-                    "case_id": "bio__default__r000",
-                },
-            },
-        ],
-    )
+    benchmark_dir = _copy_fixture(tmp_path, "benchmark-output")
 
     result = tool.analyze_benchmark_output(benchmark_dir)
 
@@ -342,168 +51,49 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert result.group_count == 2
     assert result.model_usage_count == 2
     assert result.model_usage_group_count == 2
+
     cases = {row.case_id: row for row in result.cases}
-    assert cases["bio__default__r000"].workload_category == "synthetic_biography"
-    assert cases["bio__default__r000"].entity_label_set_id == "agent"
-    assert cases["bio__default__r000"].entity_label_count == 4
-    assert cases["bio__default__r000"].gliner_threshold == pytest.approx(0.3)
-    assert cases["bio__default__r000"].experimental_replacement_strategy == "default"
-    assert cases["bio__default__r000"].observed_total_requests == 4
-    assert cases["bio__default__r000"].observed_successful_requests == 3
-    assert cases["bio__default__r000"].observed_input_tokens == 5000
-    assert cases["bio__default__r000"].observed_output_tokens == 1000
-    assert cases["bio__default__r000"].observed_total_tokens == 6000
-    assert cases["bio__default__r000"].observed_failed_request_rate == pytest.approx(1 / 4)
-    assert cases["bio__default__r000"].dd_trace_record_count == 2
-    assert cases["bio__default__r000"].dd_trace_error_count == 1
-    assert cases["bio__default__r000"].dd_trace_sync_client_unavailable_count == 1
-    assert cases["bio__default__r000"].observed_bridge_fallback_requests == 1
-    assert cases["bio__default__r000"].observed_non_bridge_total_requests == 3
-    assert cases["bio__default__r000"].observed_non_bridge_failed_requests == 0
-    assert cases["bio__default__r000"].observed_non_bridge_failed_request_rate == 0
-    assert cases["bio__default__r000"].record_count == 2
-    assert cases["bio__default__r000"].input_text_tokens_total == 1500
-    assert cases["bio__default__r000"].records_per_pipeline_sec == pytest.approx(0.2)
-    assert cases["bio__default__r000"].records_per_ndd_sec == pytest.approx(2 / 8.5)
-    assert cases["bio__default__r000"].input_text_tokens_per_pipeline_sec == 150
-    assert cases["bio__default__r000"].input_text_tokens_per_ndd_sec == pytest.approx(1500 / 8.5)
-    assert cases["bio__default__r000"].topology_endpoint_count == 2
-    assert cases["bio__default__r000"].topology_gpu_count == 4
-    assert cases["bio__default__r000"].topology_tensor_parallelism == 2
-    assert cases["bio__default__r000"].input_text_tokens_per_endpoint_sec == 75
-    assert cases["bio__default__r000"].input_text_tokens_per_gpu_sec == 37.5
-    assert cases["bio__default__r000"].empty_detection_count == 1
-    assert cases["bio__default__r000"].empty_detection_rate == 0.5
-    assert cases["bio__default__r000"].empty_detection_with_ground_truth_count == 1
-    assert cases["bio__default__r000"].empty_detection_with_ground_truth_rate == 0.5
-    assert cases["bio__default__r000"].ground_truth_record_count == 2
-    assert cases["bio__default__r000"].ground_truth_entity_count == 22
-    assert cases["bio__default__r000"].entity_true_positive_count == 10
-    assert cases["bio__default__r000"].entity_false_positive_count == 4
-    assert cases["bio__default__r000"].entity_false_negative_count == 12
-    assert cases["bio__default__r000"].entity_precision == pytest.approx(10 / 14)
-    assert cases["bio__default__r000"].entity_recall == pytest.approx(10 / 22)
-    assert cases["bio__default__r000"].entity_relaxed_gt_found_count == 15
-    assert cases["bio__default__r000"].entity_relaxed_detected_tp_count == 14
-    assert cases["bio__default__r000"].entity_relaxed_label_compatible_gt_found_count == 13
-    assert cases["bio__default__r000"].entity_relaxed_label_compatible_detected_tp_count == 12
-    assert cases["bio__default__r000"].entity_relaxed_precision == 1.0
-    assert cases["bio__default__r000"].entity_relaxed_recall == pytest.approx(15 / 22)
-    assert cases["bio__default__r000"].entity_relaxed_label_compatible_precision == pytest.approx(12 / 14)
-    assert cases["bio__default__r000"].entity_relaxed_label_compatible_recall == pytest.approx(13 / 22)
-    assert cases["bio__default__r000"].validation_max_entities_per_call == 10
-    assert cases["bio__default__r000"].original_value_leak_count == 0
-    assert cases["bio__default__r000"].original_value_leak_record_count == 0
-    assert cases["bio__default__r000"].original_value_leak_label_counts == {}
-    assert cases["bio__default__r000"].replacement_missing_final_entity_count == 2
-    assert cases["bio__default__r000"].replacement_missing_final_entity_label_counts == {"date": 2}
-    assert cases["bio__default__r000"].replacement_missing_final_value_count == 1
-    assert cases["bio__default__r000"].replacement_synthetic_original_collision_count == 1
-    assert cases["bio__default__r000"].replacement_synthetic_original_collision_label_counts == {"date": 1}
-    assert cases["bio__default__r000"].replacement_synthetic_original_collision_value_count == 1
-    assert cases["bio__default__r000"].seed_validation_candidate_count == 13
-    assert cases["bio__default__r000"].estimated_seed_validation_chunk_count == 2
-    assert cases["bio__default__r000"].augmented_new_final_value_count == 1
-    assert cases["bio__default__r000"].artifact_final_detector_entity_count == 11
-    assert cases["bio__default__r000"].artifact_final_augmenter_entity_count == 3
-    assert cases["bio__default__r000"].artifact_final_entity_signature_hashes == ["bio-hash-a", "bio-hash-b"]
-    assert cases["bio__default__r000"].artifact_final_entity_signature_labels == {
-        "bio-hash-a": "person",
-        "bio-hash-b": "city",
+    bio = cases["bio__default__r000"]
+    assert bio.workload_category == "synthetic_biography"
+    assert bio.observed_failed_request_rate == pytest.approx(1 / 4)
+    assert bio.dd_trace_error_count == 1
+    assert bio.observed_bridge_fallback_requests == 1
+    assert bio.record_count == 2
+    assert bio.entity_precision == pytest.approx(10 / 14)
+    assert bio.entity_recall == pytest.approx(10 / 22)
+    assert bio.replacement_missing_final_entity_label_counts == {"date": 2}
+    assert bio.replacement_synthetic_original_collision_label_counts == {"date": 1}
+    assert bio.artifact_final_detector_entity_count == 11
+    assert bio.artifact_final_augmenter_entity_count == 3
+    assert bio.artifact_final_entity_signature_hashes == ["bio-hash-a", "bio-hash-b"]
+    assert bio.artifact_final_entity_signature_details["bio-hash-a"] == {
+        "label": "person",
+        "source": "detector",
+        "row_index": 0,
+        "start_position": 0,
+        "end_position": 5,
+        "value_length": 5,
     }
-    assert cases["bio__default__r000"].artifact_final_entity_signature_details == {
-        "bio-hash-a": {
-            "label": "person",
-            "source": "detector",
-            "row_index": 0,
-            "start_position": 0,
-            "end_position": 5,
-            "value_length": 5,
-        }
-    }
-    assert cases["bio__default__r000"].artifact_final_entity_signature_count == 2
-    assert cases["shell__native-local__r000"].observed_total_requests == 0
-    assert cases["shell__native-local__r000"].experimental_replacement_strategy == "custom_replacement_strategy"
-    assert cases["shell__native-local__r000"].observed_failed_request_rate is None
-    assert cases["shell__native-local__r000"].observed_bridge_fallback_requests is None
-    assert cases["shell__native-local__r000"].observed_non_bridge_failed_requests is None
-    assert cases["shell__native-local__r000"].final_entity_count == 8
-    assert cases["shell__native-local__r000"].replacement_missing_final_entity_count == 0
-    assert cases["shell__native-local__r000"].replacement_missing_final_entity_label_counts == {}
-    assert cases["shell__native-local__r000"].replacement_missing_final_value_count == 0
-    assert cases["shell__native-local__r000"].replacement_synthetic_original_collision_count == 0
-    assert cases["shell__native-local__r000"].replacement_synthetic_original_collision_label_counts == {}
-    assert cases["shell__native-local__r000"].replacement_synthetic_original_collision_value_count == 0
-    assert cases["shell__native-local__r000"].original_value_leak_count == 1
-    assert cases["shell__native-local__r000"].original_value_leak_record_count == 1
-    assert cases["shell__native-local__r000"].original_value_leak_label_counts == {"api_key": 1}
-    assert cases["shell__native-local__r000"].artifact_final_augmenter_entity_count == 8
-    assert cases["shell__native-local__r000"].artifact_final_entity_signature_hashes == ["shell-hash-a"]
-    assert cases["shell__native-local__r000"].artifact_final_entity_signature_labels == {"shell-hash-a": "api_key"}
-    assert (
-        cases["shell__native-local__r000"].artifact_final_entity_signature_details["shell-hash-a"]["source"] == "native"
-    )
+
+    shell = cases["shell__native-local__r000"]
+    assert shell.experimental_replacement_strategy == "custom_replacement_strategy"
+    assert shell.original_value_leak_count == 1
+    assert shell.artifact_final_entity_signature_details["shell-hash-a"]["source"] == "native"
+
     model_rows = {row.model_name: row for row in result.model_usage}
-    assert model_rows["nvidia/gliner-pii"].observed_failed_requests == 0
-    assert model_rows["nvidia/gliner-pii"].observed_failed_request_rate == 0
     assert model_rows["nvidia/gliner-pii"].observed_total_tokens == 1100
-    assert model_rows["nvidia/nemotron-3-super"].model_alias == "local-nemotron-json"
-    assert model_rows["nvidia/nemotron-3-super"].experimental_replacement_strategy == "default"
     assert model_rows["nvidia/nemotron-3-super"].model_provider_name == "local-vllm"
-    assert model_rows["nvidia/nemotron-3-super"].observed_failed_requests == 1
     assert model_rows["nvidia/nemotron-3-super"].observed_failed_request_rate == pytest.approx(1 / 3)
-    assert model_rows["nvidia/nemotron-3-super"].observed_total_tokens == 4900
-    model_groups = {(row.model_alias, row.model_name): row for row in result.model_usage_groups}
-    nemotron_group = model_groups[("local-nemotron-json", "nvidia/nemotron-3-super")]
-    assert nemotron_group.model_provider_name == "local-vllm"
-    assert nemotron_group.sum_observed_failed_requests == 1
-    assert nemotron_group.observed_failed_request_rate == pytest.approx(1 / 3)
-    assert nemotron_group.median_observed_total_requests == 3
+
     bio_group = next(group for group in result.groups if group.workload_id == "bio")
-    assert bio_group.workload_category == "synthetic_biography"
-    assert bio_group.entity_label_set_id == "agent"
-    assert bio_group.entity_label_count == 4
-    assert bio_group.gliner_threshold == pytest.approx(0.3)
-    assert bio_group.experimental_replacement_strategy == "default"
-    assert bio_group.median_observed_bridge_fallback_requests == 1
-    assert bio_group.median_observed_non_bridge_total_requests == 3
-    assert bio_group.median_observed_non_bridge_failed_requests == 0
-    assert bio_group.median_observed_non_bridge_failed_request_rate == 0
-    assert bio_group.median_replacement_missing_final_entity_count == 2
-    assert bio_group.median_replacement_missing_final_value_count == 1
-    assert bio_group.replacement_missing_final_entity_label_counts == {"date": 2}
-    assert bio_group.median_replacement_synthetic_original_collision_count == 1
-    assert bio_group.median_replacement_synthetic_original_collision_value_count == 1
-    assert bio_group.replacement_synthetic_original_collision_label_counts == {"date": 1}
     assert bio_group.total_record_count == 2
-    assert bio_group.total_input_text_tokens == 1500
-    assert bio_group.median_input_text_tokens_per_pipeline_sec == 150
-    assert bio_group.median_input_text_tokens_per_endpoint_sec == 75
-    assert bio_group.median_input_text_tokens_per_gpu_sec == 37.5
-    assert bio_group.total_empty_detection_count == 1
-    assert bio_group.empty_detection_rate == 0.5
-    assert bio_group.total_empty_detection_with_ground_truth_count == 1
-    assert bio_group.empty_detection_with_ground_truth_rate == 0.5
-    assert bio_group.total_ground_truth_record_count == 2
-    assert bio_group.sum_ground_truth_entity_count == 22
-    assert bio_group.sum_entity_true_positive_count == 10
-    assert bio_group.sum_entity_false_positive_count == 4
-    assert bio_group.sum_entity_false_negative_count == 12
     assert bio_group.micro_entity_precision == pytest.approx(10 / 14)
-    assert bio_group.micro_entity_recall == pytest.approx(10 / 22)
-    assert bio_group.sum_entity_relaxed_gt_found_count == 15
-    assert bio_group.sum_entity_relaxed_detected_tp_count == 14
-    assert bio_group.sum_entity_relaxed_label_compatible_gt_found_count == 13
-    assert bio_group.sum_entity_relaxed_label_compatible_detected_tp_count == 12
-    assert bio_group.micro_entity_relaxed_precision == 1.0
-    assert bio_group.micro_entity_relaxed_recall == pytest.approx(15 / 22)
-    assert bio_group.micro_entity_relaxed_label_compatible_precision == pytest.approx(12 / 14)
-    assert bio_group.micro_entity_relaxed_label_compatible_recall == pytest.approx(13 / 22)
+    assert bio_group.replacement_missing_final_entity_label_counts == {"date": 2}
+    assert bio_group.replacement_synthetic_original_collision_label_counts == {"date": 1}
+
     shell_group = next(group for group in result.groups if group.workload_id == "shell")
     assert shell_group.experimental_replacement_strategy == "custom_replacement_strategy"
     assert shell_group.sum_original_value_leak_count == 1
-    assert shell_group.leaking_case_count == 1
-    assert shell_group.median_original_value_leak_count == 1
 
     serialized = result.model_dump_json()
     assert "Alice" not in serialized

@@ -3,10 +3,52 @@
 
 # Measurement tools
 
-This directory contains developer tools for measuring Anonymizer runs, exporting
-measurement JSONL to tables, and comparing benchmark strategies. Run the tools
-inside the project environment, either with an activated venv or through
-`uv run`.
+This directory contains developer tools for measuring Anonymizer runs,
+exporting measurement JSONL to tables, and comparing benchmark strategies.
+Run the tools inside the project environment, either with an activated venv or
+through `uv run`.
+
+Use these tools when you need evidence about cost, latency, reliability, or
+anonymization quality. They are not product entry points and the benchmark-only
+strategy knobs are not public Anonymizer defaults.
+
+## System overview
+
+The measurement system has three layers:
+
+- Instrumentation in Anonymizer emits JSONL records for runs, stages,
+  DataDesigner workflows, direct model workflows, and per-record safety metrics.
+- Benchmark runners and probes create repeatable workloads and write those JSONL
+  records plus optional sidecars such as detection artifacts and DataDesigner
+  traces.
+- Analysis tools convert raw run artifacts into case, group, model, and
+  comparison tables.
+
+External/distributed execution is a separate boundary. Detection export APIs are
+responsible for building DataDesigner configs that an external runtime can
+execute. The tools here should consume the resulting measurement JSONL,
+detection artifacts, and trace sidecars; they should not own SLURM
+orchestration or distributed DataDesigner execution.
+
+## Tool map
+
+| Task | Tool |
+| --- | --- |
+| Export raw measurement JSONL to tables | `export_measurements.py` |
+| Run repeatable Anonymizer suites | `run_benchmarks.py` |
+| Inspect DataDesigner traces | `analyze_dd_traces.py` |
+| Inspect detection artifact sidecars | `analyze_detection_artifacts.py` |
+| Probe one direct detection prompt | `direct_detection_probe.py` |
+| Probe staged seed/validate/augment paths | `staged_detection_probe.py` |
+| Analyze staged probe outputs | `analyze_staged_detection_output.py` |
+| Analyze benchmark output directories | `analyze_benchmark_output.py` |
+| Compare a candidate against a baseline | `compare_strategy_pairs.py` |
+| Screen many comparison files | `screen_strategy_comparisons.py` |
+| Extract exact-signature deltas | `extract_signature_deltas.py` |
+
+Most workflows start with `run_benchmarks.py`, then
+`analyze_benchmark_output.py`, then either `compare_strategy_pairs.py` or
+`screen_strategy_comparisons.py`.
 
 ```bash
 uv run python tools/measurement/export_measurements.py measurements.jsonl --output tables
