@@ -8,9 +8,7 @@ Usage:
     uv run python tools/measurement/run_benchmarks.py suite.yaml --dry-run --json
 """
 
-import json
 import logging
-import os
 import shutil
 import sys
 import time
@@ -25,17 +23,10 @@ import pyarrow.parquet as pq
 import yaml
 from analyze_detection_artifacts import (
     analyze_artifacts,
-    build_detection_artifact_row_from_entities,
     iter_detection_parquet_files,
 )
 from data_designer.config.models import ModelProvider
 from data_designer.config.utils.io_helpers import load_config_file
-from dd_parser_compat import DDParserCompatMode, dd_parser_compat_context
-from detection_strategies import (
-    ExperimentalDetectionStrategy,
-    NativeDetectionRuntime,
-    experimental_detection_strategy_context,
-)
 from export_measurements import export_tables, read_measurements
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
 from measurement_tools.tables import ExportFormat
@@ -51,10 +42,8 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT, PrivacyGoal, RiskTolerance
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
-from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
 
@@ -72,35 +61,6 @@ class DDTraceMode(StrEnum):
     none = "none"
     last_message = "last_message"
     all_messages = "all_messages"
-
-
-_NATIVE_ENDPOINT_ENV = "ANONYMIZER_BENCH_NATIVE_ENDPOINT"
-_NATIVE_MODEL_ENV = "ANONYMIZER_BENCH_NATIVE_MODEL"
-_GLINER_ENDPOINT_ENV = "ANONYMIZER_BENCH_GLINER_ENDPOINT"
-_GLINER_MODEL_ENV = "ANONYMIZER_BENCH_GLINER_MODEL"
-
-
-class NativeRuntimeSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    runtime_id: str | None = None
-    endpoint: str | None = None
-    endpoint_env: str | None = _NATIVE_ENDPOINT_ENV
-    model: str | None = None
-    model_env: str | None = _NATIVE_MODEL_ENV
-    provider: str = "native"
-    alias: str = "native-direct"
-    max_tokens: int = Field(default=4096, gt=0)
-    timeout_sec: float = Field(default=180.0, gt=0)
-    gliner_endpoint: str | None = None
-    gliner_endpoint_env: str | None = _GLINER_ENDPOINT_ENV
-    gliner_model: str | None = None
-    gliner_model_env: str | None = _GLINER_MODEL_ENV
-    gliner_provider: str = "gliner"
-    gliner_alias: str = "gliner-direct"
-    gliner_api_key_env: str = "NVIDIA_API_KEY"
-    gliner_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
-    max_workers: int = Field(default=4, ge=1)
 
 
 class ReplaceKind(StrEnum):
@@ -152,8 +112,6 @@ class ConfigSpec(BaseModel):
     replace: str | ReplaceSpec | None = None
     rewrite: RewriteSpec | None = None
     emit_telemetry: bool = False
-    experimental_detection_strategy: ExperimentalDetectionStrategy = ExperimentalDetectionStrategy.default
-    native_runtime: NativeRuntimeSpec | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> "ConfigSpec":
@@ -189,8 +147,6 @@ class BenchmarkSpec(BaseModel):
     model_configs: str | None = None
     model_providers: str | None = None
     artifact_path: str | None = None
-    dd_parser_compat: DDParserCompatMode = DDParserCompatMode.none
-    native_runtime: NativeRuntimeSpec | None = None
     case_retries: int = Field(default=0, ge=0)
     case_retry_backoff_sec: float = Field(default=0.0, ge=0.0)
     workloads: list[WorkloadSpec] = Field(min_length=1)
@@ -258,54 +214,6 @@ class _CaseRunPaths:
     task_trace_path: Path | None
     artifact_snapshot: dict[str, int] | None
     export_detection_artifacts: bool
-
-
-@dataclass(frozen=True)
-class _CaseExecution:
-    input_data: AnonymizerInput
-    trace_dataframe: pd.DataFrame | None = None
-
-
-_TRACE_FINAL_ARTIFACT_STRATEGIES = {
-    ExperimentalDetectionStrategy.native_candidate_validate_no_augment,
-    ExperimentalDetectionStrategy.detector_native_validate_no_augment,
-    ExperimentalDetectionStrategy.detector_native_validate_native_augment,
-    ExperimentalDetectionStrategy.gliner_native_validate_no_augment,
-    ExperimentalDetectionStrategy.gliner_native_validate_native_augment,
-    ExperimentalDetectionStrategy.native_single_pass,
-    ExperimentalDetectionStrategy.native_single_pass_recall,
-    ExperimentalDetectionStrategy.native_single_pass_values,
-    ExperimentalDetectionStrategy.native_single_pass_values_recall,
-}
-_NATIVE_RUNTIME_STRATEGIES = {
-    ExperimentalDetectionStrategy.native_candidate_validate_no_augment,
-    ExperimentalDetectionStrategy.detector_native_validate_no_augment,
-    ExperimentalDetectionStrategy.detector_native_validate_native_augment,
-    ExperimentalDetectionStrategy.gliner_native_validate_no_augment,
-    ExperimentalDetectionStrategy.gliner_native_validate_native_augment,
-    ExperimentalDetectionStrategy.native_single_pass,
-    ExperimentalDetectionStrategy.native_single_pass_recall,
-    ExperimentalDetectionStrategy.native_single_pass_values,
-    ExperimentalDetectionStrategy.native_single_pass_values_recall,
-}
-_GLINER_NATIVE_RUNTIME_STRATEGIES = {
-    ExperimentalDetectionStrategy.gliner_native_validate_no_augment,
-    ExperimentalDetectionStrategy.gliner_native_validate_native_augment,
-}
-
-_FINAL_ARTIFACT_KEYS = {
-    "final_entity_count",
-    "weak_api_key_shape_count",
-    "final_entity_signature_count",
-    "final_entity_signature_hashes",
-    "final_entity_signature_labels",
-    "final_entity_signature_details",
-    "weak_api_key_shape_label_counts",
-    "final_label_counts",
-    "final_source_counts",
-}
-
-_FINAL_ARTIFACT_PREFIXES = tuple(f"{key}." for key in _FINAL_ARTIFACT_KEYS if key != "final_entity_signature_hashes")
 
 
 def load_spec(path: Path) -> BenchmarkSpec:
@@ -419,10 +327,6 @@ def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) 
         except Exception as exc:
             errors.append(f"config '{config.id}' invalid: {exc}")
             continue
-        try:
-            _preflight_native_runtime(config, spec=spec)
-        except Exception as exc:
-            errors.append(f"config '{config.id}' native_runtime invalid: {exc}")
         if parsed_models is None:
             continue
         try:
@@ -442,65 +346,6 @@ def _active_config_ids(spec: BenchmarkSpec) -> set[str]:
     if spec.matrix is None:
         return {config.id for config in spec.configs}
     return {entry.config for entry in spec.matrix}
-
-
-def _preflight_native_runtime(config: ConfigSpec, *, spec: BenchmarkSpec) -> None:
-    strategy = config.experimental_detection_strategy
-    if strategy not in _NATIVE_RUNTIME_STRATEGIES:
-        return
-    runtime = _resolve_native_runtime_spec(spec, config)
-    if not runtime.runtime_id:
-        raise ValueError("native strategies require native_runtime.runtime_id")
-    if not runtime.endpoint or not runtime.model:
-        raise ValueError("native strategies require native_runtime.endpoint and native_runtime.model")
-    if strategy in _GLINER_NATIVE_RUNTIME_STRATEGIES:
-        if not runtime.gliner_endpoint or not runtime.gliner_model:
-            raise ValueError("GLiNER-native strategies require native_runtime.gliner_endpoint and gliner_model")
-        if not os.environ.get(runtime.gliner_api_key_env):
-            raise ValueError(f"{runtime.gliner_api_key_env} is not set for GLiNER-native strategy")
-
-
-def _resolve_native_runtime_spec(spec: BenchmarkSpec, config: ConfigSpec) -> NativeRuntimeSpec:
-    runtime = spec.native_runtime or NativeRuntimeSpec()
-    if config.native_runtime is not None:
-        runtime = runtime.model_copy(update=config.native_runtime.model_dump(exclude_unset=True))
-    return runtime.model_copy(
-        update={
-            "endpoint": _resolve_runtime_value(runtime.endpoint, runtime.endpoint_env),
-            "model": _resolve_runtime_value(runtime.model, runtime.model_env),
-            "gliner_endpoint": _resolve_runtime_value(runtime.gliner_endpoint, runtime.gliner_endpoint_env),
-            "gliner_model": _resolve_runtime_value(runtime.gliner_model, runtime.gliner_model_env),
-        }
-    )
-
-
-def _resolve_runtime_value(explicit: str | None, env_var: str | None) -> str | None:
-    if explicit:
-        return explicit
-    return os.environ.get(env_var) if env_var else None
-
-
-def _native_detection_runtime(spec: BenchmarkSpec, config: ConfigSpec) -> NativeDetectionRuntime:
-    runtime = _resolve_native_runtime_spec(spec, config)
-    if not runtime.runtime_id:
-        raise ValueError("native strategies require native_runtime.runtime_id")
-    if not runtime.endpoint or not runtime.model:
-        raise ValueError("native strategies require native_runtime.endpoint and native_runtime.model")
-    return NativeDetectionRuntime(
-        endpoint=runtime.endpoint,
-        model=runtime.model,
-        provider=runtime.provider,
-        alias=runtime.alias,
-        max_tokens=runtime.max_tokens,
-        timeout_sec=runtime.timeout_sec,
-        gliner_endpoint=runtime.gliner_endpoint,
-        gliner_model=runtime.gliner_model or "",
-        gliner_provider=runtime.gliner_provider,
-        gliner_alias=runtime.gliner_alias,
-        gliner_api_key_env=runtime.gliner_api_key_env,
-        gliner_threshold=runtime.gliner_threshold,
-        max_workers=runtime.max_workers,
-    )
 
 
 def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
@@ -683,7 +528,6 @@ def _build_contexts(
         "trace_dir": trace_dir or output_dir / "traces",
         "dd_task_trace": dd_task_trace,
         "task_trace_dir": task_trace_dir or output_dir / "task-traces",
-        "dd_parser_compat": spec.dd_parser_compat,
         "artifact_path": artifact_path,
         "anonymizer_kwargs": {
             "model_configs": _resolve_config_source(spec.model_configs, base_dir),
@@ -786,7 +630,7 @@ def _run_case_success(
 ) -> BenchmarkCase:
     workload = _get_item(contexts["workloads"], case.workload_id, "workload")
     config = _get_item(contexts["configs"], case.config_id, "config")
-    execution = _execute_case(
+    _execute_case(
         anonymizer,
         workload,
         config,
@@ -797,14 +641,11 @@ def _run_case_success(
         spec=spec,
         base_dir=contexts["base_dir"],
         dd_trace=contexts["dd_trace"],
-        dd_parser_compat=contexts["dd_parser_compat"],
     )
     detection_artifact_path = _case_detection_artifact_path(
         contexts,
         paths,
         case=case,
-        config=config,
-        execution=execution,
     )
     return _case_with_result(
         case,
@@ -854,8 +695,6 @@ def _case_detection_artifact_path(
     paths: _CaseRunPaths,
     *,
     case: BenchmarkCase,
-    config: ConfigSpec,
-    execution: _CaseExecution,
 ) -> Path | None:
     detection_artifact_path = _export_case_detection_artifacts_if_requested(
         contexts,
@@ -863,115 +702,9 @@ def _case_detection_artifact_path(
         case=case,
         artifact_snapshot=paths.artifact_snapshot,
     )
-    if paths.export_detection_artifacts:
-        detection_artifact_path = _trace_final_artifact_path_if_requested(
-            config,
-            detection_artifact_path,
-            paths.artifact_output_path,
-            case=case,
-            trace_dataframe=execution.trace_dataframe,
-        )
     if detection_artifact_path is not None or paths.artifact_snapshot is None:
         return detection_artifact_path
     return None
-
-
-def _trace_final_artifact_path_if_requested(
-    config: ConfigSpec,
-    detection_artifact_path: Path | None,
-    output_path: Path,
-    *,
-    case: BenchmarkCase,
-    trace_dataframe: pd.DataFrame | None,
-) -> Path | None:
-    if config.experimental_detection_strategy not in _TRACE_FINAL_ARTIFACT_STRATEGIES:
-        return detection_artifact_path
-    if trace_dataframe is None:
-        return detection_artifact_path
-    return patch_case_detection_artifacts_from_trace_dataframe(
-        detection_artifact_path or output_path,
-        trace_dataframe,
-        case=case,
-    )
-
-
-def patch_case_detection_artifacts_from_trace_dataframe(
-    output_path: Path,
-    trace_dataframe: pd.DataFrame,
-    *,
-    case: BenchmarkCase | None = None,
-) -> Path | None:
-    final_rows = _final_entity_artifact_rows_from_trace_dataframe(trace_dataframe)
-    if not final_rows:
-        return None
-    rows = _read_detection_artifact_payloads(output_path) if output_path.exists() else []
-    patched = _merge_final_entity_artifact_rows(rows, final_rows)
-    if case is not None:
-        patched = [_with_case_metadata(row, case=case) for row in patched]
-    write_detection_artifact_payloads(patched, output_path)
-    return output_path
-
-
-def _final_entity_artifact_rows_from_trace_dataframe(trace_dataframe: pd.DataFrame) -> list[dict[str, Any]]:
-    entities_column = _trace_final_entities_column(trace_dataframe)
-    if entities_column is None:
-        return []
-    return [
-        _final_entity_artifact_row(raw_entities, row_index=row_index)
-        for row_index, raw_entities in enumerate(trace_dataframe[entities_column])
-    ]
-
-
-def _trace_final_entities_column(trace_dataframe: pd.DataFrame) -> str | None:
-    if COL_FINAL_ENTITIES in trace_dataframe.columns:
-        return COL_FINAL_ENTITIES
-    if COL_DETECTED_ENTITIES in trace_dataframe.columns:
-        return COL_DETECTED_ENTITIES
-    return None
-
-
-def _final_entity_artifact_row(raw_entities: object, *, row_index: int) -> dict[str, Any]:
-    entities = EntitiesSchema.from_raw(raw_entities).entities
-    return build_detection_artifact_row_from_entities(
-        workflow_name="entity-detection-final-trace",
-        batch_file="trace_dataframe",
-        row_index=row_index,
-        seed_entities=[],
-        seed_validation_candidate_count=0,
-        merged_validation_candidate_count=0,
-        augmented_entities=[],
-        final_entities=entities,
-    ).model_dump()
-
-
-def _read_detection_artifact_payloads(output_path: Path) -> list[dict[str, Any]]:
-    with output_path.open(encoding="utf-8") as source:
-        return [json.loads(line) for line in source if line.strip()]
-
-
-def _merge_final_entity_artifact_rows(
-    rows: list[dict[str, Any]],
-    final_rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    patched = [_patch_final_entity_artifact_row(row, final_row) for row, final_row in zip(rows, final_rows)]
-    return patched + rows[len(final_rows) :] + final_rows[len(rows) :]
-
-
-def _patch_final_entity_artifact_row(row: dict[str, Any], final_row: dict[str, Any]) -> dict[str, Any]:
-    clean_row = _without_final_entity_artifact_fields(row)
-    return {**clean_row, **_final_entity_artifact_fields(final_row)}
-
-
-def _without_final_entity_artifact_fields(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in row.items()
-        if key not in _FINAL_ARTIFACT_KEYS and not key.startswith(_FINAL_ARTIFACT_PREFIXES)
-    }
-
-
-def _final_entity_artifact_fields(row: dict[str, Any]) -> dict[str, Any]:
-    return {key: row[key] for key in _FINAL_ARTIFACT_KEYS}
 
 
 def _case_with_result(
@@ -1043,8 +776,7 @@ def _execute_case(
     spec: BenchmarkSpec,
     base_dir: Path,
     dd_trace: DDTraceMode,
-    dd_parser_compat: DDParserCompatMode,
-) -> _CaseExecution:
+) -> None:
     anonymizer_config = build_anonymizer_config(config)
     input_data = build_input(
         workload,
@@ -1064,19 +796,10 @@ def _execute_case(
         fail_on_write_error=True,
     )
     with configured_measurement_session(measurement):
-        with dd_parser_compat_context(dd_parser_compat):
-            detection_context_kwargs: dict[str, Any] = {}
-            if config.experimental_detection_strategy in _NATIVE_RUNTIME_STRATEGIES:
-                detection_context_kwargs["native_runtime"] = _native_detection_runtime(spec, config)
-            with experimental_detection_strategy_context(
-                config.experimental_detection_strategy,
-                **detection_context_kwargs,
-            ):
-                result = anonymizer.run(
-                    config=anonymizer_config,
-                    data=input_data,
-                )
-    return _CaseExecution(input_data=input_data, trace_dataframe=getattr(result, "trace_dataframe", None))
+        anonymizer.run(
+            config=anonymizer_config,
+            data=input_data,
+        )
 
 
 def build_input(
@@ -1339,42 +1062,13 @@ def render_result(result: BenchmarkResult, *, json_output: bool) -> str:
 
 
 def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
-    config = next(item for item in spec.configs if item.id == case.config_id)
-    tags = {
+    return {
         "suite_id": spec.suite_id,
         "workload_id": case.workload_id,
         "config_id": case.config_id,
         "repetition": case.repetition,
         "case_id": case.case_id,
-        "experimental_detection_strategy": config.experimental_detection_strategy.value,
-        "dd_parser_compat": spec.dd_parser_compat.value,
     }
-    if config.experimental_detection_strategy in _NATIVE_RUNTIME_STRATEGIES:
-        tags.update(_native_runtime_tags(_resolve_native_runtime_spec(spec, config)))
-    return tags
-
-
-def _native_runtime_tags(runtime: NativeRuntimeSpec) -> dict[str, Any]:
-    return _present(
-        {
-            "native_runtime_id": runtime.runtime_id,
-            "native_endpoint_env": runtime.endpoint_env,
-            "native_model": runtime.model,
-            "native_model_env": runtime.model_env,
-            "native_provider": runtime.provider,
-            "native_alias": runtime.alias,
-            "native_max_tokens": runtime.max_tokens,
-            "native_timeout_sec": runtime.timeout_sec,
-            "native_max_workers": runtime.max_workers,
-            "gliner_endpoint_env": runtime.gliner_endpoint_env,
-            "gliner_model": runtime.gliner_model,
-            "gliner_model_env": runtime.gliner_model_env,
-            "gliner_provider": runtime.gliner_provider,
-            "gliner_alias": runtime.gliner_alias,
-            "gliner_api_key_env": runtime.gliner_api_key_env,
-            "gliner_threshold": runtime.gliner_threshold,
-        }
-    )
 
 
 def _present(values: dict[str, Any]) -> dict[str, Any]:
