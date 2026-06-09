@@ -40,6 +40,8 @@ class LogFormat(StrEnum):
 
 
 _log_format = LogFormat.plain
+
+
 class StagedCaseAnalysisRow(BaseModel):
     source_path: str
     case_id: str
@@ -432,6 +434,7 @@ def _render_group_line(group: StagedGroupAnalysisRow, label_deltas: list[LabelDe
         f"baseline_only={group.baseline_only_final_entity_signature_count_sum}, "
         f"direct_only={group.direct_only_final_entity_signature_count_sum}, lost_labels={lost}"
     )
+
 
 def _top_labels(label_deltas: list[LabelDeltaAnalysisRow], *, seed_source: str | None, delta_type: str) -> str:
     matches = [delta for delta in label_deltas if delta.seed_source == seed_source and delta.delta_type == delta_type]
