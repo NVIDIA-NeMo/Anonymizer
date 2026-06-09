@@ -85,7 +85,7 @@ PRIVACY_RUBRIC = Score(
     options={
         "high":   "Original direct identifiers removed; remaining quasi-identifiers create low linkage risk.",
         "medium": "No obvious direct identifiers remain, but a distinctive quasi-identifier bundle creates noticeable linkage risk.",
-        "low":    "One or more original direct identifiers or near-equivalents remain, or the record is easily linkable.",
+        "low" : "The record is easily or near-certainly linkable back to the original: key direct identifiers remain, or enough identifying detail survives that re-identification requires minimal effort regardless of how many entities were successfully transformed.",
     },
 )
 
