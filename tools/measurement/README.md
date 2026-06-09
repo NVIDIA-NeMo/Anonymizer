@@ -12,6 +12,56 @@ Use these tools when you need evidence about cost, latency, reliability, or
 anonymization quality. They are not product entry points and the benchmark-only
 strategy knobs are not public Anonymizer defaults.
 
+## Quick export to DataFrames or CSV
+
+Start here when you have a `measurements.jsonl` file and want to analyze it in
+pandas, Polars, a spreadsheet, or another local tool.
+
+```bash
+uv run python tools/measurement/export_measurements.py \
+  benchmark-runs/suite/measurements.jsonl \
+  --output benchmark-runs/suite/tables \
+  --overwrite
+```
+
+By default, the exporter writes one Parquet table per measurement record type
+plus `manifest.json`:
+
+- `run.parquet`
+- `stage.parquet`
+- `record.parquet`
+- `ndd_workflow.parquet` when DataDesigner adapter records are present
+- `model_workflow.parquet` when direct model workflow records are present
+
+Use CSV or JSONL when those are easier to inspect:
+
+```bash
+uv run python tools/measurement/export_measurements.py \
+  benchmark-runs/suite/measurements.jsonl \
+  --output benchmark-runs/suite/tables-csv \
+  --format csv \
+  --overwrite
+```
+
+Then load the tables directly:
+
+```python
+import pandas as pd
+
+records = pd.read_parquet("benchmark-runs/suite/tables/record.parquet")
+stages = pd.read_parquet("benchmark-runs/suite/tables/stage.parquet")
+ndd = pd.read_parquet("benchmark-runs/suite/tables/ndd_workflow.parquet")
+```
+
+You can also read the raw log, but the exporter is the better default because
+it splits records by `record_type` and normalizes nested fields into columns.
+
+```python
+import pandas as pd
+
+raw = pd.read_json("benchmark-runs/suite/measurements.jsonl", lines=True)
+```
+
 ## System overview
 
 The measurement system has three layers:
@@ -64,22 +114,6 @@ boring command and export policy through `measurement_tools/`:
 This is intentionally composition-based. New analysis tools should declare
 their own row models and call the shared helpers rather than inheriting from a
 common analyzer base class.
-
-```bash
-uv run python tools/measurement/export_measurements.py measurements.jsonl --output tables
-```
-
-By default, `export_measurements.py` writes Parquet files plus
-`manifest.json`:
-
-- `run.parquet`
-- `stage.parquet`
-- `record.parquet`
-- `ndd_workflow.parquet` when DataDesigner adapter records are present
-- `model_workflow.parquet` when direct model workflow records are present
-
-Use `--format csv` or `--format jsonl` for non-Parquet output, and
-`--overwrite` to replace existing output files.
 
 ## Benchmark runner
 

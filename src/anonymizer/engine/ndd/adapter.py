@@ -146,14 +146,14 @@ class NddAdapter:
                             num_records=len(workflow_input_df),
                             dataset_name=workflow_name,
                         )
-                        task_traces = list(getattr(run_results, "task_traces", []) or [])
+                        task_traces = _task_traces_from_result(run_results)
                         output_df = run_results.load_dataset()
                     else:
                         preview_results = self._data_designer.preview(
                             config_builder,
                             num_records=record_count,
                         )
-                        task_traces = list(getattr(preview_results, "task_traces", []) or [])
+                        task_traces = _task_traces_from_result(preview_results)
                         if preview_results.dataset is None:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
@@ -438,6 +438,18 @@ def _run_config_with_async_trace(run_config: Any) -> Any:
     if isinstance(run_config, RunConfig):
         return run_config.model_copy(update={"async_trace": True})
     return run_config
+
+
+def _task_traces_from_result(result: Any) -> list[Any]:
+    raw_traces = getattr(result, "task_traces", None)
+    if raw_traces is None:
+        return []
+    if isinstance(raw_traces, list):
+        return raw_traces
+    try:
+        return list(raw_traces)
+    except TypeError:
+        return []
 
 
 def _configure_native_dd_message_traces(

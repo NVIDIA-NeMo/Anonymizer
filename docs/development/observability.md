@@ -3,7 +3,7 @@
 
 # Observability
 
-Anonymizer keeps local run measurement in `src/anonymizer/measurement.py`.
+Anonymizer keeps local run measurement in the `anonymizer.measurement` package.
 Measurement hooks record timings, counts, model-call summaries, and safety
 metrics without changing anonymization behavior. Benchmark tools convert those
 records into tables for latency, reliability, model usage, and quality analysis.
@@ -163,7 +163,7 @@ When adding instrumentation:
 
 | File | Purpose |
 | --- | --- |
-| `src/anonymizer/measurement.py` | Collector, config, context managers, safe record builders, and trace sidecar hooks. |
+| `src/anonymizer/measurement/` | Collector, config, context managers, safe record builders, and trace sidecar hooks. |
 | `src/anonymizer/interface/anonymizer.py` | Run-level and per-record measurement integration. |
 | `src/anonymizer/engine/ndd/adapter.py` | DataDesigner workflow measurement, native message trace capture, and scheduler task trace capture. |
 | `tools/measurement/run_benchmarks.py` | Benchmark suite runner that activates measurement sessions and writes per-case artifacts. |
