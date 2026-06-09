@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -17,6 +18,7 @@ import yaml
 from pydantic import ValidationError
 
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -42,6 +44,7 @@ def _minimal_case_contexts(tool: ModuleType, spec: Any, tmp_path: Path) -> dict[
         "trace_dir": tmp_path / "traces",
         "dd_task_trace": False,
         "task_trace_dir": tmp_path / "task-traces",
+        "dd_parser_compat": spec.dd_parser_compat,
         "artifact_path": tmp_path / "artifacts",
     }
 
@@ -207,6 +210,128 @@ def test_benchmark_case_detection_artifact_analysis_adds_case_metadata(tmp_path:
     assert "sk-test" not in output_path.read_text(encoding="utf-8")
 
 
+def _stale_detection_artifact_payload() -> dict[str, Any]:
+    return {
+        "workflow_name": "entity-detection",
+        "batch_file": "entity-detection/parquet-files/batch_00000.parquet",
+        "row_index": 0,
+        "seed_entity_count": 1,
+        "seed_validation_candidate_count": 1,
+        "merged_validation_candidate_count": 1,
+        "augmented_entity_count": 0,
+        "final_entity_count": 1,
+        "augmented_duplicate_seed_value_count": 0,
+        "augmented_new_value_count": 0,
+        "augmented_new_final_value_count": 0,
+        "weak_api_key_shape_count": 0,
+        "final_entity_signature_count": 1,
+        "final_entity_signature_hashes": ["stale"],
+        "final_entity_signature_labels": {"stale": "person"},
+        "weak_api_key_shape_label_counts": {},
+        "final_label_counts": {"person": 1},
+        "final_source_counts": {"detector": 1},
+    }
+
+
+def _final_trace_dataframe_with_rule_entity() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {
+                            "value": "Alice",
+                            "label": "person",
+                            "start_position": 0,
+                            "end_position": 5,
+                            "source": "detector",
+                        },
+                        {
+                            "value": "1990",
+                            "label": "date_of_birth",
+                            "start_position": 25,
+                            "end_position": 29,
+                            "source": "rule",
+                        },
+                    ]
+                }
+            ]
+        }
+    )
+
+
+def test_benchmark_patches_detection_artifacts_from_final_trace_dataframe(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_patch_result_artifacts",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    output_path = tmp_path / "raw" / "case.detection-artifacts.jsonl"
+    tool.write_detection_artifact_payloads([_stale_detection_artifact_payload()], output_path)
+
+    result = tool.patch_case_detection_artifacts_from_trace_dataframe(
+        output_path,
+        _final_trace_dataframe_with_rule_entity(),
+    )
+
+    assert result == output_path
+    text = output_path.read_text(encoding="utf-8")
+    assert "Alice" not in text
+    assert "1990" not in text
+    row = json.loads(text)
+    assert row["final_entity_count"] == 2
+    assert row["final_entity_signature_count"] == 2
+    assert row["final_label_counts.person"] == 1
+    assert row["final_label_counts.date_of_birth"] == 1
+    assert row["final_source_counts.detector"] == 1
+    assert row["final_source_counts.rule"] == 1
+    assert any(key.startswith("final_entity_signature_details.") for key in row)
+    assert "final_entity_signature_labels.stale" not in row
+
+
+def test_benchmark_no_export_disables_trace_detection_artifact_sidecar(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_no_export_trace_artifact",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    spec = tool.BenchmarkSpec(
+        suite_id="no-export-suite",
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=[
+            tool.ConfigSpec(
+                id="native-single-pass-redact",
+                replace="redact",
+                experimental_detection_strategy="native_single_pass",
+            )
+        ],
+    )
+    case = tool.BenchmarkCase(
+        suite_id="no-export-suite",
+        workload_id="input",
+        config_id="native-single-pass-redact",
+        repetition=0,
+        case_id="input__native-single-pass-redact__r000",
+    )
+    contexts = _minimal_case_contexts(tool, spec, tmp_path)
+    paths = tool._case_run_paths(case, contexts=contexts, export_detection_artifacts=False)
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice"]}).to_csv(input_path, index=False)
+    execution = tool._CaseExecution(
+        input_data=tool.AnonymizerInput(source=str(input_path)),
+        trace_dataframe=_final_trace_dataframe_with_rule_entity(),
+    )
+
+    result = tool._case_detection_artifact_path(
+        contexts,
+        paths,
+        case=case,
+        config=spec.configs[0],
+        execution=execution,
+    )
+
+    assert result is None
+    assert not paths.artifact_output_path.exists()
+
+
 def test_run_suite_records_detection_artifact_analysis_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -337,12 +462,15 @@ def test_benchmark_case_retries_transient_errors_and_records_attempts(
     )
     pd.DataFrame({"text": ["Alice"]}).to_csv(tmp_path / "input.csv", index=False)
 
-    def fake_execute_case(*_args: Any, raw_path: Path, **_kwargs: Any) -> None:
+    def fake_execute_case(*_args: Any, raw_path: Path, **_kwargs: Any) -> Any:
         attempts.append(raw_path)
         if len(attempts) == 1:
             raise RuntimeError("transient provider health check failure")
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         raw_path.write_text('{"record_type":"run"}\n', encoding="utf-8")
+        return tool._CaseExecution(
+            input_data=tool.AnonymizerInput(source=str(tmp_path / "input.csv"), text_column="text")
+        )
 
     monkeypatch.setattr(tool, "_execute_case", fake_execute_case)
 
@@ -795,6 +923,186 @@ configs:
     tool.preflight_suite(spec, spec_path=spec_path)
 
 
+def test_benchmark_preflight_rejects_native_strategy_without_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_required",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", raising=False)
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_MODEL", raising=False)
+    _copy_biography_data(tmp_path)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: native-runtime-suite
+workloads:
+  - id: input
+    source: input.csv
+    text_column: biography
+configs:
+  - id: native-single-pass
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="native_runtime.runtime_id"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_native_runtime_config_override_merges_suite_defaults() -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_merge",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    config = tool.ConfigSpec(
+        id="native-single-pass",
+        experimental_detection_strategy="native_single_pass",
+        native_runtime=tool.NativeRuntimeSpec(model="config-model", max_workers=2),
+        replace="redact",
+    )
+    spec = tool.BenchmarkSpec(
+        suite_id="native-runtime-suite",
+        native_runtime=tool.NativeRuntimeSpec(
+            runtime_id="suite-runtime",
+            endpoint="http://suite-endpoint/v1",
+            model="suite-model",
+            provider="suite-provider",
+            max_workers=4,
+        ),
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=[config],
+    )
+
+    runtime = tool._native_detection_runtime(spec, config)
+
+    assert runtime.endpoint == "http://suite-endpoint/v1"
+    assert runtime.model == "config-model"
+    assert runtime.provider == "suite-provider"
+    assert runtime.max_workers == 2
+
+
+def test_benchmark_preflight_rejects_native_strategy_without_endpoint_or_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_endpoint_required",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", raising=False)
+    monkeypatch.delenv("ANONYMIZER_BENCH_NATIVE_MODEL", raising=False)
+    _copy_biography_data(tmp_path)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: native-runtime-suite
+native_runtime:
+  runtime_id: native-runtime
+workloads:
+  - id: input
+    source: input.csv
+    text_column: biography
+configs:
+  - id: native-single-pass
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="native_runtime.endpoint"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
+def test_benchmark_native_runtime_resolves_endpoint_and_model_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_native_runtime_env",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    monkeypatch.setenv("ANONYMIZER_BENCH_NATIVE_ENDPOINT", "http://runtime-from-env/v1")
+    monkeypatch.setenv("ANONYMIZER_BENCH_NATIVE_MODEL", "env-model")
+    _copy_biography_data(tmp_path)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: native-runtime-suite
+native_runtime:
+  runtime_id: env-runtime
+workloads:
+  - id: input
+    source: input.csv
+    text_column: biography
+configs:
+  - id: native-single-pass
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    tool.preflight_suite(spec, spec_path=spec_path)
+    runtime = tool._native_detection_runtime(spec, spec.configs[0])
+    tags = tool._run_tags(
+        tool.BenchmarkCase(
+            suite_id="native-runtime-suite",
+            workload_id="input",
+            config_id="native-single-pass",
+            repetition=0,
+            case_id="input__native-single-pass__r000",
+        ),
+        spec,
+    )
+
+    assert runtime.endpoint == "http://runtime-from-env/v1"
+    assert runtime.model == "env-model"
+    assert tags["native_runtime_id"] == "env-runtime"
+    assert "native_endpoint" not in tags
+    assert tags["native_endpoint_env"] == "ANONYMIZER_BENCH_NATIVE_ENDPOINT"
+    assert tags["native_model"] == "env-model"
+
+
+def test_benchmark_preflight_skips_inactive_native_configs(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_inactive_native_runtime",
+        REPO_ROOT / "tools/measurement/run_benchmarks.py",
+    )
+    _copy_biography_data(tmp_path)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: inactive-native-suite
+workloads:
+  - id: input
+    source: input.csv
+    text_column: biography
+configs:
+  - id: redact
+    replace: redact
+  - id: inactive-native
+    experimental_detection_strategy: native_single_pass
+    replace: redact
+matrix:
+  - workload: input
+    config: redact
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    tool.preflight_suite(spec, spec_path=spec_path)
+
+
 def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -841,6 +1149,7 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
         spec=spec,
         base_dir=tmp_path,
         dd_trace=tool.DDTraceMode.all_messages,
+        dd_parser_compat=tool.DDParserCompatMode.none,
     )
 
     assert len(captured) == 1
@@ -849,3 +1158,216 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
     assert captured[0].dd_task_trace_path == task_trace_path
     assert captured[0].streaming is True
     assert captured[0].keep_records is False
+
+
+def test_benchmark_config_accepts_experimental_detection_strategy() -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_detection_strategy_config", REPO_ROOT / "tools/measurement/run_benchmarks.py"
+    )
+
+    detector_only = tool.ConfigSpec(
+        id="detector-only",
+        replace="redact",
+        experimental_detection_strategy="detector_only",
+    )
+
+    assert detector_only.experimental_detection_strategy == tool.ExperimentalDetectionStrategy.detector_only
+    anonymizer_config = tool.build_anonymizer_config(detector_only)
+    assert not hasattr(anonymizer_config.detect, "experimental_detection_strategy")
+
+    native_candidate_validate = tool.ConfigSpec(
+        id="native-candidate-validate",
+        replace="redact",
+        experimental_detection_strategy="native_candidate_validate_no_augment",
+    )
+
+    assert (
+        native_candidate_validate.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.native_candidate_validate_no_augment
+    )
+
+    detector_native_validate = tool.ConfigSpec(
+        id="detector-native-validate",
+        replace="redact",
+        experimental_detection_strategy="detector_native_validate_no_augment",
+    )
+
+    assert (
+        detector_native_validate.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.detector_native_validate_no_augment
+    )
+
+    detector_native_augment = tool.ConfigSpec(
+        id="detector-native-augment",
+        replace="redact",
+        experimental_detection_strategy="detector_native_validate_native_augment",
+    )
+
+    assert (
+        detector_native_augment.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.detector_native_validate_native_augment
+    )
+
+    gliner_native_validate = tool.ConfigSpec(
+        id="gliner-native-validate",
+        replace="redact",
+        experimental_detection_strategy="gliner_native_validate_no_augment",
+    )
+
+    assert (
+        gliner_native_validate.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.gliner_native_validate_no_augment
+    )
+
+    gliner_native_augment = tool.ConfigSpec(
+        id="gliner-native-augment",
+        replace="redact",
+        experimental_detection_strategy="gliner_native_validate_native_augment",
+    )
+
+    assert (
+        gliner_native_augment.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.gliner_native_validate_native_augment
+    )
+
+    native_single_pass = tool.ConfigSpec(
+        id="native-single-pass",
+        replace="redact",
+        experimental_detection_strategy="native_single_pass",
+    )
+
+    assert native_single_pass.experimental_detection_strategy == tool.ExperimentalDetectionStrategy.native_single_pass
+
+    native_single_pass_recall = tool.ConfigSpec(
+        id="native-single-pass-recall",
+        replace="redact",
+        experimental_detection_strategy="native_single_pass_recall",
+    )
+
+    assert (
+        native_single_pass_recall.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.native_single_pass_recall
+    )
+
+    native_single_pass_values = tool.ConfigSpec(
+        id="native-single-pass-values",
+        replace="redact",
+        experimental_detection_strategy="native_single_pass_values",
+    )
+
+    assert (
+        native_single_pass_values.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.native_single_pass_values
+    )
+
+    native_single_pass_values_recall = tool.ConfigSpec(
+        id="native-single-pass-values-recall",
+        replace="redact",
+        experimental_detection_strategy="native_single_pass_values_recall",
+    )
+
+    assert (
+        native_single_pass_values_recall.experimental_detection_strategy
+        == tool.ExperimentalDetectionStrategy.native_single_pass_values_recall
+    )
+
+
+def test_benchmark_spec_accepts_dd_parser_compat() -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_dd_parser_compat_config", REPO_ROOT / "tools/measurement/run_benchmarks.py"
+    )
+
+    spec = tool.BenchmarkSpec(
+        suite_id="raw-json-suite",
+        dd_parser_compat="raw_json",
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=[tool.ConfigSpec(id="redact", replace="redact")],
+    )
+
+    assert spec.dd_parser_compat == tool.DDParserCompatMode.raw_json
+
+
+def test_benchmark_case_enters_experimental_detection_strategy_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_detection_strategy_case", REPO_ROOT / "tools/measurement/run_benchmarks.py"
+    )
+    captured_measurements: list[Any] = []
+    captured_parser_compat: list[Any] = []
+    captured_strategies: list[Any] = []
+    captured_context_kwargs: list[dict[str, Any]] = []
+
+    @contextmanager
+    def fake_measurement_session(config: Any) -> Iterator[None]:
+        captured_measurements.append(config)
+        yield None
+
+    @contextmanager
+    def fake_detection_strategy_context(strategy: Any, **kwargs: Any) -> Iterator[None]:
+        captured_strategies.append(strategy)
+        captured_context_kwargs.append(kwargs)
+        yield None
+
+    @contextmanager
+    def fake_dd_parser_compat_context(mode: Any) -> Iterator[None]:
+        captured_parser_compat.append(mode)
+        yield None
+
+    class FakeAnonymizer:
+        def run(self, *, config: Any, data: Any) -> None:
+            assert config.replace is not None
+            assert data.text_column == "text"
+
+    monkeypatch.setattr(tool, "configured_measurement_session", fake_measurement_session)
+    monkeypatch.setattr(tool, "dd_parser_compat_context", fake_dd_parser_compat_context)
+    monkeypatch.setattr(tool, "experimental_detection_strategy_context", fake_detection_strategy_context)
+
+    spec = tool.BenchmarkSpec(
+        suite_id="native-suite",
+        dd_parser_compat="raw_json",
+        native_runtime=tool.NativeRuntimeSpec(
+            runtime_id="native-test",
+            endpoint="http://runtime.example/v1",
+            model="test-model",
+        ),
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=[
+            tool.ConfigSpec(
+                id="native-single-pass-redact",
+                replace="redact",
+                experimental_detection_strategy="native_single_pass",
+            )
+        ],
+    )
+    pd.DataFrame({"text": ["token=sk-test-AAAAAAAAAAAAAAAAAAAAAAAA"]}).to_csv(tmp_path / "input.csv", index=False)
+    case = tool.BenchmarkCase(
+        suite_id="native-suite",
+        workload_id="input",
+        config_id="native-single-pass-redact",
+        repetition=0,
+        case_id="input__native-single-pass-redact__r000",
+    )
+
+    tool._execute_case(
+        FakeAnonymizer(),
+        spec.workloads[0],
+        spec.configs[0],
+        raw_path=tmp_path / "raw" / "input__native-single-pass-redact__r000.jsonl",
+        trace_path=None,
+        task_trace_path=None,
+        case=case,
+        spec=spec,
+        base_dir=tmp_path,
+        dd_trace=tool.DDTraceMode.none,
+        dd_parser_compat=spec.dd_parser_compat,
+    )
+
+    assert captured_parser_compat == [tool.DDParserCompatMode.raw_json]
+    assert captured_strategies == [tool.ExperimentalDetectionStrategy.native_single_pass]
+    assert captured_context_kwargs[0]["native_runtime"].endpoint == "http://runtime.example/v1"
+    assert captured_context_kwargs[0]["native_runtime"].model == "test-model"
+    assert captured_measurements[0].run_tags["experimental_detection_strategy"] == "native_single_pass"
+    assert captured_measurements[0].run_tags["native_runtime_id"] == "native-test"
+    assert captured_measurements[0].run_tags["dd_parser_compat"] == "raw_json"
