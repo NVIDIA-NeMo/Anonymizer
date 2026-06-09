@@ -167,6 +167,8 @@ nav:
       - Choosing a Replacement Strategy: notebooks/03_choosing_a_replacement_strategy.ipynb
       - Rewriting Biographies: notebooks/04_rewriting_biographies.ipynb
       - Rewriting Legal Documents: notebooks/05_rewriting_legal_documents.ipynb
+  - Development:
+      - Observability: development/observability.md
   - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md

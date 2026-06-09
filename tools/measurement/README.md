@@ -122,12 +122,23 @@ manual GitHub Actions dispatch. It targets the self-hosted
 environment, runs a suite, appends a short case summary to the GitHub step
 summary, and uploads the full output directory as a workflow artifact.
 
+The job is intentionally manual. It runs only through `workflow_dispatch`; it
+does not run on `push`, `pull_request`, `schedule`, or the default PR CI path.
+GitHub exposes manual dispatch only after the workflow file exists on the
+repository default branch. After that, launch it from the Actions UI, GitHub
+CLI, or API.
+
 The default suite is `tools/measurement/examples/repo-data-smoke.yaml`. Dispatch
 inputs let operators choose the ref, suite path, output directory,
 DataDesigner message trace mode, sanitized scheduler task traces, and
 fail-fast behavior. The workflow requires the repository secret
 `NVIDIA_API_KEY` because the default model configuration uses NVIDIA-hosted
 models.
+
+The `ref` input defaults to `main`. To benchmark a PR or experiment branch, set
+`ref` to that branch name or commit SHA. The workflow checks out that ref and
+uses the benchmark runner and suite files from the checkout, so the selected ref
+must contain `tools/measurement/run_benchmarks.py` and the requested suite path.
 
 Benchmark suites are YAML files with three parts:
 
