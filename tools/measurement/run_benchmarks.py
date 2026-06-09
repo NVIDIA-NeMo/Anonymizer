@@ -36,7 +36,9 @@ from detection_strategies import (
     NativeDetectionRuntime,
     experimental_detection_strategy_context,
 )
-from export_measurements import ExportFormat, export_tables, read_measurements
+from export_measurements import export_tables, read_measurements
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.tables import ExportFormat
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from anonymizer.config.anonymizer_config import (
@@ -58,14 +60,6 @@ from anonymizer.measurement import MeasurementConfig, configured_measurement_ses
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.benchmark")
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
-
-
-_log_format = LogFormat.plain
 
 
 class CaseStatus(StrEnum):
@@ -305,21 +299,6 @@ _FINAL_ARTIFACT_KEYS = {
 }
 
 _FINAL_ARTIFACT_PREFIXES = tuple(f"{key}." for key in _FINAL_ARTIFACT_KEYS if key != "final_entity_signature_hashes")
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def load_spec(path: Path) -> BenchmarkSpec:
@@ -1444,7 +1423,7 @@ def main(
             trace_dir=trace_dir,
         )
     except (ValueError, ValidationError) as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
     if any(case.status == CaseStatus.error for case in result.cases):

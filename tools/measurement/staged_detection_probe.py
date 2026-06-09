@@ -36,13 +36,13 @@ from direct_detection_probe import (
     DirectDetectionRequest,
     DirectGenerationRequest,
     HttpxDirectDetectionClient,
-    LogFormat,
     PromptMode,
     SignatureComparison,
     build_direct_prompt,
     compare_signature_sets,
     parse_labels,
 )
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from anonymizer.engine.constants import (
@@ -100,7 +100,6 @@ _UNCONFIGURED_ENDPOINT = "configured-native-endpoint"
 _UNCONFIGURED_MODEL = "configured-native-model"
 _UNCONFIGURED_GLINER_ENDPOINT = "configured-gliner-endpoint"
 _UNCONFIGURED_GLINER_MODEL = "configured-gliner-model"
-_log_format = LogFormat.plain
 _DATE_OF_BIRTH_CONTEXT_RE = re.compile(r"\b(born|birth|date of birth|dob)\b", re.IGNORECASE)
 
 
@@ -271,20 +270,6 @@ class StagedDetectionRun(BaseModel):
 class StagedDetectionExecution:
     case: StagedDetectionCase
     row: dict[str, Any]
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        sys.stderr.write(json.dumps({"level": "error", "event": "bad_input", "error": error}) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def run_staged_detection_case(
@@ -1382,7 +1367,7 @@ def _run_main_probe(params: dict[str, Any]) -> StagedDetectionRun:
     try:
         return run_probe(**params)
     except (ValueError, ValidationError, httpx.HTTPError) as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
 
 

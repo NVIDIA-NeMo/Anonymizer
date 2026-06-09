@@ -364,7 +364,11 @@ def configured_measurement_session(config: MeasurementConfig | None) -> Iterator
         return
 
     sink = _JsonlMeasurementSink(config.output_path) if config.streaming else None
-    dd_trace_sink = _JsonlMeasurementSink(config.dd_trace_path) if config.dd_trace != "none" else None
+    dd_trace_sink = None
+    if config.dd_trace != "none":
+        if config.dd_trace_path is None:
+            raise ValueError("dd_trace_path is required when dd_trace is enabled")
+        dd_trace_sink = _JsonlMeasurementSink(config.dd_trace_path)
     collector = MeasurementCollector(
         run_id=config.run_id,
         record_hash_key=config.record_hash_key,

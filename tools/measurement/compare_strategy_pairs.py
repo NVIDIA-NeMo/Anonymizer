@@ -25,6 +25,8 @@ from typing import Annotated
 
 import cyclopts
 import pandas as pd
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.tables import ExportFormat
 from pydantic import BaseModel, Field
 
 app = cyclopts.App(help=__doc__)
@@ -38,17 +40,6 @@ _SIGNATURE_DETAIL_FIELDS = {
     "end_position",
     "value_length",
 }
-
-
-class ExportFormat(StrEnum):
-    parquet = "parquet"
-    csv = "csv"
-    jsonl = "jsonl"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
 
 
 class SafetyVerdict(StrEnum):
@@ -71,7 +62,6 @@ class CandidateVerdict(StrEnum):
     reject = "reject"
 
 
-_log_format = LogFormat.plain
 _MIN_CANDIDATE_OVERLAP_RATIO = 0.8
 _MAX_CANDIDATE_BOUNDARY_GAP_CHARS = 8
 _MIN_CANDIDATE_BOUNDARY_OVERLAP_CHARS = 8
@@ -216,21 +206,6 @@ class ComparisonResult(BaseModel):
     @property
     def comparison_count(self) -> int:
         return len(self.comparisons)
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def read_case_analysis(path: Path) -> pd.DataFrame:
@@ -1444,7 +1419,7 @@ def main(
             candidate_strategy=candidate_strategy,
         )
     except ValueError as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     result = ComparisonResult(
         input_path=str(case_analysis),

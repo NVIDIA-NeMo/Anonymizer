@@ -26,6 +26,7 @@ import httpx
 import pandas as pd
 from analyze_detection_artifacts import DetectionArtifactRow, build_detection_artifact_row_from_entities
 from dd_parser_compat import _load_embedded_json
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from anonymizer.engine.detection.detection_workflow import _format_label_examples
@@ -44,11 +45,6 @@ _UNCONFIGURED_MODEL = "configured-native-model"
 class CaseStatus(StrEnum):
     completed = "completed"
     error = "error"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
 
 
 class PromptMode(StrEnum):
@@ -149,23 +145,6 @@ class HttpxDirectDetectionClient:
             elapsed_sec=float(response.elapsed.total_seconds()),
             usage=data.get("usage") or {},
         )
-
-
-_log_format = LogFormat.plain
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        sys.stderr.write(json.dumps({"level": "error", "event": "bad_input", "error": error}) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def build_chat_payload(request: DirectGenerationRequest) -> dict[str, Any]:
@@ -565,7 +544,7 @@ def main(
             baseline_artifacts=baseline_artifacts,
         )
     except (ValueError, ValidationError, httpx.HTTPError) as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
     if result.error_count:

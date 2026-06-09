@@ -23,6 +23,8 @@ from typing import Annotated
 import cyclopts
 import pandas as pd
 from analyze_detection_artifacts import _entity_signature_hash
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.tables import ExportFormat
 from pydantic import BaseModel, Field, ValidationError
 
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_TEXT
@@ -30,17 +32,6 @@ from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.signature_deltas")
-
-
-class ExportFormat(StrEnum):
-    parquet = "parquet"
-    csv = "csv"
-    jsonl = "jsonl"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
 
 
 class DeltaSide(StrEnum):
@@ -54,7 +45,6 @@ class ContextResolution(StrEnum):
     metadata_only = "metadata_only"
 
 
-_log_format = LogFormat.plain
 _SIGNATURE_DETAIL_FIELDS = {
     "label",
     "source",
@@ -95,21 +85,6 @@ class _ArtifactSide(BaseModel):
     artifacts_path: str
     artifact_root: str
     config_id: str | None = None
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def extract_signature_deltas(
@@ -527,7 +502,7 @@ def main(
             context_window=context_window,
         )
     except (ValueError, ValidationError) as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     if output is not None:
         write_rows(result.rows, output, format)

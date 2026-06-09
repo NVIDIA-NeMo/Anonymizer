@@ -19,6 +19,13 @@ inside `tools/measurement`.
 - Distributed DataDesigner execution belongs outside this directory. Detection
   export APIs build configs for an external runtime; the measurement tools
   should analyze the artifacts that runtime writes.
+- Shared command-line concerns live in `measurement_tools/`: CLI logging,
+  output formats, table writing, and small numeric aggregations. Do not
+  redefine `LogFormat`, `ExportFormat`, bad-input logging, or model-row table
+  export in each script.
+- Prefer explicit specs and functions over analyzer base classes. A script
+  should own its row models, parsing, and metric semantics; shared helpers
+  should own boring IO/aggregation policy.
 
 ## Tests
 

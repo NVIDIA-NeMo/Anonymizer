@@ -19,12 +19,13 @@ import math
 import re
 import sys
 from collections import Counter
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Iterable
 
 import cyclopts
 import pandas as pd
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.tables import ExportFormat
 from pydantic import BaseModel, Field
 
 from anonymizer.engine.constants import (
@@ -45,20 +46,6 @@ app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.detection_artifacts")
 
 API_KEY_PREFIX_RE = re.compile(r"^(sk-|sk_|sk-ant-|sk-proj-|ghp_|pat-|hf_|xox[a-z]-|ya29\.|aiza|akia|bearer\s+)", re.I)
-
-
-class ExportFormat(StrEnum):
-    parquet = "parquet"
-    csv = "csv"
-    jsonl = "jsonl"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
-
-
-_log_format = LogFormat.plain
 
 
 class DetectionArtifactRow(BaseModel):
@@ -86,21 +73,6 @@ class DetectionArtifactRow(BaseModel):
 class DetectionArtifactAnalysis(BaseModel):
     artifact_path: str
     rows: list[DetectionArtifactRow] = Field(default_factory=list)
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def analyze_artifacts(
@@ -361,7 +333,7 @@ def main(
         if output is not None:
             write_rows(result.rows, output, format)
     except ValueError as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
 

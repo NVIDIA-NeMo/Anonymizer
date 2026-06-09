@@ -15,32 +15,23 @@ import json
 import logging
 import re
 import sys
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
 import cyclopts
 import pandas as pd
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.stats import median_or_none as _median_or_none
+from measurement_tools.stats import none_if_nan as _none_if_nan
+from measurement_tools.stats import sum_int_or_zero as _sum_int_or_zero
+from measurement_tools.tables import AnalysisExportResult, ExportFormat, ModelTableSpec
+from measurement_tools.tables import write_analysis_tables as _write_analysis_table_specs
 from pydantic import BaseModel, Field, computed_field
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.dd_traces")
 
 JSON_FENCE_RE = re.compile(r"```\s*json\b", re.IGNORECASE)
-
-
-class ExportFormat(StrEnum):
-    parquet = "parquet"
-    csv = "csv"
-    jsonl = "jsonl"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
-
-
-_log_format = LogFormat.plain
 
 
 class TraceAnalysisRow(BaseModel):
@@ -108,34 +99,6 @@ class TraceAnalysis(BaseModel):
     @property
     def group_count(self) -> int:
         return len(self.groups)
-
-
-class TableSummary(BaseModel):
-    table: str
-    rows: int
-    path: str
-
-
-class AnalysisExportResult(BaseModel):
-    output_dir: str
-    format: ExportFormat
-    tables: list[TableSummary]
-    manifest_path: str
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def analyze_trace_path(trace_path: Path) -> TraceAnalysis:
@@ -346,50 +309,15 @@ def _int_or_none(value: object) -> int | None:
     return int(value) if value is not None and not pd.isna(value) else None
 
 
-def _none_if_nan(value: object) -> str | None:
-    if pd.isna(value):
-        return None
-    return str(value)
-
-
-def _median_or_none(dataframe: pd.DataFrame, column: str) -> float | None:
-    values = pd.to_numeric(dataframe[column], errors="coerce").dropna()
-    if values.empty:
-        return None
-    return float(values.median())
-
-
-def _sum_int_or_zero(dataframe: pd.DataFrame, column: str) -> int:
-    if column not in dataframe.columns:
-        return 0
-    return int(pd.to_numeric(dataframe[column], errors="coerce").fillna(0).sum())
-
-
 def write_analysis_tables(result: TraceAnalysis, output_dir: Path, export_format: ExportFormat) -> AnalysisExportResult:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tables = [
-        _write_model_rows(result.rows, output_dir / f"trace_analysis.{export_format.value}", export_format),
-        _write_model_rows(result.groups, output_dir / f"trace_group_analysis.{export_format.value}", export_format),
-    ]
-    export_result = AnalysisExportResult(
-        output_dir=str(output_dir),
-        format=export_format,
-        tables=tables,
-        manifest_path=str(output_dir / "manifest.json"),
+    return _write_analysis_table_specs(
+        output_dir,
+        export_format,
+        [
+            ModelTableSpec("trace_analysis", result.rows, TraceAnalysisRow),
+            ModelTableSpec("trace_group_analysis", result.groups, TraceGroupAnalysisRow),
+        ],
     )
-    Path(export_result.manifest_path).write_text(export_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    return export_result
-
-
-def _write_model_rows(rows: list[BaseModel], path: Path, export_format: ExportFormat) -> TableSummary:
-    table = pd.DataFrame([row.model_dump() for row in rows])
-    if export_format == ExportFormat.parquet:
-        table.to_parquet(path, index=False)
-    elif export_format == ExportFormat.csv:
-        table.to_csv(path, index=False)
-    else:
-        table.to_json(path, orient="records", lines=True)
-    return TableSummary(table=path.stem, rows=len(table), path=str(path))
 
 
 def render_result(result: TraceAnalysis, *, json_output: bool) -> str:
@@ -422,7 +350,7 @@ def main(
         if output is not None:
             write_analysis_tables(result, output, format)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
 

@@ -16,30 +16,17 @@ import json
 import logging
 import sys
 from collections import Counter, defaultdict
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
 import cyclopts
-import pandas as pd
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.tables import AnalysisExportResult, ExportFormat, ModelTableSpec
+from measurement_tools.tables import write_analysis_tables as _write_analysis_table_specs
 from pydantic import BaseModel, Field, computed_field
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.staged_detection_output")
-
-
-class ExportFormat(StrEnum):
-    parquet = "parquet"
-    csv = "csv"
-    jsonl = "jsonl"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
-
-
-_log_format = LogFormat.plain
 
 
 class StagedCaseAnalysisRow(BaseModel):
@@ -106,19 +93,6 @@ class LabelDeltaAnalysisRow(BaseModel):
     count: int
 
 
-class TableSummary(BaseModel):
-    table: str
-    rows: int
-    path: str
-
-
-class AnalysisExportResult(BaseModel):
-    output_dir: str
-    format: ExportFormat
-    tables: list[TableSummary]
-    manifest_path: str
-
-
 class StagedDetectionOutputAnalysis(BaseModel):
     source_path: str
     cases: list[StagedCaseAnalysisRow] = Field(default_factory=list)
@@ -139,21 +113,6 @@ class StagedDetectionOutputAnalysis(BaseModel):
     @property
     def label_delta_count(self) -> int:
         return len(self.label_deltas)
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def analyze_staged_detection_output(input_path: Path) -> StagedDetectionOutputAnalysis:
@@ -363,54 +322,15 @@ def write_analysis_tables(
     output_dir: Path,
     export_format: ExportFormat,
 ) -> AnalysisExportResult:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tables = [
-        _write_model_rows(
-            result.cases, output_dir / f"case_analysis.{export_format.value}", export_format, StagedCaseAnalysisRow
-        ),
-        _write_model_rows(
-            result.groups,
-            output_dir / f"group_analysis.{export_format.value}",
-            export_format,
-            StagedGroupAnalysisRow,
-        ),
-        _write_model_rows(
-            result.label_deltas,
-            output_dir / f"label_delta_analysis.{export_format.value}",
-            export_format,
-            LabelDeltaAnalysisRow,
-        ),
-    ]
-    export_result = AnalysisExportResult(
-        output_dir=str(output_dir),
-        format=export_format,
-        tables=tables,
-        manifest_path=str(output_dir / "manifest.json"),
+    return _write_analysis_table_specs(
+        output_dir,
+        export_format,
+        [
+            ModelTableSpec("case_analysis", result.cases, StagedCaseAnalysisRow),
+            ModelTableSpec("group_analysis", result.groups, StagedGroupAnalysisRow),
+            ModelTableSpec("label_delta_analysis", result.label_deltas, LabelDeltaAnalysisRow),
+        ],
     )
-    Path(export_result.manifest_path).write_text(export_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    return export_result
-
-
-def _write_model_rows(
-    rows: list[BaseModel],
-    path: Path,
-    export_format: ExportFormat,
-    row_model: type[BaseModel],
-) -> TableSummary:
-    table = _rows_to_table(rows, row_model)
-    if export_format == ExportFormat.parquet:
-        table.to_parquet(path, index=False)
-    elif export_format == ExportFormat.csv:
-        table.to_csv(path, index=False)
-    else:
-        table.to_json(path, orient="records", lines=True)
-    return TableSummary(table=path.stem, rows=len(table), path=str(path))
-
-
-def _rows_to_table(rows: list[BaseModel], row_model: type[BaseModel]) -> pd.DataFrame:
-    if rows:
-        return pd.json_normalize([row.model_dump() for row in rows], sep=".")
-    return pd.DataFrame(columns=list(row_model.model_fields))
 
 
 def render_result(result: StagedDetectionOutputAnalysis, *, json_output: bool) -> str:
@@ -463,7 +383,7 @@ def main(
         if output is not None:
             write_analysis_tables(result, output, format)
     except ValueError as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
 

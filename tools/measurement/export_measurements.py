@@ -12,32 +12,19 @@ Usage:
 import json
 import logging
 import sys
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
 import cyclopts
 import pandas as pd
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.tables import ExportFormat, ensure_can_write, write_table
 from pydantic import BaseModel, Field
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.export")
 
 MANIFEST_FILENAME = "manifest.json"
-
-
-class ExportFormat(StrEnum):
-    parquet = "parquet"
-    csv = "csv"
-    jsonl = "jsonl"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
-
-
-_log_format = LogFormat.plain
 
 
 class TableSummary(BaseModel):
@@ -54,21 +41,6 @@ class ExportResult(BaseModel):
     total_rows: int
     tables: list[TableSummary] = Field(default_factory=list)
     manifest_path: str
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def read_measurements(path: Path) -> pd.DataFrame:
@@ -102,15 +74,6 @@ def _json_cell(value: object) -> object:
     if not _is_nested_value(value):
         return value
     return json.dumps(value, ensure_ascii=True, sort_keys=True)
-
-
-def write_table(table: pd.DataFrame, path: Path, export_format: ExportFormat) -> None:
-    if export_format == ExportFormat.parquet:
-        table.to_parquet(path, index=False)
-    elif export_format == ExportFormat.csv:
-        table.to_csv(path, index=False)
-    else:
-        table.to_json(path, orient="records", lines=True)
 
 
 def export_tables(
@@ -158,11 +121,6 @@ def write_manifest(result: ExportResult, path: Path, *, overwrite: bool) -> None
     path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
 
-def ensure_can_write(path: Path, *, overwrite: bool) -> None:
-    if path.exists() and not overwrite:
-        raise ValueError(f"output already exists: {path}; pass --overwrite to replace it")
-
-
 def render_result(result: ExportResult, *, json_output: bool) -> str:
     if json_output:
         return result.model_dump_json(indent=2)
@@ -196,7 +154,7 @@ def main(
             overwrite=overwrite,
         )
     except ValueError as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
 

@@ -50,6 +50,21 @@ Most workflows start with `run_benchmarks.py`, then
 `analyze_benchmark_output.py`, then either `compare_strategy_pairs.py` or
 `screen_strategy_comparisons.py`.
 
+## Implementation shape
+
+The scripts keep workload-specific row models and metric logic local, but share
+boring command and export policy through `measurement_tools/`:
+
+- `measurement_tools.cli`: `LogFormat`, logging setup, and structured
+  bad-input errors.
+- `measurement_tools.tables`: `ExportFormat`, model-row table specs, manifest
+  writing, and CSV/Parquet/JSONL output.
+- `measurement_tools.stats`: small numeric helpers used by analysis groupers.
+
+This is intentionally composition-based. New analysis tools should declare
+their own row models and call the shared helpers rather than inheriting from a
+common analyzer base class.
+
 ```bash
 uv run python tools/measurement/export_measurements.py measurements.jsonl --output tables
 ```

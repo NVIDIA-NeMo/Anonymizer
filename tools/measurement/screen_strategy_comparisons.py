@@ -21,6 +21,8 @@ from typing import Annotated
 
 import cyclopts
 import pandas as pd
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.tables import ExportFormat
 from pydantic import BaseModel, Field, model_validator
 
 app = cyclopts.App(help=__doc__)
@@ -34,17 +36,6 @@ COMPARISON_COLUMNS = {
     "performance_verdict",
     "candidate_verdict",
 }
-
-
-class ExportFormat(StrEnum):
-    parquet = "parquet"
-    csv = "csv"
-    jsonl = "jsonl"
-
-
-class LogFormat(StrEnum):
-    plain = "plain"
-    json = "json"
 
 
 class GroupBy(StrEnum):
@@ -200,24 +191,6 @@ class ScreenResult(BaseModel):
     summary: ScreenSummary = Field(default_factory=ScreenSummary)
     rows: list[ScreenRow] = Field(default_factory=list)
     groups: list[ScreenGroup] = Field(default_factory=list)
-
-
-_log_format = LogFormat.plain
-
-
-def configure_logging(log_format: LogFormat) -> None:
-    global _log_format
-
-    _log_format = log_format
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-
-def log_bad_input(error: str) -> None:
-    if _log_format == LogFormat.json:
-        payload = {"level": "error", "event": "bad_input", "error": error}
-        sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
-        return
-    logger.error("bad_input error=%s", error)
 
 
 def screen_comparison_paths(
@@ -1121,7 +1094,7 @@ def main(
             source_excludes=source_exclude or [],
         )
     except ValueError as exc:
-        log_bad_input(str(exc))
+        log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     if output is not None:
         write_rows(result.rows, output, format)
