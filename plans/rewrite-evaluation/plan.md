@@ -40,7 +40,7 @@ All changes are backwards-compatible for replace-mode users.
 
 | File | Change |
 |---|---|
-| `src/anonymizer/engine/rewrite/final_judge.py` | Rename `NATURALNESS_RUBRIC` → `FLUENCY_RUBRIC`; change options to `low/medium/high`; update `_judge_prompt` scoring instructions; update `scores=` list |
+| `src/anonymizer/engine/rewrite/final_judge.py` | Rename `NATURALNESS_RUBRIC` → `FLUENCY_RUBRIC`; change options to `low/medium/high`; update `_judge_prompt` scoring instructions; update `scores=` list; update `FinalJudgeWorkflow.columns()` signature to accept `EvaluateModelSelection` instead of `RewriteModelSelection`; remove `COL_NEEDS_HUMAN_REVIEW` from its column output (see Step 2) |
 | `src/anonymizer/engine/rewrite/rewrite_workflow.py` | Remove `_run_final_judge` call from `run()`; add `evaluate()` method that runs detection judge + final judge |
 | `src/anonymizer/interface/results.py` | Add `rewrite_config: PrivacyGoal \| None = None` field to `AnonymizerResult` and `PreviewResult`; set it during rewrite `run()` analogous to `replace_method` |
 | `src/anonymizer/interface/anonymizer.py` | Extend `evaluate()` to dispatch on `rewrite_config`; add `COL_JUDGE_EVALUATION` + `COL_DETECTION_VALID` to the rewrite allowed-column set in `_build_user_dataframe` |
@@ -49,7 +49,7 @@ All changes are backwards-compatible for replace-mode users.
 | `src/anonymizer/config/default_model_configs/evaluate.yaml` | Add `rewrite_judge: nemotron-30b-thinking` — required to avoid a Pydantic startup crash when the new field lands in `EvaluateModelSelection` |
 | `src/anonymizer/config/default_model_configs/rewrite.yaml` | Remove `judge` entry — it moves to `evaluate.yaml` |
 | `src/anonymizer/engine/ndd/model_loader.py` | Update `validate_model_alias_references` to check `evaluate.rewrite_judge` when `check_evaluate=True` on a rewrite result |
-| `src/anonymizer/interface/display.py` | Update `_render_scores_section` to not append `/10`; update `_extract_judge_scores` return type to `list[tuple[str, int \| str]]` |
+| `src/anonymizer/interface/display.py` | Update `_render_scores_section` to not append `/10`; fix `_extract_judge_scores` to not cast `value["score"]` through `int()` — for string keys `"low"/"medium"/"high"` this raises `ValueError` which is silently swallowed, causing the judge section to never render; update return type to `list[tuple[str, int \| str]]` |
 | `src/anonymizer/engine/schemas/rewrite.py` | Update any schema or docstring that references the 1–10 scale or "naturalness" |
 | `docs/concepts/rewrite.md` | Update judge score documentation (rename naturalness → fluency, describe categorical scale, move judge to evaluate step) |
 | `skills/anonymizer/SKILL.md` | Update evaluate workflow section with rewrite evaluate example |
@@ -177,11 +177,26 @@ def evaluate(
 ```
 
 Inside `evaluate()`:
-1. Run `DetectionJudgeWorkflow` (already in `engine/evaluation/detection_judge.py`) against `COL_ENTITIES_BY_VALUE` + `COL_TEXT`.
-2. Run `FinalJudgeWorkflow` (already in `engine/rewrite/final_judge.py`) for privacy / quality / fluency scores.
-3. Merge results and return a new `RewriteResult`.
 
-`COL_NEEDS_HUMAN_REVIEW` is **not** re-computed here — it was set during `run()` based on objective metrics and should not be overwritten by the evaluate step.
+1. **Split entity vs passthrough rows** using the same `split_rows` / `_has_entities` pattern as `run()`. Passthrough rows (no detected entities) must be excluded from both judge calls — running `DetectionJudgeWorkflow` on them produces vacuously-valid scores (nothing to validate → trivially satisfied), and running `FinalJudgeWorkflow` on them produces misleadingly-high scores for records that were never anonymized. Passthrough rows receive `COL_DETECTION_VALID = None` and `COL_JUDGE_EVALUATION = None` as defaults.
+2. Run `DetectionJudgeWorkflow` (already in `engine/evaluation/detection_judge.py`) against entity rows only, using `COL_ENTITIES_BY_VALUE` + `COL_TEXT`.
+3. Run `FinalJudgeWorkflow` (already in `engine/rewrite/final_judge.py`) against entity rows only, for privacy / quality / fluency scores.
+4. Merge entity and passthrough rows and return a new `RewriteResult`.
+
+### `COL_NEEDS_HUMAN_REVIEW` must not be overwritten
+
+`FinalJudgeWorkflow.columns()` currently emits a `CustomColumnConfig` for `COL_NEEDS_HUMAN_REVIEW` (via `_determine_needs_human_review`). This flag was already set correctly during `run()` based on objective metrics. If `evaluate()` calls `FinalJudgeWorkflow` as-is, `_join_judge_columns` unconditionally resets it to `True` for all rows before re-assigning from the judge output, silently clobbering the run-time value.
+
+Fix: remove `COL_NEEDS_HUMAN_REVIEW` from `FinalJudgeWorkflow.columns()` entirely. The `CustomColumnConfig` for it and `_determine_needs_human_review` move to `RewriteWorkflow._run_final_judge()` — but since that method is being removed, the column is instead produced at the end of the evaluate-repair loop in `_run_evaluate_repair_loop()`, where `HumanReviewParams` is already available. `evaluate()` never touches `COL_NEEDS_HUMAN_REVIEW`.
+
+### Telemetry — `rewrite.judge` reference
+
+`anonymizer.py` references `rewrite.judge` in two places that will break when the field is removed from `RewriteModelSelection`:
+
+- `_collect_step_models()` — `"judge": rewrite.judge if has_rewrite else NOT_APPLICABLE`
+- `_build_telemetry_event()` — `judge_model=models["judge"]`
+
+Resolution: drop the `judge` key from the `_collect_step_models` rewrite block and from `_build_telemetry_event`. The judge is now an evaluate-time role, not a run-time role, so it doesn't belong in run telemetry. `anonymizer.py` is already in the Files Changed table for the `evaluate()` dispatch; this telemetry fix is part of the same change.
 
 ---
 
@@ -252,6 +267,8 @@ class EvaluateModelSelection(BaseModel):
 `RewriteModelSelection.judge` is removed (or kept with a deprecation note if model YAML defaults need a phased migration).
 
 Update `engine/ndd/model_loader.py` validation to check `evaluate.rewrite_judge` when `check_evaluate=True` and the output is a rewrite result.
+
+Update `FinalJudgeWorkflow.columns()` to accept `EvaluateModelSelection` instead of `RewriteModelSelection`, and resolve the judge alias via `evaluate.rewrite_judge` instead of `rewrite.judge`.
 
 ---
 
@@ -325,6 +342,15 @@ test_run_rewrite_does_not_include_judge_in_user_dataframe
 # display.py
 test_render_scores_section_categorical_no_slash_10
 test_extract_judge_scores_returns_string_scores
+test_extract_judge_scores_categorical_not_silently_empty
+
+# rewrite_workflow.py — passthrough + needs_human_review
+test_evaluate_skips_passthrough_rows
+test_evaluate_passthrough_rows_get_none_judge_defaults
+test_run_needs_human_review_not_overwritten_by_evaluate
+
+# anonymizer.py — telemetry
+test_run_rewrite_telemetry_has_no_judge_field
 ```
 
 All new tests construct result objects directly — no real pipeline or LLM calls.
