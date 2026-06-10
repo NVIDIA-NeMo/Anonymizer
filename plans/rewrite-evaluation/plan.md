@@ -7,7 +7,7 @@ The rewrite evaluation has four related issues:
 - **Evaluation is baked into `run()` / `preview()`** — the final judge (holistic privacy / quality / fluency scores) runs unconditionally as part of the rewrite pipeline. Replace mode separates this into a dedicated `anonymizer.evaluate()` call, letting users skip it during fast iteration and run it deliberately. Rewrite has no equivalent.
 - **No detection validity score in rewrite mode** — `anonymizer.evaluate()` produces a `detection_valid` column for replace mode (via `DetectionJudgeWorkflow`). Rewrite mode runs the same GLiNER + LLM detection pipeline but never scores its accuracy.
 - **Judge scores are 1–10 integers that saturate** — observed outputs cluster at the extremes (8–10 or 1–2), making the middle of the scale nearly unused. A 3-level categorical (`low` / `medium` / `high`) better matches the distribution, removes false precision, and makes rubric definitions more actionable.
-- **"Naturalness" is an ambiguous name** — the dimension measures fluency and readability of the output text, not faithfulness to the original or any other concept the word might suggest. `fluency` is the standard NLP term for this and is unambiguous.
+- **"Naturalness" is an ambiguous name** — the dimension measures writing style and readability of the output text, not faithfulness to the original or any other concept the word might suggest. `style` is a clearer term for this and is unambiguous.
 
 ---
 
@@ -21,9 +21,9 @@ The rewrite evaluation has four related issues:
 
 Rubric anchors for each dimension:
 
-| Score | Privacy | Quality | Fluency |
+| Score | Privacy | Quality | Style |
 |---|---|---|---|
-| `high` | Original direct identifiers removed; remaining quasi-identifiers create low linkage risk | Important meaning, facts, and structure fully preserved | Reads as fluent, coherent, human-written prose |
+| `high` | Original direct identifiers removed; remaining quasi-identifiers create low linkage risk | Important meaning, facts, and structure fully preserved | Reads as natural, coherent, human-written prose |
 | `medium` | No obvious direct identifiers remain, but a distinctive quasi-identifier bundle creates noticeable linkage risk | Most content preserved; minor details lost or slightly distorted | Mostly readable; isolated awkward phrasing or stiff transitions |
 | `low` | One or more original direct identifiers or near-equivalents remain, or the record is easily linkable | Material loss of important information, contradictions, or distorted core meaning | Noticeably unnatural; broken grammar, placeholder-like language, or machine-generated feel |
 
@@ -40,7 +40,7 @@ All changes are backwards-compatible for replace-mode users.
 
 | File | Change |
 |---|---|
-| `src/anonymizer/engine/rewrite/final_judge.py` | Rename `NATURALNESS_RUBRIC` → `FLUENCY_RUBRIC`; change options to `low/medium/high`; update `_judge_prompt` scoring instructions; update `scores=` list; update `FinalJudgeWorkflow.columns()` signature to accept `EvaluateModelSelection` instead of `RewriteModelSelection`; remove `COL_NEEDS_HUMAN_REVIEW` from its column output (see Step 2) |
+| `src/anonymizer/engine/rewrite/final_judge.py` | Rename `NATURALNESS_RUBRIC` → `STYLE_RUBRIC`; change options to `low/medium/high`; update `_judge_prompt` scoring instructions; update `scores=` list; update `FinalJudgeWorkflow.columns()` signature to accept `EvaluateModelSelection` instead of `RewriteModelSelection`; remove `COL_NEEDS_HUMAN_REVIEW` from its column output (see Step 2) |
 | `src/anonymizer/engine/rewrite/rewrite_workflow.py` | Remove `_run_final_judge` call from `run()`; add `evaluate()` method that runs detection judge + final judge |
 | `src/anonymizer/interface/results.py` | Add `rewrite_config: PrivacyGoal \| None = None` field to `AnonymizerResult` and `PreviewResult`; set it during rewrite `run()` analogous to `replace_method` |
 | `src/anonymizer/interface/anonymizer.py` | Extend `evaluate()` to dispatch on `rewrite_config`; add `COL_JUDGE_EVALUATION` + `COL_DETECTION_VALID` to the rewrite allowed-column set in `_build_user_dataframe` |
@@ -69,13 +69,13 @@ All changes are backwards-compatible for replace-mode users.
 NATURALNESS_RUBRIC = Score(name="naturalness", ...)
 
 # after
-FLUENCY_RUBRIC = Score(name="fluency", ...)
+STYLE_RUBRIC = Score(name="style", ...)
 ```
 
 Update `scores=` list in `FinalJudgeWorkflow.columns()`:
 
 ```python
-scores=[PRIVACY_RUBRIC, QUALITY_RUBRIC, FLUENCY_RUBRIC],
+scores=[PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC],
 ```
 
 ### Change options to `low / medium / high`
@@ -103,11 +103,11 @@ QUALITY_RUBRIC = Score(
     },
 )
 
-FLUENCY_RUBRIC = Score(
-    name="fluency",
-    description="Writing fluency — does the rewritten text read as natural, grammatically correct, human-written prose?",
+STYLE_RUBRIC = Score(
+    name="style",
+    description="Writing style — does the rewritten text read as natural, grammatically correct, human-written prose?",
     options={
-        "high":   "Reads as fluent, coherent, human-written prose.",
+        "high":   "Reads as natural, coherent, human-written prose.",
         "medium": "Mostly readable; isolated awkward phrasing or stiff transitions.",
         "low":    "Noticeably unnatural; broken grammar, placeholder-like language, or machine-generated feel.",
     },
@@ -138,17 +138,17 @@ Replace the three `<*_scoring_instructions>` blocks to match the new categorical
   - low    — material loss of important information, contradictions, or distorted core meaning
 </quality_scoring_instructions>
 
-<fluency_scoring_instructions>
+<style_scoring_instructions>
   ...naturalness guidance renamed and preserved...
 
   Score as:
-  - high   — fluent, coherent, human-written prose
+  - high   — natural, coherent, human-written prose
   - medium — mostly readable; isolated awkward phrasing or stiff transitions
   - low    — noticeably unnatural; broken grammar, placeholder-like language, or machine feel
-</fluency_scoring_instructions>
+</style_scoring_instructions>
 ```
 
-The `<task>` block changes "naturalness of writing" to "fluency of writing".
+The `<task>` block changes "naturalness of writing" to "style of writing".
 
 ---
 
@@ -179,8 +179,8 @@ def evaluate(
 Inside `evaluate()`:
 
 1. **Split entity vs passthrough rows** using the same `split_rows` / `_has_entities` pattern as `run()`. Passthrough rows (no detected entities) must be excluded from both judge calls — running `DetectionJudgeWorkflow` on them produces vacuously-valid scores (nothing to validate → trivially satisfied), and running `FinalJudgeWorkflow` on them produces misleadingly-high scores for records that were never anonymized. Passthrough rows receive `COL_DETECTION_VALID = None` and `COL_JUDGE_EVALUATION = None` as defaults.
-2. Run `DetectionJudgeWorkflow` (already in `engine/evaluation/detection_judge.py`) against entity rows only, using `COL_ENTITIES_BY_VALUE` + `COL_TEXT`.
-3. Run `FinalJudgeWorkflow` (already in `engine/rewrite/final_judge.py`) against entity rows only, for privacy / quality / fluency scores.
+2. Run `DetectionJudgeWorkflow` (already in `engine/evaluation/detection_judge.py`) against entity rows only, using `COL_ENTITIES_BY_VALUE` + `COL_TEXT`. The detection validity score is surfaced as a **0–1 value** (the LLM alignment score normalised from its raw percentage), matching the scale of `utility_score` and `leakage_mass`. This is the same score as in replace-mode evaluation, with the only difference being the 0–1 normalisation instead of exposing a raw percentage. `COL_DETECTION_VALID` is a **main output score** — it appears alongside `utility_score` and `leakage_mass` in the user dataframe and display, **not** grouped with the judge scores (privacy/quality/style). It does **not** influence `COL_NEEDS_HUMAN_REVIEW`; human review is determined solely by `leakage_mass` and `utility_score` thresholds, unchanged from the repair loop.
+3. Run `FinalJudgeWorkflow` (already in `engine/rewrite/final_judge.py`) against entity rows only, for privacy / quality / style scores.
 4. Merge entity and passthrough rows and return a new `RewriteResult`.
 
 ### `COL_NEEDS_HUMAN_REVIEW` must not be overwritten
@@ -288,6 +288,14 @@ score_strs = [f"{name}: {score}" for name, score in judge_scores]
 
 `_extract_judge_scores` returns `list[tuple[str, int]]` — update the return type to `list[tuple[str, int | str]]` since scores are now strings.
 
+### Detection validity placement
+
+`COL_DETECTION_VALID` must be rendered in the **main scores section** (alongside `utility_score` and `leakage_mass`), not inside the judge scores block. Update `_render_scores_section` to include it there when present. The value is already 0–1 so no `/10` suffix is needed and no additional scaling is required.
+
+### "Rewrite Need Review" label
+
+In rewrite mode the `COL_NEEDS_HUMAN_REVIEW` column must be displayed as **"Rewrite Need Review"** (not the generic "Needs Review" used in replace mode). Update the label resolution in `display.py` to emit the rewrite-specific label when rendering a rewrite result.
+
 ---
 
 ## Step 6 — Docs and skills
@@ -295,7 +303,7 @@ score_strs = [f"{name}: {score}" for name, score in judge_scores]
 ### `docs/concepts/rewrite.md`
 
 - Output columns table: remove `judge evaluation` from the `run()` output section; add a new **Evaluation** subsection (parallel to the existing replace evaluate docs) showing the `evaluate()` call pattern and what columns it adds.
-- Update the judge score description: rename "naturalness" → "fluency", describe `low/medium/high` scale.
+- Update the judge score description: rename "naturalness" → "style", describe `low/medium/high` scale; note detection validity appears in the main scores section (0–1) not judge scores; note `COL_NEEDS_HUMAN_REVIEW` is labelled "Rewrite Need Review" in the output column table.
 - Model roles table: move `judge` from the rewrite pipeline roles to the evaluate roles.
 
 ### `skills/anonymizer/SKILL.md`
@@ -306,7 +314,7 @@ Add a rewrite evaluate workflow example alongside the existing replace evaluate 
 # after rewrite run / preview:
 evaluated = anonymizer.evaluate(result)
 evaluated.display_record(0)
-# → adds detection_valid, judge evaluation (privacy/quality/fluency: low/medium/high)
+# → adds detection_valid (0–1, main scores section), judge evaluation (privacy/quality/style: low/medium/high)
 ```
 
 ---
@@ -315,17 +323,17 @@ evaluated.display_record(0)
 
 ### Update existing tests
 
-- `tests/engine/rewrite/test_final_judge.py` — update rubric option assertions for `low/medium/high`; update any test that checks score parsing for integer values; rename all `naturalness` references to `fluency`.
+- `tests/engine/rewrite/test_final_judge.py` — update rubric option assertions for `low/medium/high`; update any test that checks score parsing for integer values; rename all `naturalness` references to `style`.
 - `tests/interface/test_anonymizer.py` — update assertions that check `COL_JUDGE_EVALUATION` is in the `run()` output (it now only appears after `evaluate()`).
 
 ### New tests to add
 
 ```
 # final_judge.py
-test_fluency_rubric_has_low_medium_high_options
+test_style_rubric_has_low_medium_high_options
 test_privacy_rubric_has_low_medium_high_options
 test_quality_rubric_has_low_medium_high_options
-test_judge_prompt_references_fluency_not_naturalness
+test_judge_prompt_references_style_not_naturalness
 test_judge_prompt_references_categorical_scale
 
 # rewrite_workflow.py
@@ -343,6 +351,8 @@ test_run_rewrite_does_not_include_judge_in_user_dataframe
 test_render_scores_section_categorical_no_slash_10
 test_extract_judge_scores_returns_string_scores
 test_extract_judge_scores_categorical_not_silently_empty
+test_detection_valid_rendered_in_main_scores_section
+test_rewrite_needs_human_review_label_is_rewrite_need_review
 
 # rewrite_workflow.py — passthrough + needs_human_review
 test_evaluate_skips_passthrough_rows
@@ -359,7 +369,7 @@ All new tests construct result objects directly — no real pipeline or LLM call
 
 ## Implementation Order
 
-1. Update rubrics and prompt in `final_judge.py` (rename naturalness → fluency, 1-10 → low/medium/high)
+1. Update rubrics and prompt in `final_judge.py` (rename naturalness → style, 1-10 → low/medium/high)
 2. Move `_run_final_judge` out of `RewriteWorkflow.run()`; add `RewriteWorkflow.evaluate()`
 3. Add `rewrite_config` field to `AnonymizerResult` / `PreviewResult`; wire `Anonymizer.evaluate()` for rewrite
 4. Move `judge` alias from `RewriteModelSelection` to `EvaluateModelSelection` (as `rewrite_judge`); update model loader validation
