@@ -9,7 +9,9 @@ Anonymizer uses LLMs for entity detection, replacement, and rewriting. Models ar
 
 ## Defaults
 
-Set your API key for Anonymizer to use models hosted on [build.nvidia.com](https://build.nvidia.com).
+Plain `Anonymizer()` uses Anonymizer's bundled provider and model configs — not DataDesigner's machine-local defaults from `~/.data-designer/model_providers.yaml`. Bundled providers live at [`providers.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/providers.yaml); bundled models at [`models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/models.yaml).
+
+Set your API key for Anonymizer to use models hosted on [build.nvidia.com](https://build.nvidia.com):
 
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
@@ -31,7 +33,7 @@ Each pipeline stage has a **role** mapped to one of these aliases. See the full 
 
 ## Custom providers
 
-Use `model_providers` to define named API endpoints for hosted models such as OpenAI or OpenRouter.
+Pass `model_providers` when you need a non-default endpoint — for example OpenAI, OpenRouter, a local GLiNER server, or an internal inference deployment. Plain `Anonymizer()` already uses bundled [build.nvidia.com](https://build.nvidia.com) settings; override only when your models point at a different provider name or URL.
 
 Set your API keys first:
 

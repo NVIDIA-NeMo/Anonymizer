@@ -13,7 +13,7 @@ class InvalidInputError(AnonymizerError):
 
 
 class InvalidConfigError(AnonymizerError):
-    """Raised when model aliases or semantic configuration are invalid."""
+    """Raised when model, provider, alias, or semantic configuration is invalid."""
 
 
 class AnonymizerIOError(AnonymizerError):

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
@@ -25,6 +25,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.ndd.model_loader import load_default_model_providers
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
@@ -135,6 +136,80 @@ def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="providers"):
         _resolve_model_providers(yaml_path)
+
+
+def test_anonymizer_default_passes_bundled_providers_to_data_designer() -> None:
+    bundled = load_default_model_providers()
+    with patch("anonymizer.interface.anonymizer.DataDesigner") as mock_data_designer:
+        Anonymizer(
+            detection_workflow=Mock(),
+            replace_runner=Mock(),
+            rewrite_runner=Mock(),
+        )
+    mock_data_designer.assert_called_once()
+    passed_providers = mock_data_designer.call_args.kwargs["model_providers"]
+    assert {provider.name for provider in passed_providers} == {provider.name for provider in bundled}
+
+
+def test_anonymizer_custom_model_providers_override_bundled_defaults() -> None:
+    from anonymizer import ModelProvider
+
+    # Bundled model configs reference provider name "nvidia"; override the endpoint, not the name.
+    custom_providers = [ModelProvider(name="nvidia", endpoint="https://example.com/v1")]
+    with patch("anonymizer.interface.anonymizer.DataDesigner") as mock_data_designer:
+        Anonymizer(
+            model_providers=custom_providers,
+            detection_workflow=Mock(),
+            replace_runner=Mock(),
+            rewrite_runner=Mock(),
+        )
+    passed_providers = mock_data_designer.call_args.kwargs["model_providers"]
+    assert passed_providers is custom_providers
+
+
+def test_anonymizer_rejects_missing_provider_as_invalid_config_error() -> None:
+    yaml_str = """
+model_configs:
+  - alias: custom-detector
+    model: test/model
+"""
+    with pytest.raises(InvalidConfigError, match="missing required field 'provider'"):
+        Anonymizer(
+            model_configs=yaml_str,
+            detection_workflow=Mock(),
+            replace_runner=Mock(),
+            rewrite_runner=Mock(),
+        )
+
+
+def test_anonymizer_rejects_unknown_model_provider_as_invalid_config_error() -> None:
+    from anonymizer import ModelProvider
+
+    yaml_str = """
+model_configs:
+  - alias: custom-detector
+    model: test/model
+    provider: unknown-provider
+"""
+    providers = [ModelProvider(name="nvidia", endpoint="https://example.com/v1")]
+    with pytest.raises(InvalidConfigError, match="unknown-provider"):
+        Anonymizer(
+            model_configs=yaml_str,
+            model_providers=providers,
+            detection_workflow=Mock(),
+            replace_runner=Mock(),
+            rewrite_runner=Mock(),
+        )
+
+
+def test_anonymizer_rejects_empty_model_providers_list() -> None:
+    with pytest.raises(InvalidConfigError, match="at least one provider"):
+        Anonymizer(
+            model_providers=[],
+            detection_workflow=Mock(),
+            replace_runner=Mock(),
+            rewrite_runner=Mock(),
+        )
 
 
 def test_run_exposes_trace_dataframe_and_filters_internal_columns(

@@ -65,7 +65,7 @@ Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
 DATA_URL = "https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"
 
-# Uses default model providers (build.nvidia.com) via NVIDIA_API_KEY env var
+# Uses Anonymizer's bundled model providers (see src/anonymizer/config/default_model_configs/providers.yaml)
 anonymizer = Anonymizer()
 
 config = AnonymizerConfig(replace=Redact())

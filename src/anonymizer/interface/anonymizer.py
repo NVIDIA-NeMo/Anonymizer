@@ -51,7 +51,12 @@ from anonymizer.engine.evaluation.replace.relational_consistency_judge import Re
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
+from anonymizer.engine.ndd.model_loader import (
+    load_default_model_providers,
+    parse_model_configs,
+    validate_model_alias_references,
+    validate_model_configs_reference_providers,
+)
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -114,7 +119,8 @@ class Anonymizer:
                 pool and optional ``selected_models`` overrides. ``None`` uses
                 bundled defaults. See ``default_model_configs/README.md``.
             model_providers: Provider definitions (list, YAML string, or file path).
-                Each provider maps a name to an endpoint and API key.
+                Each provider maps a name to an endpoint and API key. ``None`` uses
+                bundled defaults from ``default_model_configs/providers.yaml``.
             artifact_path: Directory for intermediate artifacts. Defaults to
                 ``.anonymizer-artifacts``.
             data_designer: Pre-configured DataDesigner instance (advanced usage).
@@ -128,10 +134,14 @@ class Anonymizer:
         os.environ.setdefault("NEMO_SESSION_PREFIX", "anonymizer-")
         os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "sdk")
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
-        parsed = parse_model_configs(model_configs)
-        self._model_configs = parsed.model_configs
-        self._selected_models = parsed.selected_models
-        self._resolved_providers: list[ModelProvider] | None = _resolve_model_providers(model_providers)
+        try:
+            parsed = parse_model_configs(model_configs)
+            self._model_configs = parsed.model_configs
+            self._selected_models = parsed.selected_models
+            self._resolved_providers = _resolve_model_providers(model_providers)
+            validate_model_configs_reference_providers(self._model_configs, self._resolved_providers)
+        except ValueError as exc:
+            raise InvalidConfigError(str(exc)) from exc
         logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
         det = self._selected_models.detection
         logger.info(LOG_INDENT + "🔎 detector:  %s", det.entity_detector)
@@ -751,10 +761,12 @@ def _count_entities(df: pd.DataFrame) -> int:
 
 def _resolve_model_providers(
     model_providers: list[ModelProvider] | str | Path | None,
-) -> list[ModelProvider] | None:
+) -> list[ModelProvider]:
     if model_providers is None:
-        return None
+        return load_default_model_providers()
     if isinstance(model_providers, list):
+        if not model_providers:
+            raise ValueError("model_providers must contain at least one provider.")
         return model_providers
     if isinstance(model_providers, str) and "\n" not in model_providers:
         candidate = Path(model_providers.strip()).expanduser()
@@ -978,13 +990,9 @@ def _repair_iterations_triggered(failed: list[FailedRecord], is_rewrite: bool) -
 
 
 def _resolve_model_hosts(providers: list[ModelProvider] | None) -> list[str]:
-    """Sorted, deduplicated list of provider host classifications.
-
-    Returns ``["nvidia-build"]`` when no custom providers are configured —
-    anonymizer's defaults route through build.nvidia.com.
-    """
+    """Sorted, deduplicated list of provider host classifications."""
     if not providers:
         from anonymizer.telemetry import ModelHostEnum as _MH
 
-        return [_MH.NVIDIA_BUILD.value]
+        return [_MH.OTHER.value]
     return collect_model_hosts([classify_model_host(p) for p in providers])

@@ -315,12 +315,12 @@ class TestFieldPopulation:
 
         assert captured_events[0].transformation_type == expected_value
 
-    def test_default_model_hosts_is_nvidia_build(
+    def test_default_model_hosts_reflect_bundled_providers(
         self,
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
-        """When no providers are configured, hosts list contains only 'nvidia-build'."""
+        """Plain Anonymizer() classifies hosts from bundled providers.yaml."""
         anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 

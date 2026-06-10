@@ -48,7 +48,7 @@ def _unique_records(
 
 
 def _make_model_config(alias: str = "test-model-alias") -> ModelConfig:
-    return ModelConfig(alias=alias, model="dummy-model-id")
+    return ModelConfig(alias=alias, model="dummy-model-id", provider="stub")
 
 
 def _make_columns() -> list[ColumnConfigT]:
