@@ -115,12 +115,19 @@ Message traces are separate from measurement records. They may contain raw input
 text, prompts, generated output, entity values, replacement values, secrets, and
 PII. Do not share them unless they have been reviewed or redacted.
 
-Anonymizer requests these traces through DataDesigner native LLM column trace
-side effects. That covers `LLMTextColumnConfig` and
-`LLMStructuredColumnConfig`. It does not cover model calls made inside
-`CustomColumnConfig` generator functions. When tracing is enabled, the
-measurement stream records a `dd_trace_coverage` row so benchmark analysis can
-see unsupported columns.
+Anonymizer requests standard LLM-column traces through DataDesigner native LLM
+column trace side effects. That covers `LLMTextColumnConfig` and
+`LLMStructuredColumnConfig`.
+
+Model-backed `CustomColumnConfig` generator functions use a temporary
+Anonymizer shim that instruments the per-run DataDesigner model registry and
+returned model facades. This captures model calls that DataDesigner does not yet
+expose through a public trace sink. Treat this as a brittle bridge over private
+DataDesigner internals, not as a stable integration point.
+
+When tracing is enabled, the measurement stream records a `dd_trace_coverage`
+row with native, private-facade, and unsupported column counts so benchmark
+analysis can see which trace path covered each workflow.
 
 ## DataDesigner Task Traces
 

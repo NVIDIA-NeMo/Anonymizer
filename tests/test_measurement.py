@@ -823,25 +823,72 @@ def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(
     assert "secret response" not in serialized_measurements
 
 
-def test_ndd_adapter_records_custom_column_dd_trace_coverage_gap(tmp_path: Path) -> None:
-    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+class _TraceModelFacade:
+    model_alias = "alias"
+    model_name = "dummy-model"
+    model_provider_name = "provider"
+    model_provider = SimpleNamespace(endpoint="http://provider/v1")
 
+    def generate(self, prompt: str, **_kwargs: Any) -> str:
+        messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        return self.completion(messages).message.content
+
+    def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
+        return SimpleNamespace(
+            message=SimpleNamespace(content="custom response secret", reasoning_content="scratch", tool_calls=[]),
+            usage=SimpleNamespace(input_tokens=3, output_tokens=5, total_tokens=8),
+        )
+
+
+class _TraceModelRegistry:
+    def __init__(self) -> None:
+        self._models = {"alias": _TraceModelFacade()}
+
+    def get_model(self, *, model_alias: str) -> _TraceModelFacade:
+        return self._models[model_alias]
+
+
+class _CustomTraceDataDesigner:
+    def __init__(self, input_df: pd.DataFrame) -> None:
+        self.input_df = input_df
+        self.resource_provider = SimpleNamespace(model_registry=_TraceModelRegistry())
+
+    def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
+        return self.resource_provider
+
+    def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
+        resource_provider = self._create_resource_provider()
+        model = resource_provider.model_registry.get_model(model_alias="alias")
+        output = self.input_df.iloc[:num_records].copy()
+        for column in cast(Any, config_builder).get_column_configs():
+            for row_index, row in output.iterrows():
+                generated = column.generator_function(
+                    row.to_dict(),
+                    generator_params=None,
+                    models={"alias": model},
+                )
+                for key, value in generated.items():
+                    output.loc[row_index, key] = value
+        return SimpleNamespace(dataset=output)
+
+
+def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnConfig:
     @custom_column_generator(required_columns=["text"], model_aliases=["alias"])
-    def custom_generator(
+    def generator(
         row: dict[str, Any],
         generator_params: Any,
         models: dict[str, Any],
     ) -> dict[str, str]:
-        _ = row, generator_params, models
-        return {"raw_detected": "[]"}
+        _ = row, generator_params
+        models["alias"].generate(prompt)
+        return {name: value}
 
-    class TraceDataDesigner:
-        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-            output = input_df.iloc[:num_records].copy()
-            output["raw_detected"] = "[]"
-            return SimpleNamespace(dataset=output)
+    return CustomColumnConfig(name=name, generator_function=generator)
 
-    adapter = NddAdapter(data_designer=cast(DataDesigner, TraceDataDesigner()))
+
+def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(tmp_path: Path) -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(input_df)))
     trace_path = tmp_path / "trace.jsonl"
 
     with configured_measurement_session(
@@ -852,19 +899,50 @@ def test_ndd_adapter_records_custom_column_dd_trace_coverage_gap(tmp_path: Path)
         adapter.run_workflow(
             input_df,
             model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
-            columns=[CustomColumnConfig(name="raw_detected", generator_function=custom_generator)],
+            columns=[
+                _custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]"),
+                _custom_trace_column("quality_check", prompt="quality prompt secret", value="ok"),
+            ],
             workflow_name="entity-detection",
             preview_num_records=1,
         )
 
-    assert trace_path.read_text(encoding="utf-8") == ""
+    traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    traces_by_column = {trace["column_name"]: trace for trace in traces}
+    assert set(traces_by_column) == {"raw_detected", "quality_check"}
+
+    raw_trace = traces_by_column["raw_detected"]
+    assert raw_trace["record_type"] == "dd_message_trace"
+    assert raw_trace["trace_source"] == "anonymizer_private_model_facade"
+    assert raw_trace["workflow_name"] == "entity-detection"
+    assert raw_trace["model_alias"] == "alias"
+    assert raw_trace["model_name"] == "dummy-model"
+    assert raw_trace["model_provider_name"] == "provider"
+    assert raw_trace["model_provider_endpoint"] == "http://provider/v1"
+    assert raw_trace["status"] == "completed"
+    assert raw_trace["messages"] == [{"role": "user", "content": [{"type": "text", "text": "raw prompt secret"}]}]
+    assert raw_trace["response"]["content"] == "custom response secret"
+    assert raw_trace["response"]["reasoning_content"] == "scratch"
+    assert raw_trace["usage"] == {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
+
+    quality_trace = traces_by_column["quality_check"]
+    assert quality_trace["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "quality prompt secret"}]}
+    ]
+
     measurements = [json.loads(line) for line in (tmp_path / "measurements.jsonl").read_text().splitlines()]
     coverage = [record for record in measurements if record["record_type"] == "dd_trace_coverage"]
     assert len(coverage) == 1
-    assert coverage[0]["traced_column_count"] == 0
-    assert coverage[0]["unsupported_column_count"] == 1
-    assert coverage[0]["unsupported_column_names"] == ["raw_detected"]
-    assert coverage[0]["unsupported_column_types"] == ["custom"]
+    assert coverage[0]["trace_backend"] == "anonymizer_private_model_facade"
+    assert coverage[0]["traced_column_count"] == 2
+    assert coverage[0]["private_trace_column_count"] == 2
+    assert coverage[0]["private_trace_column_names"] == ["raw_detected", "quality_check"]
+    assert coverage[0]["unsupported_column_count"] == 0
+
+    serialized_measurements = json.dumps(measurements)
+    assert "raw prompt secret" not in serialized_measurements
+    assert "quality prompt secret" not in serialized_measurements
+    assert "custom response secret" not in serialized_measurements
 
 
 def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(tmp_path: Path) -> None:

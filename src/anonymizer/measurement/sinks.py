@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Lock
 from typing import Any, Literal, Protocol
 
 
@@ -46,9 +47,12 @@ class _JsonlMeasurementSink:
         output_path = Path(path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._file = output_path.open("w", encoding="utf-8", buffering=1)
+        self._lock = Lock()
 
     def write_record(self, record: dict[str, Any]) -> None:
-        self._file.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
+        with self._lock:
+            self._file.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
 
     def close(self) -> None:
-        self._file.close()
+        with self._lock:
+            self._file.close()

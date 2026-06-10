@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tempfile
 import time
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any, cast
@@ -36,6 +39,8 @@ logger = logging.getLogger("anonymizer.ndd")
 
 RECORD_ID_COLUMN = "_anonymizer_record_id"
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
+_MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
+_MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_purpose", default=None)
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,11 @@ class _NativeTraceColumn:
     model_alias: str | None
     model_name: str | None
     model_provider_name: str | None
+
+
+@dataclass(frozen=True)
+class _PrivateFacadeTraceColumn:
+    column_name: str
 
 
 class NddAdapter:
@@ -115,16 +125,23 @@ class NddAdapter:
         )
         started = time.perf_counter()
         collector = current_collector()
-        usage_probe = _DataDesignerUsageProbe(self._data_designer, enabled=collector is not None)
-        columns, native_trace_columns, unsupported_trace_columns = _configure_native_dd_message_traces(
+        columns, native_trace_columns, private_trace_columns, unsupported_trace_columns = _configure_dd_message_traces(
             columns=columns,
             model_configs=model_configs,
             collector=collector,
+        )
+        usage_probe = _DataDesignerUsageProbe(
+            self._data_designer,
+            enabled=collector is not None,
+            collector=collector,
+            workflow_name=workflow_name,
+            private_trace_columns=private_trace_columns,
         )
         _record_dd_trace_coverage(
             workflow_name=workflow_name,
             collector=collector,
             native_trace_columns=native_trace_columns,
+            private_trace_columns=private_trace_columns,
             unsupported_trace_columns=unsupported_trace_columns,
         )
 
@@ -328,11 +345,24 @@ def _as_alias_list(raw: Any) -> list[str]:
 class _DataDesignerUsageProbe:
     """Capture DataDesigner model usage from the per-run private ResourceProvider."""
 
-    def __init__(self, data_designer: DataDesigner, *, enabled: bool) -> None:
+    def __init__(
+        self,
+        data_designer: DataDesigner,
+        *,
+        enabled: bool,
+        collector: Any | None = None,
+        workflow_name: str | None = None,
+        private_trace_columns: list[_PrivateFacadeTraceColumn] | None = None,
+    ) -> None:
         self._data_designer = data_designer
         self._enabled = enabled
+        self._collector = collector
+        self._workflow_name = workflow_name
+        self._private_trace_column_names = {column.column_name for column in private_trace_columns or []}
         self._original_create_resource_provider: Any | None = None
         self._resource_providers: list[Any] = []
+        self._model_registry_patches: list[tuple[Any, Any]] = []
+        self._facade_patches: dict[int, tuple[Any, dict[str, Any]]] = {}
 
     def __enter__(self) -> _DataDesignerUsageProbe:
         if not self._enabled:
@@ -347,12 +377,14 @@ class _DataDesignerUsageProbe:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             resource_provider = original(*args, **kwargs)
             self._resource_providers.append(resource_provider)
+            self._install_private_model_trace(resource_provider)
             return resource_provider
 
         setattr(self._data_designer, "_create_resource_provider", wrapper)
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._restore_private_trace_patches()
         if self._original_create_resource_provider is not None:
             setattr(self._data_designer, "_create_resource_provider", self._original_create_resource_provider)
 
@@ -366,6 +398,157 @@ class _DataDesignerUsageProbe:
             for model_name, stats in snapshot.items():
                 usage[str(model_name)] = _model_usage_as_json(stats)
         return usage or None
+
+    def _private_trace_enabled(self) -> bool:
+        return bool(
+            self._collector is not None
+            and self._collector.dd_trace_enabled
+            and self._workflow_name
+            and self._private_trace_column_names
+        )
+
+    def _install_private_model_trace(self, resource_provider: Any) -> None:
+        if not self._private_trace_enabled():
+            return
+        model_registry = getattr(resource_provider, "model_registry", None)
+        get_model = getattr(model_registry, "get_model", None)
+        if not callable(get_model):
+            return
+
+        def wrapped_get_model(*args: Any, **kwargs: Any) -> Any:
+            facade = get_model(*args, **kwargs)
+            self._patch_model_facade(facade)
+            return facade
+
+        # Temporary private DataDesigner shim: CustomColumnConfig receives
+        # ModelFacade objects directly and DD does not yet expose a public
+        # model-call event sink for those calls.
+        setattr(model_registry, "get_model", wrapped_get_model)
+        self._model_registry_patches.append((model_registry, get_model))
+
+    def _patch_model_facade(self, facade: Any) -> None:
+        facade_id = id(facade)
+        if facade_id in self._facade_patches:
+            return
+
+        originals: dict[str, Any] = {}
+        for method_name in ("completion", "acompletion", "generate", "agenerate"):
+            method = getattr(facade, method_name, None)
+            if not callable(method):
+                continue
+            originals[method_name] = method
+            setattr(facade, method_name, self._wrap_facade_method(facade, method_name, method))
+
+        if originals:
+            self._facade_patches[facade_id] = (facade, originals)
+
+    def _wrap_facade_method(self, facade: Any, method_name: str, method: Any) -> Any:
+        if method_name == "acompletion":
+            return self._wrap_async_completion(facade, method)
+        if method_name == "completion":
+            return self._wrap_completion(facade, method)
+        if method_name == "agenerate":
+            return self._wrap_async_generate(method)
+        return self._wrap_generate(method)
+
+    def _wrap_generate(self, method: Any) -> Any:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            token = _MODEL_TRACE_PURPOSE.set(_purpose_from_kwargs(kwargs))
+            try:
+                return method(*args, **kwargs)
+            finally:
+                _MODEL_TRACE_PURPOSE.reset(token)
+
+        return wrapper
+
+    def _wrap_async_generate(self, method: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            token = _MODEL_TRACE_PURPOSE.set(_purpose_from_kwargs(kwargs))
+            try:
+                return await method(*args, **kwargs)
+            finally:
+                _MODEL_TRACE_PURPOSE.reset(token)
+
+        return wrapper
+
+    def _wrap_completion(self, facade: Any, method: Any) -> Any:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            started = time.perf_counter()
+            error: Exception | None = None
+            response: Any = None
+            try:
+                response = method(*args, **kwargs)
+                return response
+            except Exception as exc:
+                error = exc
+                raise
+            finally:
+                self._record_private_completion_trace(facade, args, kwargs, started, response, error, is_async=False)
+
+        return wrapper
+
+    def _wrap_async_completion(self, facade: Any, method: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            started = time.perf_counter()
+            error: Exception | None = None
+            response: Any = None
+            try:
+                response = await method(*args, **kwargs)
+                return response
+            except Exception as exc:
+                error = exc
+                raise
+            finally:
+                self._record_private_completion_trace(facade, args, kwargs, started, response, error, is_async=True)
+
+        return wrapper
+
+    def _record_private_completion_trace(
+        self,
+        facade: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        started: float,
+        response: Any,
+        error: Exception | None,
+        *,
+        is_async: bool,
+    ) -> None:
+        if not self._private_trace_enabled():
+            return
+        column_name = _private_trace_column_name(
+            column_names=self._private_trace_column_names,
+            purpose=_purpose_from_kwargs(kwargs) or _MODEL_TRACE_PURPOSE.get(),
+        )
+        if column_name is None:
+            return
+        collector = self._collector
+        if collector is None:
+            return
+        collector.record_dd_message_trace(
+            **_private_completion_trace_fields(
+                workflow_name=self._workflow_name,
+                column_name=column_name,
+                facade=facade,
+                args=args,
+                kwargs=kwargs,
+                response=response,
+                error=error,
+                elapsed_sec=time.perf_counter() - started,
+                is_async=is_async,
+                trace_mode=collector.dd_trace_mode,
+            )
+        )
+
+    def _restore_private_trace_patches(self) -> None:
+        for facade, originals in reversed(list(self._facade_patches.values())):
+            for method_name, original in originals.items():
+                setattr(facade, method_name, original)
+        self._facade_patches.clear()
+
+        for model_registry, get_model in reversed(self._model_registry_patches):
+            setattr(model_registry, "get_model", get_model)
+        self._model_registry_patches.clear()
 
 
 def _get_model_usage_snapshot(model_registry: object) -> Mapping[str, object] | None:
@@ -411,6 +594,120 @@ def _model_usage_as_json(stats: object) -> Any:
     return stats
 
 
+def _purpose_from_kwargs(kwargs: Mapping[str, Any]) -> str | None:
+    purpose = kwargs.get("purpose")
+    return purpose if isinstance(purpose, str) and purpose else None
+
+
+def _private_trace_column_name(*, column_names: set[str], purpose: str | None) -> str | None:
+    context_column = _MODEL_TRACE_COLUMN.get()
+    if context_column in column_names:
+        return context_column
+
+    task_column = _runtime_correlation_task_column()
+    if task_column in column_names:
+        return task_column
+
+    purpose_column = _column_name_from_purpose(purpose)
+    if purpose_column in column_names:
+        return purpose_column
+
+    if len(column_names) == 1:
+        return next(iter(column_names))
+    return None
+
+
+def _runtime_correlation_task_column() -> str | None:
+    try:
+        from data_designer.engine.observability import runtime_correlation_provider
+    except Exception:
+        return None
+
+    correlation = runtime_correlation_provider.current()
+    task_column = getattr(correlation, "task_column", None)
+    return task_column if isinstance(task_column, str) and task_column else None
+
+
+def _column_name_from_purpose(purpose: str | None) -> str | None:
+    if not purpose:
+        return None
+    match = re.search(r"column '([^']+)'", purpose)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _model_provider_endpoint(facade: Any) -> str | None:
+    provider = getattr(facade, "model_provider", None)
+    endpoint = getattr(provider, "endpoint", None)
+    return endpoint if isinstance(endpoint, str) and endpoint else None
+
+
+def _private_trace_messages(*, args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> list[dict[str, Any]]:
+    messages = args[0] if args else kwargs.get("messages")
+    if isinstance(messages, list):
+        return [_trace_message(message) for message in messages]
+    return []
+
+
+def _private_completion_trace_fields(
+    *,
+    workflow_name: str | None,
+    column_name: str,
+    facade: Any,
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+    response: Any,
+    error: Exception | None,
+    elapsed_sec: float,
+    is_async: bool,
+    trace_mode: str,
+) -> dict[str, Any]:
+    return {
+        "workflow_name": workflow_name,
+        "trace_source": "anonymizer_private_model_facade",
+        "column_name": column_name,
+        "trace_column_name": None,
+        "model_alias": getattr(facade, "model_alias", None),
+        "model_name": getattr(facade, "model_name", None),
+        "model_provider_name": getattr(facade, "model_provider_name", None),
+        "model_provider_endpoint": _model_provider_endpoint(facade),
+        "modality": "chat",
+        "is_async": is_async,
+        "status": "error" if error is not None else "completed",
+        "error_type": type(error).__name__ if error is not None else None,
+        "elapsed_sec": elapsed_sec,
+        "messages": _select_native_trace_messages(_private_trace_messages(args=args, kwargs=kwargs), mode=trace_mode),
+        "response": _model_trace_response(response),
+        "usage": _model_trace_usage(response),
+    }
+
+
+def _model_trace_response(response: Any) -> dict[str, Any] | None:
+    message = getattr(response, "message", None)
+    if message is None:
+        return None
+    return {
+        "content": getattr(message, "content", None),
+        "reasoning_content": getattr(message, "reasoning_content", None),
+        "tool_calls": _trace_tool_calls(getattr(message, "tool_calls", [])),
+    }
+
+
+def _model_trace_usage(response: Any) -> Any:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    model_dump = getattr(usage, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+    if isinstance(usage, Mapping):
+        return dict(usage)
+    fields = ("input_tokens", "output_tokens", "total_tokens", "reasoning_tokens")
+    payload = {field: getattr(usage, field) for field in fields if getattr(usage, field, None) is not None}
+    return payload or None
+
+
 @contextmanager
 def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
     if collector is None or not collector.dd_task_trace_enabled:
@@ -452,17 +749,33 @@ def _task_traces_from_result(result: Any) -> list[Any]:
         return []
 
 
-def _configure_native_dd_message_traces(
+def _custom_column_with_trace_context(column: CustomColumnConfig) -> ColumnConfigT:
+    generator = column.generator_function
+
+    @wraps(generator)
+    def traced_generator(*args: Any, **kwargs: Any) -> Any:
+        token = _MODEL_TRACE_COLUMN.set(column.name)
+        try:
+            return generator(*args, **kwargs)
+        finally:
+            _MODEL_TRACE_COLUMN.reset(token)
+
+    traced_generator.custom_column_metadata = getattr(generator, "custom_column_metadata", {})  # type: ignore[attr-defined]
+    return cast(ColumnConfigT, column.model_copy(update={"generator_function": traced_generator}))
+
+
+def _configure_dd_message_traces(
     *,
     columns: list[ColumnConfigT],
     model_configs: list[ModelConfig],
     collector: Any | None,
-) -> tuple[list[ColumnConfigT], list[_NativeTraceColumn], list[ColumnConfigT]]:
+) -> tuple[list[ColumnConfigT], list[_NativeTraceColumn], list[_PrivateFacadeTraceColumn], list[ColumnConfigT]]:
     if collector is None or not collector.dd_trace_enabled:
-        return columns, [], []
+        return columns, [], [], []
 
     model_configs_by_alias = {model_config.alias: model_config for model_config in model_configs}
-    traced_columns: list[_NativeTraceColumn] = []
+    native_trace_columns: list[_NativeTraceColumn] = []
+    private_trace_columns: list[_PrivateFacadeTraceColumn] = []
     unsupported_columns: list[ColumnConfigT] = []
     configured_columns: list[ColumnConfigT] = []
     trace_type = _native_dd_trace_type()
@@ -472,7 +785,7 @@ def _configure_native_dd_message_traces(
             configured_column = cast(ColumnConfigT, column.model_copy(update={"with_trace": trace_type}))
             configured_columns.append(configured_column)
             model_config = model_configs_by_alias.get(column.model_alias)
-            traced_columns.append(
+            native_trace_columns.append(
                 _NativeTraceColumn(
                     column_name=column.name,
                     trace_column_name=f"{column.name}{TRACE_COLUMN_POSTFIX}",
@@ -483,11 +796,14 @@ def _configure_native_dd_message_traces(
             )
             continue
 
-        configured_columns.append(column)
-        if _column_has_untraced_model_calls(column):
-            unsupported_columns.append(column)
+        if _column_has_private_facade_model_calls(column):
+            configured_columns.append(_custom_column_with_trace_context(column))
+            private_trace_columns.append(_PrivateFacadeTraceColumn(column_name=column.name))
+            continue
 
-    return configured_columns, traced_columns, unsupported_columns
+        configured_columns.append(column)
+
+    return configured_columns, native_trace_columns, private_trace_columns, unsupported_columns
 
 
 def _native_dd_trace_type() -> TraceType:
@@ -497,7 +813,7 @@ def _native_dd_trace_type() -> TraceType:
     return TraceType.ALL_MESSAGES
 
 
-def _column_has_untraced_model_calls(column: ColumnConfigT) -> bool:
+def _column_has_private_facade_model_calls(column: ColumnConfigT) -> bool:
     return isinstance(column, CustomColumnConfig) and bool(_extract_workflow_model_aliases([column]))
 
 
@@ -506,22 +822,45 @@ def _record_dd_trace_coverage(
     workflow_name: str,
     collector: Any,
     native_trace_columns: list[_NativeTraceColumn],
+    private_trace_columns: list[_PrivateFacadeTraceColumn],
     unsupported_trace_columns: list[ColumnConfigT],
 ) -> Any:
     if collector is None or not collector.dd_trace_enabled:
         return
+    traced_column_names = [column.column_name for column in native_trace_columns] + [
+        column.column_name for column in private_trace_columns
+    ]
     collector.record(
         "dd_trace_coverage",
         workflow_name=workflow_name,
-        trace_backend="data_designer_column",
+        trace_backend=_dd_trace_backend(native_trace_columns, private_trace_columns),
         trace_mode=collector.dd_trace_mode,
         native_trace_type=_native_dd_trace_type().value,
-        traced_column_count=len(native_trace_columns),
-        traced_column_names=[column.column_name for column in native_trace_columns],
+        traced_column_count=len(traced_column_names),
+        traced_column_names=traced_column_names,
+        native_trace_column_count=len(native_trace_columns),
+        native_trace_column_names=[column.column_name for column in native_trace_columns],
+        private_trace_column_count=len(private_trace_columns),
+        private_trace_column_names=[column.column_name for column in private_trace_columns],
+        private_trace_backend="anonymizer_private_model_facade" if private_trace_columns else None,
+        private_trace_note=(
+            "temporary private DataDesigner model registry/facade instrumentation" if private_trace_columns else None
+        ),
         unsupported_column_count=len(unsupported_trace_columns),
         unsupported_column_names=[column.name for column in unsupported_trace_columns],
         unsupported_column_types=[_column_type_name(column) for column in unsupported_trace_columns],
     )
+
+
+def _dd_trace_backend(
+    native_trace_columns: list[_NativeTraceColumn],
+    private_trace_columns: list[_PrivateFacadeTraceColumn],
+) -> str:
+    if native_trace_columns and private_trace_columns:
+        return "mixed"
+    if private_trace_columns:
+        return "anonymizer_private_model_facade"
+    return "data_designer_column"
 
 
 def _column_type_name(column: ColumnConfigT) -> str:

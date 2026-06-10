@@ -247,13 +247,17 @@ values, replacement values, secrets, and PII. Treat them as debug artifacts:
 keep them out of shared benchmark bundles unless they have been reviewed or
 redacted.
 
-Anonymizer requests these traces through DataDesigner native LLM column trace
-side effects. That covers `LLMTextColumnConfig` and
-`LLMStructuredColumnConfig`, but not model calls made inside
-`CustomColumnConfig` generator functions. Safe measurement output includes a
-`dd_trace_coverage` record with unsupported custom columns so trace-enabled
-runs can detect this gap. Full custom-column message tracing would need a
-DataDesigner hook; it is a good candidate for an upstream DataDesigner PR.
+Anonymizer requests standard LLM-column traces through DataDesigner native LLM
+column trace side effects. That covers `LLMTextColumnConfig` and
+`LLMStructuredColumnConfig`. Model-backed `CustomColumnConfig` generator
+functions are traced through a temporary Anonymizer shim that instruments the
+per-run DataDesigner model registry and returned model facades. This is a
+brittle bridge over private DataDesigner internals until DataDesigner exposes a
+public model-call trace sink.
+
+Safe measurement output includes a `dd_trace_coverage` record with native,
+private-facade, and unsupported column counts so trace-enabled runs can detect
+which path covered each workflow.
 
 ## DataDesigner Scheduler Task Traces
 
