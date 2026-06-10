@@ -42,10 +42,14 @@ All changes are backwards-compatible for replace-mode users.
 |---|---|
 | `src/anonymizer/engine/rewrite/final_judge.py` | Rename `NATURALNESS_RUBRIC` → `FLUENCY_RUBRIC`; change options to `low/medium/high`; update `_judge_prompt` scoring instructions; update `scores=` list |
 | `src/anonymizer/engine/rewrite/rewrite_workflow.py` | Remove `_run_final_judge` call from `run()`; add `evaluate()` method that runs detection judge + final judge |
-| `src/anonymizer/interface/anonymizer.py` | Extend `evaluate()` to handle rewrite results; add `COL_JUDGE_EVALUATION` + `COL_DETECTION_VALID` to the rewrite allowed-column set in `_build_user_dataframe` |
-| `src/anonymizer/config/models.py` | Add `rewrite_judge` alias to `EvaluateModelSelection`; remove `judge` from `RewriteModelSelection` (or keep as deprecated with a note) |
+| `src/anonymizer/interface/results.py` | Add `rewrite_config: PrivacyGoal \| None = None` field to `AnonymizerResult` and `PreviewResult`; set it during rewrite `run()` analogous to `replace_method` |
+| `src/anonymizer/interface/anonymizer.py` | Extend `evaluate()` to dispatch on `rewrite_config`; add `COL_JUDGE_EVALUATION` + `COL_DETECTION_VALID` to the rewrite allowed-column set in `_build_user_dataframe` |
+| `src/anonymizer/config/models.py` | Add `rewrite_judge` alias to `EvaluateModelSelection`; remove `judge` from `RewriteModelSelection` |
 | `src/anonymizer/config/anonymizer_config.py` | `EvaluateConfig` is no longer a placeholder — add a docstring clarifying it covers both replace and rewrite evaluation |
-| `src/anonymizer/interface/display.py` | Update `_render_scores_section` to not append `/10`; update `_extract_judge_scores` if it assumes integer scores |
+| `src/anonymizer/config/default_model_configs/evaluate.yaml` | Add `rewrite_judge: nemotron-30b-thinking` — required to avoid a Pydantic startup crash when the new field lands in `EvaluateModelSelection` |
+| `src/anonymizer/config/default_model_configs/rewrite.yaml` | Remove `judge` entry — it moves to `evaluate.yaml` |
+| `src/anonymizer/engine/ndd/model_loader.py` | Update `validate_model_alias_references` to check `evaluate.rewrite_judge` when `check_evaluate=True` on a rewrite result |
+| `src/anonymizer/interface/display.py` | Update `_render_scores_section` to not append `/10`; update `_extract_judge_scores` return type to `list[tuple[str, int \| str]]` |
 | `src/anonymizer/engine/schemas/rewrite.py` | Update any schema or docstring that references the 1–10 scale or "naturalness" |
 | `docs/concepts/rewrite.md` | Update judge score documentation (rename naturalness → fluency, describe categorical scale, move judge to evaluate step) |
 | `skills/anonymizer/SKILL.md` | Update evaluate workflow section with rewrite evaluate example |
