@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/concepts/evaluation/">
       
       
-        <link rel="prev" href="../reference/anonymizer/telemetry/">
+        <link rel="prev" href="../choosing-a-strategy/">
       
       
-        <link rel="next" href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/">
+        <link rel="next" href="../self-hosting-gliner/">
       
       
         
       
       
-      <link rel="icon" href="../assets/favicon.svg">
+      <link rel="icon" href="../../assets/favicon.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
     
     
       
-        <title>Index - NeMo Anonymizer</title>
+        <title>Evaluation - NeMo Anonymizer</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,13 +53,13 @@
       
     
     
-      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../css/style.css">
+      <link rel="stylesheet" href="../../css/style.css">
     
-      <link rel="stylesheet" href="../css/mkdocstrings.css">
+      <link rel="stylesheet" href="../../css/mkdocstrings.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#developer-notes" class="md-skip">
+        <a href="#evaluation" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +104,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Index
+              Evaluation
             
           </span>
         </div>
@@ -242,7 +242,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -272,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -296,8 +296,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -319,11 +321,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -344,7 +346,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -362,7 +364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concepts/models/" class="md-nav__link">
+      <a href="../models/" class="md-nav__link">
         
   
   
@@ -390,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concepts/detection/" class="md-nav__link">
+      <a href="../detection/" class="md-nav__link">
         
   
   
@@ -418,7 +420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concepts/replace/" class="md-nav__link">
+      <a href="../replace/" class="md-nav__link">
         
   
   
@@ -446,7 +448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concepts/rewrite/" class="md-nav__link">
+      <a href="../rewrite/" class="md-nav__link">
         
   
   
@@ -474,7 +476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concepts/choosing-a-strategy/" class="md-nav__link">
+      <a href="../choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -499,10 +501,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../concepts/evaluation/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -518,6 +547,154 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#replace-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replace Evaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Replace Evaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entity-detection-judge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Detection Judge
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Entity Detection Judge">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#detection-validity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection Validity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entity-replacement-judges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Replacement Judges
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Entity Replacement Judges">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#type-fidelity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type Fidelity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#attribute-fidelity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attribute Fidelity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relational-consistency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relational Consistency
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-replace-evaluation-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading replace evaluation results
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model roles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rewrite-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rewrite Evaluation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -530,7 +707,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../concepts/self-hosting-gliner/" class="md-nav__link">
+      <a href="../self-hosting-gliner/" class="md-nav__link">
         
   
   
@@ -565,7 +742,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../troubleshooting/" class="md-nav__link">
+      <a href="../../troubleshooting/" class="md-nav__link">
         
   
   
@@ -620,7 +797,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../tutorials/" class="md-nav__link ">
+            <a href="../../tutorials/" class="md-nav__link ">
               
   
   
@@ -664,7 +841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../notebooks/01_your_first_anonymization/" class="md-nav__link">
+      <a href="../../notebooks/01_your_first_anonymization/" class="md-nav__link">
         
   
   
@@ -692,7 +869,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
+      <a href="../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
         
   
   
@@ -720,7 +897,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
+      <a href="../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
         
   
   
@@ -748,7 +925,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../notebooks/04_rewriting_biographies/" class="md-nav__link">
+      <a href="../../notebooks/04_rewriting_biographies/" class="md-nav__link">
         
   
   
@@ -776,7 +953,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
+      <a href="../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
         
   
   
@@ -925,7 +1102,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/config/anonymizer_config/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/anonymizer_config/" class="md-nav__link">
         
   
   
@@ -953,7 +1130,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/config/models/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/models/" class="md-nav__link">
         
   
   
@@ -981,7 +1158,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/config/replace_strategies/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/replace_strategies/" class="md-nav__link">
         
   
   
@@ -1009,7 +1186,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/config/rewrite/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/rewrite/" class="md-nav__link">
         
   
   
@@ -1104,7 +1281,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/interface/anonymizer/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/anonymizer/" class="md-nav__link">
         
   
   
@@ -1183,7 +1360,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/interface/cli/main/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/cli/main/" class="md-nav__link">
         
   
   
@@ -1219,7 +1396,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/interface/display/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/display/" class="md-nav__link">
         
   
   
@@ -1247,7 +1424,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/interface/errors/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/errors/" class="md-nav__link">
         
   
   
@@ -1275,7 +1452,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/interface/results/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/results/" class="md-nav__link">
         
   
   
@@ -1311,7 +1488,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/logging/" class="md-nav__link">
+      <a href="../../reference/anonymizer/logging/" class="md-nav__link">
         
   
   
@@ -1339,7 +1516,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/anonymizer/telemetry/" class="md-nav__link">
+      <a href="../../reference/anonymizer/telemetry/" class="md-nav__link">
         
   
   
@@ -1371,8 +1548,6 @@
       
   
   
-    
-  
   
   
     
@@ -1390,15 +1565,15 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="./" class="md-nav__link md-nav__link--active">
+            <a href="../../devnotes/" class="md-nav__link ">
               
   
   
@@ -1416,13 +1591,13 @@
             </a>
             
               
-              <label class="md-nav__link md-nav__link--active" for="__nav_6" id="__nav_6_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1442,7 +1617,7 @@
   
   
     <li class="md-nav__item">
-      <a href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
         
   
   
@@ -1523,7 +1698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="archive/2026/" class="md-nav__link">
+      <a href="../../devnotes/archive/2026/" class="md-nav__link">
         
   
   
@@ -1586,10 +1761,127 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era" class="md-nav__link">
+  <a href="#replace-evaluation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+        Replace Evaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Replace Evaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entity-detection-judge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Detection Judge
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Entity Detection Judge">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#detection-validity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection Validity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entity-replacement-judges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Replacement Judges
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Entity Replacement Judges">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#type-fidelity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type Fidelity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#attribute-fidelity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attribute Fidelity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relational-consistency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relational Consistency
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-replace-evaluation-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading replace evaluation results
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model roles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rewrite-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rewrite Evaluation
       
     </span>
   </a>
@@ -1605,82 +1897,281 @@
             
           
           
-  <div class="md-content" data-md-component="content">
-    <div class="md-content__inner">
-      <header class="md-typeset">
-        <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+            <div class="md-content" data-md-component="content">
+              
+                
 
-<h1 id="developer-notes">Developer Notes<a class="headerlink" href="#developer-notes" title="Permanent link">&para;</a></h1>
-<p>Updates and notes from the NeMo Anonymizer team.</p>
-      </header>
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
       
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
     
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://avatars.githubusercontent.com/u/256168822?v=4" alt="Amy Steier">
-          </span>
-        
-      </nav>
     
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-05-19 00:00:00+00:00">May 19, 2026</time></li>
-        
-        
+      <li class="md-path__item">
+        <a href="../models/" class="md-path__link">
           
-          <li class="md-meta__item">
-            
-              12 min read
-            
-          </li>
-        
-        
-      </ul>
+  <span class="md-ellipsis">
+    Concepts
+  </span>
+
+        </a>
+      </li>
+    
+  
+
       
-    </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era"><a class="toclink" href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/"><strong>Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era</strong></a></h2>
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-<p>Picture this: you ship a year of customer support transcripts to a vendor for model fine-tuning. Names, emails, phone numbers, account IDs — every identifier you can think of — stripped. A week later, the vendor's eval team flags a transcript and identifies the account: the customer who escalated repeatedly after a regional outage last spring, then quietly churned a month later.</p>
-<p>You didn't leak a name.</p>
+<h1 id="evaluation">Evaluation<a class="headerlink" href="#evaluation" title="Permanent link">&para;</a></h1>
+<p>Anonymizer provides LLM-as-judge evaluation for both modes, replace and rewrite, but they work differently:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>How evaluation runs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Replace</strong></td>
+<td>Post-hoc, via a separate <code>Anonymizer.evaluate()</code> call after <code>run()</code> / <code>preview()</code>.</td>
+</tr>
+<tr>
+<td><strong>Rewrite</strong></td>
+<td>Runs automatically as part of every <code>run()</code> / <code>preview()</code> call. A dedicated post-hoc <code>evaluate()</code> call, matching replace mode, is planned for a future release.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="replace-evaluation">Replace Evaluation<a class="headerlink" href="#replace-evaluation" title="Permanent link">&para;</a></h2>
+<p>Replace evaluation is <strong>optional and post-hoc</strong> — you call <code>Anonymizer.evaluate()</code> on a result from <code>run()</code> or <code>preview()</code>:</p>
+<pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
+
+anonymizer = Anonymizer()
+cfg = AnonymizerConfig(replace=Substitute())
+src = AnonymizerInput(source="data.csv", text_column="text")
+
+result = anonymizer.run(config=cfg, data=src)
+evaluated = anonymizer.evaluate(result)
+evaluated.display_record(0)</code></pre>
+<p>Both <code>run()</code> and <code>preview()</code> results can be saved and evaluated in a separate session:</p>
+<pre class="highlight"><code class="language-python">import pickle
+
+preview = anonymizer.preview(config=cfg, data=src, num_records=15)
+
+with open("/tmp/preview.pkl", "wb") as f:
+    pickle.dump(preview, f)
+
+# … later …
+with open("/tmp/preview.pkl", "rb") as f:
+    loaded = pickle.load(f)
+
+evaluated = anonymizer.evaluate(loaded)</code></pre>
+<p>Four LLM judges run per record: one that scores detection quality and three that score replacement quality (Substitute mode only).</p>
+<hr />
+<h3 id="entity-detection-judge">Entity Detection Judge<a class="headerlink" href="#entity-detection-judge" title="Permanent link">&para;</a></h3>
+<h4 id="detection-validity">Detection Validity<a class="headerlink" href="#detection-validity" title="Permanent link">&para;</a></h4>
 <blockquote>
-<p>You leaked a <em>fingerprint</em>.</p>
+<p>"Are the detected entities actually correct (value, label) pairs in context?"</p>
 </blockquote>
-<p>The escalation pattern, the region, the churn timing — combined, they point to one account. This is the privacy problem that text anonymization actually has to solve in 2026, and it's the problem <strong>NeMo Anonymizer</strong> — <strong>Anonymizer</strong>, for short — is built for.</p>
+<p>This judge runs regardless of which replace mode was used. It looks at each detected span and flags:</p>
+<ul>
+<li><strong>false_positive</strong> — the span is not actually identifying or sensitive in this context (common word, generic phrase, boilerplate).</li>
+<li><strong>wrong_label</strong> — the span is sensitive but the label sits in a clearly different domain (e.g. a company name labeled <code>first_name</code>). Sibling labels within the same broad domain are treated as valid.</li>
+<li><strong>not_in_text</strong> — the literal value does not appear in the original text.</li>
+<li><strong>wrong_boundary</strong> — the span is a clear partial or over-extended capture (omits part of the actual value, or absorbs surrounding function words). Descriptive words in natural prose around a bare entity value are not a boundary error.</li>
+<li><strong>contextual_mismatch</strong> — the span refers to something other than the labeled entity type in this context (e.g. "Apple" as fruit labeled <code>company_name</code>).</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Output column</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>detection_valid</code></td>
+<td><code>bool \| None</code></td>
+<td><code>True</code> if all detections pass; <code>None</code> if the judge was unavailable.</td>
+</tr>
+<tr>
+<td><code>detection_invalid_entities</code></td>
+<td><code>list</code></td>
+<td>Each flagged detection with value, label, and one-sentence reasoning.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="entity-replacement-judges">Entity Replacement Judges<a class="headerlink" href="#entity-replacement-judges" title="Permanent link">&para;</a></h3>
+<p>When the source result used the <strong>Substitute</strong> mode, three additional LLM judges run in parallel — one per quality dimension.</p>
+<h4 id="type-fidelity">Type Fidelity<a class="headerlink" href="#type-fidelity" title="Permanent link">&para;</a></h4>
+<blockquote>
+<p>"Does each synthetic value still belong to the same entity class and match the expected format for that class?"</p>
+</blockquote>
+<p>The judge checks that replacements are shape-compatible with their originals — same granularity and character class — anchored by what the original itself looks like. It does <strong>not</strong> check semantic attributes (gender, age bucket) or cross-entity consistency; those are separate metrics.</p>
+<table>
+<thead>
+<tr>
+<th>Output column</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type_fidelity_valid</code></td>
+<td><code>bool \| None</code></td>
+<td><code>True</code> if all replacements pass; <code>None</code> if the judge was unavailable.</td>
+</tr>
+<tr>
+<td><code>type_fidelity_invalid_replacements</code></td>
+<td><code>list</code></td>
+<td>Each failing replacement with label, original, synthetic, and reasoning.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="attribute-fidelity">Attribute Fidelity<a class="headerlink" href="#attribute-fidelity" title="Permanent link">&para;</a></h4>
+<blockquote>
+<p>"Does each synthetic value preserve the salient within-entity attributes of the original?"</p>
+</blockquote>
+<p>The judge checks two attributes:</p>
+<ul>
+<li><strong>Gender of name</strong> — applies to <code>first_name</code>, <code>last_name</code>, <code>user_name</code>. Only checked when the original name clearly implies a gender. Adjacent or ambiguous cases pass.</li>
+<li><strong>Age bucket</strong> — applies to <code>age</code> and <code>date_of_birth</code>. Buckets: child (0–12), teen (13–19), young adult (20–29), adult (30–44), middle-aged (45–64), senior (65+). Adjacent buckets pass; only clear flips (adult → child) fail.</li>
+</ul>
+<p>All other labels are outside the scope of this metric.</p>
+<table>
+<thead>
+<tr>
+<th>Output column</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>attribute_fidelity_valid</code></td>
+<td><code>bool \| None</code></td>
+<td><code>True</code> if all checked attributes pass; <code>None</code> if unavailable.</td>
+</tr>
+<tr>
+<td><code>attribute_fidelity_invalid_entities</code></td>
+<td><code>list</code></td>
+<td>Each failing entity with attributes checked and reasoning.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="relational-consistency">Relational Consistency<a class="headerlink" href="#relational-consistency" title="Permanent link">&para;</a></h4>
+<blockquote>
+<p>"Do the synthetic entities preserve the same relational coherence with each other that the originals had?"</p>
+</blockquote>
+<p>The judge inspects cross-entity relationships within a record — for example, whether a synthetic city is actually located in the synthetic state, or whether a synthetic date of birth is consistent with a synthetic age. Records with no checkable relationships always pass.</p>
+<p>Relationships inspected include geographic pairings (city ↔ state, city ↔ postcode), temporal coherence (date of birth ↔ age), and name–email alignment.</p>
+<table>
+<thead>
+<tr>
+<th>Output column</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>relational_consistency_valid</code></td>
+<td><code>bool \| None</code></td>
+<td><code>True</code> if all relations pass; <code>None</code> if unavailable.</td>
+</tr>
+<tr>
+<td><code>relational_consistency_invalid_relations</code></td>
+<td><code>list</code></td>
+<td>Each failing relation with participants and reasoning.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="reading-replace-evaluation-results">Reading replace evaluation results<a class="headerlink" href="#reading-replace-evaluation-results" title="Permanent link">&para;</a></h2>
+<p><code>display_record()</code> renders a formatted per-record view that includes all four judge verdicts alongside the replacement map:</p>
+<pre class="highlight"><code class="language-python">evaluated.display_record(0)</code></pre>
+<p>For a tabular overview across all records:</p>
+<pre class="highlight"><code class="language-python">evaluated.dataframe[
+    [
+        "detection_valid",
+        "type_fidelity_valid",
+        "attribute_fidelity_valid",
+        "relational_consistency_valid",
+    ]
+]</code></pre>
+<p>Use <code>trace_dataframe</code> for the full internal trace including raw judge outputs.</p>
+<hr />
+<h2 id="model-roles">Model roles<a class="headerlink" href="#model-roles" title="Permanent link">&para;</a></h2>
+<p>All four judges default to <code>gpt-oss-120b</code>. Defaults are defined in <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml"><code>evaluate.yaml</code></a>. Override them by passing a <code>model_configs</code> YAML to <code>Anonymizer(model_configs=...)</code> — see <a href="../models/">Models</a> for the full override pattern.</p>
+<p>The four roles are <code>detection_validity_judge</code>, <code>replace_type_fidelity_judge</code>, <code>replace_attribute_fidelity_judge</code>, and <code>replace_relational_consistency_judge</code>.</p>
+<pre class="highlight"><code class="language-yaml"># my_models.yaml
+selected_models:
+  evaluate:
+    detection_validity_judge: your-model-alias
+    replace_type_fidelity_judge: your-model-alias
+    replace_attribute_fidelity_judge: your-model-alias
+    replace_relational_consistency_judge: your-model-alias</code></pre>
+<hr />
+<h2 id="rewrite-evaluation">Rewrite Evaluation<a class="headerlink" href="#rewrite-evaluation" title="Permanent link">&para;</a></h2>
+<p>Rewrite evaluation is part of the pipeline and runs automatically — there is no separate call. After the rewritten text is generated, an evaluate–repair loop scores each record for <strong>utility</strong> (how much semantic content was preserved) and <strong>leakage mass</strong> (how much sensitive information survived). Records that exceed the leakage threshold are sent back for repair, up to <code>max_repair_iterations</code> times. A final judge then produces a qualitative assessment and flags records that still need human review.</p>
+<p>The key output columns are <code>utility_score</code>, <code>leakage_mass</code>, <code>weighted_leakage_rate</code>, <code>any_high_leaked</code>, and <code>needs_human_review</code>. See <a href="../rewrite/">Rewrite</a> for more details.</p>
 
-    
-      <nav class="md-post__action">
-        <a href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-      
-        
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
           
-
-
-
-<nav class="md-pagination">
-  
-</nav>
-        
-      
-    </div>
-  </div>
-
           
   <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
 
@@ -1702,7 +2193,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../reference/anonymizer/telemetry/" class="md-footer__link md-footer__link--prev" aria-label="Previous: telemetry">
+          <a href="../choosing-a-strategy/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Choosing a Strategy">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1712,20 +2203,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                telemetry
+                Choosing a Strategy
               </div>
             </div>
           </a>
         
         
           
-          <a href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-footer__link md-footer__link--next" aria-label="Next: Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era">
+          <a href="../self-hosting-gliner/" class="md-footer__link md-footer__link--next" aria-label="Next: Self-hosting GLiNER">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+                Self-hosting GLiNER
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -1762,16 +2253,16 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../js/mathjax.js"></script>
+        <script src="../../js/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
-        <script src="../js/toc-toggle.js"></script>
+        <script src="../../js/toc-toggle.js"></script>
       
     
   </body>
