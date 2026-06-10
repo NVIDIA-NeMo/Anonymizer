@@ -64,9 +64,11 @@ packages = ["src/anonymizer"]
 required-version = ">=0.5.0"
 package = true
 
-override-dependencies = [
-  "grpcio>=1.68.0",  # forcing to a higher version since litellm is constraining it, to avoid CVE-2024-11407
-  "urllib3>=2.7.0",  # forcing to a higher version since it is pulled in transitively, to avoid CVE-2026-44432
+constraint-dependencies = [
+  "grpcio>=1.68.0",  # CVE-2024-11407
+  "urllib3>=2.7.0",  # CVE-2026-44432
+  "python-dotenv>=1.2.2",  # CVE-2026-28684
+  "pyjwt>=2.13.0",  # CVE-2026-48524, CVE-2026-48522, CVE-2026-48525, CVE-2026-48526
 ]
 
 [tool.pytest.ini_options]
