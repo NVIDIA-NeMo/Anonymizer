@@ -21,7 +21,7 @@ from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
 
 anonymizer = Anonymizer()
 cfg = AnonymizerConfig(replace=Substitute())
-src = AnonymizerInput(data="data.csv", text_column="text")
+src = AnonymizerInput(source="data.csv", text_column="text")
 
 result = anonymizer.run(config=cfg, data=src)
 evaluated = anonymizer.evaluate(result)
