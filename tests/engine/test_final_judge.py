@@ -117,3 +117,16 @@ def test_rubric_names_match_constants() -> None:
     assert PRIVACY_RUBRIC.name == "privacy"
     assert QUALITY_RUBRIC.name == "quality"
     assert STYLE_RUBRIC.name == "style"
+
+
+def test_judge_prompt_references_style_not_naturalness() -> None:
+    prompt = _judge_prompt(_STUB_PRIVACY_GOAL)
+    assert "style" in prompt.lower()
+    assert "naturalness" not in prompt.lower()
+
+
+def test_judge_prompt_references_categorical_scale() -> None:
+    prompt = _judge_prompt(_STUB_PRIVACY_GOAL)
+    assert "high" in prompt
+    assert "medium" in prompt
+    assert "low" in prompt

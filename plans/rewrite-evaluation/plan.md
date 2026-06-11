@@ -303,6 +303,10 @@ score_strs = [f"{name}: {score}" for name, score in judge_scores]
 
 In rewrite mode the `COL_NEEDS_HUMAN_REVIEW` column must be displayed as **"Rewrite Need Review"** (not the generic "Needs Review" used in replace mode). Update the label resolution in `display.py` to emit the rewrite-specific label when rendering a rewrite result.
 
+### Invalid-entities expandable table
+
+When `COL_DETECTION_VALID < 1.0` and `COL_DETECTION_INVALID_ENTITIES` contains entries, append a collapsed `<details>` block below the scores `<div>`. The summary line reads "Show N flagged detection(s)"; expanding it reveals a three-column table (Value / Label / Reason). This is conditional — records with `detection_valid == 1.0` or no invalid-entity entries show no extra element. The `_extract_judge_scores` fix (remove `int()` cast) is required for string scores to appear at all; without it, `ValueError` was silently swallowed for `"low"/"medium"/"high"` values, causing the judge section to never render.
+
 ---
 
 ## Step 6 — Docs and skills

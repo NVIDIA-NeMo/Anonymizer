@@ -11,7 +11,7 @@ Instead of replacing individual entities, rewrite mode transforms the entire tex
 
 [Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. 
 
-The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. A final judge provides a qualitative assessment of the rewritten record. Any records that failed to meet standards are tagged for human review. 
+The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review. 
 
 ---
 
@@ -128,16 +128,19 @@ config = AnonymizerConfig(
 
 ## Output columns
 
-| Column | Description |
-|--------|-------------|
-| `{text_col}_rewritten` | The privacy-safe rewritten text. |
-| `utility_score` | Quality preservation (0.0--1.0). Higher is better. |
-| `leakage_mass` | Weighted privacy leakage. Lower is better. |
-| `weighted_leakage_rate` | Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass. |
-| `any_high_leaked` | Whether any high-sensitivity entity leaked through. |
-| `needs_human_review` | Flag for records that may need manual review. |
+| Column | When available | Description |
+|--------|---------------|-------------|
+| `{text_col}_rewritten` | Always | The privacy-safe rewritten text. |
+| `utility_score` | Always | Quality preservation (0.0--1.0). Higher is better. |
+| `leakage_mass` | Always | Weighted privacy leakage. Lower is better. |
+| `weighted_leakage_rate` | Always | Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass. |
+| `any_high_leaked` | Always | Whether any high-sensitivity entity leaked through. |
+| `needs_human_review` | Always | Flag for records that may need manual review. |
+| `detection_valid` | After `evaluate()` | Fraction of detected entities that passed the detection judge (0.0--1.0); `None` if judge unavailable. |
+| `detection_invalid_entities` | After `evaluate()` | Flagged detections with value, label, and one-sentence reasoning. |
+| `judge_evaluation` | After `evaluate()` | Dict with `privacy`, `quality`, and `style` rubric scores and reasoning. |
 
-Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, QA pairs, repair iterations, judge evaluation).
+Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, QA pairs, repair iterations).
 
 !!! note "No entities? No rewrite."
 
@@ -180,4 +183,9 @@ Rewrite uses multiple LLM roles. All default to models in the [default config](m
 | `rewriter` | `gpt-oss-120b` | Generates the rewritten text. |
 | `evaluator` | `nemotron-30b-thinking` | Evaluates quality and leakage. |
 | `repairer` | `gpt-oss-120b` | Repairs high-leakage rewrites. |
-| `judge` | `nemotron-30b-thinking` | Final quality/privacy judge. |
+
+---
+
+## Evaluating rewrite output
+
+After running rewrite, you can score detection quality and the holistic rewrite quality using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on the detection judge and the three rewrite quality rubrics (privacy, quality, style), and how to call `Anonymizer.evaluate()`.

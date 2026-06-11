@@ -13,6 +13,7 @@ from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelectio
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_DETECTION_VALID,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
@@ -866,3 +867,176 @@ def test_passthrough_rows_get_defaults(
     assert df[COL_UTILITY_SCORE].iloc[1] == 1.0
     assert df[COL_LEAKAGE_MASS].iloc[1] == 0.0
     assert not df[COL_NEEDS_HUMAN_REVIEW].iloc[1]
+
+
+# ---------------------------------------------------------------------------
+# Tests: evaluate() — happy path and column presence
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_produces_judge_evaluation_column(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+
+    det_df = stub_eval_df.copy()
+    det_df[COL_DETECTION_VALID] = True
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(dataframe=det_df, failed_records=[])
+
+    judge_df = stub_eval_df.copy()
+    judge_df[COL_JUDGE_EVALUATION] = [
+        {"privacy": {"score": "high"}, "quality": {"score": "high"}, "style": {"score": "medium"}}
+    ]
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
+
+    result = wf.evaluate(
+        stub_eval_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
+
+    assert COL_JUDGE_EVALUATION in result.dataframe.columns
+    assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0] is not None
+
+
+def test_evaluate_produces_detection_valid_column(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+
+    det_df = stub_eval_df.copy()
+    det_df[COL_DETECTION_VALID] = True
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(dataframe=det_df, failed_records=[])
+
+    judge_df = stub_eval_df.copy()
+    judge_df[COL_JUDGE_EVALUATION] = [None]
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
+
+    result = wf.evaluate(
+        stub_eval_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
+
+    assert COL_DETECTION_VALID in result.dataframe.columns
+
+
+# ---------------------------------------------------------------------------
+# Tests: evaluate() — passthrough rows
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_skips_passthrough_rows(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    """evaluate() must only send entity rows to the judges, not passthrough rows."""
+    passthrough_row = stub_eval_df.iloc[0].to_dict()
+    passthrough_row[COL_ENTITIES_BY_VALUE] = {"entities_by_value": []}
+    mixed_df = pd.concat([stub_eval_df, pd.DataFrame([passthrough_row])], ignore_index=True)
+
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+
+    det_df = stub_eval_df.copy()
+    det_df[COL_DETECTION_VALID] = True
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(dataframe=det_df, failed_records=[])
+
+    judge_df = stub_eval_df.copy()
+    judge_df[COL_JUDGE_EVALUATION] = [None]
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
+
+    result = wf.evaluate(
+        mixed_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
+
+    detection_call_df = wf._detection_judge_wf.evaluate.call_args.args[0]
+    assert len(detection_call_df) == 1
+    assert len(result.dataframe) == 2
+
+
+def test_evaluate_passthrough_rows_get_none_judge_defaults(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    """Passthrough rows must have COL_JUDGE_EVALUATION=None and COL_DETECTION_VALID=None."""
+    passthrough_row = stub_eval_df.iloc[0].to_dict()
+    passthrough_row[COL_ENTITIES_BY_VALUE] = {"entities_by_value": []}
+    mixed_df = pd.concat([stub_eval_df, pd.DataFrame([passthrough_row])], ignore_index=True)
+
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+
+    det_df = stub_eval_df.copy()
+    det_df[COL_DETECTION_VALID] = True
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(dataframe=det_df, failed_records=[])
+
+    judge_df = stub_eval_df.copy()
+    judge_df[COL_JUDGE_EVALUATION] = [None]
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
+
+    result = wf.evaluate(
+        mixed_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
+
+    passthrough_result = result.dataframe[
+        result.dataframe[COL_ENTITIES_BY_VALUE].apply(lambda x: len(x.get("entities_by_value", [])) == 0)
+    ]
+    assert passthrough_result[COL_JUDGE_EVALUATION].iloc[0] is None
+    assert pd.isna(passthrough_result[COL_DETECTION_VALID].iloc[0])
+
+
+# ---------------------------------------------------------------------------
+# Tests: needs_human_review not overwritten by evaluate()
+# ---------------------------------------------------------------------------
+
+
+def test_run_needs_human_review_not_overwritten_by_evaluate(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    """COL_NEEDS_HUMAN_REVIEW set during run() must not be modified by evaluate()."""
+    run_df = stub_eval_df.copy()
+    run_df[COL_NEEDS_HUMAN_REVIEW] = True
+
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+
+    det_df = run_df.copy()
+    det_df[COL_DETECTION_VALID] = True
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(dataframe=det_df, failed_records=[])
+
+    judge_df = run_df.copy()
+    judge_df[COL_JUDGE_EVALUATION] = [{"privacy": {"score": "high"}}]
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
+
+    result = wf.evaluate(
+        run_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
+
+    assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True

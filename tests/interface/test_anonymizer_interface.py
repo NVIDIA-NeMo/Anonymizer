@@ -16,7 +16,9 @@ from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
+    COL_DETECTION_VALID,
     COL_FINAL_ENTITIES,
+    COL_JUDGE_EVALUATION,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
@@ -800,3 +802,86 @@ def test_evaluate_raises_value_error_on_legacy_result_without_replace_method() -
 
     with pytest.raises(ValueError, match="replace_method"):
         anonymizer.evaluate(legacy_result)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Anonymizer.evaluate() for rewrite results
+# ---------------------------------------------------------------------------
+
+
+def test_run_rewrite_does_not_include_judge_in_user_dataframe(stub_input: AnonymizerInput) -> None:
+    """run() output must not include COL_JUDGE_EVALUATION — it only appears after evaluate()."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert COL_JUDGE_EVALUATION not in result.dataframe.columns
+
+
+def test_evaluate_rewrite_result_adds_judge_columns(stub_input: AnonymizerInput) -> None:
+    """anonymizer.evaluate() on a rewrite result must add COL_JUDGE_EVALUATION."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [{"privacy": {"score": "high"}}],
+            COL_DETECTION_VALID: [1.0],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    evaluated = anonymizer.evaluate(run_result)
+
+    assert COL_JUDGE_EVALUATION in evaluated.dataframe.columns
+
+
+def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInput) -> None:
+    """anonymizer.evaluate() on a rewrite result must add COL_DETECTION_VALID."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [None],
+            COL_DETECTION_VALID: [0.9],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    evaluated = anonymizer.evaluate(run_result)
+
+    assert COL_DETECTION_VALID in evaluated.dataframe.columns
+
+
+def test_evaluate_rewrite_raises_without_rewrite_config() -> None:
+    """evaluate() must raise ValueError when result has no rewrite_config and no replace_method."""
+    anonymizer, _, _, _ = _make_anonymizer()
+    bare_result = SimpleNamespace(
+        dataframe=pd.DataFrame(),
+        trace_dataframe=pd.DataFrame(),
+        resolved_text_column="text",
+        rewrite_config=None,
+    )
+
+    with pytest.raises(ValueError):
+        anonymizer.evaluate(bare_result)  # type: ignore[arg-type]

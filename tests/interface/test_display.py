@@ -11,6 +11,7 @@ import pytest
 
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
+    COL_DETECTION_VALID,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_REPLACEMENT_MAP,
@@ -21,6 +22,7 @@ from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, SensitivityDispositionSchema
 from anonymizer.interface.display import (
     _build_replaced_entities,
+    _extract_judge_scores,
     _normalize_replacement_map,
     _render_highlighted_text,
     _verdict_badge,
@@ -564,9 +566,9 @@ def test_render_record_html_rewrite_mode_with_judge_scores() -> None:
         }
     )
     result = render_record_html(row, record_index=0)
-    assert f"{PRIVACY_RUBRIC.name}: high" in result
-    assert f"{QUALITY_RUBRIC.name}: high" in result
-    assert f"{STYLE_RUBRIC.name}: medium" in result
+    assert f"<strong>{PRIVACY_RUBRIC.name}</strong>: high" in result
+    assert f"<strong>{QUALITY_RUBRIC.name}</strong>: high" in result
+    assert f"<strong>{STYLE_RUBRIC.name}</strong>: medium" in result
 
 
 def test_render_record_html_rewrite_mode_nan_judge_column_does_not_warn(
@@ -665,3 +667,64 @@ def test_render_record_html_replace_mode_unchanged_when_no_rewritten_column() ->
     assert "Replacement Map" in result
     assert "Rewritten" not in result
     assert "Scores" not in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: _extract_judge_scores
+# ---------------------------------------------------------------------------
+
+
+def test_extract_judge_scores_returns_string_scores() -> None:
+    raw = {
+        "privacy": {"score": "high", "reasoning": "good"},
+        "quality": {"score": "medium", "reasoning": "ok"},
+        "style": {"score": "low", "reasoning": "rough"},
+    }
+    result = _extract_judge_scores(raw)
+    assert result == [("privacy", "high"), ("quality", "medium"), ("style", "low")]
+
+
+def test_extract_judge_scores_categorical_not_silently_empty() -> None:
+    """String scores must not be silently dropped (old int() cast raised ValueError)."""
+    raw = {"privacy": {"score": "high", "reasoning": "..."}}
+    result = _extract_judge_scores(raw)
+    assert len(result) == 1
+    assert result[0] == ("privacy", "high")
+
+
+# ---------------------------------------------------------------------------
+# Tests: detection_valid and label rendering
+# ---------------------------------------------------------------------------
+
+
+def test_detection_valid_rendered_in_main_scores_section() -> None:
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            COL_DETECTION_VALID: 0.75,
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "Detection Validity" in result
+    assert "0.75" in result
+
+
+def test_rewrite_needs_human_review_label_is_rewrite_need_review() -> None:
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": True,
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "Rewrite Need Review" in result
+    assert "<strong>Needs Review:</strong>" not in result
