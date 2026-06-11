@@ -29,6 +29,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -52,6 +53,31 @@ _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_NEEDS_HUMAN_REVIEW: False,
     COL_REPAIR_ITERATIONS: 0,
 }
+
+
+def _detection_valid_fraction(row: pd.Series) -> float | None:
+    """Convert bool COL_DETECTION_VALID to a 0–1 fraction for rewrite evaluate output.
+
+    The detection judge stores a bool (all_valid) but rewrite evaluate surfaces
+    a fraction so it sits on the same scale as utility_score and leakage_mass.
+    """
+    valid = row.get(COL_DETECTION_VALID)
+    if valid is None:
+        return None
+    if bool(valid):
+        return 1.0
+    invalid = row.get(COL_DETECTION_INVALID_ENTITIES)
+    invalid_count = len(invalid) if isinstance(invalid, list) else 0
+    try:
+        total = sum(
+            len(e.labels)
+            for e in EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE)).entities_by_value
+        )
+    except Exception:
+        total = 0
+    if total == 0:
+        return 1.0
+    return max(0.0, (total - invalid_count) / total)
 
 
 def _has_entities(entities_by_value: object) -> bool:
@@ -437,6 +463,9 @@ class RewriteWorkflow:
         )
         entity_rows = _join_new_columns(entity_rows, detection_result.dataframe)
         all_failed.extend(detection_result.failed_records)
+        # Convert bool all_valid → 0–1 fraction so detection validity sits on the
+        # same scale as utility_score and leakage_mass in the rewrite scores section.
+        entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
 
         # --- Holistic judge (privacy / quality / style) ---
         try:

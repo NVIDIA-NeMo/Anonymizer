@@ -454,12 +454,48 @@ def _render_scores_section(row: pd.Series) -> str:
             "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
         )
     if judge_scores:
-        score_strs = [f"{name}: {score}" for name, score in judge_scores]
-        parts.append(f"<span><strong>Judge:</strong> {html.escape(', '.join(score_strs))}</span>")
+        score_strs = [f"{html.escape(str(name))}: {html.escape(str(score))}" for name, score in judge_scores]
+        parts.append(f"<span><strong>Judge:</strong> {', '.join(score_strs)}</span>")
 
     if not parts:
         return "<p style='opacity:0.5;font-style:italic'>No scores available.</p>"
-    return "<div style='font-size:0.9em;line-height:1.8'>" + "".join(parts) + "</div>"
+
+    scores_html = "<div style='font-size:0.9em;line-height:1.8'>" + "".join(parts) + "</div>"
+
+    if detection_valid is not None and float(detection_valid) < 1.0:
+        invalid_entries = _normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
+        if invalid_entries:
+            rows_html: list[str] = []
+            for entry in invalid_entries:
+                value = html.escape(str(entry.get("value", "")))
+                label = html.escape(str(entry.get("label", "")))
+                reasoning = html.escape(str(entry.get("reasoning", "")))
+                _, border_color = _color_for_label(entry.get("label", ""))
+                rows_html.append(
+                    "<tr>"
+                    f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{value}</td>"
+                    f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>"
+                    f"<span style='border:1.5px solid {border_color};padding:1px 6px;border-radius:3px;"
+                    f"font-size:0.85em'>{label}</span></td>"
+                    f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+                    "</tr>"
+                )
+            scores_html += (
+                "<details style='margin-top:6px;font-size:0.85em'>"
+                f"<summary style='cursor:pointer;opacity:0.8'>Show {len(invalid_entries)} flagged "
+                "detection(s)</summary>"
+                "<table style='border-collapse:collapse;margin-top:6px'>"
+                "<thead><tr>"
+                "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Value</th>"
+                "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+                "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+                "</tr></thead>"
+                f"<tbody>{''.join(rows_html)}</tbody>"
+                "</table>"
+                "</details>"
+            )
+
+    return scores_html
 
 
 def _extract_judge_scores(raw: object) -> list[tuple[str, int | str]]:
