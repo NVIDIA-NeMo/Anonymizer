@@ -123,6 +123,20 @@ def test_qa_generator_alias_used(
     assert metadata["model_aliases"] == [stub_rewrite_model_selection.qa_generator]
 
 
+def test_columns_threads_window_sizing(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    cols = QAGenerationWorkflow().columns(
+        selected_models=stub_rewrite_model_selection,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    # Meaning-unit extraction (cols[1]) is the windowed metadata generator; its
+    # params carry the same sizing also passed to the quality-QA batcher.
+    assert cols[1].generator_params.max_render_chars == 12_345
+    assert cols[1].generator_params.safety_margin_chars == 678
+
+
 def test_format_disposition_block_produces_valid_json() -> None:
     row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION}
     result = _format_disposition_block(row)

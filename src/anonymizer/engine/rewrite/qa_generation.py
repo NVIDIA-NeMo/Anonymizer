@@ -453,9 +453,18 @@ class QAGenerationWorkflow:
         self,
         *,
         selected_models: RewriteModelSelection,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> list[ColumnConfigT]:
         meaning_extractor_alias = resolve_model_alias("meaning_extractor", selected_models)
         qa_generator_alias = resolve_model_alias("qa_generator", selected_models)
+        # Honor caller-provided (Detect-config-derived) window sizing; fall back
+        # to the shared defaults so a lowered detection cap also bounds meaning-unit
+        # extraction and the quality-QA batching below.
+        max_render_chars = window_max_render_chars if window_max_render_chars is not None else _DEFAULT_MAX_RENDER_CHARS
+        safety_margin_chars = (
+            window_safety_margin_chars if window_safety_margin_chars is not None else _DEFAULT_SAFETY_MARGIN_CHARS
+        )
         return [
             CustomColumnConfig(
                 name=COL_SENSITIVITY_DISPOSITION_BLOCK,
@@ -480,8 +489,8 @@ class QAGenerationWorkflow:
                     prompt_template=_get_meaning_unit_extraction_prompt(),
                     output_column=COL_MEANING_UNITS,
                     text_column=COL_TEXT,
-                    max_render_chars=_DEFAULT_MAX_RENDER_CHARS,
-                    safety_margin_chars=_DEFAULT_SAFETY_MARGIN_CHARS,
+                    max_render_chars=max_render_chars,
+                    safety_margin_chars=safety_margin_chars,
                 ),
             ),
             CustomColumnConfig(
@@ -492,8 +501,8 @@ class QAGenerationWorkflow:
                 name=COL_QUALITY_QA,
                 generator_function=_make_quality_qa_column(
                     qa_generator_alias,
-                    _DEFAULT_MAX_RENDER_CHARS,
-                    _DEFAULT_SAFETY_MARGIN_CHARS,
+                    max_render_chars,
+                    safety_margin_chars,
                 ),
             ),
             CustomColumnConfig(

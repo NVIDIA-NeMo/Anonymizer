@@ -287,15 +287,29 @@ class RewriteWorkflow:
             all_failed.extend(replace_result.failed_records)
 
             # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
+            # Thread the user-supplied (Detect-config-derived) window sizing through
+            # every windowed stage so lowering the detection cap bounds prompt size in
+            # all of them, not just rewrite generation.
             pipeline_columns = [
-                *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
+                *self._domain_wf.columns(
+                    selected_models=selected_models,
+                    data_summary=data_summary,
+                    window_max_render_chars=window_max_render_chars,
+                    window_safety_margin_chars=window_safety_margin_chars,
+                ),
                 *self._disposition_wf.columns(
                     selected_models=selected_models,
                     privacy_goal=privacy_goal,
                     data_summary=data_summary,
                     strict_entity_protection=strict_entity_protection,
+                    window_max_render_chars=window_max_render_chars,
+                    window_safety_margin_chars=window_safety_margin_chars,
                 ),
-                *self._qa_wf.columns(selected_models=selected_models),
+                *self._qa_wf.columns(
+                    selected_models=selected_models,
+                    window_max_render_chars=window_max_render_chars,
+                    window_safety_margin_chars=window_safety_margin_chars,
+                ),
                 *self._rewrite_gen_wf.columns(
                     window_max_render_chars=window_max_render_chars,
                     window_safety_margin_chars=window_safety_margin_chars,
@@ -450,11 +464,15 @@ class RewriteWorkflow:
         selected_models: EvaluateModelSelection,
         privacy_goal: PrivacyGoal,
         preview_num_records: int | None,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         try:
             judge_columns = self._judge_wf.columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
+                window_max_render_chars=window_max_render_chars,
+                window_safety_margin_chars=window_safety_margin_chars,
             )
             effective_preview = min(preview_num_records, len(df)) if preview_num_records is not None else None
             judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))

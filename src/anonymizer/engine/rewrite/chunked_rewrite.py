@@ -30,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_FULL_REWRITE,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
+    COL_REWRITE_EMPTY_WINDOWS,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -180,6 +181,7 @@ def generate_rewrite_row(
             purpose="rewrite-generation",
         )
         row[COL_FULL_REWRITE] = RewriteOutputSchema(rewritten_text=text).model_dump(mode="json")
+        row[COL_REWRITE_EMPTY_WINDOWS] = 0
         return row
 
     # Chunked path: rewrite each boundary window with continuity carry-over, then stitch.
@@ -203,6 +205,7 @@ def generate_rewrite_row(
         params.summary_max_chars,
     )
     rewritten_parts: list[str] = []
+    empty_windows = 0
     summary = ""
     for i, (start, end) in enumerate(windows):
         chunk_tagged = tagged[start:end]
@@ -237,6 +240,16 @@ def generate_rewrite_row(
             len(windows),
             len(rewritten_chunk),
         )
+        if not rewritten_chunk.strip():
+            empty_windows += 1
+            logger.warning(
+                "rewrite window %d/%d (chars [%d, %d)): model returned an empty rewrite; this section will be "
+                "dropped from the stitched output",
+                i + 1,
+                len(windows),
+                start,
+                end,
+            )
         rewritten_parts.append(rewritten_chunk)
         if i < len(windows) - 1:
             summary = _update_summary(
@@ -255,14 +268,25 @@ def generate_rewrite_row(
                 _clip(summary),
             )
 
+    # ``if part`` drops empty chunks from the join; ``empty_windows`` records how
+    # many so a section silently lost to an empty model response is visible as a
+    # review signal rather than passing as successful output.
     stitched = "\n".join(part for part in rewritten_parts if part)
+    if empty_windows:
+        logger.warning(
+            "rewrite: %d of %d window(s) returned empty text and were omitted from the stitched output",
+            empty_windows,
+            len(windows),
+        )
     logger.info(
-        "rewrite: %d window(s) over %d chars -> %d chars stitched output",
+        "rewrite: %d window(s) over %d chars -> %d chars stitched output (%d empty window(s))",
         len(windows),
         len(tagged),
         len(stitched),
+        empty_windows,
     )
     row[COL_FULL_REWRITE] = RewriteOutputSchema(rewritten_text=stitched).model_dump(mode="json")
+    row[COL_REWRITE_EMPTY_WINDOWS] = empty_windows
     return row
 
 
@@ -279,6 +303,7 @@ def make_windowed_rewrite_generator(alias: str) -> Any:
             COL_REWRITE_DISPOSITION_BLOCK,
             COL_REPLACEMENT_MAP_FOR_PROMPT,
         ],
+        side_effect_columns=[COL_REWRITE_EMPTY_WINDOWS],
         model_aliases=[alias],
     )
     def windowed_rewrite(

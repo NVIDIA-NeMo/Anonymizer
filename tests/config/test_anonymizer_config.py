@@ -145,3 +145,52 @@ def test_detect_validation_max_entities_per_call_must_be_positive() -> None:
 def test_detect_validation_excerpt_window_chars_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         AnonymizerConfig(detect={"validation_excerpt_window_chars": 0}, replace=Redact())
+
+
+def test_detect_window_overlap_at_or_above_effective_window_raises() -> None:
+    # overlap == effective window (max_render - safety_margin) collapses the
+    # planner stride to one character; a single row explodes into many windows.
+    with pytest.raises(ValidationError):
+        AnonymizerConfig(
+            detect={
+                "detection_window_max_render_chars": 20_000,
+                "detection_window_safety_margin_chars": 0,
+                "detection_window_overlap_chars": 20_000,
+            },
+            replace=Redact(),
+        )
+
+
+def test_detect_window_overlap_below_effective_window_ok() -> None:
+    config = AnonymizerConfig(
+        detect={
+            "detection_window_max_render_chars": 20_000,
+            "detection_window_safety_margin_chars": 0,
+            "detection_window_overlap_chars": 19_999,
+        },
+        replace=Redact(),
+    )
+    assert config.detect.detection_window_overlap_chars == 19_999
+
+
+def test_detect_window_overlap_uses_min_window_floor() -> None:
+    # When max_render - safety_margin drops below the 4000-char floor, the floor
+    # is the effective window: overlaps below it pass, at/above it are rejected.
+    ok = AnonymizerConfig(
+        detect={
+            "detection_window_max_render_chars": 5_000,
+            "detection_window_safety_margin_chars": 4_000,  # 1000 < 4000 floor
+            "detection_window_overlap_chars": 3_999,
+        },
+        replace=Redact(),
+    )
+    assert ok.detect.detection_window_overlap_chars == 3_999
+    with pytest.raises(ValidationError):
+        AnonymizerConfig(
+            detect={
+                "detection_window_max_render_chars": 5_000,
+                "detection_window_safety_margin_chars": 4_000,
+                "detection_window_overlap_chars": 4_000,
+            },
+            replace=Redact(),
+        )

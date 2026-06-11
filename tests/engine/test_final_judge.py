@@ -110,6 +110,21 @@ def test_judge_rubrics_use_categorical_scores() -> None:
         assert "high" in score.options
 
 
+def test_columns_threads_window_sizing(
+    stub_evaluate_model_selection: EvaluateModelSelection,
+) -> None:
+    wf = FinalJudgeWorkflow()
+    cols = wf.columns(
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_STUB_PRIVACY_GOAL,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    judge_col = next(c for c in cols if c.name == COL_JUDGE_EVALUATION)
+    assert judge_col.generator_params.max_render_chars == 12_345
+    assert judge_col.generator_params.safety_margin_chars == 678
+
+
 def test_rubric_names_match_constants() -> None:
     assert PRIVACY_RUBRIC.name == "privacy"
     assert QUALITY_RUBRIC.name == "quality"
