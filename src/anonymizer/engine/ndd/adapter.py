@@ -853,6 +853,7 @@ def _configure_dd_message_traces(
             private_trace_columns.append(_PrivateFacadeTraceColumn(column_name=column.name))
             continue
 
+        unsupported_columns.append(column)
         configured_columns.append(column)
 
     return configured_columns, native_trace_columns, private_trace_columns, unsupported_columns

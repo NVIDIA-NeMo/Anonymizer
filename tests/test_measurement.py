@@ -945,6 +945,19 @@ def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnC
     return CustomColumnConfig(name=name, generator_function=generator)
 
 
+def _local_custom_column(name: str, *, value: str) -> CustomColumnConfig:
+    @custom_column_generator(required_columns=["text"])
+    def generator(
+        row: dict[str, Any],
+        generator_params: Any,
+        models: dict[str, Any],
+    ) -> dict[str, str]:
+        _ = row, generator_params, models
+        return {name: value}
+
+    return CustomColumnConfig(name=name, generator_function=generator)
+
+
 def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
@@ -1002,6 +1015,37 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     assert "raw prompt secret" not in serialized_measurements
     assert "quality prompt secret" not in serialized_measurements
     assert "custom response secret" not in serialized_measurements
+
+
+def test_ndd_adapter_reports_untraced_custom_columns_in_dd_trace_coverage(
+    tmp_path: Path,
+    trace_input_df: pd.DataFrame,
+) -> None:
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    trace_path = tmp_path / "trace.jsonl"
+
+    with configured_measurement_session(
+        MeasurementConfig(
+            output_path=tmp_path / "measurements.jsonl",
+            dd_trace="all_messages",
+            dd_trace_path=trace_path,
+        )
+    ):
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [
+                _custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]"),
+                _local_custom_column("local_note", value="ok"),
+            ],
+        )
+
+    measurements = [json.loads(line) for line in (tmp_path / "measurements.jsonl").read_text().splitlines()]
+    coverage = [record for record in measurements if record["record_type"] == "dd_trace_coverage"]
+    assert len(coverage) == 1
+    assert coverage[0]["traced_column_names"] == ["raw_detected"]
+    assert coverage[0]["unsupported_column_count"] == 1
+    assert coverage[0]["unsupported_column_names"] == ["local_note"]
 
 
 def test_ndd_adapter_private_model_facade_trace_write_error_is_not_wrapped(
