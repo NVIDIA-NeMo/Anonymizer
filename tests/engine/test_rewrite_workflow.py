@@ -213,8 +213,8 @@ def test_passthrough_defaults_populated(
     assert df[COL_WEIGHTED_LEAKAGE_RATE].tolist() == [0.0, 0.0]
     assert df[COL_ANY_HIGH_LEAKED].tolist() == [False, False]
     assert df[COL_NEEDS_HUMAN_REVIEW].tolist() == [False, False]
-    assert df[COL_JUDGE_EVALUATION].tolist() == [None, None]
     assert df[COL_REPAIR_ITERATIONS].tolist() == [0, 0]
+    assert COL_JUDGE_EVALUATION not in df.columns
 
 
 def test_has_entities_returns_true_when_present(stub_entities_by_value_with_entities: dict) -> None:
@@ -268,7 +268,7 @@ def test_calls_sub_workflows_in_order(
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
     assert workflow_names[0] == "rewrite-pipeline"
     assert workflow_names[1].startswith("rewrite-evaluate")
-    assert workflow_names[-1] == "rewrite-final-judge"
+    assert "rewrite-final-judge" not in workflow_names
 
     assert len(result.dataframe) == 1
 
@@ -290,13 +290,11 @@ def test_failed_records_accumulated_across_steps(
 ) -> None:
     failed_pipeline = FailedRecord(record_id="a", step="rewrite-pipeline", reason="timeout")
     failed_eval = FailedRecord(record_id="b", step="rewrite-evaluate-0", reason="timeout")
-    failed_judge = FailedRecord(record_id="c", step="rewrite-final-judge", reason="timeout")
 
     adapter = Mock()
     adapter.run_workflow.side_effect = [
         WorkflowRunResult(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
         WorkflowRunResult(dataframe=stub_eval_df, failed_records=[failed_eval]),
-        WorkflowRunResult(dataframe=stub_judge_df, failed_records=[failed_judge]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -315,7 +313,7 @@ def test_failed_records_accumulated_across_steps(
         )
 
     record_ids = {f.record_id for f in result.failed_records}
-    assert record_ids == {"a", "b", "c", "d"}
+    assert record_ids == {"a", "b", "d"}
 
 
 # ---------------------------------------------------------------------------
@@ -325,96 +323,77 @@ def test_failed_records_accumulated_across_steps(
 
 def test_judge_failure_does_not_propagate(
     stub_model_configs: list[ModelConfig],
-    stub_rewrite_model_selection: RewriteModelSelection,
-    stub_replace_model_selection: ReplaceModelSelection,
-    stub_df_with_entities: pd.DataFrame,
-    stub_replace_df: pd.DataFrame,
-    stub_pipeline_df: pd.DataFrame,
+    stub_evaluate_model_selection,
     stub_eval_df: pd.DataFrame,
 ) -> None:
+    """evaluate() holistic judge failure is non-fatal; rows get COL_JUDGE_EVALUATION=None."""
     adapter = Mock()
-    adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=stub_pipeline_df, failed_records=[]),
-        WorkflowRunResult(dataframe=stub_eval_df, failed_records=[]),
-        RuntimeError("Judge LLM unavailable"),
-    ]
 
-    with patch(_REPLACE_PATCH) as mock_replace_cls:
-        _mock_replace(mock_replace_cls, stub_replace_df)
-        wf = RewriteWorkflow(adapter=adapter)
-        result = wf.run(
-            stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
-        )
+    wf = RewriteWorkflow(adapter=adapter)
+    # Mock detection judge to return successfully
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(dataframe=stub_eval_df.copy(), failed_records=[])
+    # Make the holistic judge adapter call raise
+    adapter.run_workflow.side_effect = RuntimeError("Judge LLM unavailable")
+
+    result = wf.evaluate(
+        stub_eval_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
 
     assert len(result.dataframe) == 1
-    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]
     assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0] is None
 
 
 def test_judge_partial_row_loss_preserves_all_rows(
     stub_model_configs: list[ModelConfig],
-    stub_rewrite_model_selection: RewriteModelSelection,
-    stub_replace_model_selection: ReplaceModelSelection,
+    stub_evaluate_model_selection,
     stub_df_two_entities: pd.DataFrame,
 ) -> None:
-    """Judge drops 1 of 2 rows -- surviving row gets scores, missing row gets defaults."""
-    df = stub_df_two_entities
+    """evaluate() judge drops 1 of 2 rows — surviving row gets scores, missing row gets None."""
+    df = stub_df_two_entities.copy()
+    df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
+
+    # Build a run()-style result dataframe with all required columns
+    run_result_df = df.copy()
+    run_result_df[COL_REWRITTEN_TEXT] = ["Maria works here", "Rob works there"]
+    run_result_df[COL_NEEDS_REPAIR] = False
+    run_result_df[COL_UTILITY_SCORE] = [0.9, 0.8]
+    run_result_df[COL_LEAKAGE_MASS] = [0.1, 0.2]
+    run_result_df[COL_ANY_HIGH_LEAKED] = False
+    run_result_df[COL_NEEDS_HUMAN_REVIEW] = False
+    run_result_df[COL_REPAIR_ITERATIONS] = 0
 
     adapter = Mock()
 
-    pre_gen_df = df.copy()
-    pre_gen_df[COL_DOMAIN] = "BIOGRAPHY_PROFILE"
-    pre_gen_df["_anonymizer_row_order"] = [0, 1]
-    pre_gen_df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
-
-    rewrite_gen_df = pre_gen_df.copy()
-    rewrite_gen_df[COL_REWRITTEN_TEXT] = ["Maria works here", "Rob works there"]
-    rewrite_gen_df[COL_REPAIR_ITERATIONS] = 0
-
-    eval_df = rewrite_gen_df.copy()
-    eval_df[COL_NEEDS_REPAIR] = False
-    eval_df[COL_UTILITY_SCORE] = [0.9, 0.8]
-    eval_df[COL_LEAKAGE_MASS] = [0.1, 0.2]
-    eval_df[COL_ANY_HIGH_LEAKED] = False
-
-    judge_df = eval_df.iloc[[0]].copy().reset_index(drop=True)
-    judge_df[COL_JUDGE_EVALUATION] = [{"privacy": {"score": 8}, "quality": {"score": 9}, "naturalness": {"score": 7}}]
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
-    replace_df = df.copy()
-    replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
-
-    adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(
-            dataframe=judge_df,
-            failed_records=[FailedRecord(record_id="rec-1", step="rewrite-final-judge", reason="timeout")],
-        ),
+    # detection judge returns both rows
+    det_df = run_result_df.copy()
+    # holistic judge returns only first row
+    judge_df = run_result_df.iloc[[0]].copy().reset_index(drop=True)
+    judge_df[COL_JUDGE_EVALUATION] = [
+        {"privacy": {"score": "high"}, "quality": {"score": "high"}, "style": {"score": "medium"}}
     ]
 
-    with patch(_REPLACE_PATCH) as mock_replace_cls:
-        _mock_replace(mock_replace_cls, replace_df)
-        wf = RewriteWorkflow(adapter=adapter)
-        result = wf.run(
-            df,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
-        )
+    wf = RewriteWorkflow(adapter=adapter)
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(dataframe=det_df, failed_records=[])
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=judge_df,
+        failed_records=[FailedRecord(record_id="rec-1", step="rewrite-final-judge", reason="timeout")],
+    )
+
+    result = wf.evaluate(
+        run_result_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
 
     assert len(result.dataframe) == 2
     assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0] is not None
-    assert not result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]
     assert result.dataframe[COL_JUDGE_EVALUATION].iloc[1] is None
-    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[1]
 
 
 # ---------------------------------------------------------------------------

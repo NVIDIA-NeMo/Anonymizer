@@ -881,9 +881,9 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             COL_WEIGHTED_LEAKAGE_RATE,
             COL_ANY_HIGH_LEAKED,
             COL_NEEDS_HUMAN_REVIEW,
-            COL_DETECTION_VALID,             # only present after evaluate()
+            COL_DETECTION_VALID,  # only present after evaluate()
             COL_DETECTION_INVALID_ENTITIES,  # only present after evaluate()
-            COL_JUDGE_EVALUATION,            # only present after evaluate()
+            COL_JUDGE_EVALUATION,  # only present after evaluate()
         }
     elif f"{text_col}_replaced" in t.columns:
         allowed = {

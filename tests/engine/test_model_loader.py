@@ -156,7 +156,7 @@ def test_load_default_model_selection_populates_all_workflows() -> None:
     assert selection.detection.latent_detector
     # Replace
     assert selection.replace.replacement_generator
-    # Rewrite — all 8 roles must be populated
+    # Rewrite — all 7 roles must be populated
     assert selection.rewrite.domain_classifier
     assert selection.rewrite.disposition_analyzer
     assert selection.rewrite.meaning_extractor
@@ -164,7 +164,8 @@ def test_load_default_model_selection_populates_all_workflows() -> None:
     assert selection.rewrite.rewriter
     assert selection.rewrite.evaluator
     assert selection.rewrite.repairer
-    assert selection.rewrite.judge
+    # Evaluate — includes rewrite_judge
+    assert selection.evaluate.rewrite_judge
 
 
 def test_parse_model_configs_rejects_missing_provider() -> None:

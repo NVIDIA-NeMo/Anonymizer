@@ -134,9 +134,9 @@ PRIVACY_RUBRIC = Score(
     name="privacy",
     description="Privacy protection — how well the rewrite removes linkage risk to the original record.",
     options={
-        "high":   "Original direct identifiers removed; remaining quasi-identifiers create low linkage risk.",
+        "high": "Original direct identifiers removed; remaining quasi-identifiers create low linkage risk.",
         "medium": "No obvious direct identifiers remain, but a distinctive quasi-identifier bundle creates noticeable linkage risk.",
-        "low":    "The record is easily or near-certainly linkable back to the original: key direct identifiers remain, or enough identifying detail survives that re-identification requires minimal effort regardless of how many entities were successfully transformed.",
+        "low": "The record is easily or near-certainly linkable back to the original: key direct identifiers remain, or enough identifying detail survives that re-identification requires minimal effort regardless of how many entities were successfully transformed.",
     },
 )
 
@@ -144,9 +144,9 @@ QUALITY_RUBRIC = Score(
     name="quality",
     description="Content quality — how well important meaning, facts, and structure are preserved.",
     options={
-        "high":   "Important meaning, facts, and structure fully preserved.",
+        "high": "Important meaning, facts, and structure fully preserved.",
         "medium": "Most content preserved; minor details lost or slightly distorted.",
-        "low":    "Material loss of important information, contradictions, or distorted core meaning.",
+        "low": "Material loss of important information, contradictions, or distorted core meaning.",
     },
 )
 
@@ -154,9 +154,9 @@ STYLE_RUBRIC = Score(
     name="style",
     description="Writing style — does the rewritten text read as fluent, coherent, human-written prose?",
     options={
-        "high":   "Reads as fluent, coherent, human-written prose.",
+        "high": "Reads as fluent, coherent, human-written prose.",
         "medium": "Mostly readable; isolated awkward phrasing or stiff transitions.",
-        "low":    "Noticeably unnatural; broken grammar, placeholder-like language, or machine-generated feel.",
+        "low": "Noticeably unnatural; broken grammar, placeholder-like language, or machine-generated feel.",
     },
 )
 

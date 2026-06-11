@@ -272,10 +272,11 @@ class TestFieldPopulation:
         event = captured_events[0]
         assert event.transformation_type == "rewrite"
         assert event.rewriter_model != NOT_APPLICABLE
-        assert event.judge_model != NOT_APPLICABLE
         assert event.repairer_model != NOT_APPLICABLE
         assert event.max_repair_iterations == 2
         assert event.strict_entity_protection is True
+        # judge runs in evaluate(), not run() — stays not_applicable here
+        assert event.judge_model == NOT_APPLICABLE
         # Substitute-only field stays not_applicable
         assert event.replacement_generator_model == NOT_APPLICABLE
 

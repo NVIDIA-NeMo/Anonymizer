@@ -444,9 +444,7 @@ class RewriteWorkflow:
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
             )
-            effective_preview = (
-                min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
-            )
+            effective_preview = min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
             judge_seed = select_seed_cols(entity_rows, derive_seed_columns(judge_columns, entity_rows))
             judge_result = self._adapter.run_workflow(
                 judge_seed,
