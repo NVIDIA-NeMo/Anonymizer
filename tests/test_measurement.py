@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.custom_column import custom_column_generator
 from data_designer.config.models import ModelConfig
 from data_designer.config.run_config import RunConfig
@@ -40,7 +41,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, WorkflowRunResult
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
@@ -56,6 +57,45 @@ from anonymizer.measurement import (
     record_record_metrics,
     stage_timer,
 )
+
+
+class _FailingSink:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def write_record(self, record: dict[str, Any]) -> None:
+        _ = record
+        raise OSError(self.message)
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def trace_input_df() -> pd.DataFrame:
+    return pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+
+
+def _trace_model_configs() -> list[ModelConfig]:
+    return [ModelConfig(alias="alias", model="dummy-model", provider="provider")]
+
+
+def _run_entity_detection_preview(
+    adapter: NddAdapter,
+    input_df: pd.DataFrame,
+    columns: list[ColumnConfigT],
+) -> WorkflowRunResult:
+    return adapter.run_workflow(
+        input_df,
+        model_configs=_trace_model_configs(),
+        columns=columns,
+        workflow_name="entity-detection",
+        preview_num_records=1,
+    )
+
+
+def _raw_detected_text_column() -> LLMTextColumnConfig:
+    return LLMTextColumnConfig(name="raw_detected", prompt="{{ text }}", model_alias="alias")
 
 
 def test_ndd_adapter_records_workflow_measurement_without_raw_text() -> None:
@@ -705,8 +745,8 @@ def test_measurement_collector_close_attempts_all_sinks_after_failure() -> None:
             self.name = name
             self.fail = fail
 
-        def write_record(self, _record: dict[str, Any]) -> None:
-            pass
+        def write_record(self, record: dict[str, Any]) -> None:
+            _ = record
 
         def close(self) -> None:
             close_events.append(self.name)
@@ -787,13 +827,7 @@ def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(
             output_path=tmp_path / "measurements.jsonl", dd_trace="last_message", dd_trace_path=trace_path
         )
     ):
-        result = adapter.run_workflow(
-            input_df,
-            model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
-            columns=[original_column],
-            workflow_name="entity-detection",
-            preview_num_records=1,
-        )
+        result = _run_entity_detection_preview(adapter, input_df, [original_column])
 
     assert original_column.with_trace == TraceType.NONE
     assert captured_columns[0].with_trace == TraceType.ALL_MESSAGES
@@ -841,17 +875,17 @@ class _TraceModelFacade:
 
 
 class _TraceModelRegistry:
-    def __init__(self) -> None:
-        self._models = {"alias": _TraceModelFacade()}
+    def __init__(self, facade: Any | None = None) -> None:
+        self._models = {"alias": facade or _TraceModelFacade()}
 
     def get_model(self, *, model_alias: str) -> _TraceModelFacade:
         return self._models[model_alias]
 
 
 class _CustomTraceDataDesigner:
-    def __init__(self, input_df: pd.DataFrame) -> None:
+    def __init__(self, input_df: pd.DataFrame, *, facade: Any | None = None) -> None:
         self.input_df = input_df
-        self.resource_provider = SimpleNamespace(model_registry=_TraceModelRegistry())
+        self.resource_provider = SimpleNamespace(model_registry=_TraceModelRegistry(facade))
 
     def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
         return self.resource_provider
@@ -872,6 +906,31 @@ class _CustomTraceDataDesigner:
         return SimpleNamespace(dataset=output)
 
 
+class _TaskTraceDataDesigner:
+    def __init__(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        task_traces: list[Any] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.input_df = input_df
+        self.task_traces = task_traces or []
+        self.error = error
+        self.run_config = RunConfig(async_trace=False)
+        self.async_trace_values: list[bool] = []
+
+    def set_run_config(self, run_config: RunConfig) -> None:
+        self.async_trace_values.append(run_config.async_trace)
+        self.run_config = run_config
+
+    def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+        assert self.run_config.async_trace is True
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(dataset=self.input_df.iloc[:num_records].copy(), task_traces=self.task_traces)
+
+
 def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnConfig:
     @custom_column_generator(required_columns=["text"], model_aliases=["alias"])
     def generator(
@@ -886,9 +945,11 @@ def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnC
     return CustomColumnConfig(name=name, generator_function=generator)
 
 
-def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(tmp_path: Path) -> None:
-    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
-    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(input_df)))
+def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
+    tmp_path: Path,
+    trace_input_df: pd.DataFrame,
+) -> None:
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
     trace_path = tmp_path / "trace.jsonl"
 
     with configured_measurement_session(
@@ -896,15 +957,13 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(tmp_path
             output_path=tmp_path / "measurements.jsonl", dd_trace="all_messages", dd_trace_path=trace_path
         )
     ):
-        adapter.run_workflow(
-            input_df,
-            model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
-            columns=[
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [
                 _custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]"),
                 _custom_trace_column("quality_check", prompt="quality prompt secret", value="ok"),
             ],
-            workflow_name="entity-detection",
-            preview_num_records=1,
         )
 
     traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
@@ -945,46 +1004,114 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(tmp_path
     assert "custom response secret" not in serialized_measurements
 
 
-def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(tmp_path: Path) -> None:
-    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+def test_ndd_adapter_private_model_facade_trace_write_error_is_not_wrapped(
+    trace_input_df: pd.DataFrame,
+) -> None:
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    collector = MeasurementCollector(
+        dd_trace_mode="all_messages",
+        dd_trace_sink=_FailingSink("private trace sidecar unavailable"),
+        fail_on_write_error=True,
+    )
 
-    class TraceDataDesigner:
-        def __init__(self) -> None:
-            self.run_config = RunConfig(async_trace=False)
-            self.async_trace_values: list[bool] = []
+    with measurement_session(collector), pytest.raises(OSError, match="private trace sidecar unavailable"):
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [_custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]")],
+        )
 
-        def set_run_config(self, run_config: RunConfig) -> None:
-            self.async_trace_values.append(run_config.async_trace)
-            self.run_config = run_config
 
-        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-            assert self.run_config.async_trace is True
-            task_trace = SimpleNamespace(
-                column="raw_detected",
-                row_group=0,
-                row_index=7,
-                task_type="llm",
-                dispatched_at=10.0,
-                slot_acquired_at=10.25,
-                completed_at=12.0,
-                status="error",
-                error="raw secret token Alice",
+def test_ndd_adapter_flushes_private_model_facade_error_trace_when_workflow_fails(
+    tmp_path: Path,
+    trace_input_df: pd.DataFrame,
+) -> None:
+    class FailingTraceModelFacade(_TraceModelFacade):
+        def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
+            raise RuntimeError("custom model call failed")
+
+    trace_path = tmp_path / "trace.jsonl"
+    adapter = NddAdapter(
+        data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df, facade=FailingTraceModelFacade()))
+    )
+
+    with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
+        with configured_measurement_session(
+            MeasurementConfig(
+                output_path=tmp_path / "measurements.jsonl",
+                dd_trace="all_messages",
+                dd_trace_path=trace_path,
             )
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy(), task_traces=[task_trace])
+        ):
+            _run_entity_detection_preview(
+                adapter,
+                trace_input_df,
+                [_custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]")],
+            )
 
-    data_designer = TraceDataDesigner()
+    traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace["record_type"] == "dd_message_trace"
+    assert trace["trace_source"] == "anonymizer_private_model_facade"
+    assert trace["workflow_name"] == "entity-detection"
+    assert trace["column_name"] == "raw_detected"
+    assert trace["status"] == "error"
+    assert trace["error_type"] == "RuntimeError"
+    assert trace["messages"] == [{"role": "user", "content": [{"type": "text", "text": "raw prompt secret"}]}]
+    assert "custom model call failed" not in trace_path.read_text(encoding="utf-8")
+
+
+def test_ndd_adapter_private_model_facade_trace_write_error_does_not_mask_workflow_failure(
+    trace_input_df: pd.DataFrame,
+) -> None:
+    class FailingTraceModelFacade(_TraceModelFacade):
+        def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
+            raise RuntimeError("custom model call failed")
+
+    adapter = NddAdapter(
+        data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df, facade=FailingTraceModelFacade()))
+    )
+    collector = MeasurementCollector(
+        dd_trace_mode="all_messages",
+        dd_trace_sink=_FailingSink("private trace sidecar unavailable"),
+        fail_on_write_error=True,
+    )
+
+    with measurement_session(collector), pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [_custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]")],
+        )
+
+
+def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(
+    tmp_path: Path,
+    trace_input_df: pd.DataFrame,
+) -> None:
+    task_trace = SimpleNamespace(
+        column="raw_detected",
+        row_group=0,
+        row_index=7,
+        task_type="llm",
+        dispatched_at=10.0,
+        slot_acquired_at=10.25,
+        completed_at=12.0,
+        status="error",
+        error="raw secret token Alice",
+    )
+    data_designer = _TaskTraceDataDesigner(trace_input_df, task_traces=[task_trace])
     adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
     task_trace_path = tmp_path / "task-trace.jsonl"
 
     with configured_measurement_session(
         MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_task_trace_path=task_trace_path)
     ):
-        adapter.run_workflow(
-            input_df,
-            model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
-            columns=[LLMTextColumnConfig(name="raw_detected", prompt="{{ text }}", model_alias="alias")],
-            workflow_name="entity-detection",
-            preview_num_records=1,
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [_raw_detected_text_column()],
         )
 
     assert data_designer.async_trace_values == [True, False]
@@ -998,6 +1125,9 @@ def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(tmp
     assert task_trace["task_type"] == "llm"
     assert task_trace["status"] == "error"
     assert task_trace["error_present"] is True
+    assert task_trace["dispatched_offset_sec"] == pytest.approx(0.0)
+    assert task_trace["slot_acquired_offset_sec"] == pytest.approx(0.25)
+    assert task_trace["completed_offset_sec"] == pytest.approx(2.0)
     assert task_trace["queue_wait_sec"] == pytest.approx(0.25)
     assert task_trace["execution_sec"] == pytest.approx(1.75)
     assert task_trace["total_sec"] == pytest.approx(2.0)
@@ -1005,36 +1135,159 @@ def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(tmp
     assert "raw secret token Alice" not in (tmp_path / "measurements.jsonl").read_text(encoding="utf-8")
 
 
-def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(tmp_path: Path) -> None:
-    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+def test_ndd_adapter_task_trace_handles_mapping_and_invalid_timestamps(
+    tmp_path: Path,
+    trace_input_df: pd.DataFrame,
+) -> None:
+    task_traces = [
+        {
+            "column": "missing_timestamps",
+            "row_group": 0,
+            "row_index": 1,
+            "task_type": "llm",
+            "status": "completed",
+            "error": None,
+        },
+        {
+            "column": "nonpositive_timestamps",
+            "row_group": 0,
+            "row_index": 2,
+            "task_type": "llm",
+            "dispatched_at": 0.0,
+            "slot_acquired_at": -1.0,
+            "completed_at": -2.0,
+            "status": "completed",
+            "error": None,
+        },
+        {
+            "column": "out_of_order_timestamps",
+            "row_group": 0,
+            "row_index": 3,
+            "task_type": "llm",
+            "dispatched_at": 20.0,
+            "slot_acquired_at": 19.0,
+            "completed_at": 18.0,
+            "status": "completed",
+            "error": None,
+        },
+    ]
+    task_trace_path = tmp_path / "task-trace.jsonl"
+    adapter = NddAdapter(
+        data_designer=cast(DataDesigner, _TaskTraceDataDesigner(trace_input_df, task_traces=task_traces))
+    )
 
+    with configured_measurement_session(
+        MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_task_trace_path=task_trace_path)
+    ):
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [_raw_detected_text_column()],
+        )
+
+    traces = [json.loads(line) for line in task_trace_path.read_text(encoding="utf-8").splitlines()]
+    traces_by_column = {trace["column"]: trace for trace in traces}
+
+    missing = traces_by_column["missing_timestamps"]
+    assert missing["dispatched_offset_sec"] is None
+    assert missing["slot_acquired_offset_sec"] is None
+    assert missing["completed_offset_sec"] is None
+    assert missing["queue_wait_sec"] is None
+    assert missing["execution_sec"] is None
+    assert missing["total_sec"] is None
+
+    nonpositive = traces_by_column["nonpositive_timestamps"]
+    assert nonpositive["dispatched_offset_sec"] is None
+    assert nonpositive["slot_acquired_offset_sec"] is None
+    assert nonpositive["completed_offset_sec"] is None
+    assert nonpositive["queue_wait_sec"] is None
+    assert nonpositive["execution_sec"] is None
+    assert nonpositive["total_sec"] is None
+
+    out_of_order = traces_by_column["out_of_order_timestamps"]
+    assert out_of_order["dispatched_offset_sec"] == pytest.approx(0.0)
+    assert out_of_order["slot_acquired_offset_sec"] is None
+    assert out_of_order["completed_offset_sec"] is None
+    assert out_of_order["queue_wait_sec"] is None
+    assert out_of_order["execution_sec"] is None
+    assert out_of_order["total_sec"] is None
+
+
+def test_ndd_adapter_task_trace_write_error_is_not_wrapped_as_workflow_error(
+    trace_input_df: pd.DataFrame,
+) -> None:
+    task_trace = SimpleNamespace(
+        column="raw_detected",
+        row_group=0,
+        row_index=7,
+        task_type="llm",
+        dispatched_at=10.0,
+        slot_acquired_at=10.25,
+        completed_at=12.0,
+        status="completed",
+        error=None,
+    )
+    adapter = NddAdapter(
+        data_designer=cast(DataDesigner, _TaskTraceDataDesigner(trace_input_df, task_traces=[task_trace]))
+    )
+    collector = MeasurementCollector(
+        dd_task_trace_sink=_FailingSink("task trace sidecar unavailable"),
+        fail_on_write_error=True,
+    )
+
+    with measurement_session(collector), pytest.raises(OSError, match="task trace sidecar unavailable"):
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [_raw_detected_text_column()],
+        )
+
+
+def test_ndd_adapter_trace_write_error_is_not_wrapped_as_workflow_error(
+    trace_input_df: pd.DataFrame,
+) -> None:
     class TraceDataDesigner:
-        def __init__(self) -> None:
-            self.run_config = RunConfig(async_trace=False)
-            self.async_trace_values: list[bool] = []
-
-        def set_run_config(self, run_config: RunConfig) -> None:
-            self.async_trace_values.append(run_config.async_trace)
-            self.run_config = run_config
-
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-            assert self.run_config.async_trace is True
-            _ = num_records
-            raise RuntimeError("raw secret failure")
+            output = trace_input_df.iloc[:num_records].copy()
+            output["raw_detected"] = "[]"
+            output[f"raw_detected{TRACE_COLUMN_POSTFIX}"] = [
+                [
+                    {"role": "user", "content": [{"type": "text", "text": "prompt secret"}]},
+                    {"role": "assistant", "content": "secret response"},
+                ]
+            ]
+            return SimpleNamespace(dataset=output)
 
-    data_designer = TraceDataDesigner()
+    adapter = NddAdapter(data_designer=cast(DataDesigner, TraceDataDesigner()))
+    collector = MeasurementCollector(
+        dd_trace_mode="last_message",
+        dd_trace_sink=_FailingSink("trace sidecar unavailable"),
+        fail_on_write_error=True,
+    )
+
+    with measurement_session(collector), pytest.raises(OSError, match="trace sidecar unavailable"):
+        _run_entity_detection_preview(
+            adapter,
+            trace_input_df,
+            [_raw_detected_text_column()],
+        )
+
+
+def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(
+    tmp_path: Path,
+    trace_input_df: pd.DataFrame,
+) -> None:
+    data_designer = _TaskTraceDataDesigner(trace_input_df, error=RuntimeError("raw secret failure"))
     adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
 
     with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
         with configured_measurement_session(
             MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_task_trace_path=tmp_path / "task.jsonl")
         ):
-            adapter.run_workflow(
-                input_df,
-                model_configs=[ModelConfig(alias="alias", model="dummy-model", provider="provider")],
-                columns=[LLMTextColumnConfig(name="raw_detected", prompt="{{ text }}", model_alias="alias")],
-                workflow_name="entity-detection",
-                preview_num_records=1,
+            _run_entity_detection_preview(
+                adapter,
+                trace_input_df,
+                [_raw_detected_text_column()],
             )
 
     assert data_designer.async_trace_values == [True, False]

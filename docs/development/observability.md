@@ -141,9 +141,14 @@ measurement = MeasurementConfig(
 ```
 
 Task traces capture DataDesigner scheduler timing metadata: workflow, column,
-row group, row index, task type, status, queue wait time, execution time, total
-time, and whether an error was present. They do not store raw DataDesigner error
-strings because those strings can contain prompts, outputs, or source values.
+row group, row index, task type, status, relative dispatch/slot-acquired/
+completion offsets, queue wait time, execution time, total time, and whether an
+error was present. They do not store raw DataDesigner error strings because
+those strings can contain prompts, outputs, or source values.
+
+Offsets are relative to the earliest positive `dispatched_at` timestamp in the
+task-trace batch for that workflow. They make task overlap easier to inspect
+without persisting host-specific wall-clock timestamps.
 
 ## Safety Rules
 
@@ -161,8 +166,9 @@ When adding instrumentation:
 - Put timing around stable phase boundaries, not every helper call.
 - Record metadata at the boundary where the information is known.
 - Keep raw debug payloads in explicit sidecars, never in measurement records.
-- Prefer `run_tags` for benchmark context such as suite ID, case ID, workload,
-  config, or experimental strategy.
+- Prefer `run_tags` for external run context such as source refs, CI IDs,
+  topology labels, or experimental strategy. The benchmark runner owns
+  `suite_id`, `case_id`, `workload_id`, `config_id`, and `repetition`.
 - Keep benchmark-only strategy switches in `tools/measurement`, not product
   defaults.
 

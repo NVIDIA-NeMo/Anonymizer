@@ -111,6 +111,7 @@ class ConfigSpec(BaseModel):
     detect: dict[str, Any] = Field(default_factory=dict)
     replace: str | ReplaceSpec | None = None
     rewrite: RewriteSpec | None = None
+    evaluate: bool = False
     emit_telemetry: bool = False
 
     @model_validator(mode="after")
@@ -119,6 +120,8 @@ class ConfigSpec(BaseModel):
             raise ValueError("config must define replace or rewrite")
         if self.replace is not None and self.rewrite is not None:
             raise ValueError("config cannot define both replace and rewrite")
+        if self.evaluate and self.rewrite is not None:
+            raise ValueError("evaluate is only supported for replace configs")
         return self
 
 
@@ -128,6 +131,9 @@ class MatrixEntry(BaseModel):
     workload: str
     config: str
     repetitions: int = Field(default=1, ge=1)
+
+
+RESERVED_RUN_TAG_KEYS = frozenset({"suite_id", "workload_id", "config_id", "repetition", "case_id"})
 
 
 def _duplicates(values: list[str]) -> list[str]:
@@ -147,6 +153,7 @@ class BenchmarkSpec(BaseModel):
     model_configs: str | None = None
     model_providers: str | None = None
     artifact_path: str | None = None
+    run_tags: dict[str, Any] = Field(default_factory=dict)
     case_retries: int = Field(default=0, ge=0)
     case_retry_backoff_sec: float = Field(default=0.0, ge=0.0)
     workloads: list[WorkloadSpec] = Field(min_length=1)
@@ -162,6 +169,7 @@ class BenchmarkSpec(BaseModel):
         if duplicate_configs := _duplicates(config_ids):
             raise ValueError(f"duplicate config id(s): {', '.join(duplicate_configs)}")
         self._validate_matrix_references(set(workload_ids), set(config_ids))
+        self._validate_run_tags()
         return self
 
     def _validate_matrix_references(self, workload_ids: set[str], config_ids: set[str]) -> None:
@@ -177,6 +185,12 @@ class BenchmarkSpec(BaseModel):
         if duplicate_entries:
             formatted = ", ".join(f"{workload}/{config}" for workload, config in duplicate_entries)
             raise ValueError(f"duplicate matrix workload/config entry(s): {formatted}; use repetitions for repeats")
+
+    def _validate_run_tags(self) -> None:
+        reserved_tags = sorted(set(self.run_tags) & RESERVED_RUN_TAG_KEYS)
+        if reserved_tags:
+            formatted = ", ".join(reserved_tags)
+            raise ValueError(f"run_tags cannot define reserved benchmark tag(s): {formatted}")
 
 
 class BenchmarkCase(BaseModel):
@@ -336,6 +350,7 @@ def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) 
                 check_substitute=isinstance(anonymizer_config.replace, Substitute)
                 or anonymizer_config.rewrite is not None,
                 check_rewrite=anonymizer_config.rewrite is not None,
+                check_evaluate=config.evaluate,
             )
         except ValueError as exc:
             errors.append(f"config '{config.id}' model aliases invalid: {exc}")
@@ -352,14 +367,16 @@ def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
     raw = _resolve_config_source(spec.model_providers, base_dir)
     if raw is None:
         return
-    config_source: str | Path = raw
-    if isinstance(raw, str) and "\n" not in raw:
+    if "\n" in raw:
+        config_dict = yaml.safe_load(raw)
+    else:
         candidate = Path(raw.strip()).expanduser()
         if candidate.suffix in (".yaml", ".yml"):
             if not candidate.is_file():
                 raise FileNotFoundError(f"Providers config file not found: {candidate}")
-            config_source = candidate
-    config_dict = yaml.safe_load(raw) if isinstance(raw, str) and "\n" in raw else load_config_file(config_source)
+            config_dict = load_config_file(candidate)
+        else:
+            config_dict = yaml.safe_load(raw)
     raw_providers = config_dict.get("providers") if isinstance(config_dict, dict) else None
     if not isinstance(raw_providers, list):
         raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
@@ -796,10 +813,12 @@ def _execute_case(
         fail_on_write_error=True,
     )
     with configured_measurement_session(measurement):
-        anonymizer.run(
+        result = anonymizer.run(
             config=anonymizer_config,
             data=input_data,
         )
+        if config.evaluate:
+            anonymizer.evaluate(result)
 
 
 def build_input(
@@ -1063,6 +1082,7 @@ def render_result(result: BenchmarkResult, *, json_output: bool) -> str:
 
 def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
     return {
+        **spec.run_tags,
         "suite_id": spec.suite_id,
         "workload_id": case.workload_id,
         "config_id": case.config_id,

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 suite_id: repo-data-smoke
+model_configs: ./repo-data-smoke-models.yaml
+model_providers: ./repo-data-smoke-providers.yaml
 workloads:
   - id: biographies
     source: ../../../docs/data/NVIDIA_synthetic_biographies.csv

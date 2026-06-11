@@ -176,6 +176,10 @@ Example:
 suite_id: biography-smoke
 model_configs: ./model-configs.yaml
 model_providers: ./providers.yaml
+run_tags:
+  anonymizer_ref: main
+  commit_sha: abc123
+  pipeline_id: "456"
 case_retries: 1
 case_retry_backoff_sec: 10
 workloads:
@@ -192,6 +196,7 @@ workloads:
 configs:
   - id: redact-default
     replace: redact
+    evaluate: true
   - id: hash-agent-labels
     detect:
       entity_labels: [person, email, api_key, password]
@@ -221,6 +226,22 @@ Relative paths in suite files are resolved from the suite file's directory.
 The runner refuses to write into a non-empty output directory unless
 `--overwrite` is set. By default it also exports Parquet tables into `tables/`;
 pass `--no-export` when only raw measurement JSONL is needed.
+
+Set `model_configs` and `model_providers` explicitly in checked-in or CI suites.
+Relying on Anonymizer defaults makes a run depend on the caller's installed
+defaults and provider environment. In provider YAML, put environment variable
+names such as `NVIDIA_API_KEY` in `api_key`; do not commit raw keys. The bundled
+`repo-data-smoke.yaml` follows this pattern with adjacent model/provider files.
+
+Use `run_tags` for stable suite-level metadata copied into every measurement
+record, such as source refs, commit SHAs, CI pipeline IDs, topology labels, or
+benchmark-suite revisions. The runner reserves `suite_id`, `workload_id`,
+`config_id`, `repetition`, and `case_id` for its own case identity tags.
+
+Set `evaluate: true` on a replace config when the benchmark should run
+`Anonymizer.evaluate()` after `run()` and capture the LLM-as-judge work in the
+same case. This is intentionally replace-only for now; rewrite runs already
+perform their internal evaluation/repair loop during `run()`.
 
 Before starting a real run, the benchmark runner performs cheap preflight
 checks: suite/config parsing, local dataset existence, CSV/Parquet text-column
@@ -268,9 +289,14 @@ another directory.
 
 Task trace records are separate from raw message traces. They include scheduler
 metadata such as workflow name, column, row group, row index, task type, status,
-queue wait time, execution time, total time, and whether an error was present.
-They intentionally do not store raw DataDesigner error strings because those
-can contain prompts, outputs, or source values.
+relative dispatch/slot-acquired/completion offsets, queue wait time, execution
+time, total time, and whether an error was present. They intentionally do not
+store raw DataDesigner error strings because those can contain prompts, outputs,
+or source values.
+
+Offsets are relative to the earliest positive `dispatched_at` timestamp in each
+DataDesigner workflow trace batch written into the case sidecar. They are meant
+for timeline analysis without storing host-specific wall-clock timestamps.
 
 ```bash
 uv run python tools/measurement/run_benchmarks.py \

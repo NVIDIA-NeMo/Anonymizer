@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import re
@@ -16,7 +17,7 @@ from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, TypeGuard, cast
 
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
@@ -72,6 +73,38 @@ class _NativeTraceColumn:
 @dataclass(frozen=True)
 class _PrivateFacadeTraceColumn:
     column_name: str
+
+
+class _TaskTraceLike(Protocol):
+    column: Any
+    row_group: Any
+    row_index: Any
+    task_type: Any
+    status: Any
+    error: Any
+    dispatched_at: Any
+    slot_acquired_at: Any
+    completed_at: Any
+
+
+_TaskTrace = Mapping[str, Any] | _TaskTraceLike
+
+
+class _DDTaskTraceFields(TypedDict):
+    workflow_name: str
+    trace_source: Literal["data_designer_scheduler"]
+    column: Any
+    row_group: Any
+    row_index: Any
+    task_type: Any
+    status: Any
+    error_present: bool
+    dispatched_offset_sec: float | None
+    slot_acquired_offset_sec: float | None
+    completed_offset_sec: float | None
+    queue_wait_sec: float | None
+    execution_sec: float | None
+    total_sec: float | None
 
 
 class NddAdapter:
@@ -154,8 +187,8 @@ class NddAdapter:
             for column in columns:
                 config_builder.add_column(column)
 
+            task_traces: list[_TaskTrace] = []
             try:
-                task_traces: list[Any] = []
                 with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
@@ -175,17 +208,6 @@ class NddAdapter:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
                             output_df = preview_results.dataset
-                    output_df = _record_and_strip_native_dd_message_traces(
-                        output_df=output_df,
-                        workflow_name=workflow_name,
-                        collector=collector,
-                        native_trace_columns=native_trace_columns,
-                    )
-                    _record_dd_task_traces(
-                        workflow_name=workflow_name,
-                        collector=collector,
-                        task_traces=task_traces,
-                    )
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s) on model(s) %s: %s",
@@ -198,6 +220,10 @@ class NddAdapter:
                     workflow_name,
                     col_names,
                 )
+                try:
+                    usage_probe.flush_private_trace_records()
+                except Exception:
+                    logger.warning("Failed to write DataDesigner private message trace records after workflow failure")
                 record_ndd_workflow(
                     workflow_name=workflow_name,
                     model_aliases=model_aliases,
@@ -213,6 +239,19 @@ class NddAdapter:
                     model_usage=usage_probe.model_usage(),
                 )
                 raise AnonymizerWorkflowError(f"Workflow failed: {exc}") from exc
+
+            output_df = _record_and_strip_native_dd_message_traces(
+                output_df=output_df,
+                workflow_name=workflow_name,
+                collector=collector,
+                native_trace_columns=native_trace_columns,
+            )
+            _record_dd_task_traces(
+                workflow_name=workflow_name,
+                collector=collector,
+                task_traces=task_traces,
+            )
+            usage_probe.flush_private_trace_records()
 
         logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
         failed_records = self._detect_missing_records(
@@ -363,6 +402,7 @@ class _DataDesignerUsageProbe:
         self._resource_providers: list[Any] = []
         self._model_registry_patches: list[tuple[Any, Any]] = []
         self._facade_patches: dict[int, tuple[Any, dict[str, Any]]] = {}
+        self._private_trace_records: list[dict[str, Any]] = []
 
     def __enter__(self) -> _DataDesignerUsageProbe:
         if not self._enabled:
@@ -398,6 +438,14 @@ class _DataDesignerUsageProbe:
             for model_name, stats in snapshot.items():
                 usage[str(model_name)] = _model_usage_as_json(stats)
         return usage or None
+
+    def flush_private_trace_records(self) -> None:
+        collector = self._collector
+        if collector is None:
+            self._private_trace_records.clear()
+            return
+        while self._private_trace_records:
+            collector.record_dd_message_trace(**self._private_trace_records.pop(0))
 
     def _private_trace_enabled(self) -> bool:
         return bool(
@@ -525,8 +573,8 @@ class _DataDesignerUsageProbe:
         collector = self._collector
         if collector is None:
             return
-        collector.record_dd_message_trace(
-            **_private_completion_trace_fields(
+        self._private_trace_records.append(
+            _private_completion_trace_fields(
                 workflow_name=self._workflow_name,
                 column_name=column_name,
                 facade=facade,
@@ -619,11 +667,15 @@ def _private_trace_column_name(*, column_names: set[str], purpose: str | None) -
 
 def _runtime_correlation_task_column() -> str | None:
     try:
-        from data_designer.engine.observability import runtime_correlation_provider
+        observability = importlib.import_module("data_designer.engine.observability")
     except Exception:
         return None
 
-    correlation = runtime_correlation_provider.current()
+    runtime_correlation_provider = getattr(observability, "runtime_correlation_provider", None)
+    current = getattr(runtime_correlation_provider, "current", None)
+    if not callable(current):
+        return None
+    correlation = current()
     task_column = getattr(correlation, "task_column", None)
     return task_column if isinstance(task_column, str) and task_column else None
 
@@ -737,14 +789,14 @@ def _run_config_with_async_trace(run_config: Any) -> Any:
     return run_config
 
 
-def _task_traces_from_result(result: Any) -> list[Any]:
+def _task_traces_from_result(result: Any) -> list[_TaskTrace]:
     raw_traces = getattr(result, "task_traces", None)
     if raw_traces is None:
         return []
     if isinstance(raw_traces, list):
-        return raw_traces
+        return cast(list[_TaskTrace], raw_traces)
     try:
-        return list(raw_traces)
+        return cast(list[_TaskTrace], list(raw_traces))
     except TypeError:
         return []
 
@@ -813,7 +865,7 @@ def _native_dd_trace_type() -> TraceType:
     return TraceType.ALL_MESSAGES
 
 
-def _column_has_private_facade_model_calls(column: ColumnConfigT) -> bool:
+def _column_has_private_facade_model_calls(column: ColumnConfigT) -> TypeGuard[CustomColumnConfig]:
     return isinstance(column, CustomColumnConfig) and bool(_extract_workflow_model_aliases([column]))
 
 
@@ -950,38 +1002,61 @@ def _trace_tool_calls(tool_calls: Any) -> list[Any]:
     return []
 
 
-def _record_dd_task_traces(*, workflow_name: str, collector: Any | None, task_traces: list[Any]) -> None:
+def _record_dd_task_traces(*, workflow_name: str, collector: Any | None, task_traces: list[_TaskTrace]) -> None:
     if collector is None or not collector.dd_task_trace_enabled:
         return
+    trace_origin = _task_trace_origin(task_traces)
     for task_trace in task_traces:
-        collector.record_dd_task_trace(
-            workflow_name=workflow_name,
-            trace_source="data_designer_scheduler",
-            column=_trace_attr(task_trace, "column"),
-            row_group=_trace_attr(task_trace, "row_group"),
-            row_index=_trace_attr(task_trace, "row_index"),
-            task_type=_trace_attr(task_trace, "task_type"),
-            status=_trace_attr(task_trace, "status"),
-            error_present=bool(_trace_attr(task_trace, "error")),
-            queue_wait_sec=_trace_duration(
-                _trace_attr(task_trace, "dispatched_at"),
-                _trace_attr(task_trace, "slot_acquired_at"),
-            ),
-            execution_sec=_trace_duration(
-                _trace_attr(task_trace, "slot_acquired_at"),
-                _trace_attr(task_trace, "completed_at"),
-            ),
-            total_sec=_trace_duration(
-                _trace_attr(task_trace, "dispatched_at"),
-                _trace_attr(task_trace, "completed_at"),
-            ),
-        )
+        collector.record_dd_task_trace(**_dd_task_trace_fields(workflow_name, task_trace, trace_origin))
 
 
-def _trace_attr(task_trace: Any, name: str) -> Any:
+def _dd_task_trace_fields(
+    workflow_name: str,
+    task_trace: _TaskTrace,
+    trace_origin: float | None,
+) -> _DDTaskTraceFields:
+    dispatched_at = _trace_attr(task_trace, "dispatched_at")
+    slot_acquired_at = _trace_attr(task_trace, "slot_acquired_at")
+    completed_at = _trace_attr(task_trace, "completed_at")
+    return {
+        "workflow_name": workflow_name,
+        "trace_source": "data_designer_scheduler",
+        "column": _trace_attr(task_trace, "column"),
+        "row_group": _trace_attr(task_trace, "row_group"),
+        "row_index": _trace_attr(task_trace, "row_index"),
+        "task_type": _trace_attr(task_trace, "task_type"),
+        "status": _trace_attr(task_trace, "status"),
+        "error_present": bool(_trace_attr(task_trace, "error")),
+        "dispatched_offset_sec": _trace_offset(trace_origin, dispatched_at),
+        "slot_acquired_offset_sec": _trace_offset(trace_origin, slot_acquired_at),
+        "completed_offset_sec": _trace_offset(trace_origin, completed_at),
+        "queue_wait_sec": _trace_duration(dispatched_at, slot_acquired_at),
+        "execution_sec": _trace_duration(slot_acquired_at, completed_at),
+        "total_sec": _trace_duration(dispatched_at, completed_at),
+    }
+
+
+def _task_trace_origin(task_traces: list[_TaskTrace]) -> float | None:
+    dispatch_times: list[float] = []
+    for task_trace in task_traces:
+        dispatched_at = _trace_attr(task_trace, "dispatched_at")
+        if isinstance(dispatched_at, (int, float)) and dispatched_at > 0:
+            dispatch_times.append(float(dispatched_at))
+    return min(dispatch_times) if dispatch_times else None
+
+
+def _trace_attr(task_trace: _TaskTrace, name: str) -> Any:
     if isinstance(task_trace, Mapping):
-        return task_trace.get(name)
+        return cast(Mapping[str, Any], task_trace).get(name)
     return getattr(task_trace, name, None)
+
+
+def _trace_offset(origin: float | None, timestamp: Any) -> float | None:
+    if origin is None or not isinstance(timestamp, (int, float)):
+        return None
+    if timestamp <= 0 or timestamp < origin:
+        return None
+    return float(timestamp - origin)
 
 
 def _trace_duration(start: Any, end: Any) -> float | None:

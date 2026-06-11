@@ -46,6 +46,48 @@ def _minimal_case_contexts(tool: ModuleType, spec: Any, tmp_path: Path) -> dict[
     }
 
 
+def _minimal_benchmark_spec(
+    tool: ModuleType,
+    *,
+    suite_id: str = "suite",
+    configs: list[Any] | None = None,
+    case_retries: int = 0,
+    case_retry_backoff_sec: float = 0.0,
+    run_tags: dict[str, Any] | None = None,
+) -> Any:
+    return tool.BenchmarkSpec(
+        suite_id=suite_id,
+        case_retries=case_retries,
+        case_retry_backoff_sec=case_retry_backoff_sec,
+        run_tags=run_tags or {},
+        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+        configs=configs or [tool.ConfigSpec(id="redact", replace="redact")],
+    )
+
+
+def _minimal_benchmark_case(
+    tool: ModuleType,
+    *,
+    suite_id: str = "suite",
+    workload_id: str = "input",
+    config_id: str = "redact",
+    repetition: int = 0,
+) -> Any:
+    return tool.BenchmarkCase(
+        suite_id=suite_id,
+        workload_id=workload_id,
+        config_id=config_id,
+        repetition=repetition,
+        case_id=f"{workload_id}__{config_id}__r{repetition:03d}",
+    )
+
+
+def _write_text_input(tmp_path: Path, text: str = "Alice works at Acme") -> Path:
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(input_path, index=False)
+    return input_path
+
+
 def _copy_biography_data(tmp_path: Path, filename: str = "input.csv") -> Path:
     source = REPO_ROOT / "docs" / "data" / "NVIDIA_synthetic_biographies.csv"
     destination = tmp_path / filename
@@ -65,6 +107,29 @@ def test_benchmark_spec_rejects_duplicate_matrix_entries() -> None:
                 tool.MatrixEntry(workload="input", config="redact"),
                 tool.MatrixEntry(workload="input", config="redact"),
             ],
+        )
+
+
+def test_benchmark_spec_rejects_reserved_run_tags() -> None:
+    tool = load_tool("measurement_benchmark_tool_reserved_tags", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+
+    with pytest.raises(ValidationError, match="reserved benchmark tag"):
+        tool.BenchmarkSpec(
+            suite_id="tag-suite",
+            run_tags={"pipeline_id": "1234", "case_id": "manual"},
+            workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
+            configs=[tool.ConfigSpec(id="redact", replace="redact")],
+        )
+
+
+def test_benchmark_config_rejects_evaluate_on_rewrite() -> None:
+    tool = load_tool("measurement_benchmark_tool_evaluate_rewrite", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+
+    with pytest.raises(ValidationError, match="evaluate is only supported for replace configs"):
+        tool.ConfigSpec(
+            id="rewrite-evaluate",
+            rewrite=tool.RewriteSpec(),
+            evaluate=True,
         )
 
 
@@ -212,11 +277,7 @@ def test_run_suite_records_detection_artifact_analysis_path(
     tmp_path: Path,
 ) -> None:
     tool = load_tool("measurement_benchmark_tool_run_suite_artifact", REPO_ROOT / "tools/measurement/run_benchmarks.py")
-    spec = tool.BenchmarkSpec(
-        suite_id="artifact-suite",
-        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
-        configs=[tool.ConfigSpec(id="redact", replace="redact")],
-    )
+    spec = _minimal_benchmark_spec(tool, suite_id="artifact-suite")
     output_dir = tmp_path / "output"
     output_dir.mkdir()
     artifact_path = output_dir / "artifacts"
@@ -274,11 +335,7 @@ def test_run_suite_skips_detection_artifact_analysis_when_export_disabled(
     tool = load_tool(
         "measurement_benchmark_tool_run_suite_no_export_artifact", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
-    spec = tool.BenchmarkSpec(
-        suite_id="artifact-suite",
-        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
-        configs=[tool.ConfigSpec(id="redact", replace="redact")],
-    )
+    spec = _minimal_benchmark_spec(tool, suite_id="artifact-suite")
     output_dir = tmp_path / "output"
     output_dir.mkdir()
 
@@ -321,21 +378,9 @@ def test_benchmark_case_retries_transient_errors_and_records_attempts(
 ) -> None:
     tool = load_tool("measurement_benchmark_tool_case_retry_success", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     attempts: list[Path] = []
-    spec = tool.BenchmarkSpec(
-        suite_id="retry-suite",
-        case_retries=1,
-        case_retry_backoff_sec=0,
-        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
-        configs=[tool.ConfigSpec(id="redact", replace="redact")],
-    )
-    case = tool.BenchmarkCase(
-        suite_id="retry-suite",
-        workload_id="input",
-        config_id="redact",
-        repetition=0,
-        case_id="input__redact__r000",
-    )
-    pd.DataFrame({"text": ["Alice"]}).to_csv(tmp_path / "input.csv", index=False)
+    spec = _minimal_benchmark_spec(tool, suite_id="retry-suite", case_retries=1)
+    case = _minimal_benchmark_case(tool, suite_id="retry-suite")
+    _write_text_input(tmp_path, text="Alice")
 
     def fake_execute_case(*_args: Any, raw_path: Path, **_kwargs: Any) -> None:
         attempts.append(raw_path)
@@ -366,20 +411,8 @@ def test_benchmark_case_records_persistent_retry_failures(
     tmp_path: Path,
 ) -> None:
     tool = load_tool("measurement_benchmark_tool_case_retry_failure", REPO_ROOT / "tools/measurement/run_benchmarks.py")
-    spec = tool.BenchmarkSpec(
-        suite_id="retry-suite",
-        case_retries=1,
-        case_retry_backoff_sec=0,
-        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
-        configs=[tool.ConfigSpec(id="redact", replace="redact")],
-    )
-    case = tool.BenchmarkCase(
-        suite_id="retry-suite",
-        workload_id="input",
-        config_id="redact",
-        repetition=0,
-        case_id="input__redact__r000",
-    )
+    spec = _minimal_benchmark_spec(tool, suite_id="retry-suite", case_retries=1)
+    case = _minimal_benchmark_case(tool, suite_id="retry-suite")
 
     attempts = 0
     errors: list[str] = []
@@ -421,20 +454,8 @@ def test_benchmark_case_fail_fast_skips_retries(
     tool = load_tool(
         "measurement_benchmark_tool_case_retry_fail_fast", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
-    spec = tool.BenchmarkSpec(
-        suite_id="retry-suite",
-        case_retries=3,
-        case_retry_backoff_sec=0,
-        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
-        configs=[tool.ConfigSpec(id="redact", replace="redact")],
-    )
-    case = tool.BenchmarkCase(
-        suite_id="retry-suite",
-        workload_id="input",
-        config_id="redact",
-        repetition=0,
-        case_id="input__redact__r000",
-    )
+    spec = _minimal_benchmark_spec(tool, suite_id="retry-suite", case_retries=3)
+    case = _minimal_benchmark_case(tool, suite_id="retry-suite")
     attempts = 0
 
     def fake_execute_case(*_args: Any, **_kwargs: Any) -> Any:
@@ -694,10 +715,52 @@ configs:
         tool.preflight_suite(spec, spec_path=spec_path)
 
 
+def test_benchmark_preflight_rejects_missing_evaluate_model_alias(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_tool_preflight_evaluate_models", REPO_ROOT / "tools/measurement/run_benchmarks.py"
+    )
+    _copy_biography_data(tmp_path)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: bad-evaluate-model-suite
+model_configs: |
+  selected_models:
+    detection:
+      entity_detector: detector
+      entity_validator: [validator]
+      entity_augmenter: augmenter
+    evaluate:
+      detection_validity_judge: missing-evaluator
+  model_configs:
+    - alias: detector
+      model: test/detector
+    - alias: validator
+      model: test/validator
+    - alias: augmenter
+      model: test/augmenter
+workloads:
+  - id: biography
+    source: input.csv
+    text_column: biography
+configs:
+  - id: redact-evaluate
+    replace: redact
+    evaluate: true
+""",
+        encoding="utf-8",
+    )
+    spec = tool.load_spec(spec_path)
+
+    with pytest.raises(ValueError, match="evaluate.detection_validity_judge='missing-evaluator'"):
+        tool.preflight_suite(spec, spec_path=spec_path)
+
+
 def test_benchmark_example_suites_are_portable() -> None:
     example_paths = sorted((REPO_ROOT / "tools/measurement/examples").glob("*.yaml"))
     assert example_paths
 
+    allowed_public_endpoints = {"https://integrate.api.nvidia.com/v1"}
     machine_specific_fragments = (
         "/root/",
         "/Users/",
@@ -728,7 +791,9 @@ def test_benchmark_example_suites_are_portable() -> None:
                 if key in path_fields:
                     assert not Path(value).is_absolute(), f"{example_path} uses absolute path for {key}: {value}"
                 if key in {"endpoint", "gliner_endpoint"}:
-                    raise AssertionError(f"{example_path} should use endpoint_env for {key}, not a literal endpoint")
+                    assert value in allowed_public_endpoints, (
+                        f"{example_path} should use an approved portable endpoint for {key}: {value}"
+                    )
 
 
 def test_benchmark_preflight_rejects_bad_provider_config(tmp_path: Path) -> None:
@@ -814,19 +879,13 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
 
     monkeypatch.setattr(tool, "configured_measurement_session", fake_measurement_session)
 
-    spec = tool.BenchmarkSpec(
+    spec = _minimal_benchmark_spec(
+        tool,
         suite_id="trace-suite",
-        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
-        configs=[tool.ConfigSpec(id="redact", replace="redact")],
+        run_tags={"commit_sha": "abc123", "pipeline_id": "456"},
     )
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(tmp_path / "input.csv", index=False)
-    case = tool.BenchmarkCase(
-        suite_id="trace-suite",
-        workload_id="input",
-        config_id="redact",
-        repetition=0,
-        case_id="input__redact__r000",
-    )
+    _write_text_input(tmp_path)
+    case = _minimal_benchmark_case(tool, suite_id="trace-suite")
     trace_path = tmp_path / "traces" / "input__redact__r000.jsonl"
     task_trace_path = tmp_path / "task-traces" / "input__redact__r000.jsonl"
 
@@ -849,3 +908,59 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
     assert captured[0].dd_task_trace_path == task_trace_path
     assert captured[0].streaming is True
     assert captured[0].keep_records is False
+    assert captured[0].run_tags == {
+        "suite_id": "trace-suite",
+        "workload_id": "input",
+        "config_id": "redact",
+        "repetition": 0,
+        "case_id": "input__redact__r000",
+        "commit_sha": "abc123",
+        "pipeline_id": "456",
+    }
+
+
+def test_benchmark_case_can_run_optional_evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool("measurement_benchmark_tool_evaluate", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    calls: list[Any] = []
+    run_result = object()
+
+    @contextmanager
+    def fake_measurement_session(_config: Any) -> Iterator[None]:
+        yield None
+
+    class FakeAnonymizer:
+        def run(self, *, config: Any, data: Any) -> object:
+            calls.append(("run", config.replace, data.text_column))
+            return run_result
+
+        def evaluate(self, result: object) -> object:
+            calls.append(("evaluate", result))
+            return result
+
+    monkeypatch.setattr(tool, "configured_measurement_session", fake_measurement_session)
+
+    spec = _minimal_benchmark_spec(
+        tool,
+        suite_id="evaluate-suite",
+        configs=[tool.ConfigSpec(id="redact", replace="redact", evaluate=True)],
+    )
+    _write_text_input(tmp_path)
+    case = _minimal_benchmark_case(tool, suite_id="evaluate-suite")
+
+    tool._execute_case(
+        FakeAnonymizer(),
+        spec.workloads[0],
+        spec.configs[0],
+        raw_path=tmp_path / "raw" / "input__redact__r000.jsonl",
+        trace_path=None,
+        task_trace_path=None,
+        case=case,
+        spec=spec,
+        base_dir=tmp_path,
+        dd_trace=tool.DDTraceMode.none,
+    )
+
+    assert calls == [("run", tool.Redact(), "text"), ("evaluate", run_result)]
