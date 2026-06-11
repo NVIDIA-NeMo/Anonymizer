@@ -9,10 +9,12 @@ from dataclasses import dataclass
 import pandas as pd
 from data_designer.config.models import ModelConfig
 
-from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
+from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
@@ -25,6 +27,7 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
+from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
@@ -47,7 +50,6 @@ _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_WEIGHTED_LEAKAGE_RATE: 0.0,
     COL_ANY_HIGH_LEAKED: False,
     COL_NEEDS_HUMAN_REVIEW: False,
-    COL_JUDGE_EVALUATION: None,
     COL_REPAIR_ITERATIONS: 0,
 }
 
@@ -109,15 +111,16 @@ def _join_new_columns(
 def _join_judge_columns(target: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
     """Merge judge columns preserving all rows -- judge is non-critical.
 
-    When judge returns fewer rows than target, the missing rows get
-    defaults (``COL_JUDGE_EVALUATION=None``, ``COL_NEEDS_HUMAN_REVIEW=True``)
-    instead of being dropped from the result.
+    When judge returns fewer rows than target, missing rows get
+    ``COL_JUDGE_EVALUATION=None`` instead of being dropped from the result.
+    ``COL_NEEDS_HUMAN_REVIEW`` is not touched here; it is set by the
+    evaluate-repair loop based on objective metrics.
     """
     if len(source) == len(target):
         return _join_new_columns(target, source)
 
     logger.warning(
-        "Judge returned %d of %d rows; defaulting missing rows to needs_human_review=True.",
+        "Judge returned %d of %d rows; defaulting missing rows to judge_evaluation=None.",
         len(source),
         len(target),
     )
@@ -126,13 +129,11 @@ def _join_judge_columns(target: pd.DataFrame, source: pd.DataFrame) -> pd.DataFr
     known_ids = set(source_by_id.index)
 
     result[COL_JUDGE_EVALUATION] = None
-    result[COL_NEEDS_HUMAN_REVIEW] = True
 
     for idx, record_id in result[RECORD_ID_COLUMN].items():
         if record_id in known_ids:
             row = source_by_id.loc[record_id]
             result.at[idx, COL_JUDGE_EVALUATION] = row.get(COL_JUDGE_EVALUATION)
-            result.at[idx, COL_NEEDS_HUMAN_REVIEW] = row.get(COL_NEEDS_HUMAN_REVIEW, True)
 
     return result
 
@@ -171,7 +172,8 @@ class RewriteWorkflow:
 
     Chains all sub-workflows in order: domain classification,
     sensitivity disposition, QA generation, rewrite generation,
-    evaluate-repair loop, and final judge.
+    and the evaluate-repair loop. The final judge runs separately
+    via evaluate().
     """
 
     def __init__(self, adapter: NddAdapter) -> None:
@@ -183,6 +185,7 @@ class RewriteWorkflow:
         self._evaluate_wf = EvaluateWorkflow(adapter)
         self._repair_wf = RepairWorkflow(adapter)
         self._judge_wf = FinalJudgeWorkflow()
+        self._detection_judge_wf = DetectionJudgeWorkflow(adapter)
 
     def run(
         self,
@@ -381,40 +384,82 @@ class RewriteWorkflow:
 
             df = pd.concat([passing_rows, failing_rows], ignore_index=True)
 
+        # Compute needs_human_review from objective metrics after the loop exhausts.
+        needs_review = df[COL_REWRITTEN_TEXT].isna()
+        needs_review = needs_review | df[COL_ANY_HIGH_LEAKED].apply(bool)
+        if evaluation.flag_utility_below is not None:
+            needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)
+        if evaluation.flag_leakage_above is not None:
+            needs_review = needs_review | (df[COL_LEAKAGE_MASS].apply(float) > evaluation.flag_leakage_above)
+        df[COL_NEEDS_HUMAN_REVIEW] = needs_review
+
         return df, all_failed
 
     # ---------------------------------------------------------------------------
-    # Final judge (non-critical)
+    # Evaluate (detection judge + final judge)
     # ---------------------------------------------------------------------------
 
-    def _run_final_judge(
+    def evaluate(
         self,
         df: pd.DataFrame,
         *,
         model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
+        selected_models: EvaluateModelSelection,
         privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
-        preview_num_records: int | None,
-    ) -> tuple[pd.DataFrame, list[FailedRecord]]:
+        preview_num_records: int | None = None,
+    ) -> RewriteResult:
+        """Run detection validity judge and holistic judge on a completed rewrite result.
+
+        Takes the trace dataframe from a prior run() / preview() and appends
+        COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES, and COL_JUDGE_EVALUATION.
+        COL_NEEDS_HUMAN_REVIEW is not modified — it was set during run() based on
+        objective metrics and judge scores do not influence it.
+        """
+        entity_rows, passthrough_rows = split_rows(df, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+
+        passthrough_rows = passthrough_rows.copy()
+        passthrough_rows[COL_DETECTION_VALID] = None
+        passthrough_rows[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
+        passthrough_rows[COL_JUDGE_EVALUATION] = None
+
+        if entity_rows.empty:
+            combined = merge_and_reorder(passthrough_rows)
+            return RewriteResult(dataframe=combined, failed_records=[])
+
+        all_failed: list[FailedRecord] = []
+
+        # --- Detection validity judge ---
+        detection_result = self._detection_judge_wf.evaluate(
+            entity_rows,
+            model_configs=model_configs,
+            selected_models=selected_models,
+            preview_num_records=preview_num_records,
+        )
+        entity_rows = _join_new_columns(entity_rows, detection_result.dataframe)
+        all_failed.extend(detection_result.failed_records)
+
+        # --- Holistic judge (privacy / quality / style) ---
         try:
             judge_columns = self._judge_wf.columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                evaluation=evaluation,
             )
-            judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))
+            effective_preview = (
+                min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
+            )
+            judge_seed = select_seed_cols(entity_rows, derive_seed_columns(judge_columns, entity_rows))
             judge_result = self._adapter.run_workflow(
                 judge_seed,
                 model_configs=model_configs,
                 columns=judge_columns,
                 workflow_name="rewrite-final-judge",
-                preview_num_records=preview_num_records,
+                preview_num_records=effective_preview,
             )
-            df = _join_judge_columns(df, judge_result.dataframe)
-            return df, judge_result.failed_records
+            entity_rows = _join_judge_columns(entity_rows, judge_result.dataframe)
+            all_failed.extend(judge_result.failed_records)
         except Exception:
-            logger.warning("Final judge step failed; populating defaults", exc_info=True)
-            df[COL_JUDGE_EVALUATION] = None
-            df[COL_NEEDS_HUMAN_REVIEW] = True
-            return df, []
+            logger.warning("Final judge step failed; defaulting to judge_evaluation=None", exc_info=True)
+            entity_rows[COL_JUDGE_EVALUATION] = None
+
+        combined = merge_and_reorder(entity_rows, passthrough_rows)
+        return RewriteResult(dataframe=combined, failed_records=all_failed)

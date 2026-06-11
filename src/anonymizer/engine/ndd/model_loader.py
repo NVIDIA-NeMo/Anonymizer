@@ -291,6 +291,8 @@ def validate_model_alias_references(
                 "replace_attribute_fidelity_judge",
             ):
                 _collect_role(roles_to_check, f"evaluate.{role}", evaluate_roles[role])
+        if check_rewrite:
+            _collect_role(roles_to_check, "evaluate.rewrite_judge", evaluate_roles["rewrite_judge"])
 
     unknown = {path: alias for path, alias in roles_to_check.items() if alias not in known_aliases}
     if unknown:

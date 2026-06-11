@@ -30,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_FINAL_ENTITIES,
+    COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
@@ -316,6 +317,7 @@ class Anonymizer:
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
                 replace_method=config.replace,
+                rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -342,9 +344,8 @@ class Anonymizer:
     ) -> AnonymizerResult:
         """Run LLM-as-judge evaluation on a prior ``preview()`` / ``run()`` output.
 
-        The anonymization strategy is read from ``output.replace_method`` (set
-        when ``run()`` / ``preview()`` produced the result), so users don't
-        restate it and can't mis-state it.
+        The anonymization strategy is read from the result (set when ``run()`` /
+        ``preview()`` produced it), so users don't restate it and can't mis-state it.
 
         Typical flow::
 
@@ -366,19 +367,48 @@ class Anonymizer:
         Args:
             output: An :class:`AnonymizerResult` or :class:`PreviewResult` from
                 a prior ``preview()`` / ``run()``. Carries the trace dataframe,
-                the resolved text-column name, and the replace strategy.
+                the resolved text-column name, and the anonymization config.
             config: Optional :class:`EvaluateConfig` for evaluation-specific
                 knobs (placeholder today; reserved for metric selection,
                 per-judge model/prompt overrides, etc.).
         """
         _ = config  # placeholder; no knobs to read yet
+        rewrite_config = getattr(output, "rewrite_config", None)
         replace_method = getattr(output, "replace_method", None)
+
+        if rewrite_config is not None:
+            try:
+                validate_model_alias_references(
+                    self._model_configs,
+                    self._selected_models,
+                    check_rewrite=True,
+                    check_evaluate=True,
+                )
+            except ValueError as exc:
+                raise InvalidConfigError(str(exc)) from exc
+            text_column = output.resolved_text_column
+            internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+            rewrite_result = self._rewrite_runner.evaluate(
+                internal_df,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.evaluate,
+                privacy_goal=rewrite_config,
+            )
+            renamed_trace = _rename_output_columns(rewrite_result.dataframe, resolved_text_column=text_column)
+            return AnonymizerResult(
+                dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
+                trace_dataframe=renamed_trace,
+                resolved_text_column=text_column,
+                failed_records=rewrite_result.failed_records,
+                rewrite_config=rewrite_config,
+            )
+
         if replace_method is None:
             raise ValueError(
-                "Cannot evaluate this output — it has no associated replace strategy. "
-                "Pass an AnonymizerResult / PreviewResult produced by run() / preview() "
-                "on this branch (the strategy is recorded then). Hand-built or legacy "
-                "results need their `replace_method` attribute set before calling evaluate()."
+                "Cannot evaluate this output — it has no associated anonymization config. "
+                "Pass an AnonymizerResult / PreviewResult produced by run() / preview(). "
+                "Hand-built or legacy results need their `replace_method` or `rewrite_config` "
+                "attribute set before calling evaluate()."
             )
         try:
             validate_model_alias_references(
@@ -598,6 +628,7 @@ class Anonymizer:
             resolved_text_column=text_col,
             failed_records=all_failures,
             replace_method=config.replace,
+            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
@@ -717,7 +748,6 @@ class Anonymizer:
             rewriter_model=models["rewriter"],
             evaluator_model=models["evaluator"],
             repairer_model=models["repairer"],
-            judge_model=models["judge"],
             model_hosts=hosts,
             entity_detection_failure_count=failure_counts["entity_detection"],
             latent_detection_failure_count=failure_counts["latent_detection"],
@@ -851,6 +881,9 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             COL_WEIGHTED_LEAKAGE_RATE,
             COL_ANY_HIGH_LEAKED,
             COL_NEEDS_HUMAN_REVIEW,
+            COL_DETECTION_VALID,             # only present after evaluate()
+            COL_DETECTION_INVALID_ENTITIES,  # only present after evaluate()
+            COL_JUDGE_EVALUATION,            # only present after evaluate()
         }
     elif f"{text_col}_replaced" in t.columns:
         allowed = {
@@ -938,7 +971,6 @@ def _collect_step_models(
         "rewriter": rewrite.rewriter if has_rewrite else NOT_APPLICABLE,
         "evaluator": rewrite.evaluator if has_rewrite else NOT_APPLICABLE,
         "repairer": rewrite.repairer if has_rewrite else NOT_APPLICABLE,
-        "judge": rewrite.judge if has_rewrite else NOT_APPLICABLE,
     }
 
 

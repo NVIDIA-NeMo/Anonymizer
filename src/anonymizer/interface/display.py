@@ -431,11 +431,19 @@ def _render_scores_section(row: pd.Series) -> str:
             "<span style='margin-right:16px'><strong>Weighted Leakage Rate:</strong> "
             f"{weighted_leakage_rate:.2f}</span>"
         )
+    detection_valid = row.get(COL_DETECTION_VALID)
+    if detection_valid is not None:
+        parts.append(
+            f"<span style='margin-right:16px'><strong>Detection Validity:</strong> {float(detection_valid):.2f}</span>"
+        )
+
     if needs_review is not None:
+        is_rewrite = "rewritten" in "".join(str(k) for k in row.index)
+        label = "Rewrite Need Review" if is_rewrite else "Needs Review"
         badge_color = "#ef4444" if needs_review else "#22c55e"
         badge_text = "Yes" if needs_review else "No"
         parts.append(
-            f"<span style='margin-right:16px'><strong>Needs Review:</strong> "
+            f"<span style='margin-right:16px'><strong>{label}:</strong> "
             f"<span style='color:{badge_color};font-weight:600'>{badge_text}</span></span>"
         )
 
@@ -446,7 +454,7 @@ def _render_scores_section(row: pd.Series) -> str:
             "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
         )
     if judge_scores:
-        score_strs = [f"{name}: {score}/10" for name, score in judge_scores]
+        score_strs = [f"{name}: {score}" for name, score in judge_scores]
         parts.append(f"<span><strong>Judge:</strong> {html.escape(', '.join(score_strs))}</span>")
 
     if not parts:
@@ -454,22 +462,23 @@ def _render_scores_section(row: pd.Series) -> str:
     return "<div style='font-size:0.9em;line-height:1.8'>" + "".join(parts) + "</div>"
 
 
-def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
+def _extract_judge_scores(raw: object) -> list[tuple[str, int | str]]:
     """Extract (name, score) pairs from the judge evaluation column.
 
     LLMJudgeColumnConfig output is a plain dict keyed by rubric name, each
-    value carrying ``{"score": <int>, "reasoning": "..."}``.
+    value carrying ``{"score": <int|str>, "reasoning": "..."}``. Scores are
+    returned as-is — callers must not assume int (rewrite mode uses strings).
     """
     if not isinstance(raw, dict):
         return []
-    result: list[tuple[str, int]] = []
+    result: list[tuple[str, int | str]] = []
     for name, value in raw.items():
         if not isinstance(value, dict) or "score" not in value:
             continue
-        try:
-            result.append((str(name), int(value["score"])))
-        except (ValueError, TypeError):
+        score = value["score"]
+        if score is None:
             continue
+        result.append((str(name), score))
     return result
 
 

@@ -4,7 +4,7 @@
 
 The rewrite evaluation has four related issues:
 
-- **Evaluation is baked into `run()` / `preview()`** — the final judge (holistic privacy / quality / fluency scores) runs unconditionally as part of the rewrite pipeline. Replace mode separates this into a dedicated `anonymizer.evaluate()` call, letting users skip it during fast iteration and run it deliberately. Rewrite has no equivalent.
+- **Judge scoring is baked into `run()` / `preview()`** — the final holistic judge (privacy / quality / style scores) runs unconditionally as part of the rewrite pipeline. Replace mode separates this into a dedicated `anonymizer.evaluate()` call. Rewrite has no equivalent, forcing users to pay the judge cost on every run even during fast iteration.
 - **No detection validity score in rewrite mode** — `anonymizer.evaluate()` produces a `detection_valid` column for replace mode (via `DetectionJudgeWorkflow`). Rewrite mode runs the same GLiNER + LLM detection pipeline but never scores its accuracy.
 - **Judge scores are 1–10 integers that saturate** — observed outputs cluster at the extremes (8–10 or 1–2), making the middle of the scale nearly unused. A 3-level categorical (`low` / `medium` / `high`) better matches the distribution, removes false precision, and makes rubric definitions more actionable.
 - **"Naturalness" is an ambiguous name** — the dimension measures writing style and readability of the output text, not faithfulness to the original or any other concept the word might suggest. `style` is a clearer term for this and is unambiguous.
@@ -26,6 +26,15 @@ Rubric anchors for each dimension:
 | `high` | Original direct identifiers removed; remaining quasi-identifiers create low linkage risk | Important meaning, facts, and structure fully preserved | Reads as natural, coherent, human-written prose |
 | `medium` | No obvious direct identifiers remain, but a distinctive quasi-identifier bundle creates noticeable linkage risk | Most content preserved; minor details lost or slightly distorted | Mostly readable; isolated awkward phrasing or stiff transitions |
 | `low` | One or more original direct identifiers or near-equivalents remain, or the record is easily linkable | Material loss of important information, contradictions, or distorted core meaning | Noticeably unnatural; broken grammar, placeholder-like language, or machine-generated feel |
+
+---
+
+## Design Decision: `run()` vs `evaluate()` separation
+
+- `run()` outputs `utility_score`, `leakage_mass`, `weighted_leakage_rate`, `any_high_leaked`, and `needs_human_review` unchanged — the repair loop requires them and they are immediately useful after a run.
+- `evaluate()` adds `detection_valid` (0–1) and the holistic judge scores (`privacy` / `quality` / `style`) on top of the existing `run()` output.
+
+This avoids re-running the repair loop in `evaluate()`: if `needs_human_review=True`, that is already the exhausted repair state and `evaluate()` simply reads the metrics already present.
 
 ---
 
@@ -178,16 +187,14 @@ def evaluate(
 
 Inside `evaluate()`:
 
-1. **Split entity vs passthrough rows** using the same `split_rows` / `_has_entities` pattern as `run()`. Passthrough rows (no detected entities) must be excluded from both judge calls — running `DetectionJudgeWorkflow` on them produces vacuously-valid scores (nothing to validate → trivially satisfied), and running `FinalJudgeWorkflow` on them produces misleadingly-high scores for records that were never anonymized. Passthrough rows receive `COL_DETECTION_VALID = None` and `COL_JUDGE_EVALUATION = None` as defaults.
-2. Run `DetectionJudgeWorkflow` (already in `engine/evaluation/detection_judge.py`) against entity rows only, using `COL_ENTITIES_BY_VALUE` + `COL_TEXT`. The detection validity score is surfaced as a **0–1 value** (the LLM alignment score normalised from its raw percentage), matching the scale of `utility_score` and `leakage_mass`. This is the same score as in replace-mode evaluation, with the only difference being the 0–1 normalisation instead of exposing a raw percentage. `COL_DETECTION_VALID` is a **main output score** — it appears alongside `utility_score` and `leakage_mass` in the user dataframe and display, **not** grouped with the judge scores (privacy/quality/style). It does **not** influence `COL_NEEDS_HUMAN_REVIEW`; human review is determined solely by `leakage_mass` and `utility_score` thresholds, unchanged from the repair loop.
-3. Run `FinalJudgeWorkflow` (already in `engine/rewrite/final_judge.py`) against entity rows only, for privacy / quality / style scores.
+1. **Split entity vs passthrough rows** using the same `split_rows` / `_has_entities` pattern as `run()`. Passthrough rows receive `COL_DETECTION_VALID = None` and `COL_JUDGE_EVALUATION = None` as defaults — running either judge on them produces vacuously correct or misleadingly high scores for records that were never anonymized.
+2. Run `DetectionJudgeWorkflow` against entity rows only, using `COL_ENTITIES_BY_VALUE` + `COL_TEXT`. The score is surfaced as a **0–1 value** matching the scale of `utility_score` and `leakage_mass`. `COL_DETECTION_VALID` appears alongside the objective scores in the user dataframe and display, **not** grouped with the judge scores (privacy/quality/style). It does **not** influence `COL_NEEDS_HUMAN_REVIEW`.
+3. Run `FinalJudgeWorkflow` against entity rows only, for privacy / quality / style scores.
 4. Merge entity and passthrough rows and return a new `RewriteResult`.
 
 ### `COL_NEEDS_HUMAN_REVIEW` must not be overwritten
 
-`FinalJudgeWorkflow.columns()` currently emits a `CustomColumnConfig` for `COL_NEEDS_HUMAN_REVIEW` (via `_determine_needs_human_review`). This flag was already set correctly during `run()` based on objective metrics. If `evaluate()` calls `FinalJudgeWorkflow` as-is, `_join_judge_columns` unconditionally resets it to `True` for all rows before re-assigning from the judge output, silently clobbering the run-time value.
-
-Fix: remove `COL_NEEDS_HUMAN_REVIEW` from `FinalJudgeWorkflow.columns()` entirely. The `CustomColumnConfig` for it and `_determine_needs_human_review` move to `RewriteWorkflow._run_final_judge()` — but since that method is being removed, the column is instead produced at the end of the evaluate-repair loop in `_run_evaluate_repair_loop()`, where `HumanReviewParams` is already available. `evaluate()` never touches `COL_NEEDS_HUMAN_REVIEW`.
+`COL_NEEDS_HUMAN_REVIEW` is set correctly during `run()` based on objective metrics (utility/leakage thresholds). `evaluate()` must never touch it — judge scores and detection validity do not influence the human review decision. Remove `COL_NEEDS_HUMAN_REVIEW` from `FinalJudgeWorkflow.columns()` and produce it instead at the end of `_run_evaluate_repair_loop()` in `rewrite_workflow.py`, where the threshold params are already available.
 
 ### Telemetry — `rewrite.judge` reference
 
@@ -231,7 +238,7 @@ else:
 
 ### Update `_build_user_dataframe`
 
-Add `COL_JUDGE_EVALUATION`, `COL_DETECTION_VALID`, and `COL_DETECTION_INVALID_ENTITIES` to the rewrite allowed set:
+Add `COL_JUDGE_EVALUATION`, `COL_DETECTION_VALID`, and `COL_DETECTION_INVALID_ENTITIES` to the rewrite allowed set. The objective metrics (`utility_score`, `leakage_mass`, etc.) are already in the allowed set and remain there — they are present after `run()`. The new columns are only present after `evaluate()` and are silently omitted until then.
 
 ```python
 if f"{text_col}_rewritten" in t.columns:
@@ -243,9 +250,9 @@ if f"{text_col}_rewritten" in t.columns:
         COL_WEIGHTED_LEAKAGE_RATE,
         COL_ANY_HIGH_LEAKED,
         COL_NEEDS_HUMAN_REVIEW,
-        COL_JUDGE_EVALUATION,          # ← new, only present after evaluate()
-        COL_DETECTION_VALID,           # ← new, only present after evaluate()
-        COL_DETECTION_INVALID_ENTITIES,# ← new, only present after evaluate()
+        COL_DETECTION_VALID,            # ← new, only present after evaluate()
+        COL_DETECTION_INVALID_ENTITIES, # ← new, only present after evaluate()
+        COL_JUDGE_EVALUATION,           # ← new, only present after evaluate()
     }
 ```
 

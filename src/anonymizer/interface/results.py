@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from anonymizer.config.replace_strategies import ReplaceMethod
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
@@ -59,6 +60,10 @@ class AnonymizerResult(_DisplayMixin):
             ``run()`` / ``preview()``; consumed by ``evaluate()`` to dispatch the
             right judges. ``None`` on results that were constructed by hand or
             loaded from a pre-strategy-tracking format.
+        rewrite_config: The privacy goal that produced this result when rewrite
+            mode was used. Set by ``run()`` / ``preview()``; consumed by
+            ``evaluate()`` to dispatch the rewrite judges. Mutually exclusive
+            with ``replace_method``.
     """
 
     dataframe: pd.DataFrame
@@ -66,6 +71,7 @@ class AnonymizerResult(_DisplayMixin):
     resolved_text_column: str
     failed_records: list[FailedRecord]
     replace_method: ReplaceMethod | None = None
+    rewrite_config: PrivacyGoal | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -96,6 +102,9 @@ class PreviewResult(_DisplayMixin):
             ``preview()``; consumed by ``evaluate()`` to dispatch the right
             judges. ``None`` on results that were constructed by hand or loaded
             from a pre-strategy-tracking format.
+        rewrite_config: The privacy goal that produced this preview when rewrite
+            mode was used. Set by ``preview()``; consumed by ``evaluate()`` to
+            dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
     """
 
     dataframe: pd.DataFrame
@@ -104,6 +113,7 @@ class PreviewResult(_DisplayMixin):
     failed_records: list[FailedRecord]
     preview_num_records: int
     replace_method: ReplaceMethod | None = None
+    rewrite_config: PrivacyGoal | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
