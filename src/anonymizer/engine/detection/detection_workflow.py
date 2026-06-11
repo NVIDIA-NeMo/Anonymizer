@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 import pandas as pd
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
@@ -29,13 +29,24 @@ from anonymizer.engine.constants import (
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
-    COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
     _jinja,
+)
+from anonymizer.engine.detection.chunked_augmentation import (
+    WindowedAugmentationParams,
+    make_windowed_augmentation_generator,
+)
+from anonymizer.engine.detection.chunked_detection import (
+    WindowedDetectionParams,
+    make_windowed_detection_generator,
+)
+from anonymizer.engine.detection.chunked_latent import (
+    WindowedLatentParams,
+    make_windowed_latent_generator,
 )
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
@@ -54,23 +65,27 @@ from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import (
-    AugmentedEntitiesSchema,
     EntitiesByValueSchema,
     EntitiesSchema,
-    LatentEntitiesSchema,
 )
 
 logger = logging.getLogger("anonymizer.detection")
 
-# Defaults for the two chunked-validation knobs. Sourced from the Detect config
-# so there is a single source of truth; the workflow method defaults exist so
-# internal tests and ad-hoc callers do not have to wire plumbing by hand.
+# Defaults for the chunked-validation and windowed augmentation/latent knobs.
+# Sourced from the Detect config so there is a single source of truth; the
+# workflow method defaults exist so internal tests and ad-hoc callers do not
+# have to wire plumbing by hand.
 _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL: int = AnonymizerDetectConfig.model_fields[
     "validation_max_entities_per_call"
 ].default
 _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fields[
     "validation_excerpt_window_chars"
 ].default
+_DEFAULT_WINDOW_MAX_RENDER_CHARS: int = AnonymizerDetectConfig.model_fields["detection_window_max_render_chars"].default
+_DEFAULT_WINDOW_SAFETY_MARGIN_CHARS: int = AnonymizerDetectConfig.model_fields[
+    "detection_window_safety_margin_chars"
+].default
+_DEFAULT_WINDOW_OVERLAP_CHARS: int = AnonymizerDetectConfig.model_fields["detection_window_overlap_chars"].default
 
 
 @dataclass(frozen=True)
@@ -94,6 +109,9 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        detection_window_max_render_chars: int = _DEFAULT_WINDOW_MAX_RENDER_CHARS,
+        detection_window_safety_margin_chars: int = _DEFAULT_WINDOW_SAFETY_MARGIN_CHARS,
+        detection_window_overlap_chars: int = _DEFAULT_WINDOW_OVERLAP_CHARS,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
@@ -150,10 +168,15 @@ class EntityDetectionWorkflow:
             dataframe,
             model_configs=workflow_model_configs,
             columns=[
-                LLMTextColumnConfig(
+                CustomColumnConfig(
                     name=COL_RAW_DETECTED,
-                    prompt=_jinja(COL_TEXT),
-                    model_alias=detection_alias,
+                    generator_function=make_windowed_detection_generator(detection_alias),
+                    generator_params=WindowedDetectionParams(
+                        alias=detection_alias,
+                        max_render_chars=detection_window_max_render_chars,
+                        safety_margin_chars=detection_window_safety_margin_chars,
+                        overlap_chars=detection_window_overlap_chars,
+                    ),
                 ),
                 CustomColumnConfig(
                     name=COL_SEED_ENTITIES,
@@ -177,13 +200,18 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES_JSON,
                     generator_function=apply_validation_to_seed_entities,
                 ),
-                LLMStructuredColumnConfig(
+                CustomColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
-                    prompt=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                    generator_function=make_windowed_augmentation_generator(augmenter_alias),
+                    generator_params=WindowedAugmentationParams(
+                        alias=augmenter_alias,
+                        prompt_template=_get_augment_prompt(
+                            data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                        ),
+                        max_render_chars=detection_window_max_render_chars,
+                        safety_margin_chars=detection_window_safety_margin_chars,
+                        overlap_chars=detection_window_overlap_chars,
                     ),
-                    model_alias=augmenter_alias,
-                    output_format=AugmentedEntitiesSchema,
                 ),
                 CustomColumnConfig(
                     name=COL_MERGED_ENTITIES,
@@ -210,6 +238,9 @@ class EntityDetectionWorkflow:
         entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None,
         data_summary: str | None = None,
+        detection_window_max_render_chars: int = _DEFAULT_WINDOW_MAX_RENDER_CHARS,
+        detection_window_safety_margin_chars: int = _DEFAULT_WINDOW_SAFETY_MARGIN_CHARS,
+        detection_window_overlap_chars: int = _DEFAULT_WINDOW_OVERLAP_CHARS,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
         """Detect latent/inferred entities that could enable re-identification.
@@ -229,14 +260,19 @@ class EntityDetectionWorkflow:
             dataframe,
             model_configs=workflow_model_configs,
             columns=[
-                LLMStructuredColumnConfig(
+                CustomColumnConfig(
                     name=COL_LATENT_ENTITIES,
-                    prompt=_get_latent_prompt(
-                        data_summary=data_summary,
-                        privacy_goal=privacy_goal,
+                    generator_function=make_windowed_latent_generator(latent_alias),
+                    generator_params=WindowedLatentParams(
+                        alias=latent_alias,
+                        prompt_template=_get_latent_prompt(
+                            data_summary=data_summary,
+                            privacy_goal=privacy_goal,
+                        ),
+                        max_render_chars=detection_window_max_render_chars,
+                        safety_margin_chars=detection_window_safety_margin_chars,
+                        overlap_chars=detection_window_overlap_chars,
                     ),
-                    model_alias=latent_alias,
-                    output_format=LatentEntitiesSchema,
                 )
             ],
             workflow_name="latent-entity-detection",
@@ -253,6 +289,9 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        detection_window_max_render_chars: int = _DEFAULT_WINDOW_MAX_RENDER_CHARS,
+        detection_window_safety_margin_chars: int = _DEFAULT_WINDOW_SAFETY_MARGIN_CHARS,
+        detection_window_overlap_chars: int = _DEFAULT_WINDOW_OVERLAP_CHARS,
         entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
@@ -277,6 +316,9 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
+            detection_window_max_render_chars=detection_window_max_render_chars,
+            detection_window_safety_margin_chars=detection_window_safety_margin_chars,
+            detection_window_overlap_chars=detection_window_overlap_chars,
             entity_labels=entity_labels,
             data_summary=data_summary,
             preview_num_records=preview_num_records,
@@ -291,6 +333,9 @@ class EntityDetectionWorkflow:
                 entity_labels=entity_labels,
                 privacy_goal=privacy_goal,
                 data_summary=data_summary,
+                detection_window_max_render_chars=detection_window_max_render_chars,
+                detection_window_safety_margin_chars=detection_window_safety_margin_chars,
+                detection_window_overlap_chars=detection_window_overlap_chars,
                 preview_num_records=preview_num_records,
             )
             final_df = latent_result.dataframe.copy()

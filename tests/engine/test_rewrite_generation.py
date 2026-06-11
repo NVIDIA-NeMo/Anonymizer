@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import pytest
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -291,25 +291,19 @@ def test_columns_returns_four_configs(
     assert len(cols) == 4
 
 
-def test_columns_has_llm_config_with_rewriter_alias(
+def test_columns_full_rewrite_is_windowed_generator_with_rewriter_alias(
     stub_rewrite_model_selection: RewriteModelSelection,
     privacy_goal: PrivacyGoal,
 ) -> None:
-    workflow = RewriteGenerationWorkflow()
-    cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
-    llm_cols = [c for c in cols if isinstance(c, LLMStructuredColumnConfig)]
-    assert len(llm_cols) == 1
-    assert llm_cols[0].name == COL_FULL_REWRITE
-
-
-def test_columns_full_rewrite_uses_rewrite_output_schema(
-    stub_rewrite_model_selection: RewriteModelSelection,
-    privacy_goal: PrivacyGoal,
-) -> None:
+    # COL_FULL_REWRITE is now a windowed custom generator (chunks long docs with
+    # rolling-summary continuity) instead of an LLMStructuredColumnConfig.
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
     full_rewrite_col = next(c for c in cols if c.name == COL_FULL_REWRITE)
-    assert full_rewrite_col.output_format == RewriteOutputSchema.model_json_schema()
+    assert isinstance(full_rewrite_col, CustomColumnConfig)
+    assert full_rewrite_col.generator_params.alias == stub_rewrite_model_selection.rewriter
+    metadata = full_rewrite_col.generator_function.custom_column_metadata
+    assert metadata["model_aliases"] == [stub_rewrite_model_selection.rewriter]
 
 
 def test_columns_includes_custom_configs_for_disposition_and_text_extraction(

@@ -380,6 +380,9 @@ class Anonymizer:
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+            detection_window_max_render_chars=config.detect.detection_window_max_render_chars,
+            detection_window_safety_margin_chars=config.detect.detection_window_safety_margin_chars,
+            detection_window_overlap_chars=config.detect.detection_window_overlap_chars,
             entity_labels=config.detect.entity_labels,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
@@ -412,6 +415,8 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
+                window_max_render_chars=config.detect.detection_window_max_render_chars,
+                window_safety_margin_chars=config.detect.detection_window_safety_margin_chars,
             )
             replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe
@@ -434,6 +439,8 @@ class Anonymizer:
                 data_summary=data.data_summary,
                 preview_num_records=preview_num_records,
                 strict_entity_protection=config.rewrite.strict_entity_protection,
+                window_max_render_chars=config.detect.detection_window_max_render_chars,
+                window_safety_margin_chars=config.detect.detection_window_safety_margin_chars,
             )
             rewrite_elapsed = time.perf_counter() - t0
             final_df = rewrite_result.dataframe

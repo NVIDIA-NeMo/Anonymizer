@@ -9,9 +9,10 @@ from collections import Counter
 from dataclasses import dataclass
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import Detect as _DetectConfig
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
@@ -24,10 +25,15 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.replace.chunked_replace import WindowedReplaceParams, make_windowed_replace_generator
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
+
+# Long-context window defaults shared with detection (single source of truth).
+_DEFAULT_MAX_RENDER_CHARS: int = _DetectConfig.model_fields["detection_window_max_render_chars"].default
+_DEFAULT_SAFETY_MARGIN_CHARS: int = _DetectConfig.model_fields["detection_window_safety_margin_chars"].default
 
 # Workflow-internal scratch columns used only to build the replacement-generator
 # prompt. Created in `generate_map_only` and dropped before returning — nothing
@@ -57,8 +63,17 @@ class LlmReplaceWorkflow:
         instructions: str | None = None,
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> LlmReplaceResult:
         replace_alias = resolve_model_alias("replacement_generator", selected_models)
+        # Long-context window sizing: honor the caller's (Detect-config-derived)
+        # values, falling back to the shared defaults. Smaller windows map fewer
+        # entities per LLM call, which avoids timeouts on entity-dense documents.
+        max_render_chars = window_max_render_chars if window_max_render_chars is not None else _DEFAULT_MAX_RENDER_CHARS
+        safety_margin_chars = (
+            window_safety_margin_chars if window_safety_margin_chars is not None else _DEFAULT_SAFETY_MARGIN_CHARS
+        )
 
         working_df = dataframe.copy()
 
@@ -87,14 +102,18 @@ class LlmReplaceWorkflow:
             entity_rows,
             model_configs=model_configs,
             columns=[
-                LLMStructuredColumnConfig(
+                CustomColumnConfig(
                     name=COL_REPLACEMENT_MAP,
-                    prompt=_get_replacement_mapping_prompt(
-                        entities_column=COL_ENTITIES_FOR_REPLACE,
-                        instructions=instructions,
+                    generator_function=make_windowed_replace_generator(replace_alias),
+                    generator_params=WindowedReplaceParams(
+                        alias=replace_alias,
+                        single_call_prompt_template=_get_replacement_mapping_prompt(
+                            entities_column=COL_ENTITIES_FOR_REPLACE,
+                            instructions=instructions,
+                        ),
+                        max_render_chars=max_render_chars,
+                        safety_margin_chars=safety_margin_chars,
                     ),
-                    model_alias=replace_alias,
-                    output_format=EntityReplacementMapSchema,
                 )
             ],
             workflow_name="replace-map-generation",

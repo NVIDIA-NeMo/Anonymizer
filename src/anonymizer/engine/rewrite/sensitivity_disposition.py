@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from typing import Any
+
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
+from anonymizer.config.anonymizer_config import Detect as _DetectConfig
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -20,7 +23,39 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.rewrite.chunked_steps import WindowedStepParams, make_windowed_metadata_generator
 from anonymizer.engine.schemas import SensitivityDispositionSchema, StrictSensitivityDispositionSchema
+
+_DEFAULT_MAX_RENDER_CHARS: int = _DetectConfig.model_fields["detection_window_max_render_chars"].default
+_DEFAULT_SAFETY_MARGIN_CHARS: int = _DetectConfig.model_fields["detection_window_safety_margin_chars"].default
+
+_RISK_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _make_disposition_merge(container_schema: type) -> Any:
+    """Union per-entity disposition entries across windows, keeping the highest combined-risk decision.
+
+    Each window sees the full entity list (only the tagged-text *context* is
+    chunked), so windows largely agree; dedup by (source, label, value) and keep
+    the most protective entry. The container's validator re-sequences IDs.
+    """
+
+    def _merge(outputs: list[Any]) -> dict[str, Any]:
+        best: dict[tuple[str, str, str], tuple[int, Any]] = {}
+        order: list[tuple[str, str, str]] = []
+        for out in outputs:
+            for e in out.sensitivity_disposition:
+                key = (str(e.source), e.entity_label, e.entity_value)
+                rank = _RISK_RANK.get(str(e.combined_risk_level), 0)
+                if key not in best:
+                    order.append(key)
+                    best[key] = (rank, e)
+                elif rank > best[key][0]:
+                    best[key] = (rank, e)
+        entries = [best[k][1].model_dump(mode="json") for k in order]
+        return container_schema.model_validate({"sensitivity_disposition": entries}).model_dump(mode="json")
+
+    return _merge
 
 
 def _get_sensitivity_disposition_prompt(
@@ -265,18 +300,45 @@ class SensitivityDispositionWorkflow:
         privacy_goal: PrivacyGoal,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> list[ColumnConfigT]:
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
         output_schema = StrictSensitivityDispositionSchema if strict_entity_protection else SensitivityDispositionSchema
+        # Honor caller-provided (Detect-config-derived) window sizing; fall back
+        # to the shared defaults so a lowered detection cap also bounds this stage.
+        max_render_chars = window_max_render_chars if window_max_render_chars is not None else _DEFAULT_MAX_RENDER_CHARS
+        safety_margin_chars = (
+            window_safety_margin_chars if window_safety_margin_chars is not None else _DEFAULT_SAFETY_MARGIN_CHARS
+        )
         return [
-            LLMStructuredColumnConfig(
+            CustomColumnConfig(
                 name=COL_SENSITIVITY_DISPOSITION,
-                prompt=_get_sensitivity_disposition_prompt(
-                    privacy_goal,
-                    data_summary,
-                    strict_entity_protection=strict_entity_protection,
+                generator_function=make_windowed_metadata_generator(
+                    alias=disposition_alias,
+                    required_columns=[
+                        COL_TAGGED_TEXT,
+                        COL_ENTITIES_BY_VALUE,
+                        COL_LATENT_ENTITIES,
+                        COL_DOMAIN,
+                        COL_DOMAIN_SUPPLEMENT_PRIVACY,
+                        COL_TAG_NOTATION,
+                    ],
+                    schema=output_schema,
+                    merge_fn=_make_disposition_merge(output_schema),
+                    purpose_prefix="sensitivity-disposition",
                 ),
-                model_alias=disposition_alias,
-                output_format=output_schema,
+                generator_params=WindowedStepParams(
+                    alias=disposition_alias,
+                    prompt_template=_get_sensitivity_disposition_prompt(
+                        privacy_goal,
+                        data_summary,
+                        strict_entity_protection=strict_entity_protection,
+                    ),
+                    output_column=COL_SENSITIVITY_DISPOSITION,
+                    text_column=COL_TAGGED_TEXT,
+                    max_render_chars=max_render_chars,
+                    safety_margin_chars=safety_margin_chars,
+                ),
             ),
         ]

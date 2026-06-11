@@ -24,6 +24,10 @@ COL_VALIDATED_SEED_ENTITIES = "_validated_seed_entities"
 
 # Step 3: LLM augmentation
 COL_AUGMENTED_ENTITIES = "_augmented_entities"
+# Count of augmentation windows skipped due to a per-window failure (graceful
+# degradation on long docs); 0 on the single-call fast path. Surfaced in
+# trace_dataframe so callers can flag partially-degraded records.
+COL_AUGMENTATION_FAILED_WINDOWS = "_augmentation_failed_windows"
 
 # Step 3b: prepare_validation_inputs (seed-only, pre-augmentation)
 COL_SEED_TAGGED_TEXT = "_seed_tagged_text"
@@ -55,6 +59,8 @@ COL_ENTITIES_FOR_REPLACE_JSON = "_entities_for_replace_json"
 
 # Latent detection (optional second workflow)
 COL_LATENT_ENTITIES = "_latent_entities"
+# Count of latent windows skipped due to a per-window failure; 0 on the fast path.
+COL_LATENT_FAILED_WINDOWS = "_latent_failed_windows"
 
 # Final output
 COL_FINAL_ENTITIES = "final_entities"
@@ -95,6 +101,10 @@ COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
 COL_FULL_REWRITE = "_full_rewrite"
+# Number of chunked-rewrite windows that returned empty text and were dropped
+# from the stitched output. 0 on the single-call fast path. Surfaced (like the
+# detection failed-window counts) so empty sections are not mistaken for success.
+COL_REWRITE_EMPTY_WINDOWS = "_rewrite_empty_windows"
 COL_MEANING_UNITS = "_meaning_units"
 COL_MEANING_UNITS_SERIALIZED = "_meaning_units_serialized"
 COL_QUALITY_QA = "_quality_qa"

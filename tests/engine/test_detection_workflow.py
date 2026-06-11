@@ -124,7 +124,10 @@ def test_run_with_latent_detection_calls_second_workflow(
     assert adapter.run_workflow.call_count == 2
     second_columns = adapter.run_workflow.call_args_list[1].kwargs["columns"]
     assert len(second_columns) == 1
-    assert isinstance(second_columns[0], LLMStructuredColumnConfig)
+    # Latent detection is windowed (chunks long docs) so it is a custom generator
+    # rather than an LLMStructuredColumnConfig.
+    assert isinstance(second_columns[0], CustomColumnConfig)
+    assert not isinstance(second_columns[0], LLMStructuredColumnConfig)
     assert second_columns[0].name == COL_LATENT_ENTITIES
     assert COL_LATENT_ENTITIES in result.dataframe.columns
     assert COL_FINAL_ENTITIES in result.dataframe.columns

@@ -13,6 +13,9 @@ Instead of replacing individual entities, rewrite mode transforms the entire tex
 
 The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. A final judge provides a qualitative assessment of the rewritten record. Any records that failed to meet standards are tagged for human review. 
 
+!!! info "Long records"
+    A record too large to rewrite in a single LLM call is rewritten in sequential windows, with a continuity summary carried across each so the narrative and pseudonyms stay consistent. See [Long-context handling](long-context.md#4-rewrite-generation-sequential-windows-continuity).
+
 ---
 
 ## Key concepts

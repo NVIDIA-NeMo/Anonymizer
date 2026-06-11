@@ -7,9 +7,10 @@ import logging
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
+from anonymizer.config.anonymizer_config import Detect as _DetectConfig
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -25,13 +26,15 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.rewrite.chunked_rewrite import WindowedRewriteParams, make_windowed_rewrite_generator
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
-from anonymizer.engine.schemas import (
-    EntityReplacementMapSchema,
-    RewriteOutputSchema,
-)
+from anonymizer.engine.schemas import EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.rewrite.generation")
+
+# Long-context window defaults shared with detection (single source of truth).
+_DEFAULT_MAX_RENDER_CHARS: int = _DetectConfig.model_fields["detection_window_max_render_chars"].default
+_DEFAULT_SAFETY_MARGIN_CHARS: int = _DetectConfig.model_fields["detection_window_safety_margin_chars"].default
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +221,16 @@ class RewriteGenerationWorkflow:
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         data_summary: str | None = None,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> list[ColumnConfigT]:
         rewriter_alias = resolve_model_alias("rewriter", selected_models)
+        # Honor caller-provided (Detect-config-derived) window sizing; fall back
+        # to the shared defaults. Smaller windows rewrite less text per LLM call.
+        max_render_chars = window_max_render_chars if window_max_render_chars is not None else _DEFAULT_MAX_RENDER_CHARS
+        safety_margin_chars = (
+            window_safety_margin_chars if window_safety_margin_chars is not None else _DEFAULT_SAFETY_MARGIN_CHARS
+        )
         return [
             CustomColumnConfig(
                 name=COL_REWRITE_DISPOSITION_BLOCK,
@@ -229,11 +240,15 @@ class RewriteGenerationWorkflow:
                 name=COL_REPLACEMENT_MAP_FOR_PROMPT,
                 generator_function=_filter_replacement_map_for_prompt,
             ),
-            LLMStructuredColumnConfig(
+            CustomColumnConfig(
                 name=COL_FULL_REWRITE,
-                prompt=_get_rewrite_prompt(privacy_goal, data_summary),
-                model_alias=rewriter_alias,
-                output_format=RewriteOutputSchema,
+                generator_function=make_windowed_rewrite_generator(rewriter_alias),
+                generator_params=WindowedRewriteParams(
+                    alias=rewriter_alias,
+                    single_call_prompt_template=_get_rewrite_prompt(privacy_goal, data_summary),
+                    max_render_chars=max_render_chars,
+                    safety_margin_chars=safety_margin_chars,
+                ),
             ),
             CustomColumnConfig(
                 name=COL_REWRITTEN_TEXT,
