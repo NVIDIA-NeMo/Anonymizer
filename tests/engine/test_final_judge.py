@@ -13,10 +13,10 @@ from anonymizer.engine.constants import (
     COL_TEXT,
 )
 from anonymizer.engine.rewrite.final_judge import (
-    FinalJudgeWorkflow,
     PRIVACY_RUBRIC,
     QUALITY_RUBRIC,
     STYLE_RUBRIC,
+    FinalJudgeWorkflow,
     _judge_prompt,
 )
 

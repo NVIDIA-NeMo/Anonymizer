@@ -29,7 +29,6 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
-from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -41,6 +40,7 @@ from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkfl
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
@@ -70,8 +70,7 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
     invalid_count = len(invalid) if isinstance(invalid, list) else 0
     try:
         total = sum(
-            len(e.labels)
-            for e in EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE)).entities_by_value
+            len(e.labels) for e in EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE)).entities_by_value
         )
     except Exception:
         total = 0
