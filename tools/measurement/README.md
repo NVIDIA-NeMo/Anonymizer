@@ -115,7 +115,7 @@ uv run python tools/measurement/run_benchmarks.py suite.yaml --output benchmark-
 uv run python tools/measurement/run_benchmarks.py suite.yaml --dry-run --json
 uv run python tools/measurement/run_benchmarks.py suite.yaml \
   --output benchmark-runs/suite \
-  --dd-trace last-message
+  --dd-trace last_message
 uv run python tools/measurement/run_benchmarks.py suite.yaml \
   --output benchmark-runs/suite \
   --dd-task-trace
@@ -129,10 +129,10 @@ bash tools/measurement/examples/run-repo-data-smoke-with-dd-traces.sh
 
 The script writes to `/tmp/anonymizer-repo-data-smoke-dd-traces` by default.
 Pass a different output directory as the first argument, or set
-`DD_TRACE_MODE=all-messages` when full chat history is needed:
+`DD_TRACE_MODE=all_messages` when full chat history is needed:
 
 ```bash
-DD_TRACE_MODE=all-messages \
+DD_TRACE_MODE=all_messages \
   bash tools/measurement/examples/run-repo-data-smoke-with-dd-traces.sh \
   /tmp/anonymizer-repo-data-smoke-dd-traces-full
 ```
@@ -257,11 +257,11 @@ remains fail-fast and bypasses retries.
 
 ## DataDesigner traces
 
-For debugging DataDesigner calls, pass `--dd-trace last-message` or
-`--dd-trace all-messages`. Trace records are written separately from sanitized
+For debugging DataDesigner calls, pass `--dd-trace last_message` or
+`--dd-trace all_messages`. Trace records are written separately from sanitized
 measurements, under `traces/{case_id}.jsonl` by default. Use `--trace-dir` to
-choose another directory. `last-message` stores only the final prompt message
-for each DataDesigner model call; `all-messages` stores the full message list.
+choose another directory. `last_message` stores only the final prompt message
+for each DataDesigner model call; `all_messages` stores the full message list.
 
 DataDesigner traces may contain raw input text, prompts, model outputs, entity
 values, replacement values, secrets, and PII. Treat them as debug artifacts:

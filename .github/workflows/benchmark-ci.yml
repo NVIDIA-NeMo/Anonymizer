@@ -24,8 +24,8 @@ on:
         type: choice
         options:
           - "none"
-          - "last-message"
-          - "all-messages"
+          - "last_message"
+          - "all_messages"
         default: "none"
       dd_task_trace:
         description: "Capture sanitized DataDesigner scheduler task traces"

@@ -796,6 +796,16 @@ def test_benchmark_example_suites_are_portable() -> None:
                     )
 
 
+def test_benchmark_ci_dd_trace_options_match_runner_enum() -> None:
+    tool = load_tool("measurement_benchmark_tool_ci", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/benchmark-ci.yml").read_text(encoding="utf-8"))
+    on_section = workflow.get("on", workflow.get(True))
+
+    options = on_section["workflow_dispatch"]["inputs"]["dd_trace"]["options"]
+
+    assert options == [mode.value for mode in tool.DDTraceMode]
+
+
 def test_benchmark_preflight_rejects_bad_provider_config(tmp_path: Path) -> None:
     tool = load_tool(
         "measurement_benchmark_tool_preflight_providers", REPO_ROOT / "tools/measurement/run_benchmarks.py"

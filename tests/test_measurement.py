@@ -811,11 +811,14 @@ def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(
             output = input_df.iloc[:num_records].copy()
             output["raw_detected"] = "[]"
             output[f"raw_detected{TRACE_COLUMN_POSTFIX}"] = [
-                [
-                    {"role": "system", "content": [{"type": "text", "text": "system secret"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "prompt secret"}]},
-                    {"role": "assistant", "content": "secret response", "reasoning_content": "scratch"},
-                ]
+                np.array(
+                    [
+                        {"role": "system", "content": [{"type": "text", "text": "system secret"}]},
+                        {"role": "user", "content": [{"type": "text", "text": "prompt secret"}]},
+                        {"role": "assistant", "content": "secret response", "reasoning_content": "scratch"},
+                    ],
+                    dtype=object,
+                )
             ]
             return SimpleNamespace(dataset=output)
 

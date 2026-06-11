@@ -75,6 +75,163 @@ class _PrivateFacadeTraceColumn:
     column_name: str
 
 
+@dataclass(frozen=True)
+class _DDMessageTracePlan:
+    columns: list[ColumnConfigT]
+    native_columns: list[_NativeTraceColumn]
+    private_columns: list[_PrivateFacadeTraceColumn]
+    unsupported_columns: list[ColumnConfigT]
+
+    @classmethod
+    def from_columns(
+        cls,
+        *,
+        columns: list[ColumnConfigT],
+        model_configs: list[ModelConfig],
+        collector: Any | None,
+    ) -> _DDMessageTracePlan:
+        if collector is None or not collector.dd_trace_enabled:
+            return cls(columns=columns, native_columns=[], private_columns=[], unsupported_columns=[])
+
+        model_configs_by_alias = {model_config.alias: model_config for model_config in model_configs}
+        native_columns: list[_NativeTraceColumn] = []
+        private_columns: list[_PrivateFacadeTraceColumn] = []
+        unsupported_columns: list[ColumnConfigT] = []
+        configured_columns: list[ColumnConfigT] = []
+
+        for column in columns:
+            if isinstance(column, _TRACEABLE_LLM_COLUMN_TYPES):
+                configured_columns.append(
+                    cast(ColumnConfigT, column.model_copy(update={"with_trace": cls.trace_type()}))
+                )
+                model_config = model_configs_by_alias.get(column.model_alias)
+                native_columns.append(
+                    _NativeTraceColumn(
+                        column_name=column.name,
+                        trace_column_name=f"{column.name}{TRACE_COLUMN_POSTFIX}",
+                        model_alias=column.model_alias,
+                        model_name=getattr(model_config, "model", None),
+                        model_provider_name=getattr(model_config, "provider", None),
+                    )
+                )
+                continue
+
+            if _column_has_private_facade_model_calls(column):
+                configured_columns.append(_custom_column_with_trace_context(column))
+                private_columns.append(_PrivateFacadeTraceColumn(column_name=column.name))
+                continue
+
+            unsupported_columns.append(column)
+            configured_columns.append(column)
+
+        return cls(
+            columns=configured_columns,
+            native_columns=native_columns,
+            private_columns=private_columns,
+            unsupported_columns=unsupported_columns,
+        )
+
+    @staticmethod
+    def trace_type() -> TraceType:
+        # Preserve Anonymizer's existing dd_trace=last_message semantics: the trace
+        # sink records the final prompt message and response separately, while DD's
+        # native LAST_MESSAGE side effect only keeps the final assistant message.
+        return TraceType.ALL_MESSAGES
+
+    def record_coverage(self, *, workflow_name: str, collector: Any | None) -> None:
+        if collector is None or not collector.dd_trace_enabled:
+            return
+
+        traced_column_names = [column.column_name for column in self.native_columns] + [
+            column.column_name for column in self.private_columns
+        ]
+        collector.record(
+            "dd_trace_coverage",
+            workflow_name=workflow_name,
+            trace_backend=self.backend,
+            trace_mode=collector.dd_trace_mode,
+            native_trace_type=self.trace_type().value,
+            traced_column_count=len(traced_column_names),
+            traced_column_names=traced_column_names,
+            native_trace_column_count=len(self.native_columns),
+            native_trace_column_names=[column.column_name for column in self.native_columns],
+            private_trace_column_count=len(self.private_columns),
+            private_trace_column_names=[column.column_name for column in self.private_columns],
+            private_trace_backend="anonymizer_private_model_facade" if self.private_columns else None,
+            private_trace_note=(
+                "temporary private DataDesigner model registry/facade instrumentation" if self.private_columns else None
+            ),
+            unsupported_column_count=len(self.unsupported_columns),
+            unsupported_column_names=[column.name for column in self.unsupported_columns],
+            unsupported_column_types=[_column_type_name(column) for column in self.unsupported_columns],
+        )
+
+    @property
+    def backend(self) -> str:
+        if self.native_columns and self.private_columns:
+            return "mixed"
+        if self.private_columns:
+            return "anonymizer_private_model_facade"
+        return "data_designer_column"
+
+    def record_and_strip_native_traces(
+        self,
+        *,
+        output_df: pd.DataFrame,
+        workflow_name: str,
+        collector: Any | None,
+    ) -> pd.DataFrame:
+        if not self.native_columns:
+            return output_df
+
+        trace_column_names = [column.trace_column_name for column in self.native_columns]
+        if collector is not None and collector.dd_trace_enabled:
+            for _, row in output_df.iterrows():
+                for trace_column in self.native_columns:
+                    if trace_column.trace_column_name not in output_df.columns:
+                        continue
+                    self._record_native_trace(
+                        trace_column=trace_column,
+                        trace_value=row.get(trace_column.trace_column_name),
+                        workflow_name=workflow_name,
+                        collector=collector,
+                    )
+
+        existing_trace_columns = [column_name for column_name in trace_column_names if column_name in output_df.columns]
+        if not existing_trace_columns:
+            return output_df
+        return output_df.drop(columns=existing_trace_columns)
+
+    @staticmethod
+    def _record_native_trace(
+        *,
+        trace_column: _NativeTraceColumn,
+        trace_value: Any,
+        workflow_name: str,
+        collector: Any,
+    ) -> None:
+        trace_messages = _native_trace_messages(trace_value)
+        if not trace_messages:
+            return
+        collector.record_dd_message_trace(
+            workflow_name=workflow_name,
+            trace_source="data_designer_column",
+            column_name=trace_column.column_name,
+            trace_column_name=trace_column.trace_column_name,
+            model_alias=trace_column.model_alias,
+            model_name=trace_column.model_name,
+            model_provider_name=trace_column.model_provider_name,
+            modality="chat",
+            is_async=None,
+            status="completed",
+            error_type=None,
+            elapsed_sec=None,
+            messages=_select_native_trace_messages(trace_messages, mode=collector.dd_trace_mode),
+            response=_native_trace_response(trace_messages),
+            usage=None,
+        )
+
+
 class _TaskTraceLike(Protocol):
     column: Any
     row_group: Any
@@ -158,25 +315,20 @@ class NddAdapter:
         )
         started = time.perf_counter()
         collector = current_collector()
-        columns, native_trace_columns, private_trace_columns, unsupported_trace_columns = _configure_dd_message_traces(
+        trace_plan = _DDMessageTracePlan.from_columns(
             columns=columns,
             model_configs=model_configs,
             collector=collector,
         )
+        columns = trace_plan.columns
         usage_probe = _DataDesignerUsageProbe(
             self._data_designer,
             enabled=collector is not None,
             collector=collector,
             workflow_name=workflow_name,
-            private_trace_columns=private_trace_columns,
+            private_trace_columns=trace_plan.private_columns,
         )
-        _record_dd_trace_coverage(
-            workflow_name=workflow_name,
-            collector=collector,
-            native_trace_columns=native_trace_columns,
-            private_trace_columns=private_trace_columns,
-            unsupported_trace_columns=unsupported_trace_columns,
-        )
+        trace_plan.record_coverage(workflow_name=workflow_name, collector=collector)
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
@@ -240,11 +392,10 @@ class NddAdapter:
                 )
                 raise AnonymizerWorkflowError(f"Workflow failed: {exc}") from exc
 
-            output_df = _record_and_strip_native_dd_message_traces(
+            output_df = trace_plan.record_and_strip_native_traces(
                 output_df=output_df,
                 workflow_name=workflow_name,
                 collector=collector,
-                native_trace_columns=native_trace_columns,
             )
             _record_dd_task_traces(
                 workflow_name=workflow_name,
@@ -816,104 +967,8 @@ def _custom_column_with_trace_context(column: CustomColumnConfig) -> ColumnConfi
     return cast(ColumnConfigT, column.model_copy(update={"generator_function": traced_generator}))
 
 
-def _configure_dd_message_traces(
-    *,
-    columns: list[ColumnConfigT],
-    model_configs: list[ModelConfig],
-    collector: Any | None,
-) -> tuple[list[ColumnConfigT], list[_NativeTraceColumn], list[_PrivateFacadeTraceColumn], list[ColumnConfigT]]:
-    if collector is None or not collector.dd_trace_enabled:
-        return columns, [], [], []
-
-    model_configs_by_alias = {model_config.alias: model_config for model_config in model_configs}
-    native_trace_columns: list[_NativeTraceColumn] = []
-    private_trace_columns: list[_PrivateFacadeTraceColumn] = []
-    unsupported_columns: list[ColumnConfigT] = []
-    configured_columns: list[ColumnConfigT] = []
-    trace_type = _native_dd_trace_type()
-
-    for column in columns:
-        if isinstance(column, _TRACEABLE_LLM_COLUMN_TYPES):
-            configured_column = cast(ColumnConfigT, column.model_copy(update={"with_trace": trace_type}))
-            configured_columns.append(configured_column)
-            model_config = model_configs_by_alias.get(column.model_alias)
-            native_trace_columns.append(
-                _NativeTraceColumn(
-                    column_name=column.name,
-                    trace_column_name=f"{column.name}{TRACE_COLUMN_POSTFIX}",
-                    model_alias=column.model_alias,
-                    model_name=getattr(model_config, "model", None),
-                    model_provider_name=getattr(model_config, "provider", None),
-                )
-            )
-            continue
-
-        if _column_has_private_facade_model_calls(column):
-            configured_columns.append(_custom_column_with_trace_context(column))
-            private_trace_columns.append(_PrivateFacadeTraceColumn(column_name=column.name))
-            continue
-
-        unsupported_columns.append(column)
-        configured_columns.append(column)
-
-    return configured_columns, native_trace_columns, private_trace_columns, unsupported_columns
-
-
-def _native_dd_trace_type() -> TraceType:
-    # Preserve Anonymizer's existing dd_trace=last_message semantics: the trace
-    # sink records the final prompt message and response separately, while DD's
-    # native LAST_MESSAGE side effect only keeps the final assistant message.
-    return TraceType.ALL_MESSAGES
-
-
 def _column_has_private_facade_model_calls(column: ColumnConfigT) -> TypeGuard[CustomColumnConfig]:
     return isinstance(column, CustomColumnConfig) and bool(_extract_workflow_model_aliases([column]))
-
-
-def _record_dd_trace_coverage(
-    *,
-    workflow_name: str,
-    collector: Any,
-    native_trace_columns: list[_NativeTraceColumn],
-    private_trace_columns: list[_PrivateFacadeTraceColumn],
-    unsupported_trace_columns: list[ColumnConfigT],
-) -> Any:
-    if collector is None or not collector.dd_trace_enabled:
-        return
-    traced_column_names = [column.column_name for column in native_trace_columns] + [
-        column.column_name for column in private_trace_columns
-    ]
-    collector.record(
-        "dd_trace_coverage",
-        workflow_name=workflow_name,
-        trace_backend=_dd_trace_backend(native_trace_columns, private_trace_columns),
-        trace_mode=collector.dd_trace_mode,
-        native_trace_type=_native_dd_trace_type().value,
-        traced_column_count=len(traced_column_names),
-        traced_column_names=traced_column_names,
-        native_trace_column_count=len(native_trace_columns),
-        native_trace_column_names=[column.column_name for column in native_trace_columns],
-        private_trace_column_count=len(private_trace_columns),
-        private_trace_column_names=[column.column_name for column in private_trace_columns],
-        private_trace_backend="anonymizer_private_model_facade" if private_trace_columns else None,
-        private_trace_note=(
-            "temporary private DataDesigner model registry/facade instrumentation" if private_trace_columns else None
-        ),
-        unsupported_column_count=len(unsupported_trace_columns),
-        unsupported_column_names=[column.name for column in unsupported_trace_columns],
-        unsupported_column_types=[_column_type_name(column) for column in unsupported_trace_columns],
-    )
-
-
-def _dd_trace_backend(
-    native_trace_columns: list[_NativeTraceColumn],
-    private_trace_columns: list[_PrivateFacadeTraceColumn],
-) -> str:
-    if native_trace_columns and private_trace_columns:
-        return "mixed"
-    if private_trace_columns:
-        return "anonymizer_private_model_facade"
-    return "data_designer_column"
 
 
 def _column_type_name(column: ColumnConfigT) -> str:
@@ -921,53 +976,14 @@ def _column_type_name(column: ColumnConfigT) -> str:
     return str(column_type) if column_type is not None else type(column).__name__
 
 
-def _record_and_strip_native_dd_message_traces(
-    *,
-    output_df: pd.DataFrame,
-    workflow_name: str,
-    collector: Any,
-    native_trace_columns: list[_NativeTraceColumn],
-) -> pd.DataFrame:
-    if not native_trace_columns:
-        return output_df
-
-    trace_column_names = [column.trace_column_name for column in native_trace_columns]
-    if collector is not None and collector.dd_trace_enabled:
-        for _, row in output_df.iterrows():
-            for trace_column in native_trace_columns:
-                if trace_column.trace_column_name not in output_df.columns:
-                    continue
-                trace_messages = _native_trace_messages(row.get(trace_column.trace_column_name))
-                if not trace_messages:
-                    continue
-                collector.record_dd_message_trace(
-                    workflow_name=workflow_name,
-                    trace_source="data_designer_column",
-                    column_name=trace_column.column_name,
-                    trace_column_name=trace_column.trace_column_name,
-                    model_alias=trace_column.model_alias,
-                    model_name=trace_column.model_name,
-                    model_provider_name=trace_column.model_provider_name,
-                    modality="chat",
-                    is_async=None,
-                    status="completed",
-                    error_type=None,
-                    elapsed_sec=None,
-                    messages=_select_native_trace_messages(trace_messages, mode=collector.dd_trace_mode),
-                    response=_native_trace_response(trace_messages),
-                    usage=None,
-                )
-
-    existing_trace_columns = [column_name for column_name in trace_column_names if column_name in output_df.columns]
-    if not existing_trace_columns:
-        return output_df
-    return output_df.drop(columns=existing_trace_columns)
-
-
 def _native_trace_messages(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
+    if value is None or isinstance(value, (str, bytes, Mapping)):
         return []
-    return [_trace_message(message) for message in value]
+    try:
+        messages = list(value)
+    except TypeError:
+        return []
+    return [_trace_message(message) for message in messages]
 
 
 def _select_native_trace_messages(messages: list[dict[str, Any]], *, mode: str) -> list[dict[str, Any]]:
