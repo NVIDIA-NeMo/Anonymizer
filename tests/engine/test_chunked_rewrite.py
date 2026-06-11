@@ -11,6 +11,7 @@ from anonymizer.engine.constants import (
     COL_FULL_REWRITE,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
+    COL_REWRITE_EMPTY_WINDOWS,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -63,6 +64,35 @@ class TestGenerateRewriteRow:
         out = generate_rewrite_row(_row("short tagged text"), params, {"w": facade})
         assert facade.rewrite_calls == 1 and facade.summary_calls == 0
         assert RewriteOutputSchema.model_validate(out[COL_FULL_REWRITE]).rewritten_text == "OUT1"
+        assert out[COL_REWRITE_EMPTY_WINDOWS] == 0
+
+    def test_chunked_counts_and_drops_empty_window(self) -> None:
+        tagged = ("X" * 4000 + "\n") * 3  # ~12k chars -> several windows
+
+        class _EmptyMiddle:
+            """Returns an empty rewrite for the second window, normal text otherwise."""
+
+            def __init__(self) -> None:
+                self.rewrite_calls = 0
+
+            def generate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
+                if "summary" in (purpose or ""):
+                    return parser("running summary"), []
+                self.rewrite_calls += 1
+                body = "" if self.rewrite_calls == 2 else "OUT%d" % self.rewrite_calls
+                return parser('```json\n{"rewritten_text":"%s"}\n```' % body), []
+
+        facade = _EmptyMiddle()
+        params = WindowedRewriteParams(
+            alias="w", single_call_prompt_template=_TEMPLATE, max_render_chars=4000, safety_margin_chars=0
+        )
+        out = generate_rewrite_row(_row(tagged), params, {"w": facade})
+        # The empty window is counted, not silently treated as successful output.
+        assert out[COL_REWRITE_EMPTY_WINDOWS] == 1
+        text = RewriteOutputSchema.model_validate(out[COL_FULL_REWRITE]).rewritten_text
+        # ...and dropped from the stitch rather than emitted as a blank section.
+        assert "OUT2" not in text
+        assert "" not in text.split("\n")
 
     def test_chunked_stitches_with_rolling_summary(self) -> None:
         tagged = ("X" * 4000 + "\n") * 3  # ~12k chars -> several windows

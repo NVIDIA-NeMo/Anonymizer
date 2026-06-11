@@ -300,9 +300,17 @@ class SensitivityDispositionWorkflow:
         privacy_goal: PrivacyGoal,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> list[ColumnConfigT]:
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
         output_schema = StrictSensitivityDispositionSchema if strict_entity_protection else SensitivityDispositionSchema
+        # Honor caller-provided (Detect-config-derived) window sizing; fall back
+        # to the shared defaults so a lowered detection cap also bounds this stage.
+        max_render_chars = window_max_render_chars if window_max_render_chars is not None else _DEFAULT_MAX_RENDER_CHARS
+        safety_margin_chars = (
+            window_safety_margin_chars if window_safety_margin_chars is not None else _DEFAULT_SAFETY_MARGIN_CHARS
+        )
         return [
             CustomColumnConfig(
                 name=COL_SENSITIVITY_DISPOSITION,
@@ -329,8 +337,8 @@ class SensitivityDispositionWorkflow:
                     ),
                     output_column=COL_SENSITIVITY_DISPOSITION,
                     text_column=COL_TAGGED_TEXT,
-                    max_render_chars=_DEFAULT_MAX_RENDER_CHARS,
-                    safety_margin_chars=_DEFAULT_SAFETY_MARGIN_CHARS,
+                    max_render_chars=max_render_chars,
+                    safety_margin_chars=safety_margin_chars,
                 ),
             ),
         ]

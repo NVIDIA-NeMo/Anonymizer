@@ -128,6 +128,65 @@ def test_missing_alias_raises() -> None:
         )
 
 
+class _FlakyFacade:
+    """Facade stub that raises on selected (1-indexed) calls, else returns fixed JSON."""
+
+    def __init__(
+        self, response_obj: dict[str, Any], *, fail_calls: tuple[int, ...] = (), fail_all: bool = False
+    ) -> None:
+        self._payload = "```json\n" + json.dumps(response_obj) + "\n```"
+        self._fail_calls = set(fail_calls)
+        self._fail_all = fail_all
+        self.calls = 0
+
+    def generate(self, *, prompt: Any, parser: Any, system_prompt: Any = None, purpose: Any = None, **_: Any) -> Any:
+        self.calls += 1
+        if self._fail_all or self.calls in self._fail_calls:
+            raise RuntimeError("transient model error")
+        return parser(self._payload), []
+
+
+def _multi_window_params() -> WindowedStepParams:
+    return WindowedStepParams(
+        alias="d",
+        prompt_template=_get_domain_classification_prompt(None),
+        output_column=COL_DOMAIN,
+        text_column=COL_TEXT,
+        max_render_chars=4000,
+        safety_margin_chars=0,
+    )
+
+
+def test_windowed_step_skips_failed_window_and_merges_survivors() -> None:
+    # First window's model call fails; remaining windows still run and merge.
+    facade = _FlakyFacade({"domain": "OTHER", "domain_confidence": 0.9}, fail_calls=(1,))
+    long_text = ("x" * 4000 + "\n") * 3
+    row = run_windowed_step(
+        {COL_TEXT: long_text},
+        _multi_window_params(),
+        {"d": facade},
+        schema=DomainClassificationSchema,
+        merge_fn=_first_output,
+        purpose_prefix="domain",
+    )
+    assert facade.calls >= 2  # the window after the failure was still attempted
+    assert DomainClassificationSchema.model_validate(row[COL_DOMAIN]).domain.value == "OTHER"
+
+
+def test_windowed_step_raises_when_all_windows_fail() -> None:
+    facade = _FlakyFacade({"domain": "OTHER", "domain_confidence": 0.9}, fail_all=True)
+    long_text = ("x" * 4000 + "\n") * 3
+    with pytest.raises(RuntimeError, match="all .* window"):
+        run_windowed_step(
+            {COL_TEXT: long_text},
+            _multi_window_params(),
+            {"d": facade},
+            schema=DomainClassificationSchema,
+            merge_fn=_first_output,
+            purpose_prefix="domain",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Merges
 # ---------------------------------------------------------------------------

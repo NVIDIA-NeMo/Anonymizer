@@ -41,6 +41,19 @@ def test_columns_uses_disposition_analyzer_alias(
     assert cols[0].name == COL_SENSITIVITY_DISPOSITION
 
 
+def test_columns_threads_window_sizing(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    cols = SensitivityDispositionWorkflow().columns(
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_STUB_PRIVACY_GOAL,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    assert cols[0].generator_params.max_render_chars == 12_345
+    assert cols[0].generator_params.safety_margin_chars == 678
+
+
 def test_privacy_goal_interpolated_into_prompt() -> None:
     prompt = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
     assert "Protect direct identifiers and quasi-identifier combinations" in prompt

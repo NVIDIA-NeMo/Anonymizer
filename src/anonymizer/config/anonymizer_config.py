@@ -31,6 +31,12 @@ except Exception:  # pragma: no cover - fall back if NDD internals move
 # Clamped so it never exceeds NDD's cap if that is ever lowered.
 _DEFAULT_WINDOW_MAX_RENDER_CHARS = min(128_000, _NDD_MAX_RENDERED_LEN)
 
+# Floor on the per-window character budget; mirrors ``_MIN_WINDOW_CHARS`` in the
+# engine's chunked-detection planners. Defined here (rather than imported) to keep
+# the user-facing config free of an engine import cycle. Used only to compute the
+# effective window size for overlap validation.
+_MIN_DETECTION_WINDOW_CHARS = 4_000
+
 
 def is_remote_input_source(value: str) -> bool:
     """Return True when the input source is an HTTP(S) URL."""
@@ -135,7 +141,9 @@ class Detect(BaseModel):
         ge=0,
         description=(
             "Overlap between adjacent augmentation/latent windows so an entity straddling a "
-            "window boundary is fully visible in at least one window."
+            "window boundary is fully visible in at least one window. Must be smaller than the "
+            "effective window size (max_render_chars - safety_margin_chars, floored at 4000); a "
+            "larger overlap stalls the planners to one character per step and is rejected at config time."
         ),
     )
 
@@ -151,6 +159,31 @@ class Detect(BaseModel):
         if len(deduped) != len(cleaned):
             logger.warning("entity_labels contained duplicates, removed automatically.")
         return deduped
+
+    @model_validator(mode="after")
+    def validate_window_overlap(self) -> Detect:
+        """Reject overlaps that would stall the windowed detection planners.
+
+        The augmentation/latent planners advance by ``window - overlap`` characters
+        per step. The effective window mirrors the engine's sizing:
+        ``max(_MIN_DETECTION_WINDOW_CHARS, max_render - safety_margin)``. When the
+        overlap meets or exceeds that, the stride collapses to a single character
+        and one long row explodes into tens of thousands of model calls (a 20k-char
+        row became 16,001 windows in testing), so require it to be strictly smaller.
+        """
+        effective_window = max(
+            _MIN_DETECTION_WINDOW_CHARS,
+            self.detection_window_max_render_chars - self.detection_window_safety_margin_chars,
+        )
+        if self.detection_window_overlap_chars >= effective_window:
+            raise ValueError(
+                f"detection_window_overlap_chars ({self.detection_window_overlap_chars}) must be smaller than "
+                f"the effective window size ({effective_window} chars = max({_MIN_DETECTION_WINDOW_CHARS}, "
+                "detection_window_max_render_chars - detection_window_safety_margin_chars)). A larger overlap "
+                "makes the windowed planners advance one character at a time, exploding a single row into "
+                "thousands of model calls."
+            )
+        return self
 
 
 class Rewrite(BaseModel):

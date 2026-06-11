@@ -43,6 +43,18 @@ def test_columns_returns_exactly_three_in_order(
     assert cols[0].generator_params.first_only is True
 
 
+def test_columns_threads_window_sizing(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    cols = DomainClassificationWorkflow().columns(
+        selected_models=stub_rewrite_model_selection,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    assert cols[0].generator_params.max_render_chars == 12_345
+    assert cols[0].generator_params.safety_margin_chars == 678
+
+
 def test_enrich_domain_populates_supplement_for_known_domain() -> None:
     result = _enrich_domain({COL_DOMAIN: {"domain": Domain.BIOGRAPHY_PROFILE, "domain_confidence": 0.9}})
     assert result[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.BIOGRAPHY_PROFILE].quality_supplement

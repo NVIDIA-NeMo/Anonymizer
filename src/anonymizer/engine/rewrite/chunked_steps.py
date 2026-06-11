@@ -99,10 +99,34 @@ def run_windowed_step(
     windows = iter_boundary_windows(text, initial_window, delimiter=params.delimiter)
     if params.first_only:
         windows = windows[:1]
+    # Run each window independently: a single transient model error (or a chunk
+    # the model cannot parse into the schema) should drop only that window, not
+    # the whole record. Failures are logged and skipped; the all-failed case is
+    # handled explicitly below so we never merge an empty output set silently.
     outputs = []
+    failed = 0
     for start, end in windows:
         rendered = _compile_template(params.prompt_template).render(**{**row, params.text_column: text[start:end]})
-        outputs.append(_call(rendered, f"{purpose_prefix}-{start}"))
+        try:
+            outputs.append(_call(rendered, f"{purpose_prefix}-{start}"))
+        except Exception:
+            failed += 1
+            logger.warning(
+                "windowed step %s: window [%d, %d) failed and was skipped",
+                purpose_prefix,
+                start,
+                end,
+                exc_info=True,
+            )
+    if not outputs:
+        raise RuntimeError(
+            f"windowed step {purpose_prefix!r}: all {len(windows)} window(s) failed; no output produced "
+            f"for column {params.output_column!r}."
+        )
+    if failed:
+        logger.warning(
+            "windowed step %s: %d of %d window(s) failed and were skipped", purpose_prefix, failed, len(windows)
+        )
     logger.debug("windowed step %s: %d window(s) over %d chars", purpose_prefix, len(windows), len(text))
     row[params.output_column] = merge_fn(outputs)
     return row

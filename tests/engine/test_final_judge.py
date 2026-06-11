@@ -112,6 +112,22 @@ def test_judge_column_is_windowed_generator_with_three_rubrics(
     assert judge_col.generator_params.max_render_chars > 0
 
 
+def test_columns_threads_window_sizing(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    wf = FinalJudgeWorkflow()
+    cols = wf.columns(
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_STUB_PRIVACY_GOAL,
+        evaluation=_STUB_EVALUATION,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    judge_col = next(c for c in cols if c.name == COL_JUDGE_EVALUATION)
+    assert judge_col.generator_params.max_render_chars == 12_345
+    assert judge_col.generator_params.safety_margin_chars == 678
+
+
 def test_needs_human_review_column_present(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:

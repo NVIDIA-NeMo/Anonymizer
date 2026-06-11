@@ -278,8 +278,16 @@ class DomainClassificationWorkflow:
         *,
         selected_models: RewriteModelSelection,
         data_summary: str | None = None,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> list[ColumnConfigT]:
         domain_alias = resolve_model_alias("domain_classifier", selected_models)
+        # Honor caller-provided (Detect-config-derived) window sizing; fall back
+        # to the shared defaults so a lowered detection cap also bounds this stage.
+        max_render_chars = window_max_render_chars if window_max_render_chars is not None else _DEFAULT_MAX_RENDER_CHARS
+        safety_margin_chars = (
+            window_safety_margin_chars if window_safety_margin_chars is not None else _DEFAULT_SAFETY_MARGIN_CHARS
+        )
         return [
             CustomColumnConfig(
                 name=COL_DOMAIN,
@@ -295,8 +303,8 @@ class DomainClassificationWorkflow:
                     prompt_template=_get_domain_classification_prompt(data_summary),
                     output_column=COL_DOMAIN,
                     text_column=COL_TEXT,
-                    max_render_chars=_DEFAULT_MAX_RENDER_CHARS,
-                    safety_margin_chars=_DEFAULT_SAFETY_MARGIN_CHARS,
+                    max_render_chars=max_render_chars,
+                    safety_margin_chars=safety_margin_chars,
                     first_only=True,
                 ),
             ),

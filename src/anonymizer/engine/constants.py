@@ -101,6 +101,10 @@ COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
 COL_FULL_REWRITE = "_full_rewrite"
+# Number of chunked-rewrite windows that returned empty text and were dropped
+# from the stitched output. 0 on the single-call fast path. Surfaced (like the
+# detection failed-window counts) so empty sections are not mistaken for success.
+COL_REWRITE_EMPTY_WINDOWS = "_rewrite_empty_windows"
 COL_MEANING_UNITS = "_meaning_units"
 COL_MEANING_UNITS_SERIALIZED = "_meaning_units_serialized"
 COL_QUALITY_QA = "_quality_qa"
