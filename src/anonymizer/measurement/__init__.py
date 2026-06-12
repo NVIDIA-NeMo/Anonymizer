@@ -19,7 +19,7 @@ from anonymizer.measurement.recorders import (
     record_stage,
     stage_timer,
 )
-from anonymizer.measurement.records.row import record_record_metrics
+from anonymizer.measurement.records.row import record_evaluation_metrics, record_record_metrics
 from anonymizer.measurement.session import configured_measurement_session, current_collector, measurement_session
 
 __all__ = [
@@ -35,6 +35,7 @@ __all__ = [
     "measurement_session",
     "record_model_workflow",
     "record_ndd_workflow",
+    "record_evaluation_metrics",
     "record_record_metrics",
     "record_run_metadata",
     "record_stage",

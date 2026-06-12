@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -934,8 +935,16 @@ def test_benchmark_case_can_run_optional_evaluation(
     tmp_path: Path,
 ) -> None:
     tool = load_tool("measurement_benchmark_tool_evaluate", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    from anonymizer.interface.results import AnonymizerResult
+
     calls: list[Any] = []
-    run_result = object()
+    run_result = AnonymizerResult(
+        dataframe=pd.DataFrame({"text": ["Alice works at Acme"]}),
+        trace_dataframe=pd.DataFrame({"text": ["Alice works at Acme"]}),
+        resolved_text_column="text",
+        failed_records=[],
+        replace_method=None,
+    )
 
     @contextmanager
     def fake_measurement_session(_config: Any) -> Iterator[None]:
@@ -974,3 +983,143 @@ def test_benchmark_case_can_run_optional_evaluation(
     )
 
     assert calls == [("run", tool.Redact(), "text"), ("evaluate", run_result)]
+
+
+def test_benchmark_optional_evaluation_records_sanitized_judge_metrics(tmp_path: Path) -> None:
+    tool = load_tool("measurement_benchmark_tool_evaluate_metrics", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    from anonymizer.interface.results import AnonymizerResult
+
+    dangerous_values = [
+        "alice@example.com",
+        "bob@example.com",
+        "sk-secret-123",
+        "replacement-output-secret",
+        "nested-malformed-secret",
+        "raw judge prompt",
+        "raw judge response",
+    ]
+    run_result = AnonymizerResult(
+        dataframe=pd.DataFrame({"text": ["Alice has sk-secret-123"]}),
+        trace_dataframe=pd.DataFrame({"text": ["Alice has sk-secret-123"]}),
+        resolved_text_column="text",
+        failed_records=[],
+        replace_method=None,
+    )
+    evaluated_public_columns = {
+        "text": ["Alice has sk-secret-123"],
+        "text_replaced": ["Avery has replacement-output-secret"],
+        "final_entities": [[{"value": "alice@example.com", "label": "email"}]],
+        "detection_valid": [False],
+        "detection_invalid_entities": [{"invalid_entities": [{"value": "alice@example.com", "label": "email"}]}],
+        "type_fidelity_valid": [False],
+        "type_fidelity_invalid_replacements": [
+            {"invalid_replacements": [{"original": "alice@example.com", "synthetic": "bob@example.com"}]}
+        ],
+        "relational_consistency_valid": [False],
+        "relational_consistency_invalid_relations": [{"invalid_relations": [{"reasoning": "raw judge response"}]}],
+        "attribute_fidelity_valid": [False],
+        "attribute_fidelity_invalid_entities": ['[{"entity": "nested-malformed-secret"}'],
+    }
+    evaluated_result = AnonymizerResult(
+        dataframe=pd.DataFrame(evaluated_public_columns),
+        trace_dataframe=pd.DataFrame(
+            {
+                **evaluated_public_columns,
+                "_detection_judge": [
+                    {
+                        "prompt": "raw judge prompt",
+                        "response": "raw judge response",
+                        "invalid_entities": [{"value": "alice@example.com"}],
+                    }
+                ],
+                "_type_fidelity_judge": [
+                    {"invalid_replacements": [{"original": "alice@example.com", "synthetic": "bob@example.com"}]}
+                ],
+            }
+        ),
+        resolved_text_column="text",
+        failed_records=[],
+        replace_method=None,
+    )
+
+    class FakeAnonymizer:
+        def run(self, *, config: Any, data: Any) -> AnonymizerResult:
+            return run_result
+
+        def evaluate(self, result: AnonymizerResult) -> AnonymizerResult:
+            assert result is run_result
+            return evaluated_result
+
+    spec = _minimal_benchmark_spec(
+        tool,
+        suite_id="evaluate-suite",
+        configs=[
+            tool.ConfigSpec(
+                id="substitute",
+                replace=tool.ReplaceSpec(strategy=tool.ReplaceKind.substitute),
+                evaluate=True,
+            )
+        ],
+    )
+    _write_text_input(tmp_path, "Alice has sk-secret-123")
+    case = _minimal_benchmark_case(tool, suite_id="evaluate-suite", config_id="substitute")
+    measurement_path = tmp_path / "raw" / "input__substitute__r000.jsonl"
+
+    tool._execute_case(
+        FakeAnonymizer(),
+        spec.workloads[0],
+        spec.configs[0],
+        raw_path=measurement_path,
+        trace_path=None,
+        task_trace_path=None,
+        case=case,
+        spec=spec,
+        base_dir=tmp_path,
+        dd_trace=tool.DDTraceMode.none,
+    )
+
+    serialized = measurement_path.read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in serialized.splitlines()]
+    evaluation_rows = [row for row in rows if row["record_type"] == "evaluation_record"]
+
+    assert len(evaluation_rows) == 1
+    assert {
+        "record_type": "evaluation_record",
+        "mode": "replace",
+        "strategy": "Substitute",
+        "row_index": 0,
+        "detection_valid": False,
+        "detection_invalid_entity_count": 1,
+        "type_fidelity_valid": False,
+        "type_fidelity_invalid_replacement_count": 1,
+        "relational_consistency_valid": False,
+        "relational_consistency_invalid_relation_count": 1,
+        "attribute_fidelity_valid": False,
+        "attribute_fidelity_invalid_entity_count": 0,
+    }.items() <= evaluation_rows[0].items()
+    forbidden_fields = {
+        "text",
+        "text_replaced",
+        "text_with_spans",
+        "final_entities",
+        "detection_invalid_entities",
+        "type_fidelity_invalid_replacements",
+        "relational_consistency_invalid_relations",
+        "attribute_fidelity_invalid_entities",
+        "_detection_judge",
+        "_type_fidelity_judge",
+        "_relational_consistency_judge",
+        "_attribute_fidelity_judge",
+    }
+    assert forbidden_fields.isdisjoint(evaluation_rows[0])
+    for raw_value in dangerous_values:
+        assert raw_value not in serialized
+
+    table_dir = tmp_path / "tables"
+    tool.export_measurement_tables(measurement_path, table_dir)
+    exported = pd.read_parquet(table_dir / "evaluation_record.parquet")
+    exported_text = str(exported.to_json(orient="records"))
+
+    assert forbidden_fields.isdisjoint(exported.columns)
+    for raw_value in dangerous_values:
+        assert raw_value not in exported_text

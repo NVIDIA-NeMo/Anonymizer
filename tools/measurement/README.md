@@ -28,6 +28,7 @@ plus `manifest.json`:
 - `run.parquet`
 - `stage.parquet`
 - `record.parquet`
+- `evaluation_record.parquet` when replace judge evaluation is enabled
 - `ndd_workflow.parquet` when DataDesigner adapter records are present
 - `model_workflow.parquet` when direct model workflow records are present
 
@@ -65,7 +66,8 @@ raw = pd.read_json("benchmark-runs/suite/measurements.jsonl", lines=True)
 The measurement system has three layers:
 
 - Instrumentation in Anonymizer emits JSONL records for runs, stages,
-  DataDesigner workflows, direct model workflows, and per-record safety metrics.
+  DataDesigner workflows, direct model workflows, per-record safety metrics,
+  and optional sanitized replace-judge evaluation metrics.
 - Benchmark runners create repeatable workloads and write those JSONL records
   plus optional sidecars such as detection artifacts and DataDesigner traces.
 - Analysis tools convert raw run artifacts into case, group, and model tables.
@@ -243,6 +245,12 @@ Set `evaluate: true` on a replace config when the benchmark should run
 same case. This is intentionally replace-only for now; rewrite runs already
 perform their internal evaluation/repair loop during `run()`.
 
+When evaluation is enabled, the safe measurement log includes
+`evaluation_record` rows with judge verdict booleans and invalid-item counts.
+It does not persist the evaluated result dataframe or trace dataframe. Those
+dataframes can contain original text, entity values, replacement values, raw
+judge outputs, prompts, and model responses.
+
 Before starting a real run, the benchmark runner performs cheap preflight
 checks: suite/config parsing, local dataset existence, CSV/Parquet text-column
 metadata, provider YAML shape, and active model-alias references. `--dry-run`
@@ -409,3 +417,15 @@ Safety and replacement:
 - `replacement_synthetic_original_collision_count`: final entity occurrences
   whose original value was reused as a synthetic replacement value elsewhere in
   the same record.
+
+Replace judge evaluation:
+
+- `detection_valid`, `type_fidelity_valid`,
+  `relational_consistency_valid`, and `attribute_fidelity_valid`: per-record
+  judge verdicts when `evaluate: true` is enabled.
+- `detection_invalid_entity_count`,
+  `type_fidelity_invalid_replacement_count`,
+  `relational_consistency_invalid_relation_count`, and
+  `attribute_fidelity_invalid_entity_count`: counts of invalid judge findings.
+  These fields count structures returned by the judges but do not include raw
+  values, replacement strings, or judge reasoning text.

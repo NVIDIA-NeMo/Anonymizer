@@ -4,10 +4,22 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES
+from anonymizer.engine.constants import (
+    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
+    COL_ATTRIBUTE_FIDELITY_VALID,
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_VALID,
+    COL_FINAL_ENTITIES,
+    COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+    COL_RELATIONAL_CONSISTENCY_VALID,
+    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+    COL_TYPE_FIDELITY_VALID,
+)
 from anonymizer.measurement._coerce import (
+    _coerce_bool,
     _coerce_int,
     _count_items,
     _count_text_tokens,
@@ -32,6 +44,69 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from anonymizer.measurement.collector import MeasurementCollector
+
+
+_EvaluationBoolField = Literal[
+    "detection_valid",
+    "type_fidelity_valid",
+    "relational_consistency_valid",
+    "attribute_fidelity_valid",
+]
+_EvaluationCountField = Literal[
+    "detection_invalid_entity_count",
+    "type_fidelity_invalid_replacement_count",
+    "relational_consistency_invalid_relation_count",
+    "attribute_fidelity_invalid_entity_count",
+]
+
+
+class _EvaluationRecordFields(TypedDict, total=False):
+    detection_valid: bool | None
+    type_fidelity_valid: bool | None
+    relational_consistency_valid: bool | None
+    attribute_fidelity_valid: bool | None
+    detection_invalid_entity_count: int
+    type_fidelity_invalid_replacement_count: int
+    relational_consistency_invalid_relation_count: int
+    attribute_fidelity_invalid_entity_count: int
+
+
+@dataclass(frozen=True)
+class _EvaluationBoolMetric:
+    source_column: str
+    output_field: _EvaluationBoolField
+
+
+@dataclass(frozen=True)
+class _EvaluationCountMetric:
+    source_column: str
+    output_field: _EvaluationCountField
+    primary_key: str
+
+
+_EVALUATION_BOOL_METRICS = (
+    _EvaluationBoolMetric(COL_DETECTION_VALID, "detection_valid"),
+    _EvaluationBoolMetric(COL_TYPE_FIDELITY_VALID, "type_fidelity_valid"),
+    _EvaluationBoolMetric(COL_RELATIONAL_CONSISTENCY_VALID, "relational_consistency_valid"),
+    _EvaluationBoolMetric(COL_ATTRIBUTE_FIDELITY_VALID, "attribute_fidelity_valid"),
+)
+
+_EVALUATION_COUNT_METRICS = (
+    _EvaluationCountMetric(COL_DETECTION_INVALID_ENTITIES, "detection_invalid_entity_count", "invalid_entities"),
+    _EvaluationCountMetric(
+        COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+        "type_fidelity_invalid_replacement_count",
+        "invalid_replacements",
+    ),
+    _EvaluationCountMetric(
+        COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+        "relational_consistency_invalid_relation_count",
+        "invalid_relations",
+    ),
+    _EvaluationCountMetric(
+        COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES, "attribute_fidelity_invalid_entity_count", "entities"
+    ),
+)
 
 
 def record_record_metrics(
@@ -74,6 +149,54 @@ def record_record_metrics(
                 validation_max_entities_per_call=validation_max_entities_per_call,
             ),
         )
+
+
+def record_evaluation_metrics(
+    dataframe: pd.DataFrame,
+    *,
+    mode: str,
+    strategy: str,
+    text_column: str,
+) -> None:
+    """Record sanitized per-row LLM-as-judge verdict metrics from an evaluated trace dataframe."""
+    collector = current_collector()
+    if collector is None or not collector.record_level:
+        return
+
+    columns = set(dataframe.columns)
+    if not _has_evaluation_metrics(columns):
+        return
+
+    for row_index, row in dataframe.iterrows():
+        collector.record(
+            "evaluation_record",
+            **_base_record_fields(
+                collector=collector,
+                row_index=row_index,
+                row=row,
+                text_column=text_column,
+                mode=mode,
+                strategy=strategy,
+            ),
+            **_evaluation_record_fields(row, columns=columns),
+        )
+
+
+def _has_evaluation_metrics(columns: set[str]) -> bool:
+    return any(metric.source_column in columns for metric in _EVALUATION_BOOL_METRICS) or any(
+        metric.source_column in columns for metric in _EVALUATION_COUNT_METRICS
+    )
+
+
+def _evaluation_record_fields(row: pd.Series, *, columns: set[str]) -> _EvaluationRecordFields:
+    fields: _EvaluationRecordFields = {}
+    for metric in _EVALUATION_BOOL_METRICS:
+        if metric.source_column in columns:
+            fields[metric.output_field] = _coerce_bool(row.get(metric.source_column))
+    for metric in _EVALUATION_COUNT_METRICS:
+        if metric.source_column in columns:
+            fields[metric.output_field] = _count_items(row.get(metric.source_column), primary_key=metric.primary_key)
+    return fields
 
 
 def _base_record_fields(

@@ -45,7 +45,7 @@ from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEX
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.interface.anonymizer import Anonymizer
-from anonymizer.measurement import MeasurementConfig, configured_measurement_session
+from anonymizer.measurement import MeasurementConfig, configured_measurement_session, record_evaluation_metrics
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.benchmark")
@@ -818,7 +818,13 @@ def _execute_case(
             data=input_data,
         )
         if config.evaluate:
-            anonymizer.evaluate(result)
+            evaluated = anonymizer.evaluate(result)
+            record_evaluation_metrics(
+                evaluated.trace_dataframe,
+                mode="replace",
+                strategy=type(anonymizer_config.replace).__name__,
+                text_column=evaluated.resolved_text_column,
+            )
 
 
 def build_input(
