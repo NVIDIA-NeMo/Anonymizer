@@ -102,6 +102,11 @@ class ChunkedValidationParams(BaseModel):
         max_entities_per_call: Upper bound on candidates per chunk.
         excerpt_window_chars: Chars of surrounding raw text included in each
             chunk's excerpt on either side of the chunk span.
+        single_chunk_full_text: If True, a row with one validation chunk sees
+            the full tagged document. If False, even a single chunk uses the
+            excerpt window. The default preserves production parity with the
+            pre-chunking validation path; benchmarks may disable it to probe
+            compact validation prompts.
         prompt_template: Jinja2 source for the validation prompt (with
             ``_seed_tagged_text``, ``_validation_skeleton``, ``_tag_notation``
             placeholders). Typically produced by ``_get_validation_prompt``.
@@ -119,6 +124,7 @@ class ChunkedValidationParams(BaseModel):
     pool: list[str] = Field(min_length=1)
     max_entities_per_call: int = Field(gt=0)
     excerpt_window_chars: int = Field(gt=0)
+    single_chunk_full_text: bool = True
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
 
@@ -449,7 +455,11 @@ def chunked_validate_row(
     # only making one call there's no cost reason to clip, and clipping
     # would silently narrow the context the validator sees. Computed once
     # here because ``len(chunks) == 1`` is loop-invariant.
-    single_chunk_tagged_text = build_tagged_text(text, all_spans, notation=notation) if len(chunks) == 1 else None
+    single_chunk_tagged_text = (
+        build_tagged_text(text, all_spans, notation=notation)
+        if len(chunks) == 1 and params.single_chunk_full_text
+        else None
+    )
 
     dispatch_kwargs_per_chunk: list[dict[str, Any]] = []
     for chunk_index, chunk in enumerate(chunks):

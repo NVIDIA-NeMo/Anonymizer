@@ -9,6 +9,7 @@ license = "Apache-2.0"
 dependencies = [
     "data-designer>=0.6.1,<0.7",
     "pydantic>=2.9,<3",
+    "pydantic-settings>=2.12,<3",
     "cyclopts>=3",
     "pygments>=2.20.0",
     "cryptography>=46.0.6",
