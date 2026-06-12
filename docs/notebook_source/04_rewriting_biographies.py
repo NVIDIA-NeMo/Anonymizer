@@ -24,8 +24,8 @@
 # 2. Classifies the domain and assigns sensitivity dispositions
 # 3. Generates a rewritten version that obscures sensitive entities
 # 4. Evaluates quality (utility) and privacy (leakage) with an automated repair loop
+# 5. Runs a final optional LLM judge for informational scores
 #
-# After `run()`, call `Anonymizer.evaluate()` for optional LLM-as-judge scoring.
 #
 # #### 📚 What you'll learn
 #

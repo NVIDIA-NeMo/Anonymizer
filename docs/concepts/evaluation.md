@@ -200,7 +200,7 @@ evaluated = anonymizer.evaluate(loaded)
 
 ### Entity Detection Judge
 
-Same judge as in replace mode — see [Entity Detection Judge](#entity-detection-judge) above. In rewrite mode, `detection_valid` is returned as a **0–1 fraction** (the share of detected entities that passed), rather than a boolean. A value of `1.0` means all detections are valid; lower values indicate the fraction of entities the judge flagged as incorrect.
+Same judge as in replace mode — see [Entity Detection Judge](#entity-detection-judge) above. In rewrite mode, `detection_valid` is returned as a **0–1 fraction** (the share of detected entities that passed), rather than a boolean. A value of `1.0` means all detections are valid; lower values mean more entities were flagged — the value itself is the fraction that passed.
 
 | Output column | Type | Description |
 |---|---|---|
