@@ -116,7 +116,7 @@ Relationships inspected include geographic pairings (city ↔ state, city ↔ po
 
 ---
 
-## Reading replace evaluation results
+### Reading replace evaluation results
 
 `display_record()` renders a formatted per-record view that includes all four judge verdicts alongside the replacement map:
 
@@ -141,7 +141,7 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 ---
 
-## Model roles
+### Model roles
 
 All four judges default to `gpt-oss-120b`. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them by passing a `model_configs` YAML to `Anonymizer(model_configs=...)` — see [Models](models.md) for the full override pattern.
 
@@ -262,7 +262,7 @@ The three rubric scores are stored together under the `judge_evaluation` column 
 
 ---
 
-## Reading rewrite evaluation results
+### Reading rewrite evaluation results
 
 `display_record()` renders a formatted per-record view that includes the detection validity fraction and all three judge rubrics alongside the rewritten text:
 
@@ -280,7 +280,7 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 ---
 
-## Model roles (rewrite evaluation)
+### Model roles
 
 The rewrite quality judge defaults to `nemotron-30b-thinking`. The detection validity judge shares the `detection_validity_judge` role used by replace evaluation. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them via `model_configs`:
 
