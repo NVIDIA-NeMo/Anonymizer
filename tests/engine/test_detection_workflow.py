@@ -558,14 +558,54 @@ def test_validation_single_chunk_full_text_threads_to_generator_params(
         failed_records=[],
     )
     workflow = EntityDetectionWorkflow(adapter=adapter)
-    workflow.detect_and_validate_entities(
+    workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
         model_configs=stub_detector_model_configs,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         validation_single_chunk_full_text=False,
+        tag_latent_entities=False,
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
+    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
+    assert params.single_chunk_full_text is False
+
+
+def test_build_detection_config_threads_validation_single_chunk_full_text(
+    tmp_path,
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.build_detection_config(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        seed_path=tmp_path / "seed.parquet",
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        validation_single_chunk_full_text=False,
+    )
+    columns = adapter.build_config.call_args.kwargs["columns"]
+    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
+    assert params.single_chunk_full_text is False
+
+
+def test_build_detection_builder_for_seed_threads_validation_single_chunk_full_text(
+    tmp_path,
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.build_detection_builder_for_seed(
+        seed_path=tmp_path / "seed.parquet",
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        validation_single_chunk_full_text=False,
+    )
+    columns = adapter.build_config_for_seed.call_args.kwargs["columns"]
     params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
     assert params.single_chunk_full_text is False
 
