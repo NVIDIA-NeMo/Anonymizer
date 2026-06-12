@@ -696,10 +696,13 @@ model_configs: |
   model_configs:
     - alias: detector
       model: test/detector
+      provider: stub
     - alias: validator
       model: test/validator
+      provider: stub
     - alias: augmenter
       model: test/augmenter
+      provider: stub
 workloads:
   - id: biography
     source: input.csv
@@ -736,10 +739,13 @@ model_configs: |
   model_configs:
     - alias: detector
       model: test/detector
+      provider: stub
     - alias: validator
       model: test/validator
+      provider: stub
     - alias: augmenter
       model: test/augmenter
+      provider: stub
 workloads:
   - id: biography
     source: input.csv

@@ -113,7 +113,7 @@ def test_ndd_adapter_records_workflow_measurement_without_raw_text() -> None:
     with measurement_session(collector):
         result = adapter.run_workflow(
             input_df,
-            model_configs=[ModelConfig(alias="detector", model="dummy")],
+            model_configs=[ModelConfig(alias="detector", model="dummy", provider="stub")],
             columns=[
                 LLMTextColumnConfig(
                     name="raw_detected",
@@ -185,7 +185,7 @@ def test_ndd_adapter_records_datadesigner_model_usage() -> None:
     with measurement_session(collector):
         adapter.run_workflow(
             input_df,
-            model_configs=[ModelConfig(alias="detector", model="dummy")],
+            model_configs=[ModelConfig(alias="detector", model="dummy", provider="stub")],
             columns=[
                 LLMTextColumnConfig(
                     name="raw_detected",
@@ -280,7 +280,7 @@ def test_ndd_adapter_records_datadesigner_model_usage_by_alias_for_shared_model_
     with measurement_session(collector):
         adapter.run_workflow(
             input_df,
-            model_configs=[ModelConfig(alias="validator", model="shared-model")],
+            model_configs=[ModelConfig(alias="validator", model="shared-model", provider="stub")],
             columns=[
                 LLMTextColumnConfig(
                     name="raw_detected",
