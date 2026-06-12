@@ -68,6 +68,15 @@ This judge runs regardless of which replace mode was used. It looks at each dete
 | `detection_valid` | `bool \| None` | `True` if all detections pass; `None` if the judge was unavailable. |
 | `detection_invalid_entities` | `list` | Each flagged detection with value, label, and one-sentence reasoning. |
 
+**Special values:**
+
+| Scenario | `detection_valid` | Display | Log |
+|---|---|---|---|
+| No entities detected in this record | `True` | Satisfied | `INFO`: "N passthrough row(s) have no detected entities — detection_valid set to True (trivially valid)" |
+| Judge ran and all detections passed | `True` | Satisfied | — |
+| Judge ran and flagged one or more detections | `False` | Not Satisfied / Partially Satisfied | — |
+| Judge call failed or returned a malformed response | `None` | Unavailable | — |
+
 ---
 
 ### Entity Replacement Judges
@@ -204,8 +213,17 @@ Same judge as in replace mode — see [Entity Detection Judge](#entity-detection
 
 | Output column | Type | Description |
 |---|---|---|
-| `detection_valid` | `float \| None` | 1.0 if all detections pass; fraction of valid entities otherwise; `None` if the judge was unavailable. |
+| `detection_valid` | `float \| None` | 1.0 if all detections pass; fraction of valid entities otherwise; `None` if the score is unavailable. |
 | `detection_invalid_entities` | `list` | Each flagged detection with value, label, and one-sentence reasoning. |
+
+**Special values:**
+
+| Scenario | `detection_valid` | Display | Log |
+|---|---|---|---|
+| No entities detected in this record | `1.0` | 1.00 | `INFO`: "N passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid)" |
+| Judge ran and all detections passed | `1.0` | 1.00 | — |
+| Judge ran and flagged one or more detections | 0–1 fraction | numeric score | — |
+| Judge call failed or entity data unreadable | `None` | Unavailable | `WARNING`: "Could not parse entities_by_value to compute detection_valid fraction" |
 
 ---
 

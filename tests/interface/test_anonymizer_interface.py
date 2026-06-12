@@ -27,10 +27,9 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.ndd.model_loader import load_default_model_providers
+from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.engine.ndd.model_loader import validate_model_alias_references
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
 
@@ -923,9 +922,7 @@ def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: An
     ) as mock_validate:
         anonymizer.evaluate(run_result)
 
-    rewrite_eval_calls = [
-        call for call in mock_validate.call_args_list if call.kwargs.get("check_evaluate") is True
-    ]
+    rewrite_eval_calls = [call for call in mock_validate.call_args_list if call.kwargs.get("check_evaluate") is True]
     assert rewrite_eval_calls, "validate_model_alias_references was not called with check_evaluate=True"
     for call in rewrite_eval_calls:
         assert call.kwargs.get("check_rewrite") is False, (

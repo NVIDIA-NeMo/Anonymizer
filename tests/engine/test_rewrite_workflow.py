@@ -13,6 +13,7 @@ from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelectio
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
@@ -27,7 +28,6 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
-from anonymizer.engine.constants import COL_DETECTION_INVALID_ENTITIES
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction
 
