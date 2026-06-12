@@ -778,6 +778,8 @@ def _resolve_model_providers(
     raw_providers = config_dict.get("providers")
     if not isinstance(raw_providers, list):
         raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
+    if not raw_providers:
+        raise ValueError("model_providers must contain at least one provider.")
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
 
@@ -989,10 +991,6 @@ def _repair_iterations_triggered(failed: list[FailedRecord], is_rewrite: bool) -
     return len(iterations)
 
 
-def _resolve_model_hosts(providers: list[ModelProvider] | None) -> list[str]:
+def _resolve_model_hosts(providers: list[ModelProvider]) -> list[str]:
     """Sorted, deduplicated list of provider host classifications."""
-    if not providers:
-        from anonymizer.telemetry import ModelHostEnum as _MH
-
-        return [_MH.OTHER.value]
     return collect_model_hosts([classify_model_host(p) for p in providers])

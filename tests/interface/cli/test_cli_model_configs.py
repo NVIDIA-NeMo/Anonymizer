@@ -225,6 +225,13 @@ def test_model_providers_empty_list_raises() -> None:
         _resolve_model_providers([])
 
 
+def test_model_providers_empty_yaml_list_raises(tmp_path: Path) -> None:
+    path = tmp_path / "providers.yaml"
+    path.write_text("providers: []\n")
+    with pytest.raises(ValueError, match="at least one provider"):
+        _resolve_model_providers(str(path))
+
+
 # ---------------------------------------------------------------------------
 # CLI integration: _cli_error_handler catches FileNotFoundError
 # ---------------------------------------------------------------------------
