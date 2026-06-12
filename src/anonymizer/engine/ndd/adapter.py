@@ -145,6 +145,77 @@ class NddAdapter:
         )
         return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
 
+    def build_config(
+        self,
+        df: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        columns: list[ColumnConfigT],
+        seed_path: str | Path,
+    ) -> DataDesignerConfigBuilder:
+        """Assemble (but do NOT execute) the DataDesigner config for a workflow.
+
+        Writes the record-id-tagged input to ``seed_path`` as the seed dataset and
+        returns the assembled ``DataDesignerConfigBuilder`` for an *external* executor
+        (e.g. an at-scale SLURM orchestrator) to run. This mirrors the config assembly
+        in :meth:`run_workflow` without the ``DataDesigner.create()/.preview()`` call,
+        so callers can hand the same workflow to a different DataDesigner runtime.
+
+        Args:
+            df: Input DataFrame.
+            model_configs: NDD model aliases available to the workflow.
+            columns: NDD column configs to add to the workflow.
+            seed_path: Destination parquet path for the seed dataset (persisted; the
+                caller owns its lifetime, unlike ``run_workflow``'s tempdir).
+
+        Returns:
+            The assembled ``DataDesignerConfigBuilder`` (seed dataset + columns added).
+        """
+        workflow_input_df = self._attach_record_ids(df=df)
+        seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, str(seed_path))
+        config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
+        config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
+        for column in columns:
+            config_builder.add_column(column)
+        return config_builder
+
+    def build_config_for_seed(
+        self,
+        *,
+        model_configs: list[ModelConfig],
+        columns: list[ColumnConfigT],
+        seed_path: str | Path,
+        job_index: int = 0,
+        num_jobs: int = 1,
+    ) -> DataDesignerConfigBuilder:
+        """Assemble the workflow config reading an EXISTING seed parquet (no write).
+
+        Like :meth:`build_config` but the seed dataset points at an already-written
+        ``seed_path`` (record ids assumed already attached) instead of materializing a
+        DataFrame. Use this on a distributed worker that received the seed from an
+        orchestrator and must NOT rewrite the shared file. ``num_jobs > 1`` selects this
+        worker's ordered partition (``job_index`` of ``num_jobs``), matching how the
+        orchestrator shards the seed.
+        """
+        from data_designer.config.seed import PartitionBlock  # noqa: PLC0415
+
+        if num_jobs < 1:
+            raise ValueError(f"num_jobs must be >= 1, got {num_jobs}")
+        if not (0 <= job_index < num_jobs):
+            raise ValueError(f"job_index must be in [0, num_jobs), got job_index={job_index}, num_jobs={num_jobs}")
+
+        config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
+        seed_source = LocalFileSeedSource(path=str(seed_path))
+        selection = PartitionBlock(index=job_index, num_partitions=num_jobs) if num_jobs > 1 else None
+        config_builder.with_seed_dataset(
+            seed_source,
+            sampling_strategy=SamplingStrategy.ORDERED,
+            selection_strategy=selection,
+        )
+        for column in columns:
+            config_builder.add_column(column)
+        return config_builder
+
     def _attach_record_ids(self, df: pd.DataFrame) -> pd.DataFrame:
         if RECORD_ID_COLUMN in df.columns:
             return df.copy()
