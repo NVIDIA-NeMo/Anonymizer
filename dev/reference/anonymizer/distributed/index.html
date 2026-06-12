@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/errors/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/distributed/">
       
       
-        <link rel="prev" href="../display/">
+        <link rel="prev" href="../config/rewrite/">
       
       
-        <link rel="next" href="../results/">
+        <link rel="next" href="../interface/anonymizer/">
       
       
         
       
       
-      <link rel="icon" href="../../../../assets/favicon.svg">
+      <link rel="icon" href="../../../assets/favicon.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
     
     
       
-        <title>errors - NeMo Anonymizer</title>
+        <title>distributed - NeMo Anonymizer</title>
       
     
     
-      <link rel="stylesheet" href="../../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,13 +53,13 @@
       
     
     
-      <link rel="stylesheet" href="../../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../../css/style.css">
+      <link rel="stylesheet" href="../../../css/style.css">
     
-      <link rel="stylesheet" href="../../../../css/mkdocstrings.css">
+      <link rel="stylesheet" href="../../../css/mkdocstrings.css">
     
-    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#anonymizer.interface.errors" class="md-skip">
+        <a href="#anonymizer.distributed" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +104,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              errors
+              distributed
             
           </span>
         </div>
@@ -242,7 +242,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -272,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   
@@ -362,7 +362,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/models/" class="md-nav__link">
+      <a href="../../../concepts/models/" class="md-nav__link">
         
   
   
@@ -390,7 +390,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/detection/" class="md-nav__link">
+      <a href="../../../concepts/detection/" class="md-nav__link">
         
   
   
@@ -418,7 +418,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/replace/" class="md-nav__link">
+      <a href="../../../concepts/replace/" class="md-nav__link">
         
   
   
@@ -446,7 +446,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/rewrite/" class="md-nav__link">
+      <a href="../../../concepts/rewrite/" class="md-nav__link">
         
   
   
@@ -474,7 +474,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/choosing-a-strategy/" class="md-nav__link">
+      <a href="../../../concepts/choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -502,7 +502,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/evaluation/" class="md-nav__link">
+      <a href="../../../concepts/evaluation/" class="md-nav__link">
         
   
   
@@ -530,7 +530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../concepts/self-hosting-gliner/" class="md-nav__link">
+      <a href="../../../concepts/self-hosting-gliner/" class="md-nav__link">
         
   
   
@@ -565,7 +565,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../troubleshooting/" class="md-nav__link">
+      <a href="../../../troubleshooting/" class="md-nav__link">
         
   
   
@@ -620,7 +620,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../tutorials/" class="md-nav__link ">
+            <a href="../../../tutorials/" class="md-nav__link ">
               
   
   
@@ -664,7 +664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/01_your_first_anonymization/" class="md-nav__link">
+      <a href="../../../notebooks/01_your_first_anonymization/" class="md-nav__link">
         
   
   
@@ -692,7 +692,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
+      <a href="../../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
         
   
   
@@ -720,7 +720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
+      <a href="../../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
         
   
   
@@ -748,7 +748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/04_rewriting_biographies/" class="md-nav__link">
+      <a href="../../../notebooks/04_rewriting_biographies/" class="md-nav__link">
         
   
   
@@ -776,7 +776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
+      <a href="../../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
         
   
   
@@ -929,7 +929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/anonymizer_config/" class="md-nav__link">
+      <a href="../config/anonymizer_config/" class="md-nav__link">
         
   
   
@@ -957,7 +957,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/models/" class="md-nav__link">
+      <a href="../config/models/" class="md-nav__link">
         
   
   
@@ -985,7 +985,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/replace_strategies/" class="md-nav__link">
+      <a href="../config/replace_strategies/" class="md-nav__link">
         
   
   
@@ -1013,7 +1013,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../config/rewrite/" class="md-nav__link">
+      <a href="../config/rewrite/" class="md-nav__link">
         
   
   
@@ -1046,10 +1046,35 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../distributed/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    distributed
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1065,6 +1090,52 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#anonymizer.distributed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;distributed
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" distributed">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.distributed.build_detection_builder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;build_detection_builder
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1074,10 +1145,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1095,11 +1164,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
         
           
           <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
@@ -1120,7 +1189,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1138,7 +1207,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anonymizer/" class="md-nav__link">
+      <a href="../interface/anonymizer/" class="md-nav__link">
         
   
   
@@ -1217,7 +1286,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/main/" class="md-nav__link">
+      <a href="../interface/cli/main/" class="md-nav__link">
         
   
   
@@ -1253,7 +1322,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../display/" class="md-nav__link">
+      <a href="../interface/display/" class="md-nav__link">
         
   
   
@@ -1278,35 +1347,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    errors
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../interface/errors/" class="md-nav__link">
         
   
   
@@ -1322,96 +1366,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;errors
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" errors">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidInputError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidInputError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidConfigError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidConfigError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerIOError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerIOError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerWorkflowError
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1424,7 +1378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../results/" class="md-nav__link">
+      <a href="../interface/results/" class="md-nav__link">
         
   
   
@@ -1460,7 +1414,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../logging/" class="md-nav__link">
+      <a href="../logging/" class="md-nav__link">
         
   
   
@@ -1488,7 +1442,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../telemetry/" class="md-nav__link">
+      <a href="../telemetry/" class="md-nav__link">
         
   
   
@@ -1545,7 +1499,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../devnotes/" class="md-nav__link ">
+            <a href="../../../devnotes/" class="md-nav__link ">
               
   
   
@@ -1589,7 +1543,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="../../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
         
   
   
@@ -1670,7 +1624,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../devnotes/archive/2026/" class="md-nav__link">
+      <a href="../../../devnotes/archive/2026/" class="md-nav__link">
         
   
   
@@ -1731,66 +1685,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors" class="md-nav__link">
+  <a href="#anonymizer.distributed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;errors
+        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;distributed
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label=" errors">
+    <nav class="md-nav" aria-label=" distributed">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerError" class="md-nav__link">
+  <a href="#anonymizer.distributed.build_detection_builder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidInputError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidInputError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.InvalidConfigError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;InvalidConfigError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerIOError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerIOError
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;AnonymizerWorkflowError
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;build_detection_builder
       
     </span>
   </a>
@@ -1827,7 +1737,7 @@
   
   
     <li class="md-path__item">
-      <a href="../../../.." class="md-path__link">
+      <a href="../../.." class="md-path__link">
         
   <span class="md-ellipsis">
     Home
@@ -1850,7 +1760,7 @@
     
     
       <li class="md-path__item">
-        <a href="../../config/anonymizer_config/" class="md-path__link">
+        <a href="../config/anonymizer_config/" class="md-path__link">
           
   <span class="md-ellipsis">
     API Reference
@@ -1861,24 +1771,6 @@
     
   
 
-    
-  
-
-      
-        
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../anonymizer/" class="md-path__link">
-          
-  <span class="md-ellipsis">
-    interface
-  </span>
-
-        </a>
-      </li>
     
   
 
@@ -1896,20 +1788,42 @@
   
 
 
-  <h1>errors</h1>
+  <h1>distributed</h1>
 
 <div class="doc doc-object doc-module">
 
 
 
-<h2 id="anonymizer.interface.errors" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <code>errors</code>
+<h2 id="anonymizer.distributed" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <code>distributed</code>
 
 
-<a href="#anonymizer.interface.errors" class="headerlink" title="Permanent link">&para;</a></h2>
+<a href="#anonymizer.distributed" class="headerlink" title="Permanent link">&para;</a></h2>
 
     <div class="doc doc-contents first">
 
+        <p>Distributed-executor entrypoint for running the detection workflow on a SLURM cluster.</p>
+<p>For running detection at scale, an external DataDesigner runtime (e.g. a SLURM
+orchestrator) provisions the model servers, partitions the dataset across workers, and
+runs the workflow. Such runtimes usually ship a <em>serialized</em> config to each worker and
+rebuild it with <code>from_config</code> — but the detection workflow can't go through that path:
+it uses <code>CustomColumnConfig</code> columns whose <code>generator_function</code> is a live Python
+callable (DataDesigner custom columns are "library only"), which do not survive JSON
+serialization.</p>
+<p>This module is the alternative: a factory the runtime imports and calls <strong>in-process on
+each worker</strong> to get the live <code>DataDesignerConfigBuilder</code> (callables intact). The custom
+columns reference their LLM by <em>alias</em> and receive model facades injected by the
+DataDesigner runtime, so the runtime's provider wiring (alias → provisioned server) still
+routes their calls correctly. The seed parquet is read from the path the runtime provides
+(not rewritten — workers may share it), and <code>num_jobs &gt; 1</code> selects this worker's ordered
+partition.</p>
+
+
+<details class="the-runtime-calls" open>
+  <summary>The runtime calls</summary>
+  <p>build_detection_builder(seed_path=..., job_index=..., num_jobs=..., spec={...})</p>
+</details>        <p>where <code>spec</code> is the JSON-serializable detection spec produced by the submitting side.
+Requires <code>nemo-anonymizer</code> installed in the worker environment.</p>
 
 
 
@@ -1919,7 +1833,10 @@
 
 
 
-<p><span class="doc-section-title">Classes:</span></p>
+
+
+
+<p><span class="doc-section-title">Functions:</span></p>
     <table>
       <thead>
         <tr>
@@ -1928,50 +1845,16 @@
         </tr>
       </thead>
       <tbody>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Base error for Anonymizer interface operations.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            InvalidInputError (anonymizer.interface.errors.InvalidInputError)" href="#anonymizer.interface.errors.InvalidInputError">InvalidInputError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Raised when input data or configuration is invalid.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            InvalidConfigError (anonymizer.interface.errors.InvalidConfigError)" href="#anonymizer.interface.errors.InvalidConfigError">InvalidConfigError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Raised when model aliases or semantic configuration are invalid.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerIOError (anonymizer.interface.errors.AnonymizerIOError)" href="#anonymizer.interface.errors.AnonymizerIOError">AnonymizerIOError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Raised when file IO operations fail.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="            AnonymizerWorkflowError (anonymizer.interface.errors.AnonymizerWorkflowError)" href="#anonymizer.interface.errors.AnonymizerWorkflowError">AnonymizerWorkflowError</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Raised when an underlying workflow step (preview, execution, or dataset load) fails.</p>
-              </div>
-            </td>
-          </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            build_detection_builder(*, seed_path, spec, job_index=0, num_jobs=1) (anonymizer.distributed.build_detection_builder)" href="#anonymizer.distributed.build_detection_builder">build_detection_builder</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Return the live detection <code>DataDesignerConfigBuilder</code> for one distributed worker.</p>
+                </div>
+              </td>
+            </tr>
       </tbody>
     </table>
-
-
 
 
 
@@ -1987,189 +1870,163 @@
 
 
 
-<div class="doc doc-object doc-class">
+
+<div class="doc doc-object doc-function">
 
 
+<h3 id="anonymizer.distributed.build_detection_builder" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">build_detection_builder(*, seed_path, spec, job_index=0, num_jobs=1)</code>
 
-<h3 id="anonymizer.interface.errors.AnonymizerError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerError</code>
-
-
-<a href="#anonymizer.interface.errors.AnonymizerError" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><span title="Exception">Exception</span></code></p>
-
-
-
-        <p>Base error for Anonymizer interface operations.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h3 id="anonymizer.interface.errors.InvalidInputError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>InvalidInputError</code>
-
-
-<a href="#anonymizer.interface.errors.InvalidInputError" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#anonymizer.distributed.build_detection_builder" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
+
+        <p>Return the live detection <code>DataDesignerConfigBuilder</code> for one distributed worker.</p>
 
 
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>seed_path</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Path to the seed parquet the runtime placed on this worker (read, not
+written). Record ids are assumed already attached by the submitting side.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>spec</code>
+            </td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>JSON-serializable detection spec with keys:
+<code>model_configs_yaml</code> (str): the Anonymizer model_configs YAML (selected_models
+    + model_configs aliases) — the alias <code>model</code> ids must match the served
+    model names the runtime provisions, so its provider wiring can map them.
+<code>provider_names</code> (list[str]): provider names referenced by the YAML; placeholder
+    <code>ModelProvider</code>s are created for them (the runtime supplies the real ones).
+<code>detect</code> (dict): <code>gliner_threshold</code> (float) and optional <code>entity_labels</code>
+    (list[str] | None).
+<code>data_summary</code> (str | None): optional dataset description for prompts.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>job_index</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>index of this worker's ordered partition of the seed.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>num_jobs</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>total number of partitions the seed is split across.</p>
+              </div>
+            </td>
+            <td>
+                  <code>1</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
 
-        <p>Raised when input data or configuration is invalid.</p>
 
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/distributed.py</code></summary>
+              <pre class="highlight"><code class="language-python">def build_detection_builder(
+    *,
+    seed_path: str,
+    spec: dict[str, Any],
+    job_index: int = 0,
+    num_jobs: int = 1,
+) -&gt; DataDesignerConfigBuilder:
+    """Return the live detection ``DataDesignerConfigBuilder`` for one distributed worker.
 
+    Args:
+        seed_path: Path to the seed parquet the runtime placed on this worker (read, not
+            written). Record ids are assumed already attached by the submitting side.
+        spec: JSON-serializable detection spec with keys:
+            ``model_configs_yaml`` (str): the Anonymizer model_configs YAML (selected_models
+                + model_configs aliases) — the alias ``model`` ids must match the served
+                model names the runtime provisions, so its provider wiring can map them.
+            ``provider_names`` (list[str]): provider names referenced by the YAML; placeholder
+                ``ModelProvider``s are created for them (the runtime supplies the real ones).
+            ``detect`` (dict): ``gliner_threshold`` (float) and optional ``entity_labels``
+                (list[str] | None).
+            ``data_summary`` (str | None): optional dataset description for prompts.
+        job_index: index of this worker's ordered partition of the seed.
+        num_jobs: total number of partitions the seed is split across.
+    """
+    from anonymizer import Anonymizer, AnonymizerConfig, ModelProvider, Redact  # noqa: PLC0415
+    from anonymizer.config.anonymizer_config import Detect  # noqa: PLC0415
 
+    providers = [
+        ModelProvider(name=name, endpoint=_PLACEHOLDER_ENDPOINT, provider_type="openai", api_key="EMPTY")
+        for name in spec["provider_names"]
+    ]
+    anonymizer = Anonymizer(model_configs=spec["model_configs_yaml"], model_providers=providers)
 
+    if "detect" not in spec:
+        raise KeyError("spec must include required 'detect' section")
+    detect = spec["detect"]
+    detect_kwargs: dict[str, Any] = {"gliner_threshold": detect["gliner_threshold"]}
+    if detect.get("entity_labels") is not None:
+        detect_kwargs["entity_labels"] = detect["entity_labels"]
+    config = AnonymizerConfig(detect=Detect(**detect_kwargs), replace=Redact())
 
-
-
-
-
-
-
-
-
-
+    return anonymizer.export_detection_builder_for_seed(
+        config=config,
+        seed_path=seed_path,
+        job_index=job_index,
+        num_jobs=num_jobs,
+        data_summary=spec.get("data_summary"),
+    )</code></pre>
+            </details>
     </div>
 
 </div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h3 id="anonymizer.interface.errors.InvalidConfigError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>InvalidConfigError</code>
-
-
-<a href="#anonymizer.interface.errors.InvalidConfigError" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
-
-
-
-        <p>Raised when model aliases or semantic configuration are invalid.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h3 id="anonymizer.interface.errors.AnonymizerIOError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerIOError</code>
-
-
-<a href="#anonymizer.interface.errors.AnonymizerIOError" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
-
-
-
-        <p>Raised when file IO operations fail.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h3 id="anonymizer.interface.errors.AnonymizerWorkflowError" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>AnonymizerWorkflowError</code>
-
-
-<a href="#anonymizer.interface.errors.AnonymizerWorkflowError" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><a class="autorefs autorefs-internal" title="            AnonymizerError (anonymizer.interface.errors.AnonymizerError)" href="#anonymizer.interface.errors.AnonymizerError">AnonymizerError</a></code></p>
-
-
-
-        <p>Raised when an underlying workflow step (preview, execution, or dataset load) fails.</p>
-<p>The original backend exception is preserved as <code>__cause__</code> via <code>raise ... from exc</code>
-so callers can inspect the exact failure without the anonymizer layer leaking backend
-exception types into its own public error hierarchy.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    </div>
-
-</div>
-
 
 
 
@@ -2215,7 +2072,7 @@ exception types into its own public error hierarchy.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../display/" class="md-footer__link md-footer__link--prev" aria-label="Previous: display">
+          <a href="../config/rewrite/" class="md-footer__link md-footer__link--prev" aria-label="Previous: rewrite">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -2225,20 +2082,20 @@ exception types into its own public error hierarchy.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                display
+                rewrite
               </div>
             </div>
           </a>
         
         
           
-          <a href="../results/" class="md-footer__link md-footer__link--next" aria-label="Next: results">
+          <a href="../interface/anonymizer/" class="md-footer__link md-footer__link--next" aria-label="Next: anonymizer">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                results
+                anonymizer
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -2275,16 +2132,16 @@ exception types into its own public error hierarchy.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../../../js/mathjax.js"></script>
+        <script src="../../../js/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
-        <script src="../../../../js/toc-toggle.js"></script>
+        <script src="../../../js/toc-toggle.js"></script>
       
     
   </body>
