@@ -200,7 +200,18 @@ class DetectionJudgeWorkflow(_BaseJudgeWorkflow):
 
     def prepare(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         working_df = dataframe.copy()
-        parsed = working_df[COL_ENTITIES_BY_VALUE].apply(EntitiesByValueSchema.from_raw)
+
+        def _safe_parse(raw: object) -> EntitiesByValueSchema:
+            try:
+                return EntitiesByValueSchema.from_raw(raw)
+            except Exception:
+                logger.warning(
+                    "Could not parse entities_by_value for a row; treating as no entities.",
+                    exc_info=True,
+                )
+                return EntitiesByValueSchema(entities_by_value=[])
+
+        parsed = working_df[COL_ENTITIES_BY_VALUE].apply(_safe_parse)
         working_df[_ENTITIES_FOR_JUDGE_COL] = parsed.apply(_entities_for_judge)
         working_df[_ENTITY_EXAMPLES_FOR_JUDGE_COL] = parsed.apply(_label_examples_for_judge)
         return working_df

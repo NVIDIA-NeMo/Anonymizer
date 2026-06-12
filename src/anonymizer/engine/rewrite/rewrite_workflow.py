@@ -60,6 +60,8 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
 
     The detection judge stores a bool (all_valid) but rewrite evaluate surfaces
     a fraction so it sits on the same scale as utility_score and leakage_mass.
+    Returns None when the score cannot be computed (judge unavailable or entity
+    parsing failed).
     """
     valid = row.get(COL_DETECTION_VALID)
     if valid is None:
@@ -73,9 +75,15 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
             len(e.labels) for e in EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE)).entities_by_value
         )
     except Exception:
-        total = 0
+        logger.warning(
+            "Could not parse entities_by_value to compute detection_valid fraction; defaulting to None.",
+            exc_info=True,
+        )
+        return None
     if total == 0:
-        return 1.0
+        # Reachable only when valid is False (True returns early above).
+        # Judge flagged invalid detections but no entities were found — score is uncomputable.
+        return None
     return max(0.0, (total - invalid_count) / total)
 
 
@@ -443,7 +451,12 @@ class RewriteWorkflow:
         entity_rows, passthrough_rows = split_rows(df, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
 
         passthrough_rows = passthrough_rows.copy()
-        passthrough_rows[COL_DETECTION_VALID] = None
+        if not passthrough_rows.empty:
+            logger.info(
+                "%d passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid).",
+                len(passthrough_rows),
+            )
+        passthrough_rows[COL_DETECTION_VALID] = 1.0
         passthrough_rows[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
         passthrough_rows[COL_JUDGE_EVALUATION] = None
 

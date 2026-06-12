@@ -27,8 +27,9 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
+from anonymizer.engine.constants import COL_DETECTION_INVALID_ENTITIES
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -137,22 +138,23 @@ def stub_eval_df(stub_pipeline_df: pd.DataFrame) -> pd.DataFrame:
 
 @pytest.fixture
 def stub_judge_df(stub_eval_df: pd.DataFrame) -> pd.DataFrame:
+    """Fixture used by evaluate() tests — only judge-produced columns here."""
     df = stub_eval_df.copy()
     df[COL_JUDGE_EVALUATION] = None
-    df[COL_NEEDS_HUMAN_REVIEW] = False
     return df
 
 
 def _standard_side_effect(
     pipeline_df: pd.DataFrame,
     eval_df: pd.DataFrame,
-    judge_df: pd.DataFrame,
 ) -> list[WorkflowRunResult]:
-    """Happy-path adapter side_effect: pipeline, evaluate, judge."""
+    """Happy-path adapter side_effect for run(): pipeline then evaluate.
+
+    The final-judge no longer runs inside run() — it only runs via evaluate().
+    """
     return [
         WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
 
@@ -249,10 +251,9 @@ def test_calls_sub_workflows_in_order(
     stub_replace_df: pd.DataFrame,
     stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
-    stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df)
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         _mock_replace(mock_replace_cls, stub_replace_df)
@@ -287,7 +288,6 @@ def test_failed_records_accumulated_across_steps(
     stub_replace_df: pd.DataFrame,
     stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
-    stub_judge_df: pd.DataFrame,
 ) -> None:
     failed_pipeline = FailedRecord(record_id="a", step="rewrite-pipeline", reason="timeout")
     failed_eval = FailedRecord(record_id="b", step="rewrite-evaluate-0", reason="timeout")
@@ -410,10 +410,9 @@ def test_repair_loop_exits_early_when_no_rows_need_repair(
     stub_replace_df: pd.DataFrame,
     stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
-    stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df)
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         _mock_replace(mock_replace_cls, stub_replace_df)
@@ -642,10 +641,9 @@ def test_zero_max_repair_iterations_still_evaluates(
     stub_replace_df: pd.DataFrame,
     stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
-    stub_judge_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df, stub_judge_df)
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df)
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         _mock_replace(mock_replace_cls, stub_replace_df)
@@ -975,7 +973,7 @@ def test_evaluate_passthrough_rows_get_none_judge_defaults(
     stub_evaluate_model_selection,
     stub_eval_df: pd.DataFrame,
 ) -> None:
-    """Passthrough rows must have COL_JUDGE_EVALUATION=None and COL_DETECTION_VALID=None."""
+    """Passthrough rows must have COL_JUDGE_EVALUATION=None and COL_DETECTION_VALID=1.0 (trivially valid)."""
     passthrough_row = stub_eval_df.iloc[0].to_dict()
     passthrough_row[COL_ENTITIES_BY_VALUE] = {"entities_by_value": []}
     mixed_df = pd.concat([stub_eval_df, pd.DataFrame([passthrough_row])], ignore_index=True)
@@ -1003,12 +1001,69 @@ def test_evaluate_passthrough_rows_get_none_judge_defaults(
         result.dataframe[COL_ENTITIES_BY_VALUE].apply(lambda x: len(x.get("entities_by_value", [])) == 0)
     ]
     assert passthrough_result[COL_JUDGE_EVALUATION].iloc[0] is None
-    assert pd.isna(passthrough_result[COL_DETECTION_VALID].iloc[0])
+    assert passthrough_result[COL_DETECTION_VALID].iloc[0] == 1.0
 
 
 # ---------------------------------------------------------------------------
 # Tests: needs_human_review not overwritten by evaluate()
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Tests: _detection_valid_fraction
+# ---------------------------------------------------------------------------
+
+
+def test_detection_valid_fraction_returns_none_when_valid_is_none() -> None:
+    row = pd.Series({COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: [], COL_ENTITIES_BY_VALUE: {}})
+    assert _detection_valid_fraction(row) is None
+
+
+def test_detection_valid_fraction_returns_1_when_all_valid() -> None:
+    row = pd.Series(
+        {
+            COL_DETECTION_VALID: True,
+            COL_DETECTION_INVALID_ENTITIES: [],
+            COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]},
+        }
+    )
+    assert _detection_valid_fraction(row) == 1.0
+
+
+def test_detection_valid_fraction_computes_correct_fraction() -> None:
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name", "full_name"]}]}
+    row = pd.Series(
+        {
+            COL_DETECTION_VALID: False,
+            COL_DETECTION_INVALID_ENTITIES: [{"value": "Alice", "label": "full_name", "reasoning": "wrong label"}],
+            COL_ENTITIES_BY_VALUE: entities,
+        }
+    )
+    result = _detection_valid_fraction(row)
+    assert result == pytest.approx(0.5)
+
+
+def test_detection_valid_fraction_returns_none_on_parse_failure() -> None:
+    row = pd.Series(
+        {
+            COL_DETECTION_VALID: False,
+            COL_DETECTION_INVALID_ENTITIES: [{"value": "x", "label": "y", "reasoning": "z"}],
+            COL_ENTITIES_BY_VALUE: "not a valid schema payload <<<",
+        }
+    )
+    assert _detection_valid_fraction(row) is None
+
+
+def test_detection_valid_fraction_returns_none_when_total_is_zero_and_valid_false() -> None:
+    """valid=False with an empty entity list — judge flagged invalid but no entities found."""
+    row = pd.Series(
+        {
+            COL_DETECTION_VALID: False,
+            COL_DETECTION_INVALID_ENTITIES: [],
+            COL_ENTITIES_BY_VALUE: {"entities_by_value": []},
+        }
+    )
+    assert _detection_valid_fraction(row) is None
 
 
 def test_run_needs_human_review_not_overwritten_by_evaluate(

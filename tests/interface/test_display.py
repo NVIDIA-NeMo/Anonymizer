@@ -714,6 +714,59 @@ def test_detection_valid_rendered_in_main_scores_section() -> None:
     assert "0.75" in result
 
 
+def test_render_record_html_rewrite_mode_detection_valid_none_shows_unavailable() -> None:
+    """When evaluate() ran but detection_valid is None, display renders 'Unavailable' not a score."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            COL_DETECTION_VALID: None,
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "Detection Validity" in result
+    assert "Unavailable" in result
+    assert "0." not in result.split("Detection Validity")[1].split("</div>")[0]
+
+
+def test_render_record_html_rewrite_mode_detection_valid_nan_shows_unavailable() -> None:
+    """NaN in COL_DETECTION_VALID (pandas missing-value sentinel) renders 'Unavailable'."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+            COL_DETECTION_VALID: np.nan,
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "Detection Validity" in result
+    assert "Unavailable" in result
+
+
+def test_render_record_html_rewrite_mode_no_detection_valid_column_omits_section() -> None:
+    """When COL_DETECTION_VALID is absent (evaluate() never called), the row is omitted entirely."""
+    row = pd.Series(
+        {
+            "text": "Alice works at Acme",
+            "text_rewritten": "Beth works at Globex",
+            COL_DETECTED_ENTITIES: {"entities": []},
+            "utility_score": 0.9,
+            "leakage_mass": 0.1,
+            "needs_human_review": False,
+        }
+    )
+    result = render_record_html(row, record_index=0)
+    assert "Detection Validity" not in result
+
+
 def test_rewrite_needs_human_review_label_is_rewrite_need_review() -> None:
     row = pd.Series(
         {

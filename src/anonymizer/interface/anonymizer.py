@@ -381,7 +381,7 @@ class Anonymizer:
                 validate_model_alias_references(
                     self._model_configs,
                     self._selected_models,
-                    check_rewrite=True,
+                    check_rewrite=False,
                     check_evaluate=True,
                 )
             except ValueError as exc:

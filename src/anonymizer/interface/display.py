@@ -139,7 +139,7 @@ def _render_rewrite_html(row: pd.Series, *, text_col: str, record_index: int | N
     entities = _resolve_display_entities(row)
     original_html = _render_highlighted_text(text, entities)
     rewritten_html = f"<span>{html.escape(rewritten_text)}</span>"
-    scores_html = _render_scores_section(row)
+    scores_html = _render_scores_section(row, is_rewrite=True)
     disposition_html = _render_disposition_table(row)
     index_label = f" (record {record_index})" if record_index is not None else ""
 
@@ -413,7 +413,7 @@ def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]
     return result
 
 
-def _render_scores_section(row: pd.Series) -> str:
+def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
     """Render scores in up to three rows: objective metrics | detection validity | judge."""
     section_rows: list[str] = []
 
@@ -435,7 +435,6 @@ def _render_scores_section(row: pd.Series) -> str:
             f"{weighted_leakage_rate:.2f}</span>"
         )
     if needs_review is not None:
-        is_rewrite = "rewritten" in "".join(str(k) for k in row.index)
         label = "Rewrite Need Review" if is_rewrite else "Needs Review"
         badge_color = "#ef4444" if needs_review else "#22c55e"
         badge_text = "Yes" if needs_review else "No"
@@ -448,7 +447,13 @@ def _render_scores_section(row: pd.Series) -> str:
 
     # --- Row 2: detection validity inline with flagged-entities dropdown ---
     detection_valid = row.get(COL_DETECTION_VALID)
-    if detection_valid is not None:
+    if COL_DETECTION_VALID in row.index and (detection_valid is None or pd.isna(detection_valid)):
+        section_rows.append(
+            "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px'>"
+            "<span style='margin-right:12px'><strong>Detection Validity:</strong> "
+            "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span></span></div>"
+        )
+    elif detection_valid is not None and not pd.isna(detection_valid):
         det_span = (
             f"<span style='margin-right:12px'><strong>Detection Validity:</strong> {float(detection_valid):.2f}</span>"
         )
