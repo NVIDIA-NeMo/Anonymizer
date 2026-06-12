@@ -199,6 +199,11 @@ class NddAdapter:
         """
         from data_designer.config.seed import PartitionBlock  # noqa: PLC0415
 
+        if num_jobs < 1:
+            raise ValueError(f"num_jobs must be >= 1, got {num_jobs}")
+        if not (0 <= job_index < num_jobs):
+            raise ValueError(f"job_index must be in [0, num_jobs), got job_index={job_index}, num_jobs={num_jobs}")
+
         config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
         seed_source = LocalFileSeedSource(path=str(seed_path))
         selection = PartitionBlock(index=job_index, num_partitions=num_jobs) if num_jobs > 1 else None

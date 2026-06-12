@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Distributed-executor entrypoint for running the detection workflow on a SLURM cluster.
 
 For running detection at scale, an external DataDesigner runtime (e.g. a SLURM
@@ -21,6 +24,7 @@ The runtime calls:
 where ``spec`` is the JSON-serializable detection spec produced by the submitting side.
 Requires ``nemo-anonymizer`` installed in the worker environment.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -54,19 +58,21 @@ def build_detection_builder(
             ``detect`` (dict): ``gliner_threshold`` (float) and optional ``entity_labels``
                 (list[str] | None).
             ``data_summary`` (str | None): optional dataset description for prompts.
-        job_index, num_jobs: this worker's ordered partition of the seed.
+        job_index: index of this worker's ordered partition of the seed.
+        num_jobs: total number of partitions the seed is split across.
     """
     from anonymizer import Anonymizer, AnonymizerConfig, ModelProvider, Redact  # noqa: PLC0415
     from anonymizer.config.anonymizer_config import Detect  # noqa: PLC0415
 
     providers = [
-        ModelProvider(name=name, endpoint=_PLACEHOLDER_ENDPOINT,
-                      provider_type="openai", api_key="EMPTY")
+        ModelProvider(name=name, endpoint=_PLACEHOLDER_ENDPOINT, provider_type="openai", api_key="EMPTY")
         for name in spec["provider_names"]
     ]
     anonymizer = Anonymizer(model_configs=spec["model_configs_yaml"], model_providers=providers)
 
-    detect = spec.get("detect", {})
+    if "detect" not in spec:
+        raise KeyError("spec must include required 'detect' section")
+    detect = spec["detect"]
     detect_kwargs: dict[str, Any] = {"gliner_threshold": detect["gliner_threshold"]}
     if detect.get("entity_labels") is not None:
         detect_kwargs["entity_labels"] = detect["entity_labels"]
