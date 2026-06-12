@@ -429,3 +429,10 @@ Replace judge evaluation:
   `attribute_fidelity_invalid_entity_count`: counts of invalid judge findings.
   These fields count structures returned by the judges but do not include raw
   values, replacement strings, or judge reasoning text.
+- `case_analysis` also includes per-case rollups for each judge family:
+  `{family}_judged_record_count`, `{family}_valid_record_count`,
+  `{family}_valid_rate`, and the corresponding invalid-count field.
+- `group_analysis` includes grouped micro-rate rollups:
+  `sum_{family}_judged_record_count`, `sum_{family}_valid_record_count`,
+  `micro_{family}_valid_rate`, and `sum_{invalid_count_field}`. These rates are
+  computed from summed counts, not medians of case-level rates.

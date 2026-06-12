@@ -187,6 +187,104 @@ def test_analyze_benchmark_output_counts_generic_model_workflow_records(tmp_path
     assert result.model_usage_groups[0].sum_observed_total_tokens == 42
 
 
+def test_analyze_benchmark_output_rolls_up_evaluation_records(tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_analysis_evaluation_rollups",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [
+            {
+                "record_type": "evaluation_record",
+                "run_id": "bio__substitute__r000",
+                "detection_valid": True,
+                "detection_invalid_entity_count": 0,
+                "type_fidelity_valid": True,
+                "type_fidelity_invalid_replacement_count": 0,
+                "relational_consistency_valid": False,
+                "relational_consistency_invalid_relation_count": 2,
+                "attribute_fidelity_valid": True,
+                "attribute_fidelity_invalid_entity_count": 0,
+                "run_tags": {
+                    "workload_id": "bio",
+                    "config_id": "substitute",
+                    "case_id": "bio__substitute__r000",
+                },
+            },
+            {
+                "record_type": "evaluation_record",
+                "run_id": "bio__substitute__r000",
+                "detection_valid": False,
+                "detection_invalid_entity_count": 3,
+                "type_fidelity_valid": True,
+                "type_fidelity_invalid_replacement_count": 0,
+                "relational_consistency_valid": True,
+                "relational_consistency_invalid_relation_count": 0,
+                "attribute_fidelity_valid": None,
+                "attribute_fidelity_invalid_entity_count": 0,
+                "run_tags": {
+                    "workload_id": "bio",
+                    "config_id": "substitute",
+                    "case_id": "bio__substitute__r000",
+                },
+            },
+            {
+                "record_type": "evaluation_record",
+                "run_id": "bio__substitute__r001",
+                "detection_valid": True,
+                "detection_invalid_entity_count": 1,
+                "type_fidelity_valid": False,
+                "type_fidelity_invalid_replacement_count": 4,
+                "relational_consistency_valid": True,
+                "relational_consistency_invalid_relation_count": 0,
+                "attribute_fidelity_valid": False,
+                "attribute_fidelity_invalid_entity_count": 5,
+                "run_tags": {
+                    "workload_id": "bio",
+                    "config_id": "substitute",
+                    "case_id": "bio__substitute__r001",
+                },
+            },
+        ],
+    )
+
+    result = tool.analyze_benchmark_output(benchmark_dir)
+
+    cases = {row.case_id: row for row in result.cases}
+    first_case = cases["bio__substitute__r000"]
+    assert first_case.detection_judged_record_count == 2
+    assert first_case.detection_valid_record_count == 1
+    assert first_case.detection_valid_rate == pytest.approx(0.5)
+    assert first_case.detection_invalid_entity_count == 3
+    assert first_case.relational_consistency_judged_record_count == 2
+    assert first_case.relational_consistency_valid_rate == pytest.approx(0.5)
+    assert first_case.attribute_fidelity_judged_record_count == 1
+    assert first_case.attribute_fidelity_valid_rate == pytest.approx(1.0)
+
+    second_case = cases["bio__substitute__r001"]
+    assert second_case.type_fidelity_judged_record_count == 1
+    assert second_case.type_fidelity_valid_record_count == 0
+    assert second_case.type_fidelity_valid_rate == pytest.approx(0.0)
+    assert second_case.type_fidelity_invalid_replacement_count == 4
+
+    group = result.groups[0]
+    assert group.sum_detection_judged_record_count == 3
+    assert group.sum_detection_valid_record_count == 2
+    assert group.micro_detection_valid_rate == pytest.approx(2 / 3)
+    assert group.sum_detection_invalid_entity_count == 4
+    assert group.sum_type_fidelity_judged_record_count == 3
+    assert group.sum_type_fidelity_valid_record_count == 2
+    assert group.micro_type_fidelity_valid_rate == pytest.approx(2 / 3)
+    assert group.sum_type_fidelity_invalid_replacement_count == 4
+    assert group.sum_attribute_fidelity_judged_record_count == 2
+    assert group.sum_attribute_fidelity_valid_record_count == 1
+    assert group.micro_attribute_fidelity_valid_rate == pytest.approx(0.5)
+    assert group.sum_attribute_fidelity_invalid_entity_count == 5
+
+
 def test_analyze_benchmark_output_accepts_detection_artifact_override(tmp_path: Path) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_artifact_override",

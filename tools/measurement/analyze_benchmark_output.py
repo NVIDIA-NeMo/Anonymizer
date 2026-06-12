@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -43,6 +44,25 @@ _SIGNATURE_DETAIL_FIELDS = {
     "end_position",
     "value_length",
 }
+
+
+@dataclass(frozen=True)
+class _EvaluationRollup:
+    prefix: str
+    valid_column: str
+    invalid_count_column: str
+
+
+_EVALUATION_ROLLUPS = (
+    _EvaluationRollup("detection", "detection_valid", "detection_invalid_entity_count"),
+    _EvaluationRollup("type_fidelity", "type_fidelity_valid", "type_fidelity_invalid_replacement_count"),
+    _EvaluationRollup(
+        "relational_consistency",
+        "relational_consistency_valid",
+        "relational_consistency_invalid_relation_count",
+    ),
+    _EvaluationRollup("attribute_fidelity", "attribute_fidelity_valid", "attribute_fidelity_invalid_entity_count"),
+)
 
 
 class CaseAnalysisRow(BaseModel):
@@ -125,6 +145,22 @@ class CaseAnalysisRow(BaseModel):
     original_value_leak_count: float | None = None
     original_value_leak_record_count: int = 0
     original_value_leak_label_counts: dict[str, int] = Field(default_factory=dict)
+    detection_judged_record_count: int = 0
+    detection_valid_record_count: int = 0
+    detection_valid_rate: float | None = None
+    detection_invalid_entity_count: int = 0
+    type_fidelity_judged_record_count: int = 0
+    type_fidelity_valid_record_count: int = 0
+    type_fidelity_valid_rate: float | None = None
+    type_fidelity_invalid_replacement_count: int = 0
+    relational_consistency_judged_record_count: int = 0
+    relational_consistency_valid_record_count: int = 0
+    relational_consistency_valid_rate: float | None = None
+    relational_consistency_invalid_relation_count: int = 0
+    attribute_fidelity_judged_record_count: int = 0
+    attribute_fidelity_valid_record_count: int = 0
+    attribute_fidelity_valid_rate: float | None = None
+    attribute_fidelity_invalid_entity_count: int = 0
     validation_max_entities_per_call: int | None = None
     detection_artifact_rows: int = 0
     seed_entity_count: float | None = None
@@ -217,6 +253,22 @@ class GroupAnalysisRow(BaseModel):
     sum_original_value_leak_count: float | None = None
     leaking_case_count: int = 0
     median_original_value_leak_count: float | None = None
+    sum_detection_judged_record_count: int = 0
+    sum_detection_valid_record_count: int = 0
+    micro_detection_valid_rate: float | None = None
+    sum_detection_invalid_entity_count: int = 0
+    sum_type_fidelity_judged_record_count: int = 0
+    sum_type_fidelity_valid_record_count: int = 0
+    micro_type_fidelity_valid_rate: float | None = None
+    sum_type_fidelity_invalid_replacement_count: int = 0
+    sum_relational_consistency_judged_record_count: int = 0
+    sum_relational_consistency_valid_record_count: int = 0
+    micro_relational_consistency_valid_rate: float | None = None
+    sum_relational_consistency_invalid_relation_count: int = 0
+    sum_attribute_fidelity_judged_record_count: int = 0
+    sum_attribute_fidelity_valid_record_count: int = 0
+    micro_attribute_fidelity_valid_rate: float | None = None
+    sum_attribute_fidelity_invalid_entity_count: int = 0
     median_seed_entity_count: float | None = None
     median_seed_validation_candidate_count: float | None = None
     median_estimated_seed_validation_chunk_count: float | None = None
@@ -404,6 +456,7 @@ def _build_case_row(
     artifact_rows = _rows_for_case(artifacts, case_id)
     trace_rows = _rows_for_case(traces, case_id)
     record_rows = _records_of_type(measurement_rows, "record")
+    evaluation_rows = _records_of_type(measurement_rows, "evaluation_record")
     ndd_rows = _records_of_type(measurement_rows, "ndd_workflow")
     model_rows = _model_workflow_rows(measurement_rows)
     stage_rows = _records_of_type(measurement_rows, "stage")
@@ -493,6 +546,7 @@ def _build_case_row(
         original_value_leak_count=_sum_or_none(record_rows, "original_value_leak_count"),
         original_value_leak_record_count=_positive_count(record_rows, "original_value_leak_count"),
         original_value_leak_label_counts=_sum_prefixed_ints(record_rows, "original_value_leak_label_counts."),
+        **_case_evaluation_metrics(evaluation_rows),
         validation_max_entities_per_call=validation_max_entities_per_call,
         **_case_artifact_metrics(
             artifact_rows,
@@ -688,6 +742,43 @@ def _error_status_count(rows: pd.DataFrame) -> int:
         return 0
     statuses = rows["status"].astype(str).str.lower()
     return int(statuses.isin({"error", "failed"}).sum())
+
+
+def _case_evaluation_metrics(evaluation_rows: pd.DataFrame) -> dict[str, int | float | None]:
+    metrics: dict[str, int | float | None] = {}
+    for rollup in _EVALUATION_ROLLUPS:
+        judged_count, valid_count = _evaluation_judged_and_valid_counts(evaluation_rows, rollup.valid_column)
+        metrics[f"{rollup.prefix}_judged_record_count"] = judged_count
+        metrics[f"{rollup.prefix}_valid_record_count"] = valid_count
+        metrics[f"{rollup.prefix}_valid_rate"] = _safe_ratio(valid_count, judged_count)
+        metrics[rollup.invalid_count_column] = _sum_int_or_zero(evaluation_rows, rollup.invalid_count_column)
+    return metrics
+
+
+def _evaluation_judged_and_valid_counts(evaluation_rows: pd.DataFrame, valid_column: str) -> tuple[int, int]:
+    if valid_column not in evaluation_rows.columns:
+        return 0, 0
+    verdicts = [_optional_bool(value) for value in evaluation_rows[valid_column].tolist()]
+    judged_count = sum(verdict is not None for verdict in verdicts)
+    valid_count = sum(verdict is True for verdict in verdicts)
+    return judged_count, valid_count
+
+
+def _optional_bool(value: object) -> bool | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+        return None
+    if isinstance(value, int | float):
+        return bool(value)
+    return None
 
 
 def _case_artifact_metrics(
@@ -1187,6 +1278,7 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
     relaxed_recall = _safe_ratio(relaxed_gt_found, ground_truth_entity_count)
     label_compatible_precision = _safe_ratio(label_compatible_detected_tp, final_entity_count)
     label_compatible_recall = _safe_ratio(label_compatible_gt_found, ground_truth_entity_count)
+    evaluation_metrics = _group_evaluation_metrics(group)
     return GroupAnalysisRow(
         workload_id=_none_if_nan(workload_id),
         workload_category=_none_if_nan(workload_category),
@@ -1287,6 +1379,7 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
         sum_original_value_leak_count=_sum_or_none(group, "original_value_leak_count"),
         leaking_case_count=_positive_count(group, "original_value_leak_count"),
         median_original_value_leak_count=_median_or_none(group, "original_value_leak_count"),
+        **evaluation_metrics,
         median_seed_entity_count=_median_or_none(group, "seed_entity_count"),
         median_seed_validation_candidate_count=_median_or_none(group, "seed_validation_candidate_count"),
         median_estimated_seed_validation_chunk_count=_median_or_none(group, "estimated_seed_validation_chunk_count"),
@@ -1315,6 +1408,18 @@ def _sum_bool_or_zero(dataframe: pd.DataFrame, column: str) -> int:
     if column not in dataframe.columns:
         return 0
     return int(dataframe[column].fillna(False).astype(bool).sum())
+
+
+def _group_evaluation_metrics(group: pd.DataFrame) -> dict[str, int | float | None]:
+    metrics: dict[str, int | float | None] = {}
+    for rollup in _EVALUATION_ROLLUPS:
+        judged_count = _sum_int_or_zero(group, f"{rollup.prefix}_judged_record_count")
+        valid_count = _sum_int_or_zero(group, f"{rollup.prefix}_valid_record_count")
+        metrics[f"sum_{rollup.prefix}_judged_record_count"] = judged_count
+        metrics[f"sum_{rollup.prefix}_valid_record_count"] = valid_count
+        metrics[f"micro_{rollup.prefix}_valid_rate"] = _safe_ratio(valid_count, judged_count)
+        metrics[f"sum_{rollup.invalid_count_column}"] = _sum_int_or_zero(group, rollup.invalid_count_column)
+    return metrics
 
 
 def _sum_int_or_none(dataframe: pd.DataFrame, column: str) -> int | None:
