@@ -45,6 +45,10 @@
          <lastmod>2026-06-12</lastmod>
     </url>
     <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/development/observability/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/</loc>
          <lastmod>2026-06-12</lastmod>
     </url>
@@ -142,6 +146,58 @@
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/cli/main/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/collector/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/config/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/constants/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/recorders/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/session/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/sinks/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/entities/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/llm_calls/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/replacements/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/rewrite/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/records/model/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/records/row/</loc>
+         <lastmod>2026-06-12</lastmod>
+    </url>
+    <url>
+         <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/records/run/</loc>
          <lastmod>2026-06-12</lastmod>
     </url>
     <url>
