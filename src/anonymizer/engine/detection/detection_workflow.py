@@ -117,6 +117,7 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
+            validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             data_summary=data_summary,
         )
@@ -138,6 +139,7 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
@@ -245,6 +247,7 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
@@ -259,6 +262,7 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
+            validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             data_summary=data_summary,
         )
@@ -278,6 +282,7 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
@@ -298,6 +303,7 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
+            validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             data_summary=data_summary,
         )
@@ -362,6 +368,7 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
+        validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
@@ -391,6 +398,7 @@ class EntityDetectionWorkflow:
                 gliner_detection_threshold=gliner_detection_threshold,
                 validation_max_entities_per_call=validation_max_entities_per_call,
                 validation_excerpt_window_chars=validation_excerpt_window_chars,
+                validation_single_chunk_full_text=validation_single_chunk_full_text,
                 entity_labels=entity_labels,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
