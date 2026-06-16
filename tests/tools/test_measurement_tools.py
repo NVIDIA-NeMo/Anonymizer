@@ -9,7 +9,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -1129,3 +1129,1027 @@ def test_benchmark_optional_evaluation_records_sanitized_judge_metrics(tmp_path:
     assert forbidden_fields.isdisjoint(exported.columns)
     for raw_value in dangerous_values:
         assert raw_value not in exported_text
+
+
+def test_wandb_settings_default_disabled() -> None:
+    tool = load_tool("measurement_wandb_settings", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+
+    settings = tool.WandbSettings()
+
+    assert settings.wandb_mode == tool.WandbMode.disabled
+    assert settings.enabled is False
+    assert settings.wandb_log_tables is False
+
+
+def test_wandb_settings_accepts_field_name_overrides() -> None:
+    tool = load_tool("measurement_wandb_settings_fields", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+
+    settings = tool.WandbSettings(
+        wandb_mode=tool.WandbMode.online,
+        wandb_entity="field-entity",
+        wandb_project="field-project",
+        wandb_group="field-group",
+        wandb_job_type="field-job",
+        wandb_run_name="field-run",
+        wandb_tags="alpha, beta",
+        wandb_log_tables=True,
+    )
+
+    assert settings.wandb_mode == tool.WandbMode.online
+    assert settings.wandb_entity == "field-entity"
+    assert settings.wandb_project == "field-project"
+    assert settings.wandb_group == "field-group"
+    assert settings.wandb_job_type == "field-job"
+    assert settings.wandb_run_name == "field-run"
+    assert settings.effective_wandb_tags == ["alpha", "beta"]
+    assert settings.wandb_log_tables is True
+
+
+def test_resolve_wandb_settings_honors_env_when_cli_flags_are_omitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WANDB_MODE", "online")
+    monkeypatch.setenv("WANDB_ENTITY", "global-entity")
+    monkeypatch.setenv("WANDB_PROJECT", "global-project")
+    monkeypatch.setenv("WANDB_GROUP", "global-group")
+    monkeypatch.setenv("WANDB_JOB_TYPE", "global-job")
+    monkeypatch.setenv("WANDB_NAME", "global-run")
+    monkeypatch.setenv("WANDB_TAGS", "global")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_MODE", "offline")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_ENTITY", "env-entity")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_PROJECT", "env-project")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_GROUP", "env-group")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_JOB_TYPE", "env-job")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_RUN_NAME", "env-run")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_TAGS", "env-a, env-b")
+    monkeypatch.setenv("ANONYMIZER_MEASUREMENT_WANDB_LOG_TABLES", "true")
+    tool = load_tool("measurement_wandb_env_settings", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+
+    settings = tool.resolve_wandb_settings()
+    overridden = tool.resolve_wandb_settings(
+        wandb_mode=tool.WandbMode.disabled,
+        wandb_entity="cli-entity",
+        wandb_group="cli-group",
+        wandb_job_type="cli-job",
+        wandb_run_name="cli-run",
+        wandb_tags="cli-a",
+        wandb_log_tables=False,
+    )
+
+    assert settings.wandb_mode == tool.WandbMode.offline
+    assert settings.wandb_entity == "env-entity"
+    assert settings.wandb_project == "env-project"
+    assert settings.wandb_group == "env-group"
+    assert settings.wandb_job_type == "env-job"
+    assert settings.wandb_run_name == "env-run"
+    assert settings.effective_wandb_tags == ["env-a", "env-b"]
+    assert settings.wandb_log_tables is True
+    assert overridden.wandb_mode == tool.WandbMode.disabled
+    assert overridden.wandb_entity == "cli-entity"
+    assert overridden.wandb_project == "env-project"
+    assert overridden.wandb_group == "cli-group"
+    assert overridden.wandb_job_type == "cli-job"
+    assert overridden.wandb_run_name == "cli-run"
+    assert overridden.effective_wandb_tags == ["cli-a"]
+    assert overridden.wandb_log_tables is False
+
+
+def test_wandb_require_wandb_reports_missing_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    tool = load_tool("measurement_wandb_require", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "wandb":
+            raise ImportError("No module named 'wandb'")
+        return original_import(name, *args, **kwargs)
+
+    original_import = __import__
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    with pytest.raises(ImportError, match="wandb package is not installed"):
+        tool.require_wandb()
+
+
+def test_wandb_report_run_path_accepts_path_and_url() -> None:
+    tool = load_tool("measurement_wandb_report_path", REPO_ROOT / "tools/measurement/create_wandb_report.py")
+
+    path = tool.parse_wandb_run_path("entity/project/abc123")
+    url = tool.parse_wandb_run_path("https://wandb.ai/entity/project/runs/abc123")
+
+    assert path.entity == "entity"
+    assert path.project == "project"
+    assert path.run_id == "abc123"
+    assert path.path == "entity/project/abc123"
+    assert url == path
+
+
+def test_wandb_report_project_path_accepts_entity_project() -> None:
+    tool = load_tool("measurement_wandb_report_project_path", REPO_ROOT / "tools/measurement/create_wandb_report.py")
+
+    project = tool.parse_wandb_project_path("entity/project")
+
+    assert project.entity == "entity"
+    assert project.project == "project"
+    assert project.path == "entity/project"
+
+
+def test_wandb_report_sweep_columns_include_benchmark_metric_groups() -> None:
+    tool = load_tool("measurement_wandb_report_sweep_columns", REPO_ROOT / "tools/measurement/create_wandb_report.py")
+
+    columns = tool._sweep_visible_columns()
+
+    expected = {
+        "config:sweep_id",
+        "config:sweep_arm_id",
+        "summary:benchmark/case_elapsed_sec_sum",
+        "summary:measurement/ndd_workflow/elapsed_sec",
+        "summary:measurement/ndd_workflow/observed_input_tokens",
+        "summary:measurement/ndd_workflow/observed_output_tokens",
+        "summary:measurement/ndd_workflow/observed_tokens_per_sec_mean",
+        "summary:measurement/ndd_workflow/observed_failed_request_rate_mean",
+        "summary:measurement/record/replacement_duplicate_value_count",
+        "summary:measurement/record/replacement_missing_final_value_count",
+        "summary:measurement/stage/input_rows_per_sec_mean",
+    }
+    assert expected.issubset(set(columns))
+
+
+def test_wandb_report_sweep_panels_cover_metric_sections() -> None:
+    tool = load_tool("measurement_wandb_report_sweep_panels", REPO_ROOT / "tools/measurement/create_wandb_report.py")
+
+    class FakePanel:
+        def __init__(self, **kwargs: Any) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeWr:
+        BarPlot = FakePanel
+        MediaBrowser = FakePanel
+
+    panels = tool._sweep_panels(FakeWr)
+    titles = {panel.title for panel in panels}
+    metrics = {metric for panel in panels for metric in getattr(panel, "metrics", [])}
+    media_keys = {key for panel in panels for key in getattr(panel, "media_keys", [])}
+
+    assert {
+        "Case Health",
+        "Case Latency",
+        "NDD Row Flow",
+        "NDD Request Health",
+        "NDD Token Usage",
+        "NDD Throughput",
+        "Record Privacy",
+        "Replacement Quality",
+        "Stage Throughput",
+        "Sanitized Measurement Tables",
+    }.issubset(titles)
+    assert "measurement/ndd_workflow/observed_tokens_per_successful_request" in metrics
+    assert "measurement/record/replacement_synthetic_original_collision_value_count" in metrics
+    assert "measurement_table/record" in media_keys
+
+
+def test_wandb_report_markdown_uses_sanitized_fields() -> None:
+    tool = load_tool("measurement_wandb_report_markdown", REPO_ROOT / "tools/measurement/create_wandb_report.py")
+    run = SimpleNamespace(name="run-a", url="https://wandb.ai/entity/project/runs/run-a")
+    summary = {
+        "benchmark/case_completed": 2,
+        "benchmark/case_total": 2,
+        "benchmark/case_errored": 0,
+        "benchmark/case_success_rate": 1.0,
+        "benchmark/case_elapsed_sec_mean": 12.34,
+        "measurement/record/final_entity_count": 10,
+        "measurement/record/original_value_leak_count": 0,
+        "measurement/ndd_workflow/observed_total_requests": 4,
+        "measurement/ndd_workflow/observed_failed_requests": 0,
+        "measurement/ndd_workflow/observed_total_tokens": 100,
+    }
+    config = {
+        "benchmark": {"suite_id": "suite", "suite_file_hash": "hash"},
+        "runtime": {"anonymizer_version": "1", "datadesigner_version": "2", "wandb_version": "3"},
+        "git": {"branch": "feature", "commit": "abc", "dirty": True},
+        "workloads": [
+            {
+                "id": "workload",
+                "source_kind": "file",
+                "source_suffix": ".csv",
+                "source_path": "/secret/path.csv",
+                "text_column": "text",
+                "row_limit": 5,
+            }
+        ],
+        "configs": [
+            {
+                "id": "redact",
+                "detect": {"entity_label_count": 4, "gliner_threshold": 0.3},
+                "replace": {"strategy": "redact"},
+                "model_providers": "sk-secret-token",
+            }
+        ],
+    }
+
+    markdown = tool.build_report_markdown(run, summary=summary, config=config)
+
+    assert "2/2 cases completed" in markdown
+    assert "Final entities" in markdown
+    assert "source_suffix=`.csv`" in markdown
+    assert "/secret/path.csv" not in markdown
+    assert "sk-secret-token" not in markdown
+
+
+def test_sweep_expands_parameter_grid_and_materializes_arm_suite(tmp_path: Path) -> None:
+    tool = load_tool("measurement_sweep_expand", REPO_ROOT / "tools/measurement/sweep_benchmarks.py")
+    base_suite = tmp_path / "base.yaml"
+    base_suite.write_text(
+        """
+suite_id: base-suite
+model_configs: ./models.yaml
+model_providers: ./providers.yaml
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+  - id: hash
+    detect:
+      entity_labels: [person]
+    replace:
+      strategy: hash
+      digest_length: 12
+matrix:
+  - workload: input
+    config: redact
+  - workload: input
+    config: hash
+""",
+        encoding="utf-8",
+    )
+    sweep_path = tmp_path / "sweep.yaml"
+    sweep_path.write_text(
+        f"""
+sweep_id: threshold-digest
+base_suite: {base_suite.name}
+parameters:
+  configs.*.detect.gliner_threshold: [0.2, 0.4]
+  configs.hash.replace.digest_length: [8]
+""",
+        encoding="utf-8",
+    )
+
+    spec = tool.load_sweep_spec(sweep_path)
+    arms = tool.expand_sweep_arms(spec)
+    arm_path = tool.materialize_arm_suite(spec, arms[0], output_root=tmp_path / "out", overwrite=False)
+    materialized = yaml.safe_load(arm_path.read_text(encoding="utf-8"))
+
+    assert [arm.arm_id for arm in arms] == ["arm-000", "arm-001"]
+    assert arms[0].parameters == {
+        "configs.*.detect.gliner_threshold": 0.2,
+        "configs.hash.replace.digest_length": 8,
+    }
+    assert materialized["run_tags"]["sweep_id"] == "threshold-digest"
+    assert materialized["run_tags"]["sweep_arm_id"] == "arm-000"
+    assert materialized["run_tags"]["sweep_param_configs_all_detect_gliner_threshold"] == 0.2
+    assert materialized["model_configs"] == str(tmp_path / "models.yaml")
+    assert materialized["model_providers"] == str(tmp_path / "providers.yaml")
+    assert materialized["workloads"][0]["source"] == str(tmp_path / "input.csv")
+    assert materialized["configs"][0]["detect"]["gliner_threshold"] == 0.2
+    assert materialized["configs"][1]["detect"]["gliner_threshold"] == 0.2
+    assert materialized["configs"][1]["replace"]["digest_length"] == 8
+
+
+def test_sweep_run_uses_one_wandb_run_per_arm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tool = load_tool("measurement_sweep_run", REPO_ROOT / "tools/measurement/sweep_benchmarks.py")
+    base_suite = tmp_path / "base.yaml"
+    base_suite.write_text(
+        """
+suite_id: base-suite
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    sweep_path = tmp_path / "sweep.yaml"
+    sweep_path.write_text(
+        f"""
+sweep_id: threshold
+base_suite: {base_suite.name}
+parameters:
+  configs.*.detect.gliner_threshold: [0.2, 0.4]
+""",
+        encoding="utf-8",
+    )
+    calls: list[tuple[Path, Path, Any]] = []
+
+    class FakeCase:
+        status = tool.run_benchmarks.CaseStatus.completed
+
+    class FakeResult:
+        suite_id = "base-suite"
+        cases = [FakeCase()]
+
+    def fake_run_or_plan(spec_path: Path, **kwargs: Any) -> FakeResult:
+        calls.append((spec_path, kwargs["output"], kwargs["wandb_settings"]))
+        return FakeResult()
+
+    monkeypatch.setattr(tool.run_benchmarks, "run_or_plan", fake_run_or_plan)
+
+    result = tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=tool.run_benchmarks.resolve_wandb_settings(
+            wandb_mode=tool.run_benchmarks.WandbMode.offline,
+            wandb_project="project",
+            wandb_tags="base",
+        ),
+        create_report=False,
+    )
+
+    assert result.completed_arms == 2
+    assert len(calls) == 2
+    assert calls[0][1] == tmp_path / "runs" / "arm-000" / "output"
+    assert calls[0][2].wandb_group == "threshold"
+    assert calls[0][2].wandb_run_name == "threshold-arm-000"
+    assert calls[0][2].effective_wandb_tags == ["base", "sweep", "sweep:threshold", "arm:arm-000"]
+    assert result.arms[0].wandb_run_name == "threshold-arm-000"
+
+
+def test_sweep_fail_fast_stops_after_first_errored_arm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tool = load_tool("measurement_sweep_fail_fast", REPO_ROOT / "tools/measurement/sweep_benchmarks.py")
+    base_suite = tmp_path / "base.yaml"
+    base_suite.write_text(
+        """
+suite_id: base-suite
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    sweep_path = tmp_path / "sweep.yaml"
+    sweep_path.write_text(
+        f"""
+sweep_id: threshold
+base_suite: {base_suite.name}
+parameters:
+  configs.*.detect.gliner_threshold: [0.2, 0.4]
+""",
+        encoding="utf-8",
+    )
+    calls: list[Path] = []
+
+    class FakeCase:
+        status = tool.run_benchmarks.CaseStatus.error
+
+    class FakeResult:
+        suite_id = "base-suite"
+        cases = [FakeCase()]
+
+    def fake_run_or_plan(spec_path: Path, **_kwargs: Any) -> FakeResult:
+        calls.append(spec_path)
+        return FakeResult()
+
+    monkeypatch.setattr(tool.run_benchmarks, "run_or_plan", fake_run_or_plan)
+
+    result = tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=True,
+        wandb_settings=tool.run_benchmarks.resolve_wandb_settings(),
+        create_report=False,
+    )
+
+    assert len(calls) == 1
+    assert len(result.arms) == 1
+    assert result.errored_arms == 1
+
+
+def test_build_wandb_metadata_projects_sweep_run_tags(tmp_path: Path) -> None:
+    tool = load_tool("measurement_wandb_sweep_metadata", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    spec = _minimal_benchmark_spec(
+        tool,
+        run_tags={
+            "sweep_id": "threshold",
+            "sweep_arm_id": "arm-000",
+            "sweep_param_configs_all_detect_gliner_threshold": 0.2,
+        },
+    )
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text("suite_id: suite\n", encoding="utf-8")
+
+    metadata = tool.build_wandb_metadata(
+        spec,
+        spec_path=spec_path,
+        output_dir=tmp_path / "out",
+        export=True,
+        fail_fast=False,
+        dd_trace=tool.DDTraceMode.none,
+        dd_task_trace=False,
+    )
+
+    assert metadata["sweep_id"] == "threshold"
+    assert metadata["sweep_arm_id"] == "arm-000"
+    assert metadata["sweep"]["id"] == "threshold"
+    assert metadata["sweep"]["arm_id"] == "arm-000"
+    assert metadata["sweep_params"]["configs_all_detect_gliner_threshold"] == 0.2
+    assert metadata["sweep_param_configs_all_detect_gliner_threshold"] == 0.2
+
+
+def test_wandb_extract_scalar_metrics_excludes_sensitive_fields() -> None:
+    load_tool("measurement_wandb_logging_prereq", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    logging_tool = load_tool(
+        "measurement_wandb_logging_sensitive",
+        REPO_ROOT / "tools/measurement/measurement_tools/wandb_logging.py",
+    )
+    dangerous_values = [
+        "alice@example.com",
+        "sk-secret-token",
+        "raw judge prompt",
+    ]
+    record = {
+        "record_type": "record",
+        "run_id": "case-a",
+        "text": "Alice works at Acme",
+        "text_replaced": "Avery works at Acme",
+        "final_entities": [{"value": "alice@example.com"}],
+        "run_tags.api_key": "sk-secret-token",
+        "run_tags.text": "Alice",
+        "measurement_path": "/tmp/private.jsonl",
+        "notes": "raw judge prompt",
+        "status": "completed",
+        "final_entity_count": 2,
+        "utility_score": 0.9,
+        "mode": "replace",
+    }
+
+    metrics = logging_tool.extract_scalar_metrics(record)
+    serialized = json.dumps(metrics)
+
+    assert metrics["measurement/record/final_entity_count"] == 2
+    assert metrics["measurement/record/utility_score"] == 0.9
+    assert metrics["measurement/record/status"] == "completed"
+    assert "text" not in metrics
+    assert "measurement/record/measurement_path" not in metrics
+    assert "measurement/record/run_tags.api_key" not in metrics
+    assert "measurement/record/run_tags.text" not in metrics
+    assert "measurement/record/notes" not in metrics
+    for raw_value in dangerous_values:
+        assert raw_value not in serialized
+
+
+def test_wandb_table_logging_drops_sensitive_dotted_columns() -> None:
+    load_tool("measurement_wandb_table_prereq", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    logging_tool = load_tool(
+        "measurement_wandb_table_columns",
+        REPO_ROOT / "tools/measurement/measurement_tools/wandb_logging.py",
+    )
+
+    table = pd.DataFrame(
+        {
+            "final_entity_count": [2],
+            "run_tags.api_key": ["sk-secret-token"],
+            "run_tags.api-key": ["sk-secret-token"],
+            "run_tags.access_token": ["sk-secret-token"],
+            "run_tags.secret_tag": ["raw secret"],
+            "run_tags.text": ["Alice"],
+            "measurement_path": ["/tmp/private.jsonl"],
+        }
+    )
+
+    sanitized = logging_tool._drop_blocked_columns(table)
+
+    assert list(sanitized.columns) == ["final_entity_count"]
+
+
+def test_wandb_extract_scalar_metrics_drops_nan_values() -> None:
+    load_tool("measurement_wandb_nan_prereq", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    logging_tool = load_tool(
+        "measurement_wandb_nan_values",
+        REPO_ROOT / "tools/measurement/measurement_tools/wandb_logging.py",
+    )
+
+    metrics = logging_tool.extract_scalar_metrics(
+        {
+            "record_type": "record",
+            "final_entity_count": 1,
+            "utility_score": float("nan"),
+            "weighted_leakage_rate": float("nan"),
+        }
+    )
+
+    assert metrics == {"measurement/record/final_entity_count": 1}
+
+
+def test_wandb_aggregates_scores_and_rates_as_means() -> None:
+    load_tool("measurement_wandb_aggregate_prereq", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    logging_tool = load_tool(
+        "measurement_wandb_aggregate_scores",
+        REPO_ROOT / "tools/measurement/measurement_tools/wandb_logging.py",
+    )
+
+    aggregated = logging_tool.aggregate_measurement_scalars(
+        [
+            {
+                "record_type": "record",
+                "final_entity_count": 2,
+                "utility_score": 0.8,
+                "weighted_leakage_rate": 0.1,
+                "input_rows_per_sec": 10.0,
+            },
+            {
+                "record_type": "record",
+                "final_entity_count": 1,
+                "utility_score": 1.0,
+                "weighted_leakage_rate": 0.3,
+                "input_rows_per_sec": 20.0,
+            },
+        ]
+    )
+
+    assert aggregated["measurement/record/final_entity_count"] == 3.0
+    assert aggregated["measurement/record/utility_score_mean"] == pytest.approx(0.9)
+    assert aggregated["measurement/record/weighted_leakage_rate_mean"] == pytest.approx(0.2)
+    assert aggregated["measurement/record/input_rows_per_sec_mean"] == pytest.approx(15.0)
+    assert "measurement/record/utility_score" not in aggregated
+    assert "measurement/record/weighted_leakage_rate" not in aggregated
+    assert "measurement/record/input_rows_per_sec" not in aggregated
+
+
+def test_wandb_run_config_filters_sensitive_run_tags() -> None:
+    tool = load_tool("measurement_wandb_setup_tags", REPO_ROOT / "tools/measurement/measurement_tools/wandb_setup.py")
+
+    tags = tool._scalar_run_tags(
+        {
+            "commit_sha": "abc123",
+            "attempt": 2,
+            "api_key": "sk-secret-token",
+            "secret_tag": "raw secret",
+            "dashboard_url": "https://example.invalid/run",
+            "nested": {"not": "scalar"},
+        }
+    )
+
+    assert tags == {"commit_sha": "abc123", "attempt": 2}
+
+
+def test_initialize_wandb_run_adds_routing_and_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_wandb_setup_metadata", REPO_ROOT / "tools/measurement/measurement_tools/wandb_setup.py"
+    )
+    init_kwargs: dict[str, Any] = {}
+    config_updates: list[dict[str, Any]] = []
+    defined_metrics: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    class FakeRun:
+        id = "fake-run-id"
+
+    class FakeConfig:
+        @staticmethod
+        def update(payload: dict[str, Any], *, allow_val_change: bool) -> None:
+            assert allow_val_change is True
+            config_updates.append(payload)
+
+    class FakeWandb:
+        run = None
+        config = FakeConfig()
+
+        @staticmethod
+        def Settings(**kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+        @classmethod
+        def init(cls, **kwargs: Any) -> FakeRun:
+            init_kwargs.update(kwargs)
+            cls.run = FakeRun()
+            return cls.run
+
+        @staticmethod
+        def define_metric(*args: Any, **kwargs: Any) -> None:
+            defined_metrics.append((args, kwargs))
+
+    monkeypatch.setattr(tool, "require_wandb", lambda: FakeWandb)
+
+    created = tool.initialize_benchmark_wandb_run(
+        tool.WandbSettings(
+            wandb_mode=tool.WandbMode.offline,
+            wandb_entity="entity-a",
+            wandb_project="project-a",
+            wandb_group="group-a",
+            wandb_job_type="job-a",
+            wandb_tags="tag-a,tag-b",
+        ),
+        suite_id="suite-a",
+        output_dir=tmp_path,
+        run_tags={"commit_sha": "abc123", "secret_tag": "raw secret"},
+        metadata={"git": {"commit": "abc123456789", "branch": "main", "dirty": False}, "configs": [{"id": "redact"}]},
+    )
+
+    assert created is True
+    assert init_kwargs["entity"] == "entity-a"
+    assert init_kwargs["project"] == "project-a"
+    assert init_kwargs["group"] == "group-a"
+    assert init_kwargs["job_type"] == "job-a"
+    assert init_kwargs["name"] == "suite-a main@abc1234"
+    assert init_kwargs["tags"] == ["tag-a", "tag-b", "suite:suite-a", "branch:main", "clean"]
+    assert defined_metrics == [
+        (("benchmark/*",), {"summary": "last"}),
+        (("measurement/*",), {"summary": "last"}),
+    ]
+    assert config_updates == [
+        {
+            "suite_id": "suite-a",
+            "wandb_mode": "offline",
+            "wandb_log_tables": False,
+            "git": {"commit": "abc123456789", "branch": "main", "dirty": False},
+            "configs": [{"id": "redact"}],
+            "run_tags": {"commit_sha": "abc123"},
+        }
+    ]
+
+
+def test_initialize_wandb_run_uses_explicit_run_name(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    tool = load_tool(
+        "measurement_wandb_setup_explicit_name", REPO_ROOT / "tools/measurement/measurement_tools/wandb_setup.py"
+    )
+    init_kwargs: dict[str, Any] = {}
+
+    class FakeRun:
+        id = "fake-run-id"
+
+    class FakeConfig:
+        @staticmethod
+        def update(payload: dict[str, Any], *, allow_val_change: bool) -> None:
+            pass
+
+    class FakeWandb:
+        run = None
+        config = FakeConfig()
+
+        @staticmethod
+        def Settings(**kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+        @classmethod
+        def init(cls, **kwargs: Any) -> FakeRun:
+            init_kwargs.update(kwargs)
+            cls.run = FakeRun()
+            return cls.run
+
+        @staticmethod
+        def define_metric(*args: Any, **kwargs: Any) -> None:
+            pass
+
+    monkeypatch.setattr(tool, "require_wandb", lambda: FakeWandb)
+
+    tool.initialize_benchmark_wandb_run(
+        tool.WandbSettings(wandb_mode=tool.WandbMode.offline, wandb_run_name="operator-name"),
+        suite_id="suite-a",
+        output_dir=tmp_path,
+        metadata={"git": {"commit": "abc123456789", "branch": "main", "dirty": False}},
+    )
+
+    assert init_kwargs["name"] == "operator-name"
+
+
+def test_build_wandb_metadata_includes_sanitized_configs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    tool = load_tool("measurement_wandb_metadata_builder", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    spec = tool.BenchmarkSpec(
+        suite_id="suite-a",
+        model_configs="models.yaml",
+        model_providers="providers.yaml",
+        artifact_path="artifacts",
+        run_tags={"ci_job": "123", "api_key": "sk-secret-token"},
+        case_retries=2,
+        case_retry_backoff_sec=3.5,
+        workloads=[
+            tool.WorkloadSpec(
+                id="workload-a",
+                source="/private/path/input.csv",
+                text_column="body",
+                id_column="id",
+                data_summary="contains Alice and raw secret",
+                row_limit=5,
+                row_offset=10,
+            )
+        ],
+        configs=[
+            tool.ConfigSpec(
+                id="hash-a",
+                detect={"entity_labels": ["person", "api_key"], "gliner_threshold": 0.4},
+                replace=tool.ReplaceSpec(strategy=tool.ReplaceKind.hash, digest_length=12, instructions="raw secret"),
+                evaluate=True,
+            ),
+            tool.ConfigSpec(
+                id="rewrite-a",
+                rewrite=tool.RewriteSpec(
+                    protect="protect Alice",
+                    preserve="preserve raw secret",
+                    instructions="raw prompt",
+                    risk_tolerance=tool.RiskTolerance.minimal,
+                    max_repair_iterations=1,
+                    strict_entity_protection=True,
+                ),
+            ),
+        ],
+        matrix=[tool.MatrixEntry(workload="workload-a", config="hash-a", repetitions=2)],
+    )
+    monkeypatch.setattr(tool, "_git_metadata", lambda _cwd: {"commit": "abc123", "branch": "main", "dirty": False})
+    monkeypatch.setattr(
+        tool,
+        "_package_versions",
+        lambda: {"anonymizer_version": "1.2.3", "datadesigner_version": "4.5.6", "wandb_version": "7.8.9"},
+    )
+
+    metadata = tool.build_wandb_metadata(
+        spec,
+        spec_path=tmp_path / "suite.yaml",
+        output_dir=tmp_path / "output",
+        export=True,
+        fail_fast=True,
+        dd_trace=tool.DDTraceMode.none,
+        dd_task_trace=False,
+    )
+    serialized = json.dumps(metadata, sort_keys=True)
+
+    assert metadata["benchmark"]["suite_id"] == "suite-a"
+    assert metadata["benchmark"]["case_count"] == 2
+    assert metadata["git"] == {"commit": "abc123", "branch": "main", "dirty": False}
+    assert metadata["runtime"]["anonymizer_version"] == "1.2.3"
+    assert metadata["workloads"] == [
+        {
+            "id": "workload-a",
+            "source": {
+                "kind": "local_file",
+                "suffix": ".csv",
+                "source_hash": metadata["workloads"][0]["source"]["source_hash"],
+            },
+            "text_column": "body",
+            "has_id_column": True,
+            "has_data_summary": True,
+            "row_limit": 5,
+            "row_offset": 10,
+        }
+    ]
+    assert metadata["configs"][0]["replace"] == {
+        "strategy": "hash",
+        "digest_length": 12,
+        "has_instructions": True,
+    }
+    assert metadata["configs"][1]["rewrite"] == {
+        "risk_tolerance": "minimal",
+        "max_repair_iterations": 1,
+        "strict_entity_protection": True,
+        "has_privacy_goal": True,
+        "has_protect": True,
+        "has_preserve": True,
+        "has_instructions": True,
+    }
+    assert metadata["model_sources"] == {
+        "has_model_configs": True,
+        "has_model_providers": True,
+        "has_artifact_path": True,
+    }
+    for forbidden in ("Alice", "raw secret", "raw prompt", "/private/path", "models.yaml", "providers.yaml"):
+        assert forbidden not in serialized
+
+
+def test_wandb_extract_scalar_metrics_rejects_trace_record_types() -> None:
+    load_tool("measurement_wandb_trace_prereq", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    logging_tool = load_tool(
+        "measurement_wandb_trace_block",
+        REPO_ROOT / "tools/measurement/measurement_tools/wandb_logging.py",
+    )
+
+    metrics = logging_tool.extract_scalar_metrics(
+        {
+            "record_type": "dd_message_trace",
+            "workflow_name": "entity-detection",
+            "messages": [{"role": "user", "content": "secret prompt"}],
+        }
+    )
+
+    assert metrics == {}
+
+
+def test_run_or_plan_skips_wandb_on_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool("measurement_wandb_dry_run", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: wandb-dry-run
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    _write_text_input(tmp_path)
+    init_calls: list[Any] = []
+    monkeypatch.setattr(
+        tool, "initialize_benchmark_wandb_run", lambda *args, **kwargs: init_calls.append((args, kwargs))
+    )
+    monkeypatch.setattr(tool, "require_wandb", lambda: pytest.fail("require_wandb should not run on dry-run"))
+
+    tool.run_or_plan(
+        spec_path,
+        output=tmp_path / "output",
+        overwrite=False,
+        dry_run=True,
+        export=False,
+        fail_fast=False,
+        wandb_settings=tool.resolve_wandb_settings(wandb_mode=tool.WandbMode.offline),
+    )
+
+    assert init_calls == []
+
+
+def test_run_or_plan_does_not_finish_wandb_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool("measurement_wandb_disabled_finish", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: wandb-disabled
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    _write_text_input(tmp_path)
+
+    def fake_run_suite(
+        benchmark_spec: Any,
+        *,
+        output_dir: Path,
+        **_kwargs: Any,
+    ) -> Any:
+        return tool.BenchmarkResult(
+            suite_id=benchmark_spec.suite_id,
+            output_dir=str(output_dir),
+            measurement_path=str(output_dir / "measurements.jsonl"),
+            summary_path=str(output_dir / "summary.json"),
+            table_dir=None,
+            cases=[],
+        )
+
+    monkeypatch.setattr(tool, "run_suite", fake_run_suite)
+    monkeypatch.setattr(tool, "finish_benchmark_wandb_run", lambda: pytest.fail("disabled W&B must not finish runs"))
+
+    result = tool.run_or_plan(
+        spec_path,
+        output=tmp_path / "output",
+        overwrite=False,
+        dry_run=False,
+        export=False,
+        fail_fast=False,
+        wandb_settings=tool.resolve_wandb_settings(wandb_mode=tool.WandbMode.disabled),
+    )
+
+    assert result.suite_id == "wandb-disabled"
+
+
+def test_run_or_plan_logs_benchmark_with_fake_wandb(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tool = load_tool("measurement_wandb_run_or_plan", REPO_ROOT / "tools/measurement/run_benchmarks.py")
+    _minimal_benchmark_spec(tool, suite_id="wandb-suite")
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text(
+        """
+suite_id: wandb-suite
+workloads:
+  - id: input
+    source: input.csv
+configs:
+  - id: redact
+    replace: redact
+""",
+        encoding="utf-8",
+    )
+    _write_text_input(tmp_path)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    logged: list[dict[str, Any]] = []
+    summary_updates: list[dict[str, Any]] = []
+    finished: list[str] = []
+
+    class FakeRun:
+        id = "fake-run-id"
+
+    class FakeSummary:
+        @staticmethod
+        def update(payload: dict[str, Any]) -> None:
+            summary_updates.append(payload)
+
+    class FakeWandb:
+        run = FakeRun()
+        summary = FakeSummary()
+
+        @staticmethod
+        def log(payload: dict[str, Any]) -> None:
+            logged.append(payload)
+
+        @staticmethod
+        def init(**kwargs: Any) -> FakeRun:
+            return FakeRun()
+
+        @staticmethod
+        def finish() -> None:
+            finished.append("finish")
+
+    class FakeAnonymizer:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+    def fake_run_case(case: Any, *_args: Any, **_kwargs: Any) -> Any:
+        raw_path = output_dir / "raw" / f"{case.case_id}.jsonl"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "record_type": "run",
+                            "run_id": case.case_id,
+                            "mode": "replace",
+                            "strategy": "Redact",
+                            "input_row_count": 1,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "record_type": "record",
+                            "run_id": case.case_id,
+                            "final_entity_count": 1,
+                            "text": "Alice",
+                            "utility_score": 0.95,
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return case.model_copy(
+            update={
+                "status": tool.CaseStatus.completed,
+                "measurement_path": str(raw_path),
+                "elapsed_sec": 1.5,
+            }
+        )
+
+    monkeypatch.setattr(tool, "Anonymizer", FakeAnonymizer)
+    monkeypatch.setattr(tool, "_run_case", fake_run_case)
+    monkeypatch.setattr(tool, "export_measurement_tables", lambda *_args: output_dir / "tables")
+    monkeypatch.setattr(tool, "require_wandb", lambda: FakeWandb)
+    init_calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        tool,
+        "initialize_benchmark_wandb_run",
+        lambda settings, **kwargs: init_calls.append((settings, kwargs)) or True,
+    )
+    monkeypatch.setattr(tool, "finish_benchmark_wandb_run", lambda: finished.append("finish"))
+
+    result = tool.run_or_plan(
+        spec_path,
+        output=output_dir,
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=tool.resolve_wandb_settings(wandb_mode=tool.WandbMode.offline),
+    )
+
+    assert result.suite_id == "wandb-suite"
+    assert len(init_calls) == 1
+    assert init_calls[0][0].wandb_mode == tool.WandbMode.offline
+    assert finished == ["finish"]
+    assert logged
+    payload = logged[0]
+    assert payload["benchmark/case_completed"] == 1
+    assert payload["measurement/record/final_entity_count"] == 1.0
+    assert payload["measurement/record/utility_score_mean"] == pytest.approx(0.95)
+    assert summary_updates == [payload]
+    assert "Alice" not in json.dumps(payload)

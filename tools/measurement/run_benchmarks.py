@@ -8,12 +8,16 @@ Usage:
     uv run python tools/measurement/run_benchmarks.py suite.yaml --dry-run --json
 """
 
+import hashlib
 import logging
+import platform
 import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -30,6 +34,15 @@ from data_designer.config.utils.io_helpers import load_config_file
 from export_measurements import export_tables, read_measurements
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
 from measurement_tools.tables import ExportFormat
+from measurement_tools.wandb_logging import log_benchmark_measurements
+from measurement_tools.wandb_setup import (
+    WANDB_SANITIZER_VERSION,
+    WandbMode,
+    WandbSettings,
+    finish_benchmark_wandb_run,
+    initialize_benchmark_wandb_run,
+    require_wandb,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from anonymizer.config.anonymizer_config import (
@@ -45,7 +58,12 @@ from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEX
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.interface.anonymizer import Anonymizer
-from anonymizer.measurement import MeasurementConfig, configured_measurement_session, record_evaluation_metrics
+from anonymizer.measurement import (
+    MEASUREMENT_SCHEMA_VERSION,
+    MeasurementConfig,
+    configured_measurement_session,
+    record_evaluation_metrics,
+)
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.benchmark")
@@ -134,6 +152,8 @@ class MatrixEntry(BaseModel):
 
 
 RESERVED_RUN_TAG_KEYS = frozenset({"suite_id", "workload_id", "config_id", "repetition", "case_id"})
+BENCHMARK_SUITE_SCHEMA_VERSION = 1
+WANDB_METADATA_SCHEMA_VERSION = 1
 
 
 def _duplicates(values: list[str]) -> list[str]:
@@ -1166,6 +1186,243 @@ def dry_run_result(
     )
 
 
+def build_wandb_metadata(
+    spec: BenchmarkSpec,
+    *,
+    spec_path: Path,
+    output_dir: Path,
+    export: bool,
+    fail_fast: bool,
+    dd_trace: DDTraceMode,
+    dd_task_trace: bool,
+) -> dict[str, Any]:
+    metadata = {
+        "benchmark": _benchmark_metadata(spec, spec_path=spec_path),
+        "execution": _execution_metadata(
+            output_dir=output_dir,
+            export=export,
+            fail_fast=fail_fast,
+            dd_trace=dd_trace,
+            dd_task_trace=dd_task_trace,
+        ),
+        "runtime": _runtime_metadata(),
+        "git": _git_metadata(Path.cwd()),
+        "model_sources": _model_source_metadata(spec),
+        "workloads": [_workload_metadata(workload) for workload in spec.workloads],
+        "configs": [_config_metadata(config) for config in spec.configs],
+        "matrix": [entry.model_dump(mode="json") for entry in (spec.matrix or _cross_product_matrix(spec))],
+    }
+    metadata.update(_sweep_metadata(spec.run_tags))
+    return metadata
+
+
+def _benchmark_metadata(spec: BenchmarkSpec, *, spec_path: Path) -> dict[str, Any]:
+    matrix = spec.matrix or _cross_product_matrix(spec)
+    metadata = {
+        "metadata_schema_version": WANDB_METADATA_SCHEMA_VERSION,
+        "suite_schema_version": BENCHMARK_SUITE_SCHEMA_VERSION,
+        "wandb_sanitizer_version": WANDB_SANITIZER_VERSION,
+        "measurement_schema_version": MEASUREMENT_SCHEMA_VERSION,
+        "suite_id": spec.suite_id,
+        "workload_count": len(spec.workloads),
+        "config_count": len(spec.configs),
+        "matrix_entry_count": len(matrix),
+        "case_count": sum(entry.repetitions for entry in matrix),
+        "case_retries": spec.case_retries,
+        "case_retry_backoff_sec": spec.case_retry_backoff_sec,
+    }
+    if spec_hash := _file_hash(spec_path):
+        metadata["suite_file_hash"] = spec_hash
+    return metadata
+
+
+def _execution_metadata(
+    *,
+    output_dir: Path,
+    export: bool,
+    fail_fast: bool,
+    dd_trace: DDTraceMode,
+    dd_task_trace: bool,
+) -> dict[str, Any]:
+    return {
+        "output_dir_hash": _stable_hash(str(output_dir)),
+        "export": export,
+        "fail_fast": fail_fast,
+        "dd_trace": dd_trace.value,
+        "dd_task_trace": dd_task_trace,
+    }
+
+
+def _runtime_metadata() -> dict[str, Any]:
+    return {
+        **_package_versions(),
+        "python_version": platform.python_version(),
+        "platform_machine": platform.machine(),
+        "platform_system": platform.system(),
+    }
+
+
+def _package_versions() -> dict[str, str | None]:
+    return {
+        "anonymizer_version": _package_version("nemo-anonymizer"),
+        "datadesigner_version": _package_version("data-designer"),
+        "wandb_version": _package_version("wandb"),
+    }
+
+
+def _package_version(package: str) -> str | None:
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        return None
+
+
+def _model_source_metadata(spec: BenchmarkSpec) -> dict[str, bool]:
+    return {
+        "has_model_configs": spec.model_configs is not None,
+        "has_model_providers": spec.model_providers is not None,
+        "has_artifact_path": spec.artifact_path is not None,
+    }
+
+
+def _workload_metadata(workload: WorkloadSpec) -> dict[str, Any]:
+    return {
+        "id": workload.id,
+        "source": _source_metadata(workload.source),
+        "text_column": workload.text_column,
+        "has_id_column": workload.id_column is not None,
+        "has_data_summary": workload.data_summary is not None,
+        "row_limit": workload.row_limit,
+        "row_offset": workload.row_offset,
+    }
+
+
+def _source_metadata(source: str) -> dict[str, str | None]:
+    return {
+        "kind": "remote_file" if is_remote_input_source(source) else "local_file",
+        "suffix": _source_suffix(source),
+        "source_hash": _stable_hash(source),
+    }
+
+
+def _source_suffix(source: str) -> str | None:
+    try:
+        return infer_input_source_suffix(source)
+    except ValueError:
+        return None
+
+
+def _config_metadata(config: ConfigSpec) -> dict[str, Any]:
+    return {
+        "id": config.id,
+        "mode": "rewrite" if config.rewrite is not None else "replace",
+        "detect": _detect_metadata(config.detect),
+        "replace": _replace_metadata(config.replace),
+        "rewrite": _rewrite_metadata(config.rewrite),
+        "evaluate": config.evaluate,
+        "emit_telemetry": config.emit_telemetry,
+    }
+
+
+def _sweep_metadata(run_tags: dict[str, Any]) -> dict[str, Any]:
+    sweep_id = run_tags.get("sweep_id")
+    arm_id = run_tags.get("sweep_arm_id")
+    if not isinstance(sweep_id, str) or not isinstance(arm_id, str):
+        return {}
+    params = {
+        key.removeprefix("sweep_param_"): value
+        for key, value in run_tags.items()
+        if key.startswith("sweep_param_") and isinstance(value, str | int | float | bool)
+    }
+    metadata: dict[str, Any] = {
+        "sweep_id": sweep_id,
+        "sweep_arm_id": arm_id,
+        "sweep": {"id": sweep_id, "arm_id": arm_id, "params": params},
+        "sweep_params": params,
+    }
+    metadata.update({f"sweep_param_{key}": value for key, value in params.items()})
+    return metadata
+
+
+def _detect_metadata(detect: dict[str, Any]) -> dict[str, Any]:
+    entity_labels = detect.get("entity_labels")
+    metadata = {
+        "entity_label_source": "custom" if isinstance(entity_labels, list) else "default",
+        "entity_label_count": len(entity_labels) if isinstance(entity_labels, list) else None,
+    }
+    if isinstance(entity_labels, list):
+        metadata["entity_label_set_hash"] = _stable_hash(",".join(sorted(map(str, entity_labels))))
+    for key in ("gliner_threshold", "validation_max_entities_per_call", "validation_excerpt_window_chars"):
+        if key in detect:
+            metadata[key] = detect[key]
+    return metadata
+
+
+def _replace_metadata(replace: str | ReplaceSpec | None) -> dict[str, Any] | None:
+    if replace is None:
+        return None
+    if isinstance(replace, str):
+        return {"strategy": replace}
+    metadata: dict[str, Any] = {"strategy": replace.strategy.value}
+    for key in ("normalize_label", "algorithm", "digest_length"):
+        value = getattr(replace, key)
+        if value is not None:
+            metadata[key] = value
+    if replace.format_template is not None:
+        metadata["has_format_template"] = True
+    if replace.instructions is not None:
+        metadata["has_instructions"] = True
+    return metadata
+
+
+def _rewrite_metadata(rewrite: RewriteSpec | None) -> dict[str, Any] | None:
+    if rewrite is None:
+        return None
+    return {
+        "risk_tolerance": rewrite.risk_tolerance.value,
+        "max_repair_iterations": rewrite.max_repair_iterations,
+        "strict_entity_protection": rewrite.strict_entity_protection,
+        "has_privacy_goal": rewrite.protect is not None or rewrite.preserve is not None,
+        "has_protect": rewrite.protect is not None,
+        "has_preserve": rewrite.preserve is not None,
+        "has_instructions": rewrite.instructions is not None,
+    }
+
+
+def _git_metadata(cwd: Path) -> dict[str, str | bool | None]:
+    commit = _git_output(cwd, "rev-parse", "HEAD")
+    branch = _git_output(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    status = _git_output(cwd, "status", "--short")
+    return {"commit": commit, "branch": branch, "dirty": bool(status) if status is not None else None}
+
+
+def _git_output(cwd: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _file_hash(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return _stable_hash(path.read_text(encoding="utf-8"))
+
+
+def _stable_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
 @app.default
 def main(
     spec: Path,
@@ -1181,8 +1438,26 @@ def main(
     task_trace_dir: Annotated[Path | None, cyclopts.Parameter("--task-trace-dir")] = None,
     json_output: Annotated[bool, cyclopts.Parameter("--json")] = False,
     log_format: Annotated[LogFormat, cyclopts.Parameter("--log-format")] = LogFormat.plain,
+    wandb_mode: Annotated[WandbMode | None, cyclopts.Parameter("--wandb-mode")] = None,
+    wandb_entity: Annotated[str | None, cyclopts.Parameter("--wandb-entity")] = None,
+    wandb_project: Annotated[str | None, cyclopts.Parameter("--wandb-project")] = None,
+    wandb_group: Annotated[str | None, cyclopts.Parameter("--wandb-group")] = None,
+    wandb_job_type: Annotated[str | None, cyclopts.Parameter("--wandb-job-type")] = None,
+    wandb_run_name: Annotated[str | None, cyclopts.Parameter("--wandb-run-name")] = None,
+    wandb_tags: Annotated[str | None, cyclopts.Parameter("--wandb-tags")] = None,
+    wandb_log_tables: Annotated[bool | None, cyclopts.Parameter("--wandb-log-tables")] = None,
 ) -> None:
     configure_logging(log_format)
+    wandb_settings = resolve_wandb_settings(
+        wandb_mode=wandb_mode,
+        wandb_entity=wandb_entity,
+        wandb_project=wandb_project,
+        wandb_group=wandb_group,
+        wandb_job_type=wandb_job_type,
+        wandb_run_name=wandb_run_name,
+        wandb_tags=wandb_tags,
+        wandb_log_tables=wandb_log_tables,
+    )
     try:
         result = run_or_plan(
             spec,
@@ -1195,6 +1470,7 @@ def main(
             trace_dir=trace_dir,
             dd_task_trace=dd_task_trace,
             task_trace_dir=task_trace_dir,
+            wandb_settings=wandb_settings,
         )
     except (ValueError, ValidationError) as exc:
         log_bad_input(logger, str(exc))
@@ -1202,6 +1478,59 @@ def main(
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
     if any(case.status == CaseStatus.error for case in result.cases):
         raise SystemExit(1)
+
+
+def resolve_wandb_settings(
+    *,
+    wandb_mode: WandbMode | None = None,
+    wandb_entity: str | None = None,
+    wandb_project: str | None = None,
+    wandb_group: str | None = None,
+    wandb_job_type: str | None = None,
+    wandb_run_name: str | None = None,
+    wandb_tags: str | None = None,
+    wandb_log_tables: bool | None = None,
+) -> WandbSettings:
+    settings = WandbSettings()
+    updates: dict[str, Any] = {}
+    if wandb_mode is not None:
+        updates["wandb_mode"] = wandb_mode
+    if wandb_entity is not None:
+        updates["wandb_entity"] = wandb_entity
+    if wandb_project is not None:
+        updates["wandb_project"] = wandb_project
+    if wandb_group is not None:
+        updates["wandb_group"] = wandb_group
+    if wandb_job_type is not None:
+        updates["wandb_job_type"] = wandb_job_type
+    if wandb_run_name is not None:
+        updates["wandb_run_name"] = wandb_run_name
+    if wandb_tags is not None:
+        updates["wandb_tags"] = wandb_tags
+    if wandb_log_tables is not None:
+        updates["wandb_log_tables"] = wandb_log_tables
+    if not updates:
+        return settings
+    return settings.model_copy(update=updates)
+
+
+def _log_benchmark_wandb(
+    wandb_settings: WandbSettings,
+    *,
+    result: BenchmarkResult,
+    measurement_path: Path,
+    table_dir: Path | None,
+) -> None:
+    if not wandb_settings.enabled:
+        return
+    wandb = require_wandb()
+    log_benchmark_measurements(
+        wandb,
+        measurement_path=measurement_path,
+        cases=result.cases,
+        log_tables=wandb_settings.wandb_log_tables,
+        table_dir=table_dir,
+    )
 
 
 def run_or_plan(
@@ -1216,9 +1545,11 @@ def run_or_plan(
     trace_dir: Path | None = None,
     dd_task_trace: bool = False,
     task_trace_dir: Path | None = None,
+    wandb_settings: WandbSettings | None = None,
 ) -> BenchmarkResult:
     benchmark_spec = load_spec(spec_path)
     output_dir = output or Path("benchmark-runs") / benchmark_spec.suite_id
+    resolved_wandb = wandb_settings or WandbSettings()
     if trace_dir is not None and dd_trace == DDTraceMode.none:
         raise ValueError("--trace-dir requires --dd-trace")
     if task_trace_dir is not None and not dd_task_trace:
@@ -1234,18 +1565,52 @@ def run_or_plan(
             dd_task_trace=dd_task_trace,
             task_trace_dir=task_trace_dir,
         )
+    if resolved_wandb.enabled:
+        require_wandb()
     prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
-    return run_suite(
-        benchmark_spec,
-        spec_path=spec_path,
+    wandb_run_created = initialize_benchmark_wandb_run(
+        resolved_wandb,
+        suite_id=benchmark_spec.suite_id,
         output_dir=output_dir,
-        export=export,
-        fail_fast=fail_fast,
-        dd_trace=dd_trace,
-        trace_dir=trace_dir,
-        dd_task_trace=dd_task_trace,
-        task_trace_dir=task_trace_dir,
+        run_tags=benchmark_spec.run_tags,
+        metadata=build_wandb_metadata(
+            benchmark_spec,
+            spec_path=spec_path,
+            output_dir=output_dir,
+            export=export,
+            fail_fast=fail_fast,
+            dd_trace=dd_trace,
+            dd_task_trace=dd_task_trace,
+        ),
     )
+    try:
+        result = run_suite(
+            benchmark_spec,
+            spec_path=spec_path,
+            output_dir=output_dir,
+            export=export,
+            fail_fast=fail_fast,
+            dd_trace=dd_trace,
+            trace_dir=trace_dir,
+            dd_task_trace=dd_task_trace,
+            task_trace_dir=task_trace_dir,
+        )
+    except Exception:
+        if wandb_run_created:
+            finish_benchmark_wandb_run()
+        raise
+    try:
+        table_dir = Path(result.table_dir) if result.table_dir is not None else None
+        _log_benchmark_wandb(
+            resolved_wandb,
+            result=result,
+            measurement_path=Path(result.measurement_path),
+            table_dir=table_dir,
+        )
+    finally:
+        if wandb_run_created:
+            finish_benchmark_wandb_run()
+    return result
 
 
 if __name__ == "__main__":

@@ -95,6 +95,37 @@ developer tooling. Product entry points do not call it automatically.
 | `ANONYMIZER_MEASUREMENT_RUN_ID` | `run_id` |
 | `ANONYMIZER_MEASUREMENT_RUN_TAGS` | `run_tags` |
 
+## W&B Benchmark Logging
+
+Benchmark runs can export sanitized measurement summaries to Weights & Biases
+(W&B). Only benchmark tooling starts W&B runs; the Anonymizer SDK and product
+CLI do not.
+
+W&B benchmark logging is disabled by default. Enable it with
+`--wandb-mode offline` or `--wandb-mode online` when running a benchmark suite:
+
+```bash
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online
+```
+
+The runner uploads aggregate benchmark and measurement scalar fields by
+default. `--wandb-log-tables` also uploads sanitized measurement tables. The
+sanitizer excludes raw text, prompts, model responses, replacement maps, entity
+payloads, DataDesigner trace records, local paths, URLs, provider payloads, and
+sensitive-looking run tags.
+
+Use `tools/measurement/create_wandb_report.py` to create a W&B benchmark report
+for one benchmark run or for a benchmark run group. Reports include case health
+and latency, DataDesigner row flow, request health, token usage, throughput,
+record privacy counters, replacement quality counters, stage throughput, and
+sanitized measurement tables when present.
+
+Use `tools/measurement/sweep_benchmarks.py` for parameter sweeps. It runs one
+benchmark suite per sweep arm and copies `sweep_id`, `sweep_arm_id`, and
+`sweep_param_*` fields into W&B benchmark config so benchmark reports can
+compare arms directly.
+See `tools/measurement/README.md` for the full command reference.
+
 ## DataDesigner Message Traces
 
 DataDesigner message traces are optional sidecar artifacts for model-call
@@ -180,4 +211,6 @@ When adding instrumentation:
 | `src/anonymizer/interface/anonymizer.py` | Run-level and per-record measurement integration. |
 | `src/anonymizer/engine/ndd/adapter.py` | DataDesigner workflow measurement, native message trace capture, and scheduler task trace capture. |
 | `tools/measurement/run_benchmarks.py` | Benchmark suite runner that activates measurement sessions and writes per-case artifacts. |
+| `tools/measurement/create_wandb_report.py` | W&B benchmark report builder for sanitized benchmark runs and run groups. |
+| `tools/measurement/sweep_benchmarks.py` | Parameter sweep runner that logs one W&B benchmark run per sweep arm. |
 | `tools/measurement/README.md` | Detailed benchmark and analysis command reference. |

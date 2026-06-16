@@ -240,6 +240,106 @@ record, such as source refs, commit SHAs, CI pipeline IDs, topology labels, or
 benchmark-suite revisions. The runner reserves `suite_id`, `workload_id`,
 `config_id`, `repetition`, and `case_id` for its own case identity tags.
 
+## W&B Benchmark Logging
+
+The benchmark runner can log sanitized measurement summaries to Weights &
+Biases. W&B benchmark logging is disabled by default. Only
+`tools/measurement/run_benchmarks.py` starts W&B runs; the Anonymizer SDK and
+product CLI do not.
+
+Install the optional measurement dependency group before enabling W&B benchmark
+logging:
+
+```bash
+uv sync --group measurement
+```
+
+Enable a benchmark run with CLI flags:
+
+```bash
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode offline
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online --wandb-project my-project
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online --wandb-entity my-team --wandb-group nightly --wandb-job-type benchmark --wandb-run-name biography-smoke-main --wandb-tags privacy,nightly
+```
+
+The same settings can come from environment variables when the corresponding
+CLI flag is omitted: `ANONYMIZER_MEASUREMENT_WANDB_MODE`,
+`ANONYMIZER_MEASUREMENT_WANDB_ENTITY`,
+`ANONYMIZER_MEASUREMENT_WANDB_PROJECT`,
+`ANONYMIZER_MEASUREMENT_WANDB_GROUP`,
+`ANONYMIZER_MEASUREMENT_WANDB_JOB_TYPE`,
+`ANONYMIZER_MEASUREMENT_WANDB_RUN_NAME`,
+`ANONYMIZER_MEASUREMENT_WANDB_TAGS`, and
+`ANONYMIZER_MEASUREMENT_WANDB_LOG_TABLES`, plus the standard `WANDB_MODE`,
+`WANDB_ENTITY`, `WANDB_PROJECT`, `WANDB_GROUP`, `WANDB_JOB_TYPE`, and
+`WANDB_NAME` / `WANDB_TAGS` aliases. The W&B SDK handles authentication through
+its normal environment and login mechanisms.
+
+Each W&B benchmark run config includes sanitized benchmark metadata: suite/case
+counts, retry and execution flags, package/runtime versions, git
+commit/branch/dirty state, model source presence booleans, workload summaries,
+matrix entries, and one sanitized object per benchmark config. Workload
+metadata stores source kind, suffix, and a hash instead of the raw source.
+Config metadata records settings such as detection thresholds, entity-label
+count/hash, replacement strategy knobs, rewrite risk tolerance, repair settings,
+and booleans for prompt-bearing fields rather than their raw text.
+
+By default the runner logs only aggregate benchmark and measurement scalars.
+Passing `--wandb-log-tables` uploads sanitized measurement tables as W&B tables;
+this remains separate from DataDesigner trace sidecars. Raw input text, prompts,
+model responses, replacement maps, entity payloads, trace records, paths, URLs,
+data summaries, model/provider config payloads, and sensitive-looking run tags
+are filtered from W&B payloads.
+
+Create a W&B benchmark report for an uploaded benchmark run with the report
+utility:
+
+```bash
+uv run python tools/measurement/create_wandb_report.py \
+  entity/project/run-id
+```
+
+The benchmark report utility uses the W&B SDK report API to build a draft
+report from sanitized benchmark run summary/config fields and a panel grid
+filtered to the selected run. Pass `--publish` when the report should be saved
+as a published report instead of a draft. Report generation requires the
+measurement dependency group because it uses the `wandb[workspaces]` extra.
+
+Reports include panels for case health and latency, DataDesigner row flow,
+request health, token usage, throughput, record privacy counters, replacement
+quality counters, stage throughput, and sanitized measurement tables when table
+logging is enabled.
+
+For parameter sweeps, use one W&B benchmark run per sweep arm:
+
+```yaml
+sweep_id: qwen-threshold-smoke
+base_suite: ./repo-data-smoke-qwen3-coder-next.yaml
+parameters:
+  configs.*.detect.gliner_threshold: [0.2, 0.4]
+  configs.legal-hash-agent-labels.replace.digest_length: [8, 12]
+```
+
+```bash
+uv run python tools/measurement/sweep_benchmarks.py sweep.yaml \
+  --wandb-mode online \
+  --wandb-entity my-team \
+  --wandb-project nemo-anonymizer-benchmarks \
+  --create-report
+```
+
+Each arm materializes a generated suite under the sweep output root and runs
+`run_benchmarks.py` once. Sweep metadata is copied into safe run tags and W&B
+benchmark run config fields such as `sweep_id`, `sweep_arm_id`, and
+`sweep_param_*` so W&B benchmark reports can compare arms directly. A benchmark
+group report can also be created later:
+
+```bash
+uv run python tools/measurement/create_wandb_report.py \
+  my-team/nemo-anonymizer-benchmarks \
+  --group qwen-threshold-smoke
+```
+
 Set `evaluate: true` on a replace config when the benchmark should run
 `Anonymizer.evaluate()` after `run()` and capture the LLM-as-judge work in the
 same case. This is intentionally replace-only for now; rewrite runs already
