@@ -12,6 +12,8 @@ from typing import Any
 import pandas as pd
 from export_measurements import normalize_table, read_measurements
 
+from anonymizer.engine import constants as engine_constants
+
 logger = logging.getLogger("measurement.wandb")
 
 PRIVACY_BLOCKED_RECORD_TYPES = frozenset(
@@ -33,39 +35,58 @@ PRIVACY_ALLOWED_RECORD_TYPES = frozenset(
     }
 )
 
-PRIVACY_BLOCKED_FIELD_NAMES = frozenset(
+_ENGINE_INTERNAL_FIELD_NAMES = frozenset(
+    value
+    for name, value in vars(engine_constants).items()
+    if name.startswith("COL_") and isinstance(value, str) and value.startswith("_")
+)
+
+_ENGINE_RAW_OUTPUT_FIELD_NAMES = frozenset(
     {
-        "text",
-        "text_replaced",
-        "text_with_spans",
-        "final_entities",
-        "detected_entities",
-        "seed_entities",
-        "augmented_entities",
-        "ground_truth_entities",
-        "replacement_map",
-        "messages",
-        "prompt",
-        "response",
-        "reasoning_content",
-        "content",
-        "detection_invalid_entities",
-        "type_fidelity_invalid_replacements",
-        "relational_consistency_invalid_relations",
-        "attribute_fidelity_invalid_entities",
-        "_detection_judge",
-        "_type_fidelity_judge",
-        "_relational_consistency_judge",
-        "_attribute_fidelity_judge",
-        "api_key",
-        "credential",
-        "credentials",
-        "model_providers",
-        "model_configs",
-        "password",
-        "secret",
-        "token",
+        engine_constants.COL_FINAL_ENTITIES,
+        engine_constants.COL_DETECTION_INVALID_ENTITIES,
+        engine_constants.COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+        engine_constants.COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
+        engine_constants.COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     }
+)
+
+PRIVACY_BLOCKED_FIELD_NAMES = (
+    _ENGINE_INTERNAL_FIELD_NAMES
+    | _ENGINE_RAW_OUTPUT_FIELD_NAMES
+    | frozenset(
+        {
+            "text",
+            "text_replaced",
+            "text_with_spans",
+            "detected_entities",
+            "seed_entities",
+            "augmented_entities",
+            "ground_truth_entities",
+            "replacement_map",
+            "messages",
+            "prompt",
+            "response",
+            "reasoning_content",
+            "content",
+            "detection_invalid_entities",
+            "type_fidelity_invalid_replacements",
+            "relational_consistency_invalid_relations",
+            "attribute_fidelity_invalid_entities",
+            "_detection_judge",
+            "_type_fidelity_judge",
+            "_relational_consistency_judge",
+            "_attribute_fidelity_judge",
+            "api_key",
+            "credential",
+            "credentials",
+            "model_providers",
+            "model_configs",
+            "password",
+            "secret",
+            "token",
+        }
+    )
 )
 
 _SCALAR_METRIC_PREFIX = "measurement"
