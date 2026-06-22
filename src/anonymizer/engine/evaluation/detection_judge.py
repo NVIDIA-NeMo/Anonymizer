@@ -5,14 +5,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from typing import ClassVar
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
-from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
-from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_JUDGE,
@@ -22,10 +19,8 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema
 
 logger = logging.getLogger("anonymizer.evaluation.detection_judge")
@@ -55,17 +50,6 @@ class DetectionJudgmentSchema(BaseModel):
         default_factory=list,
         description="Every detected entity that is not a valid detection. Empty when all_valid is True.",
     )
-
-
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class DetectionJudgeResult:
-    dataframe: pd.DataFrame
-    failed_records: list[FailedRecord]
 
 
 # ---------------------------------------------------------------------------
@@ -192,36 +176,12 @@ def _label_examples_for_judge(parsed: EntitiesByValueSchema) -> str:
     return json.dumps(examples, ensure_ascii=True)
 
 
-def _flatten_judgment(raw: object) -> tuple[bool | None, list[dict[str, str]]]:
-    """Normalize an LLM judge output into (all_valid, invalid_entities).
-
-    Returns ``(None, [])`` for any malformed or missing payload so downstream
-    display can render "judge unavailable" rather than fabricate a verdict.
-    """
-    if raw is None:
-        return None, []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return None, []
-    if not isinstance(raw, dict):
-        return None, []
-    try:
-        parsed = DetectionJudgmentSchema.model_validate(raw)
-    except Exception:
-        return None, []
-    return parsed.all_valid, [entry.model_dump() for entry in parsed.invalid_entities]
-
-
 # ---------------------------------------------------------------------------
 # Workflow
 # ---------------------------------------------------------------------------
 
 
-class DetectionJudgeWorkflow:
+class DetectionJudgeWorkflow(_BaseJudgeWorkflow):
     """LLM-as-judge evaluator that flags invalid PII detections per record.
 
     Runs after replacement and validates the detection step that fed the
@@ -229,113 +189,31 @@ class DetectionJudgeWorkflow:
     ``COL_DETECTION_INVALID_ENTITIES`` (list of {value, label, reasoning}).
     """
 
-    def __init__(self, adapter: NddAdapter) -> None:
-        self._adapter = adapter
+    RAW_COL: ClassVar[str] = COL_DETECTION_JUDGE
+    VALID_COL: ClassVar[str] = COL_DETECTION_VALID
+    INVALID_COL: ClassVar[str] = COL_DETECTION_INVALID_ENTITIES
+    SCHEMA: ClassVar[type[BaseModel]] = DetectionJudgmentSchema
+    VERDICT_FIELD: ClassVar[str] = "all_valid"
+    DEFAULT_PAYLOAD: ClassVar[dict] = {"all_valid": True, "invalid_entities": []}
+    MODEL_ROLE: ClassVar[str] = "detection_validity_judge"
+    WORKFLOW_NAME: ClassVar[str] = "replace-detection-judge"
 
-    # ------------------------------------------------------------------------
-    # Decomposed pieces — the orchestrator in ReplacementWorkflow uses these
-    # to merge all 4 judges into a single adapter.run_workflow() call.
-    # ------------------------------------------------------------------------
-
-    def prepare(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        entities_column: str = COL_ENTITIES_BY_VALUE,
-    ) -> pd.DataFrame:
-        """Add the intermediate columns this judge's prompt template references.
-
-        Returns a copy of ``dataframe`` with ``_entities_for_detection_judge`` and
-        ``_entity_examples_for_detection_judge`` populated.
-        """
+    def prepare(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         working_df = dataframe.copy()
-        parsed = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
+        parsed = working_df[COL_ENTITIES_BY_VALUE].apply(EntitiesByValueSchema.from_raw)
         working_df[_ENTITIES_FOR_JUDGE_COL] = parsed.apply(_entities_for_judge)
         working_df[_ENTITY_EXAMPLES_FOR_JUDGE_COL] = parsed.apply(_label_examples_for_judge)
         return working_df
 
-    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
-        """The DD column config — name, prompt, model alias, structured-output schema."""
-        return LLMStructuredColumnConfig(
-            name=COL_DETECTION_JUDGE,
-            prompt=_judge_prompt(),
-            model_alias=resolve_model_alias("detection_validity_judge", selected_models),
-            output_format=DetectionJudgmentSchema,
-        )
-
-    def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        """Flatten the raw judge output into VALID / INVALID columns and apply
-        the passthrough default (rows with no detected entities trivially pass).
-        """
-        out = dataframe.copy()
-        flattened = out[COL_DETECTION_JUDGE].apply(_flatten_judgment) if COL_DETECTION_JUDGE in out.columns else None
+    def _passthrough_mask(self, dataframe: pd.DataFrame) -> pd.Series:
         # `items` may be a numpy array after a parquet round-trip via DD, so use
         # `len()` rather than `bool()` (which is ambiguous on multi-element arrays).
-        passthrough_mask = out[_ENTITIES_FOR_JUDGE_COL].apply(lambda items: items is None or len(items) == 0)
+        return dataframe[_ENTITIES_FOR_JUDGE_COL].apply(lambda items: items is None or len(items) == 0)
 
-        valid: list[bool | None] = []
-        invalid: list[list[dict[str, str]]] = []
-        for idx in out.index:
-            if passthrough_mask.loc[idx]:
-                valid.append(True)
-                invalid.append([])
-            elif flattened is not None:
-                v, inv = flattened.loc[idx]
-                valid.append(v)
-                invalid.append(inv)
-            else:
-                valid.append(None)
-                invalid.append([])
-        out[COL_DETECTION_VALID] = valid
-        out[COL_DETECTION_INVALID_ENTITIES] = invalid
-        # Stamp passthrough rows with the default raw judge payload so display logic stays consistent.
-        if COL_DETECTION_JUDGE in out.columns:
-            out.loc[passthrough_mask, COL_DETECTION_JUDGE] = [{"all_valid": True, "invalid_entities": []}] * int(
-                passthrough_mask.sum()
-            )
-        return out
+    @classmethod
+    def _build_prompt(cls) -> str:
+        return _judge_prompt()
 
-    # ------------------------------------------------------------------------
-    # Legacy single-judge entry point. Kept so existing callers/tests still work.
-    # ------------------------------------------------------------------------
-
-    def evaluate(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: EvaluateModelSelection,
-        entities_column: str = COL_ENTITIES_BY_VALUE,
-        preview_num_records: int | None = None,
-    ) -> DetectionJudgeResult:
-        working_df = self.prepare(dataframe, entities_column=entities_column)
-
-        entity_rows, passthrough_rows = split_rows(working_df, column=_ENTITIES_FOR_JUDGE_COL, predicate=bool)
-        passthrough_rows[COL_DETECTION_JUDGE] = [
-            {"all_valid": True, "invalid_entities": []} for _ in range(len(passthrough_rows))
-        ]
-        passthrough_rows[COL_DETECTION_VALID] = True
-        passthrough_rows[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
-
-        if entity_rows.empty:
-            combined = merge_and_reorder(passthrough_rows)
-            return DetectionJudgeResult(dataframe=combined, failed_records=[])
-
-        effective_preview_num_records = (
-            min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
-        )
-        run_result = self._adapter.run_workflow(
-            entity_rows,
-            model_configs=model_configs,
-            columns=[self.column_config(selected_models)],
-            workflow_name="replace-detection-judge",
-            preview_num_records=effective_preview_num_records,
-        )
-
-        judged_df = run_result.dataframe.copy()
-        flattened = judged_df[COL_DETECTION_JUDGE].apply(_flatten_judgment)
-        judged_df[COL_DETECTION_VALID] = flattened.apply(lambda pair: pair[0])
-        judged_df[COL_DETECTION_INVALID_ENTITIES] = flattened.apply(lambda pair: pair[1])
-
-        combined = merge_and_reorder(judged_df, passthrough_rows)
-        return DetectionJudgeResult(dataframe=combined, failed_records=run_result.failed_records)
+    @classmethod
+    def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
+        return [entry.model_dump() for entry in parsed.invalid_entities]

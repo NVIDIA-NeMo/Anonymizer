@@ -16,11 +16,12 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import (
     TypeFidelityJudgeWorkflow,
     TypeFidelityJudgmentSchema,
-    _flatten_judgment,
     _judge_prompt,
     _label_examples_for_judge,
     _replacements_for_judge,
 )
+
+_flatten_judgment = TypeFidelityJudgeWorkflow._flatten_judgment
 
 # ---------------------------------------------------------------------------
 # Tests: _judge_prompt

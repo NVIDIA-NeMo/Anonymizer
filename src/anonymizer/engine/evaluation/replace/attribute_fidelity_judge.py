@@ -5,25 +5,20 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
 from datetime import datetime
+from typing import ClassVar
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
-from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
-from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_JUDGE,
     COL_ATTRIBUTE_FIDELITY_VALID,
     COL_REPLACEMENT_MAP,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.evaluation.replace.attribute_fidelity_judge")
@@ -66,17 +61,6 @@ class AttributeFidelityJudgmentSchema(BaseModel):
             "Triples with no salient attributes (opaque identifiers) are omitted."
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class AttributeFidelityJudgeResult:
-    dataframe: pd.DataFrame
-    failed_records: list[FailedRecord]
 
 
 # ---------------------------------------------------------------------------
@@ -216,37 +200,12 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
     return [{"original": r.original, "label": r.label, "synthetic": r.synthetic} for r in parsed.replacements]
 
 
-def _flatten_judgment(raw: object) -> tuple[bool | None, list[dict[str, object]]]:
-    """Normalize an LLM judge output into (all_valid, invalid_entities).
-
-    Returns ``(None, [])`` for any malformed or missing payload so downstream
-    display renders "judge unavailable" rather than fabricating a verdict.
-    """
-    if raw is None:
-        return None, []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return None, []
-    if not isinstance(raw, dict):
-        return None, []
-    try:
-        parsed = AttributeFidelityJudgmentSchema.model_validate(raw)
-    except Exception:
-        return None, []
-    invalid = [e.model_dump() for e in parsed.entities if not e.passes]
-    return parsed.all_valid, invalid
-
-
 # ---------------------------------------------------------------------------
 # Workflow
 # ---------------------------------------------------------------------------
 
 
-class AttributeFidelityJudgeWorkflow:
+class AttributeFidelityJudgeWorkflow(_BaseJudgeWorkflow):
     """LLM-as-judge evaluator that checks per-entity attribute preservation.
 
     Runs after Substitute generates the replacement map. Output columns:
@@ -256,88 +215,27 @@ class AttributeFidelityJudgeWorkflow:
     can derive the success-rate denominator from the full entities list).
     """
 
-    def __init__(self, adapter: NddAdapter) -> None:
-        self._adapter = adapter
+    RAW_COL: ClassVar[str] = COL_ATTRIBUTE_FIDELITY_JUDGE
+    VALID_COL: ClassVar[str] = COL_ATTRIBUTE_FIDELITY_VALID
+    INVALID_COL: ClassVar[str] = COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES
+    SCHEMA: ClassVar[type[BaseModel]] = AttributeFidelityJudgmentSchema
+    VERDICT_FIELD: ClassVar[str] = "all_valid"
+    DEFAULT_PAYLOAD: ClassVar[dict] = {"all_valid": True, "entities": []}
+    MODEL_ROLE: ClassVar[str] = "replace_attribute_fidelity_judge"
+    WORKFLOW_NAME: ClassVar[str] = "replace-attribute-fidelity-judge"
 
     def prepare(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         working_df = dataframe.copy()
         working_df[_REPLACEMENTS_FOR_JUDGE_COL] = working_df[COL_REPLACEMENT_MAP].apply(_replacements_for_judge)
         return working_df
 
-    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
-        return LLMStructuredColumnConfig(
-            name=COL_ATTRIBUTE_FIDELITY_JUDGE,
-            prompt=_judge_prompt(),
-            model_alias=resolve_model_alias("replace_attribute_fidelity_judge", selected_models),
-            output_format=AttributeFidelityJudgmentSchema,
-        )
+    def _passthrough_mask(self, dataframe: pd.DataFrame) -> pd.Series:
+        return dataframe[_REPLACEMENTS_FOR_JUDGE_COL].apply(lambda items: items is None or len(items) == 0)
 
-    def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        out = dataframe.copy()
-        flattened = (
-            out[COL_ATTRIBUTE_FIDELITY_JUDGE].apply(_flatten_judgment)
-            if COL_ATTRIBUTE_FIDELITY_JUDGE in out.columns
-            else None
-        )
-        passthrough_mask = out[_REPLACEMENTS_FOR_JUDGE_COL].apply(lambda items: items is None or len(items) == 0)
+    @classmethod
+    def _build_prompt(cls) -> str:
+        return _judge_prompt()
 
-        valid: list[bool | None] = []
-        invalid: list[list[dict[str, str]]] = []
-        for idx in out.index:
-            if passthrough_mask.loc[idx]:
-                valid.append(True)
-                invalid.append([])
-            elif flattened is not None:
-                v, inv = flattened.loc[idx]
-                valid.append(v)
-                invalid.append(inv)
-            else:
-                valid.append(None)
-                invalid.append([])
-        out[COL_ATTRIBUTE_FIDELITY_VALID] = valid
-        out[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = invalid
-        if COL_ATTRIBUTE_FIDELITY_JUDGE in out.columns:
-            out.loc[passthrough_mask, COL_ATTRIBUTE_FIDELITY_JUDGE] = [{"all_valid": True, "entities": []}] * int(
-                passthrough_mask.sum()
-            )
-        return out
-
-    def evaluate(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: EvaluateModelSelection,
-        preview_num_records: int | None = None,
-    ) -> AttributeFidelityJudgeResult:
-        working_df = self.prepare(dataframe)
-
-        with_replacements, passthrough_rows = split_rows(working_df, column=_REPLACEMENTS_FOR_JUDGE_COL, predicate=bool)
-        passthrough_rows[COL_ATTRIBUTE_FIDELITY_JUDGE] = [
-            {"all_valid": True, "entities": []} for _ in range(len(passthrough_rows))
-        ]
-        passthrough_rows[COL_ATTRIBUTE_FIDELITY_VALID] = True
-        passthrough_rows[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
-
-        if with_replacements.empty:
-            combined = merge_and_reorder(passthrough_rows)
-            return AttributeFidelityJudgeResult(dataframe=combined, failed_records=[])
-
-        effective_preview_num_records = (
-            min(preview_num_records, len(with_replacements)) if preview_num_records is not None else None
-        )
-        run_result = self._adapter.run_workflow(
-            with_replacements,
-            model_configs=model_configs,
-            columns=[self.column_config(selected_models)],
-            workflow_name="replace-attribute-fidelity-judge",
-            preview_num_records=effective_preview_num_records,
-        )
-
-        judged_df = run_result.dataframe.copy()
-        flattened = judged_df[COL_ATTRIBUTE_FIDELITY_JUDGE].apply(_flatten_judgment)
-        judged_df[COL_ATTRIBUTE_FIDELITY_VALID] = flattened.apply(lambda pair: pair[0])
-        judged_df[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES] = flattened.apply(lambda pair: pair[1])
-
-        combined = merge_and_reorder(judged_df, passthrough_rows)
-        return AttributeFidelityJudgeResult(dataframe=combined, failed_records=run_result.failed_records)
+    @classmethod
+    def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
+        return [e.model_dump() for e in parsed.entities if not e.passes]
