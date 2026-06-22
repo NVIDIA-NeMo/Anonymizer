@@ -74,6 +74,11 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"
 
     providers = [
         ModelProvider(
+            name="nvidia",
+            endpoint="https://integrate.api.nvidia.com/v1",
+            api_key=os.environ["NVIDIA_API_KEY"],
+        ),
+        ModelProvider(
             name="openai",
             endpoint="https://api.openai.com/v1",
             api_key=os.environ["OPENAI_API_KEY"],
@@ -88,7 +93,7 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"
     anonymizer = Anonymizer(model_providers=providers)
     ```
 
-After defining providers, reference them from your model configs as described below.
+The bundled model configs reference `provider: nvidia`, so keep the `nvidia` provider in your list (or pass matching `model_configs=`) — `Anonymizer` validates that every model config's `provider` name resolves to a configured provider. After defining providers, reference them from your model configs as described below.
 
 ---
 

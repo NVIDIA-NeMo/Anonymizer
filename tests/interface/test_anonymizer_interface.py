@@ -212,6 +212,26 @@ def test_anonymizer_rejects_empty_model_providers_list() -> None:
         )
 
 
+def test_anonymizer_skips_provider_validation_with_supplied_data_designer() -> None:
+    from data_designer.interface.data_designer import DataDesigner
+
+    # Provider not in bundled defaults; would raise if validated against them.
+    yaml_str = """
+model_configs:
+  - alias: custom-detector
+    model: test/model
+    provider: my-own-provider
+"""
+    anonymizer = Anonymizer(
+        model_configs=yaml_str,
+        data_designer=Mock(spec=DataDesigner),
+        detection_workflow=Mock(),
+        replace_runner=Mock(),
+        rewrite_runner=Mock(),
+    )
+    assert {config.provider for config in anonymizer._model_configs} == {"my-own-provider"}
+
+
 def test_run_exposes_trace_dataframe_and_filters_internal_columns(
     stub_anonymizer_config: AnonymizerConfig,
     stub_input: AnonymizerInput,

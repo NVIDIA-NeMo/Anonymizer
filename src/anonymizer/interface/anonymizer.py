@@ -139,7 +139,14 @@ class Anonymizer:
             self._model_configs = parsed.model_configs
             self._selected_models = parsed.selected_models
             self._resolved_providers = _resolve_model_providers(model_providers)
-            validate_model_configs_reference_providers(self._model_configs, self._resolved_providers)
+            # When the caller supplies a preconfigured DataDesigner, provider
+            # registration is owned by that instance — our resolved providers
+            # (bundled defaults when model_providers is None) are never passed to it
+            # and only feed telemetry host classification. Validating the user's
+            # model_configs against our defaults would wrongly reject configs that
+            # reference providers registered on their own DataDesigner.
+            if data_designer is None:
+                validate_model_configs_reference_providers(self._model_configs, self._resolved_providers)
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
         logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
