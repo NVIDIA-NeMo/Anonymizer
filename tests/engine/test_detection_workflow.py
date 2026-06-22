@@ -543,6 +543,92 @@ def test_validator_pool_kwargs_thread_through_to_generator_params(
     assert params.excerpt_window_chars == 42
 
 
+def test_validation_single_chunk_full_text_threads_to_generator_params(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        validation_single_chunk_full_text=False,
+        tag_latent_entities=False,
+    )
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
+    assert params.single_chunk_full_text is False
+
+
+def test_build_detection_config_threads_validation_single_chunk_full_text(
+    tmp_path,
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.build_detection_config(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        seed_path=tmp_path / "seed.parquet",
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        validation_single_chunk_full_text=False,
+    )
+    columns = adapter.build_config.call_args.kwargs["columns"]
+    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
+    assert params.single_chunk_full_text is False
+
+
+def test_build_detection_builder_for_seed_threads_validation_single_chunk_full_text(
+    tmp_path,
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.build_detection_builder_for_seed(
+        seed_path=tmp_path / "seed.parquet",
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        validation_single_chunk_full_text=False,
+    )
+    columns = adapter.build_config_for_seed.call_args.kwargs["columns"]
+    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
+    assert params.single_chunk_full_text is False
+
+
+def test_build_detection_config_uses_default_validation_single_chunk_full_text(
+    tmp_path,
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.build_detection_config(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        seed_path=tmp_path / "seed.parquet",
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+    )
+    columns = adapter.build_config.call_args.kwargs["columns"]
+    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
+    assert params.single_chunk_full_text is True
+
+
 def test_pool_size_greater_than_one_emits_warning(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,

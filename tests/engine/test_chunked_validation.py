@@ -447,6 +447,41 @@ class TestChunkedValidateRowPoolOfOne:
             "around Alice/Bob would clip the suffix entirely."
         )
 
+    def test_single_chunk_can_use_compact_excerpt_when_configured(self) -> None:
+        prefix = "START_ONLY_MARKER " + ("prefix filler " * 80)
+        suffix = (" suffix filler" * 80) + " END_ONLY_MARKER"
+        middle = "Alice met Bob."
+        text = prefix + middle + suffix
+        alice_start = len(prefix)
+        bob_start = alice_start + 10
+
+        spans = [
+            _entity_span("a", "Alice", "first_name", alice_start, alice_start + 5),
+            _entity_span("b", "Bob", "first_name", bob_start, bob_start + 3),
+        ]
+        candidates = _candidates_schema(
+            ("a", "Alice", "first_name"),
+            ("b", "Bob", "first_name"),
+        )
+        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+
+        facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=10,
+            excerpt_window_chars=20,
+            single_chunk_full_text=False,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        chunked_validate_row(row, params, {"v0": facade})
+
+        prompt = facade.calls[0]["prompt"]
+        assert "Alice" in prompt
+        assert "Bob" in prompt
+        assert "START_ONLY_MARKER" not in prompt
+        assert "END_ONLY_MARKER" not in prompt
+
     def test_empty_candidates_short_circuits_without_calls(self) -> None:
         row = _build_row(text="hello", seed_entities=[], candidates=_candidates_schema())
         facade = FakeFacade("v0", response={"decisions": []})

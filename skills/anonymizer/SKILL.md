@@ -62,8 +62,8 @@ The agent should consult these as it goes — *do not* try to enumerate field re
 Environment-level issues only. Quality and pipeline issues are in `docs/troubleshooting.md`.
 
 - **`anonymizer` not installed:** Tell the user `nemo-anonymizer` is not in this Python environment (requires Python ≥ 3.11). Ask if they want you to install it (`pip install nemo-anonymizer`) or do it themselves. Do not install without permission.
-- **Model aliases not configured:** Anonymizer can't run without `models.yaml` and `providers.yaml`. Tell the user to set these up — see `docs/concepts/models.md`. If they don't have a config yet, point them at `src/anonymizer/config/default_model_configs/` for the shipped defaults.
-- **LLM calls failing at preview:** Usually an auth issue (missing or invalid API key), a network problem, or a wrong base URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
+- **Model aliases not configured:** Anonymizer can't run without `model_configs` and `model_providers` (YAML files or Python objects). Tell the user to set these up — see `docs/concepts/models.md`. If they don't have a config yet, point them at `src/anonymizer/config/default_model_configs/` for the shipped defaults.
+- **LLM calls failing at preview:** Usually an auth issue (missing or invalid API key), a network problem, or a wrong endpoint URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
 - **Local / on-prem GLiNER:** Clone or download `tools/serve_gliner.py` from the Anonymizer repo, start the server, add a provider with `endpoint: http://localhost:8001/v1`, and point `gliner-pii-detector` at `provider: local-gliner` with `skip_health_check: true`. Preflight errors about missing aliases usually mean `model_configs` only listed the detector — include the full default pool. Wrong `endpoint` or a down server surfaces as detection failures at preview — see [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
 
 # Output Template

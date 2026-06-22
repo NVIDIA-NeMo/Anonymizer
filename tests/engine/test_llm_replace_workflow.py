@@ -330,6 +330,41 @@ def test_filter_replacement_map_anomaly_summaries_do_not_leak_pii(
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
 
 
+def test_filter_replacement_map_repairs_synthetic_original_collisions_without_pii(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Synthetic values must not reuse another protected original from the same row."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "1979-01-01", "labels": ["date"]},
+                {"value": "1980-02-02", "labels": ["date"]},
+            ]
+        }
+    )
+    raw_map = {
+        "replacements": [
+            {"original": "1979-01-01", "label": "date", "synthetic": "1980-02-02"},
+            {"original": "1980-02-02", "label": "date", "synthetic": "1991-03-04"},
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        result = _filter_replacement_map_to_input_entities(
+            raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-collision"
+        )
+
+    assert result == {
+        "replacements": [
+            {"original": "1979-01-01", "label": "date", "synthetic": "[SUBSTITUTE_DATE_1]"},
+            {"original": "1980-02-02", "label": "date", "synthetic": "1991-03-04"},
+        ]
+    }
+    assert "synthetic-original collision" in caplog.text
+    assert "date" in caplog.text
+    _assert_no_pii_in_logs(caplog, extra_secrets=("1979-01-01", "1980-02-02", "1991-03-04"))
+
+
 def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

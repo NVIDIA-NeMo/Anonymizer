@@ -37,6 +37,7 @@ from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkfl
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
@@ -196,80 +197,95 @@ class RewriteWorkflow:
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
     ) -> RewriteResult:
-        all_failed: list[FailedRecord] = []
+        with stage_timer("RewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
+            all_failed: list[FailedRecord] = []
 
-        entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+            entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+            measurement.update(
+                entity_row_count=len(entity_rows),
+                passthrough_row_count=len(passthrough_rows),
+            )
 
-        # Fast path: no entities anywhere
-        if entity_rows.empty:
+            # Fast path: no entities anywhere
+            if entity_rows.empty:
+                _apply_passthrough_defaults(passthrough_rows)
+                result_df = merge_and_reorder(passthrough_rows)
+                result = RewriteResult(dataframe=result_df, failed_records=all_failed)
+                measurement.update(
+                    output_row_count=len(result.dataframe),
+                    failed_record_count=len(result.failed_records),
+                )
+                return result
+
+            # --- Step 1: replacement map (needs only detection output) ---
+            replace_workflow = LlmReplaceWorkflow(adapter=self._adapter)
+            replace_result = replace_workflow.generate_map_only(
+                entity_rows,
+                model_configs=model_configs,
+                selected_models=replace_model_selection,
+            )
+            entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
+            all_failed.extend(replace_result.failed_records)
+
+            # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
+            pipeline_columns = [
+                *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
+                *self._disposition_wf.columns(
+                    selected_models=selected_models,
+                    privacy_goal=privacy_goal,
+                    data_summary=data_summary,
+                    strict_entity_protection=strict_entity_protection,
+                ),
+                *self._qa_wf.columns(selected_models=selected_models),
+                *self._rewrite_gen_wf.columns(
+                    selected_models=selected_models,
+                    privacy_goal=privacy_goal,
+                    data_summary=data_summary,
+                ),
+            ]
+
+            pipeline_seed = select_seed_cols(entity_rows, derive_seed_columns(pipeline_columns, entity_rows))
+            pipeline_result = self._adapter.run_workflow(
+                pipeline_seed,
+                model_configs=model_configs,
+                columns=pipeline_columns,
+                workflow_name="rewrite-pipeline",
+                preview_num_records=preview_num_records,
+            )
+            entity_rows = _join_new_columns(entity_rows, pipeline_result.dataframe)
+            all_failed.extend(pipeline_result.failed_records)
+
+            # --- Step 5: evaluate-repair loop ---
+            entity_rows, eval_repair_failed = self._run_evaluate_repair_loop(
+                entity_rows,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                preview_num_records=preview_num_records,
+            )
+            all_failed.extend(eval_repair_failed)
+
+            # --- Step 6: final judge (non-critical) ---
+            entity_rows, judge_failed = self._run_final_judge(
+                entity_rows,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                preview_num_records=preview_num_records,
+            )
+            all_failed.extend(judge_failed)
+
+            # --- Merge and return ---
             _apply_passthrough_defaults(passthrough_rows)
-            result_df = merge_and_reorder(passthrough_rows)
-            return RewriteResult(dataframe=result_df, failed_records=all_failed)
-
-        # --- Step 1: replacement map (needs only detection output) ---
-        replace_workflow = LlmReplaceWorkflow(adapter=self._adapter)
-        replace_result = replace_workflow.generate_map_only(
-            entity_rows,
-            model_configs=model_configs,
-            selected_models=replace_model_selection,
-        )
-        entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
-        all_failed.extend(replace_result.failed_records)
-
-        # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
-        pipeline_columns = [
-            *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
-            *self._disposition_wf.columns(
-                selected_models=selected_models,
-                privacy_goal=privacy_goal,
-                data_summary=data_summary,
-                strict_entity_protection=strict_entity_protection,
-            ),
-            *self._qa_wf.columns(selected_models=selected_models),
-            *self._rewrite_gen_wf.columns(
-                selected_models=selected_models,
-                privacy_goal=privacy_goal,
-                data_summary=data_summary,
-            ),
-        ]
-
-        pipeline_seed = select_seed_cols(entity_rows, derive_seed_columns(pipeline_columns, entity_rows))
-        pipeline_result = self._adapter.run_workflow(
-            pipeline_seed,
-            model_configs=model_configs,
-            columns=pipeline_columns,
-            workflow_name="rewrite-pipeline",
-            preview_num_records=preview_num_records,
-        )
-        entity_rows = _join_new_columns(entity_rows, pipeline_result.dataframe)
-        all_failed.extend(pipeline_result.failed_records)
-
-        # --- Step 5: evaluate-repair loop ---
-        entity_rows, eval_repair_failed = self._run_evaluate_repair_loop(
-            entity_rows,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            privacy_goal=privacy_goal,
-            evaluation=evaluation,
-            preview_num_records=preview_num_records,
-        )
-        all_failed.extend(eval_repair_failed)
-
-        # --- Step 6: final judge (non-critical) ---
-        entity_rows, judge_failed = self._run_final_judge(
-            entity_rows,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            privacy_goal=privacy_goal,
-            evaluation=evaluation,
-            preview_num_records=preview_num_records,
-        )
-        all_failed.extend(judge_failed)
-
-        # --- Merge and return ---
-        _apply_passthrough_defaults(passthrough_rows)
-        combined = merge_and_reorder(entity_rows, passthrough_rows)
-        return RewriteResult(dataframe=combined, failed_records=all_failed)
+            combined = merge_and_reorder(entity_rows, passthrough_rows)
+            result = RewriteResult(dataframe=combined, failed_records=all_failed)
+            measurement.update(
+                output_row_count=len(result.dataframe),
+                failed_record_count=len(result.failed_records),
+            )
+            return result
 
     # ---------------------------------------------------------------------------
     # Evaluate-repair loop
