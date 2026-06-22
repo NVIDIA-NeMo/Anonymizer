@@ -42,6 +42,7 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
 - **Validator pool is the only model role with built-in load-spreading.** Set `entity_validator: [a, b, c]` in `models.yaml` if rate limits drop rows. Other roles (rewriter, evaluator, etc.) are single-alias.
+- **Self-hosted GLiNER** — when detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run the reference server from a **source checkout** (`python tools/serve_gliner.py`; not installed via `pip install nemo-anonymizer`). Add a provider with `endpoint: http://localhost:8001/v1`, route `entity_detector` via a `gliner-pii-detector` alias with `provider: local-gliner` and `skip_health_check: true`. If you pass `--port` or `--host` to the server, set the provider `endpoint` to the same host/port. `model_configs` is a **complete** model pool, not an overlay — copy `src/anonymizer/config/default_model_configs/models.yaml` and change only the detector entry (keep `gpt-oss-120b` and `nemotron-30b-thinking`). See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
 - **The evaluation judges use their own model roles** (`detection_validity_judge`, `replace_type_fidelity_judge`, `replace_relational_consistency_judge`, `replace_attribute_fidelity_judge`), configured in the `evaluate` section of `models.yaml`. They are **not** consumed by `preview()` / `run()`, so a config that anonymizes fine can still fail validation at `evaluate()` if those roles are unset. Defaults ship in `src/anonymizer/config/default_model_configs/evaluate.yaml`.
 - **`*_valid` verdict columns are `True` / `False` / `None`.** `None` means the judge was unavailable (model/infra failure), **not** that the row passed — treat it as "unscored", never as a pass. Inspect verdicts per record with `evaluated.display_record(i)`.
 - **`EvaluateConfig` is an empty placeholder today** — no knobs to set. `anonymizer.evaluate(result)` is the whole API; pass nothing else.
@@ -54,6 +55,7 @@ The agent should consult these as it goes — *do not* try to enumerate field re
 - [`docs/troubleshooting.md`](../../docs/troubleshooting.md) — symptom-first guide for diagnosing dropped rows, leakage, low utility, and pipeline failures. Read **section by section as symptoms appear**, not all at once.
 - [`docs/concepts/detection.md`](../../docs/concepts/detection.md) — detection internals (GLiNER threshold semantics, label catalogue, augmenter/validator behavior).
 - [`docs/concepts/models.md`](../../docs/concepts/models.md) — model role configuration, validator pools.
+- [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) — local `entity_detector` server (`tools/serve_gliner.py`), OpenAI-compatible contract, YAML wiring.
 
 # Troubleshooting
 
@@ -62,6 +64,7 @@ Environment-level issues only. Quality and pipeline issues are in `docs/troubles
 - **`anonymizer` not installed:** Tell the user `nemo-anonymizer` is not in this Python environment (requires Python ≥ 3.11). Ask if they want you to install it (`pip install nemo-anonymizer`) or do it themselves. Do not install without permission.
 - **Model aliases not configured:** Anonymizer can't run without `models.yaml` and `providers.yaml`. Tell the user to set these up — see `docs/concepts/models.md`. If they don't have a config yet, point them at `src/anonymizer/config/default_model_configs/` for the shipped defaults.
 - **LLM calls failing at preview:** Usually an auth issue (missing or invalid API key), a network problem, or a wrong base URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
+- **Local / on-prem GLiNER:** Clone or download `tools/serve_gliner.py` from the Anonymizer repo, start the server, add a provider with `endpoint: http://localhost:8001/v1`, and point `gliner-pii-detector` at `provider: local-gliner` with `skip_health_check: true`. Preflight errors about missing aliases usually mean `model_configs` only listed the detector — include the full default pool. Wrong `endpoint` or a down server surfaces as detection failures at preview — see [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
 
 # Output Template
 

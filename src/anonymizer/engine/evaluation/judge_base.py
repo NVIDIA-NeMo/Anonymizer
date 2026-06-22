@@ -104,7 +104,7 @@ class _BaseJudgeWorkflow(ABC):
         """
         if raw is None:
             return None, []
-        if hasattr(raw, "model_dump"):
+        if isinstance(raw, BaseModel):
             raw = raw.model_dump(mode="python")
         if isinstance(raw, str):
             try:
