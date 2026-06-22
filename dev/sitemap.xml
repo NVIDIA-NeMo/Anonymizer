@@ -2,210 +2,210 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/hooks/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/troubleshooting/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/concepts/choosing-a-strategy/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/concepts/detection/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/concepts/evaluation/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/concepts/models/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/concepts/replace/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/concepts/rewrite/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/concepts/self-hosting-gliner/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/data/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/development/observability/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebook_source/01_your_first_anonymization/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebook_source/02_inspecting_detected_entities/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebook_source/03_choosing_a_replacement_strategy/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebook_source/04_rewriting_biographies/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebook_source/05_rewriting_legal_documents/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebooks/01_your_first_anonymization/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebooks/02_inspecting_detected_entities/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebooks/03_choosing_a_replacement_strategy/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebooks/04_rewriting_biographies/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/notebooks/05_rewriting_legal_documents/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/SUMMARY/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/distributed/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/logging/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/telemetry/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/config/anonymizer_config/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/config/models/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/config/replace_strategies/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/config/rewrite/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/anonymizer/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/display/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/errors/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/results/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/interface/cli/main/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/collector/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/config/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/constants/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/recorders/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/session/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/sinks/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/entities/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/llm_calls/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/replacements/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/metrics/rewrite/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/records/model/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/records/row/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/measurement/records/run/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/tutorials/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
     <url>
          <loc>https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/archive/2026/</loc>
-         <lastmod>2026-06-15</lastmod>
+         <lastmod>2026-06-22</lastmod>
     </url>
 </urlset>
