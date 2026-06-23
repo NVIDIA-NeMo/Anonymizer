@@ -291,6 +291,11 @@ model responses, replacement maps, entity payloads, trace records, paths, URLs,
 data summaries, model/provider config payloads, and sensitive-looking run tags
 are filtered from W&B payloads.
 
+The goal of W&B support is to get sanitized benchmark data into W&B. Workspaces,
+reports, views, and panels are presentation layers on top of that data. They
+can be edited in W&B, regenerated with the tooling below, or replaced as the
+benchmark questions change.
+
 Create a W&B benchmark workspace or report for uploaded benchmark runs with
 the report utility:
 
@@ -311,6 +316,11 @@ a draft report from sanitized benchmark run summary/config fields and a panel
 grid filtered to one run. Pass `--publish` when a report should be saved as a
 published report instead of a draft. Workspace/report generation requires the
 measurement dependency group because it uses the `wandb[workspaces]` extra.
+
+Generated workspaces and reports are not canonical artifacts. The W&B project
+data is canonical. If a workspace layout, report panel, or project view stops
+answering the benchmark question, update it directly in W&B or rerun the
+workspace/report command.
 
 Reports include panels for case health and latency, DataDesigner row flow,
 request health, token usage, throughput, record privacy counters, replacement

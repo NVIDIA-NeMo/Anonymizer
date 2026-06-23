@@ -114,6 +114,11 @@ sanitizer excludes raw text, prompts, model responses, replacement maps, entity
 payloads, DataDesigner trace records, local paths, URLs, provider payloads, and
 sensitive-looking run tags.
 
+The main goal is benchmark data in W&B. Workspaces, reports, project views, and
+panels are presentation layers. They can be edited in W&B, regenerated with the
+benchmark tooling, or replaced when a new benchmark question needs a different
+view.
+
 Use `tools/measurement/create_wandb_report.py --workspace` to create a manual
 W&B benchmark workspace for a project or benchmark run group. The workspace
 organizes focused panels for benchmark summary, privacy, utility,
@@ -123,9 +128,9 @@ benchmark run or a benchmark run group.
 
 Use `tools/measurement/sweep_benchmarks.py` for parameter sweeps. It runs one
 benchmark suite per sweep arm and copies `sweep_id`, `sweep_arm_id`, and
-`sweep_param_*` fields into W&B benchmark config so benchmark reports can
-compare arms directly. Pass `--create-workspace` to create the benchmark
-workspace after the sweep completes.
+`sweep_param_*` fields into W&B benchmark config so benchmark workspaces and
+reports can compare arms directly. Pass `--create-workspace` to create the
+benchmark workspace after the sweep completes.
 See `tools/measurement/README.md` for the full command reference.
 
 ## DataDesigner Message Traces
@@ -213,6 +218,6 @@ When adding instrumentation:
 | `src/anonymizer/interface/anonymizer.py` | Run-level and per-record measurement integration. |
 | `src/anonymizer/engine/ndd/adapter.py` | DataDesigner workflow measurement, native message trace capture, and scheduler task trace capture. |
 | `tools/measurement/run_benchmarks.py` | Benchmark suite runner that activates measurement sessions and writes per-case artifacts. |
-| `tools/measurement/create_wandb_report.py` | W&B benchmark report builder for sanitized benchmark runs and run groups. |
+| `tools/measurement/create_wandb_report.py` | W&B benchmark workspace/report builder for sanitized benchmark runs and run groups. |
 | `tools/measurement/sweep_benchmarks.py` | Parameter sweep runner that logs one W&B benchmark run per sweep arm. |
 | `tools/measurement/README.md` | Detailed benchmark and analysis command reference. |
