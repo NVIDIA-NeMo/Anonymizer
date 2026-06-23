@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -19,6 +20,17 @@ from anonymizer.config.rewrite import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+DetectionMode = Literal["full", "gliner_only", "gliner_fix", "augment_only"]
+AugmentPromptVariant = Literal["default", "high_recall", "high_recall2"]
+"""Controls which detection stages run.
+
+- ``"full"``          — GLiNER NER → LLM validation → LLM augmentation (default)
+- ``"gliner_only"``   — GLiNER NER only; skip validation and augmentation
+- ``"gliner_fix"``    — GLiNER NER + LLM validation; skip augmentation
+- ``"augment_only"``  — LLM augmentation only; skip GLiNER and validation
+"""
 
 
 def is_remote_input_source(value: str) -> bool:
@@ -98,6 +110,26 @@ class Detect(BaseModel):
             "Number of characters to include before and after a chunk's entity span when "
             "building the text excerpt sent to the validator. Bounds the prompt context the "
             "validator sees per chunk; it is NOT the LLM's context window limit."
+        ),
+    )
+
+    detection_mode: DetectionMode = Field(
+        default="full",
+        description=(
+            "Controls which detection stages run. "
+            "'full' (default): GLiNER NER → LLM validation → LLM augmentation. "
+            "'gliner_only': GLiNER NER only; skip validation and augmentation. "
+            "'gliner_fix': GLiNER NER + LLM validation; skip augmentation. "
+            "'augment_only': LLM augmentation only; skip GLiNER and validation."
+        ),
+    )
+    augment_prompt: AugmentPromptVariant = Field(
+        default="default",
+        description=(
+            "Selects the augmentation LLM prompt variant. "
+            "'default': standard entity extraction prompt. "
+            "'high_recall': high-recall prompt with verbatim-span enforcement and "
+            "support for disguised/fragmented/word-encoded identifiers."
         ),
     )
 

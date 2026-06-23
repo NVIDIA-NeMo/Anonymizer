@@ -386,6 +386,8 @@ class Anonymizer:
             tag_latent_entities=config.rewrite is not None,
             compute_grouped_entities=config.replace is not None or config.rewrite is not None,
             preview_num_records=preview_num_records,
+            detection_mode=config.detect.detection_mode,
+            augment_prompt_variant=config.detect.augment_prompt,
         )
         detection_elapsed = time.perf_counter() - t0
         entity_count = _count_entities(detection_result.dataframe)

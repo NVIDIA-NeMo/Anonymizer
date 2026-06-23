@@ -44,7 +44,10 @@ from anonymizer.engine.detection.chunked_validation import (
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
+    bypass_gliner,
     enrich_validation_decisions,
+    finalize_gliner_fix,
+    finalize_gliner_only,
     merge_and_build_candidates,
     parse_detected_entities,
     prepare_validation_inputs,
@@ -97,14 +100,15 @@ class EntityDetectionWorkflow:
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
+        detection_mode: str = "full",
+        augment_prompt_variant: str = "default",
     ) -> EntityDetectionResult:
-        """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
+        """Run the detection pipeline according to *detection_mode*.
 
-        This is the primary detection workflow. It detects entities via GLiNER,
-        validates/reclassifies them with an LLM (chunked across a pool of
-        validator aliases), augments with additional entities the detector may
-        have missed, and produces final standoff entity spans with overlap
-        resolution.
+        - ``"full"``         GLiNER → validation → augmentation (default)
+        - ``"gliner_only"``  GLiNER only; skip validation and augmentation
+        - ``"gliner_fix"``   GLiNER + validation; skip augmentation
+        - ``"augment_only"`` LLM augmentation only; skip GLiNER and validation
         """
         labels = _resolve_detection_labels(entity_labels)
         workflow_model_configs = self._inject_detector_params(
@@ -114,42 +118,48 @@ class EntityDetectionWorkflow:
             gliner_detection_threshold=gliner_detection_threshold,
         )
 
-        detection_alias = resolve_model_alias("entity_detector", selected_models)
-        validator_aliases = resolve_model_aliases("entity_validator", selected_models)
-        augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
-        logger.debug(
-            "detection aliases: detector=%s, validator_pool=%s, augmenter=%s",
-            detection_alias,
-            validator_aliases,
-            augmenter_alias,
-        )
-        # ModelConfig.max_parallel_requests caps concurrency *per alias*. When
-        # the pool has multiple validators each gets its own cap, so total
-        # in-flight validator calls can reach sum(per-alias caps). Operators
-        # provisioning rate budgets for downstream providers should size each
-        # alias's cap accordingly.
-        if len(validator_aliases) > 1:
-            logger.warning(
-                "entity validation runs across a pool of %d aliases (%s). "
-                "max_parallel_requests is enforced per alias, so the pool "
-                "multiplies total in-flight validator calls; budget provider "
-                "TPM/RPM accordingly.",
-                len(validator_aliases),
-                validator_aliases,
+        needs_gliner = detection_mode in ("full", "gliner_only", "gliner_fix")
+        needs_validation = detection_mode in ("full", "gliner_fix")
+        needs_augmentation = detection_mode in ("full", "augment_only")
+
+        detection_alias = resolve_model_alias("entity_detector", selected_models) if needs_gliner else None
+        augmenter_alias = resolve_model_alias("entity_augmenter", selected_models) if needs_augmentation else None
+
+        validator_generator = None
+        validator_params = None
+        if needs_validation:
+            validator_aliases = resolve_model_aliases("entity_validator", selected_models)
+            # ModelConfig.max_parallel_requests caps concurrency *per alias*. When
+            # the pool has multiple validators each gets its own cap, so total
+            # in-flight validator calls can reach sum(per-alias caps). Operators
+            # provisioning rate budgets for downstream providers should size each
+            # alias's cap accordingly.
+            if len(validator_aliases) > 1:
+                logger.warning(
+                    "entity validation runs across a pool of %d aliases (%s). "
+                    "max_parallel_requests is enforced per alias, so the pool "
+                    "multiplies total in-flight validator calls; budget provider "
+                    "TPM/RPM accordingly.",
+                    len(validator_aliases),
+                    validator_aliases,
+                )
+            validator_generator = make_chunked_validation_generator(validator_aliases)
+            validator_params = ChunkedValidationParams(
+                pool=list(validator_aliases),
+                max_entities_per_call=validation_max_entities_per_call,
+                excerpt_window_chars=validation_excerpt_window_chars,
+                prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
             )
 
-        validator_generator = make_chunked_validation_generator(validator_aliases)
-        validator_params = ChunkedValidationParams(
-            pool=list(validator_aliases),
-            max_entities_per_call=validation_max_entities_per_call,
-            excerpt_window_chars=validation_excerpt_window_chars,
-            prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
+        logger.debug(
+            "detection_mode=%s: detector=%s, augmenter=%s",
+            detection_mode,
+            detection_alias,
+            augmenter_alias,
         )
 
-        detection_result = self._adapter.run_workflow(
-            dataframe,
-            model_configs=workflow_model_configs,
-            columns=[
+        if needs_gliner:
+            gliner_columns = [
                 LLMTextColumnConfig(
                     name=COL_RAW_DETECTED,
                     prompt=_jinja(COL_TEXT),
@@ -159,6 +169,12 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES,
                     generator_function=parse_detected_entities,
                 ),
+            ]
+        else:
+            gliner_columns = []
+
+        if needs_validation:
+            validation_columns = [
                 CustomColumnConfig(
                     name=COL_SEED_VALIDATION_CANDIDATES,
                     generator_function=prepare_validation_inputs,
@@ -177,10 +193,19 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES_JSON,
                     generator_function=apply_validation_to_seed_entities,
                 ),
+            ]
+        else:
+            validation_columns = []
+
+        if needs_augmentation:
+            augmentation_columns = [
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
                     prompt=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                        data_summary=data_summary,
+                        labels=labels,
+                        strict_labels=entity_labels is not None,
+                        variant=augment_prompt_variant,
                     ),
                     model_alias=augmenter_alias,
                     output_format=AugmentedEntitiesSchema,
@@ -189,11 +214,39 @@ class EntityDetectionWorkflow:
                     name=COL_MERGED_ENTITIES,
                     generator_function=merge_and_build_candidates,
                 ),
-                CustomColumnConfig(
-                    name=COL_DETECTED_ENTITIES,
-                    generator_function=apply_validation_and_finalize,
-                ),
-            ],
+            ]
+        else:
+            augmentation_columns = []
+
+        if detection_mode == "gliner_only":
+            columns = [
+                *gliner_columns,
+                CustomColumnConfig(name=COL_DETECTED_ENTITIES, generator_function=finalize_gliner_only),
+            ]
+        elif detection_mode == "gliner_fix":
+            columns = [
+                *gliner_columns,
+                *validation_columns,
+                CustomColumnConfig(name=COL_DETECTED_ENTITIES, generator_function=finalize_gliner_fix),
+            ]
+        elif detection_mode == "augment_only":
+            columns = [
+                CustomColumnConfig(name=COL_SEED_ENTITIES, generator_function=bypass_gliner),
+                *augmentation_columns,
+                CustomColumnConfig(name=COL_DETECTED_ENTITIES, generator_function=apply_validation_and_finalize),
+            ]
+        else:  # "full"
+            columns = [
+                *gliner_columns,
+                *validation_columns,
+                *augmentation_columns,
+                CustomColumnConfig(name=COL_DETECTED_ENTITIES, generator_function=apply_validation_and_finalize),
+            ]
+
+        detection_result = self._adapter.run_workflow(
+            dataframe,
+            model_configs=workflow_model_configs,
+            columns=columns,
             workflow_name="entity-detection",
             preview_num_records=preview_num_records,
         )
@@ -259,6 +312,8 @@ class EntityDetectionWorkflow:
         tag_latent_entities: bool = True,
         compute_grouped_entities: bool | None = None,
         preview_num_records: int | None = None,
+        detection_mode: str = "full",
+        augment_prompt_variant: str = "default",
     ) -> EntityDetectionResult:
         """Run the full detection pipeline, optionally including latent entity detection.
 
@@ -280,6 +335,8 @@ class EntityDetectionWorkflow:
             entity_labels=entity_labels,
             data_summary=data_summary,
             preview_num_records=preview_num_records,
+            detection_mode=detection_mode,
+            augment_prompt_variant=augment_prompt_variant,
         )
 
         if tag_latent_entities:
@@ -491,7 +548,72 @@ Template: <<VALIDATION_SKELETON>>
     )
 
 
-def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool = False) -> str:
+_AUGMENT_TASK_DEFAULT = """\
+Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
+- Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
+- Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
+- Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms"""
+
+_AUGMENT_TASK_HIGH_RECALL = """\
+Task: Perform high-recall privacy entity extraction from the full text.
+Extract all direct identifiers, quasi-identifiers, latent identifiers, and linkable
+contextual attributes that could help re-identify a person, organization, record,
+device, event, or resource.
+
+Do not limit yourself to obvious PII. Include contextual facts that become identifying
+in combination, such as occupation, employer type, role, location, age/date clues,
+demographic attributes, family relationships, unusual schedules, technical systems,
+legal/medical context, and distinctive activities.
+
+Important: Identifiers may be disguised, fragmented, hyphenated, misspelled, or written
+in words instead of digits. Preserve leading zeros. Do not drop partial numeric fragments
+when they are part of an ID, phone number, SSN, date of birth, address, account number,
+or record number."""
+
+_AUGMENT_TASK_HIGH_RECALL2 = """\
+Task: Perform high-recall privacy entity extraction from the full text.
+Extract all direct identifiers, quasi-identifiers, latent identifiers, and linkable
+contextual attributes that could help re-identify a person, organization, record,
+device, event, or resource.
+
+Do not limit yourself to obvious PII. Include contextual facts that become identifying
+in combination, such as occupation, employer type, role, location, age/date clues,
+demographic attributes, family relationships, unusual schedules, technical systems,
+legal/medical context, and distinctive activities.
+
+Important: Identifiers may be disguised, fragmented, hyphenated, misspelled, or written
+in words instead of digits."""
+
+_AUGMENT_TASKS: dict[str, str] = {
+    "default": _AUGMENT_TASK_DEFAULT,
+    "high_recall": _AUGMENT_TASK_HIGH_RECALL,
+    "high_recall2": _AUGMENT_TASK_HIGH_RECALL2,
+}
+
+_AUGMENT_EXTRA_RULES: dict[str, str] = {
+    "default": "",
+    "high_recall": (
+        '- The "value" field must be the EXACT verbatim span from the input text — copy it\n'
+        '  character-for-character. Do not normalize, translate, reformat, or decode it.\n'
+        '  If the text says "four four two dash six seven", the value is "four four two\n'
+        '  dash six seven", not "442-67".\n'
+        '- Identifiers may be disguised, fragmented, hyphenated, misspelled, or written in\n'
+        '  words instead of digits. Preserve leading zeros. Do not drop partial numeric\n'
+        '  fragments when they are part of an ID, phone number, SSN, date of birth, address,\n'
+        '  account number, or record number.\n'
+    ),
+    "high_recall2": (
+        '- The "value" field must be the EXACT verbatim span from the input text — copy it\n'
+        '  character-for-character. Do not normalize, translate, reformat, or decode it.\n'
+        '- Identifiers may be disguised, fragmented, hyphenated, misspelled, or written in\n'
+        '  words instead of digits.\n'
+    ),
+}
+
+
+def _get_augment_prompt(
+    *, data_summary: str | None, labels: list[str], strict_labels: bool = False, variant: str = "default"
+) -> str:
     if strict_labels:
         label_block = (
             "Here are the allowed entity classes. Use ONLY labels from this list:\n"
@@ -532,10 +654,9 @@ Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. 
 Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
 Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
 
-    prompt = """Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
-- Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
-- Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
-- Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
+    task_section = _AUGMENT_TASKS.get(variant, _AUGMENT_TASK_DEFAULT)
+    extra_rules = _AUGMENT_EXTRA_RULES.get(variant, "")
+    prompt = f"""{task_section}
 
 We have the following type of data: <<DATA_SUMMARY>>
 
@@ -544,7 +665,7 @@ We have the following type of data: <<DATA_SUMMARY>>
 Rules:
 - Tag actual values, not placeholders
 - Do not repeat already-tagged entities
-- In structured formats, distinguish between:
+{extra_rules}- In structured formats, distinguish between:
   - Syntax/metadata: field names, column headers, function names, keywords
   - Data: assigned values, cell contents, literals, user input
   Only tag data, never syntax

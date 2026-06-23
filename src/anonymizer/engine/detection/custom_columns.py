@@ -180,6 +180,57 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+@custom_column_generator(
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES],
+    side_effect_columns=[COL_TAGGED_TEXT],
+)
+def finalize_gliner_only(row: dict[str, Any]) -> dict[str, Any]:
+    """Bypass validation and augmentation; promote raw GLiNER entities to final output."""
+    text = str(row.get(COL_TEXT, ""))
+    seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
+    expanded = expand_entity_occurrences(text=text, entities=seed_spans)
+    row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[e.as_dict() for e in expanded]).model_dump(mode="json")
+    row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=expanded)
+    return row
+
+
+@custom_column_generator(
+    required_columns=[COL_TEXT, COL_VALIDATED_SEED_ENTITIES],
+    side_effect_columns=[COL_TAGGED_TEXT],
+)
+def finalize_gliner_fix(row: dict[str, Any]) -> dict[str, Any]:
+    """Bypass augmentation; promote validated seed entities to final output."""
+    text = str(row.get(COL_TEXT, ""))
+    validated_spans = _parse_entity_spans(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
+    expanded = expand_entity_occurrences(text=text, entities=validated_spans)
+    row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[e.as_dict() for e in expanded]).model_dump(mode="json")
+    row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=expanded)
+    return row
+
+
+@custom_column_generator(
+    required_columns=[COL_TEXT],
+    side_effect_columns=[
+        COL_TAG_NOTATION,
+        COL_SEED_ENTITIES_JSON,
+        COL_INITIAL_TAGGED_TEXT,
+        COL_VALIDATED_SEED_ENTITIES,
+        COL_VALIDATED_ENTITIES,
+    ],
+)
+def bypass_gliner(row: dict[str, Any]) -> dict[str, Any]:
+    """Bypass GLiNER and validation; seed augmentation with no prior entities."""
+    text = str(row.get(COL_TEXT, ""))
+    empty_entities = EntitiesSchema(entities=[]).model_dump(mode="json")
+    row[COL_SEED_ENTITIES] = empty_entities
+    row[COL_TAG_NOTATION] = get_tag_notation(text=text)
+    row[COL_SEED_ENTITIES_JSON] = "[]"
+    row[COL_INITIAL_TAGGED_TEXT] = text
+    row[COL_VALIDATED_SEED_ENTITIES] = empty_entities
+    row[COL_VALIDATED_ENTITIES] = ValidatedDecisionsSchema(decisions=[]).model_dump(mode="json")
+    return row
+
+
 def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
     parsed = EntitiesSchema.from_raw(raw_payload)
     return [
