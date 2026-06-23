@@ -16,6 +16,7 @@ schema, model role, prompt builder, and the per-row passthrough rule.
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
@@ -29,6 +30,8 @@ from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
+
+logger = logging.getLogger("anonymizer.evaluation.judge_base")
 
 
 @dataclass(frozen=True)
@@ -171,6 +174,11 @@ class _BaseJudgeWorkflow(ABC):
         passthrough_rows[self.RAW_COL] = [self.DEFAULT_PAYLOAD for _ in range(len(passthrough_rows))]
         passthrough_rows[self.VALID_COL] = True
         passthrough_rows[self.INVALID_COL] = [[] for _ in range(len(passthrough_rows))]
+        if not passthrough_rows.empty:
+            logger.info(
+                "%d passthrough row(s) have no detected entities — detection_valid set to True (trivially valid).",
+                len(passthrough_rows),
+            )
 
         if with_content.empty:
             combined = merge_and_reorder(passthrough_rows)

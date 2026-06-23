@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 
@@ -140,6 +142,7 @@ def _entities_payload(entities: list[dict]) -> dict:
 
 def test_evaluate_short_circuits_when_no_entities(
     stub_evaluate_model_selection: EvaluateModelSelection,
+    caplog,
 ) -> None:
     """Rows with no detected entities skip the LLM call and pass trivially."""
     df = pd.DataFrame(
@@ -154,10 +157,12 @@ def test_evaluate_short_circuits_when_no_entities(
             raise AssertionError("run_workflow should not be called for empty-entity rows")
 
     wf = DetectionJudgeWorkflow(adapter=_UnusedAdapter())
-    result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
+    with caplog.at_level(logging.INFO, logger="anonymizer.evaluation.judge_base"):
+        result = wf.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
     assert result.failed_records == []
     assert bool(result.dataframe[COL_DETECTION_VALID].iloc[0]) is True
     assert result.dataframe[COL_DETECTION_INVALID_ENTITIES].iloc[0] == []
+    assert "detection_valid set to True (trivially valid)" in caplog.text
 
 
 def test_evaluate_invokes_adapter_for_rows_with_entities(
