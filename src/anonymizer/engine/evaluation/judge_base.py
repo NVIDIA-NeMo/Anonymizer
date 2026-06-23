@@ -175,6 +175,7 @@ class _BaseJudgeWorkflow(ABC):
         passthrough_rows[self.VALID_COL] = True
         passthrough_rows[self.INVALID_COL] = [[] for _ in range(len(passthrough_rows))]
         if not passthrough_rows.empty:
+            # Mirrors the rewrite-mode passthrough log: rows with no entities trivially pass.
             logger.info(
                 "%d passthrough row(s) have no detected entities — detection_valid set to True (trivially valid).",
                 len(passthrough_rows),
