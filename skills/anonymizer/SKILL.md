@@ -200,9 +200,14 @@ def main() -> None:
                     scored = int(df[col].notna().sum())
                     print(f"{col}: {passed}/{scored} passed ({len(df) - scored} unscored)")
         else:
+            # Rewrite: detection_valid is a 0–1 fraction (mean is more informative than pass count).
             if "detection_valid" in df.columns:
-                passed = int(df["detection_valid"].notna().sum())
-                print(f"detection_valid: {passed}/{len(df)} scored")
+                scored = int(df["detection_valid"].notna().sum())
+                mean_val = df["detection_valid"].mean()
+                print(f"detection_valid: mean={mean_val:.2f}  scored={scored}/{len(df)}")
+            if "judge_evaluation" in df.columns:
+                scored = int(df["judge_evaluation"].notna().sum())
+                print(f"judge_evaluation: {scored}/{len(df)} scored")
         # In a notebook, inspect per-record verdicts visually:
         #   result.display_record(0)
 
