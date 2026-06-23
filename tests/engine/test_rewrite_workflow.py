@@ -397,6 +397,57 @@ def test_judge_partial_row_loss_preserves_all_rows(
     assert result.dataframe[COL_JUDGE_EVALUATION].iloc[1] is None
 
 
+def test_detection_judge_partial_row_loss_preserves_all_rows(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_df_two_entities: pd.DataFrame,
+) -> None:
+    """evaluate() detection judge drops 1 of 2 rows — surviving row gets scores, missing row gets None."""
+    df = stub_df_two_entities.copy()
+    df["_anonymizer_record_id"] = ["rec-0", "rec-1"]
+
+    run_result_df = df.copy()
+    run_result_df[COL_REWRITTEN_TEXT] = ["Maria works here", "Rob works there"]
+    run_result_df[COL_NEEDS_REPAIR] = False
+    run_result_df[COL_UTILITY_SCORE] = [0.9, 0.8]
+    run_result_df[COL_LEAKAGE_MASS] = [0.1, 0.2]
+    run_result_df[COL_ANY_HIGH_LEAKED] = False
+    run_result_df[COL_NEEDS_HUMAN_REVIEW] = False
+    run_result_df[COL_REPAIR_ITERATIONS] = 0
+
+    # detection judge returns only first row
+    det_df = run_result_df.iloc[[0]].copy().reset_index(drop=True)
+    det_df[COL_DETECTION_VALID] = True
+    det_df[COL_DETECTION_INVALID_ENTITIES] = [[]]
+
+    # holistic judge returns both rows (no additional drop)
+    judge_df = run_result_df.copy()
+    judge_df[COL_JUDGE_EVALUATION] = [None, None]
+
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+    wf._detection_judge_wf = Mock()
+    wf._detection_judge_wf.evaluate.return_value = Mock(
+        dataframe=det_df,
+        failed_records=[FailedRecord(record_id="rec-1", step="rewrite-detection-judge", reason="timeout")],
+    )
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
+
+    result = wf.evaluate(
+        run_result_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+    )
+
+    assert len(result.dataframe) == 2
+    # surviving row gets a computed detection_valid fraction
+    assert not pd.isna(result.dataframe[COL_DETECTION_VALID].iloc[0])
+    # dropped row defaults to null instead of being removed
+    assert pd.isna(result.dataframe[COL_DETECTION_VALID].iloc[1])
+    assert result.dataframe[COL_DETECTION_INVALID_ENTITIES].iloc[1] is None
+
+
 # ---------------------------------------------------------------------------
 # Tests: evaluate-repair loop
 # ---------------------------------------------------------------------------
@@ -1061,6 +1112,18 @@ def test_detection_valid_fraction_returns_none_when_total_is_zero_and_valid_fals
             COL_DETECTION_VALID: False,
             COL_DETECTION_INVALID_ENTITIES: [],
             COL_ENTITIES_BY_VALUE: {"entities_by_value": []},
+        }
+    )
+    assert _detection_valid_fraction(row) is None
+
+
+def test_detection_valid_fraction_returns_none_when_valid_false_and_invalid_entities_empty_but_total_nonzero() -> None:
+    """valid=False with empty invalid_entities but entities exist — would spuriously yield 1.0 without the fix."""
+    row = pd.Series(
+        {
+            COL_DETECTION_VALID: False,
+            COL_DETECTION_INVALID_ENTITIES: [],
+            COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]},
         }
     )
     assert _detection_valid_fraction(row) is None

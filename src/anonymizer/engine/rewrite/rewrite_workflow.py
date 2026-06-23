@@ -80,9 +80,11 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
             exc_info=True,
         )
         return None
-    if total == 0:
+    if total == 0 or invalid_count == 0:
         # Reachable only when valid is False (True returns early above).
-        # Judge flagged invalid detections but no entities were found — score is uncomputable.
+        # total == 0: judge flagged invalid detections but no entities were found — score is uncomputable.
+        # invalid_count == 0: judge flagged the row invalid but listed no specific invalid
+        # entities — would spuriously produce 1.0 without this guard.
         return None
     return max(0.0, (total - invalid_count) / total)
 
@@ -141,34 +143,51 @@ def _join_new_columns(
     return target
 
 
-def _join_judge_columns(target: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
-    """Merge judge columns preserving all rows -- judge is non-critical.
+def _join_preserving(
+    target: pd.DataFrame,
+    source: pd.DataFrame,
+    defaults: dict[str, object],
+) -> pd.DataFrame:
+    """Left-join source columns onto target, preserving all target rows.
 
-    When judge returns fewer rows than target, missing rows get
-    ``COL_JUDGE_EVALUATION=None`` instead of being dropped from the result.
-    ``COL_NEEDS_HUMAN_REVIEW`` is not touched here; it is set by the
-    evaluate-repair loop based on objective metrics.
+    When source returns fewer rows than target (e.g. a judge timed out or the
+    NDD adapter dropped a row), missing rows receive the values in ``defaults``
+    instead of being removed from the result.  Used for non-critical/diagnostic
+    steps where losing a row from the output is worse than surfacing a null.
     """
     if len(source) == len(target):
         return _join_new_columns(target, source)
 
     logger.warning(
-        "Judge returned %d of %d rows; defaulting missing rows to judge_evaluation=None.",
+        "Source returned %d of %d rows; defaulting %d missing row(s).",
         len(source),
         len(target),
+        len(target) - len(source),
     )
     result = target.copy()
     source_by_id = source.set_index(RECORD_ID_COLUMN)
     known_ids = set(source_by_id.index)
 
-    result[COL_JUDGE_EVALUATION] = None
+    for col, default in defaults.items():
+        result[col] = default
 
     for idx, record_id in result[RECORD_ID_COLUMN].items():
         if record_id in known_ids:
             row = source_by_id.loc[record_id]
-            result.at[idx, COL_JUDGE_EVALUATION] = row.get(COL_JUDGE_EVALUATION)
+            for col in defaults:
+                result.at[idx, col] = row.get(col)
 
     return result
+
+
+def _join_judge_columns(target: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
+    """Merge holistic judge columns preserving all rows.
+
+    Thin wrapper around ``_join_preserving`` with the holistic-judge defaults.
+    ``COL_NEEDS_HUMAN_REVIEW`` is not touched here; it is set by the
+    evaluate-repair loop based on objective metrics.
+    """
+    return _join_preserving(target, source, defaults={COL_JUDGE_EVALUATION: None})
 
 
 def _apply_passthrough_defaults(
@@ -473,7 +492,11 @@ class RewriteWorkflow:
             selected_models=selected_models,
             preview_num_records=preview_num_records,
         )
-        entity_rows = _join_new_columns(entity_rows, detection_result.dataframe)
+        entity_rows = _join_preserving(
+            entity_rows,
+            detection_result.dataframe,
+            defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
+        )
         all_failed.extend(detection_result.failed_records)
         # Convert bool all_valid → 0–1 fraction so detection validity sits on the
         # same scale as utility_score and leakage_mass in the rewrite scores section.

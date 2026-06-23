@@ -30,7 +30,7 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 - **For cross-record consistency** (same value → same replacement everywhere), use `Hash`, not `Substitute`. `Substitute` is consistent within a row only.
 - **In Replace mode, default to `Substitute`** if the user hasn't specified a strategy. It's the most general-purpose choice and matches the bulk of production usage.
 - **`Annotate` is for inspection, not production.** Its output keeps the original entity text and is not privacy-safe. Use it during iteration to confirm detection is working, then switch.
-- **Evaluation is opt-in and runs as a separate step** (Replace mode). After `preview()` / `run()`, call `anonymizer.evaluate(result)` to score the output with LLM-as-judge. `Substitute` gets four judges (detection validity, type fidelity, relational consistency, attribute fidelity); `Redact` / `Annotate` / `Hash` get the detection-validity judge only. Evaluation is diagnostic — it scores quality, it does not change the anonymized output.
+- **Evaluation is opt-in and runs as a separate step** (Replace and Rewrite modes). After `preview()` / `run()`, call `anonymizer.evaluate(result)` to score the output with LLM-as-judge. Replace mode: `Substitute` gets four judges (detection validity, type fidelity, relational consistency, attribute fidelity); `Redact` / `Annotate` / `Hash` get detection-validity only. Rewrite mode: detection validity + holistic privacy/quality/style judge. Evaluation is diagnostic — it scores quality, it does not change the anonymized output.
 - **Always set `AnonymizerInput.data_summary`**, even briefly. It is the single cheapest quality lever and it improves both detection and rewrite.
 - **Never claim privacy guarantees.** Anonymizer is best-effort. Outputs may need human review depending on `risk_tolerance`. Tell the user this when you finalize.
 
@@ -43,7 +43,7 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
 - **Validator pool is the only model role with built-in load-spreading.** Set `entity_validator: [a, b, c]` in `models.yaml` if rate limits drop rows. Other roles (rewriter, evaluator, etc.) are single-alias.
 - **Self-hosted GLiNER** — when detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run the reference server from a **source checkout** (`python tools/serve_gliner.py`; not installed via `pip install nemo-anonymizer`). Add a provider with `endpoint: http://localhost:8001/v1`, route `entity_detector` via a `gliner-pii-detector` alias with `provider: local-gliner` and `skip_health_check: true`. If you pass `--port` or `--host` to the server, set the provider `endpoint` to the same host/port. `model_configs` is a **complete** model pool, not an overlay — copy `src/anonymizer/config/default_model_configs/models.yaml` and change only the detector entry (keep `gpt-oss-120b` and `nemotron-30b-thinking`). See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
-- **The evaluation judges use their own model roles** (`detection_validity_judge`, `replace_type_fidelity_judge`, `replace_relational_consistency_judge`, `replace_attribute_fidelity_judge`), configured in the `evaluate` section of `models.yaml`. They are **not** consumed by `preview()` / `run()`, so a config that anonymizes fine can still fail validation at `evaluate()` if those roles are unset. Defaults ship in `src/anonymizer/config/default_model_configs/evaluate.yaml`.
+- **The evaluation judges use their own model roles** (`detection_validity_judge`, `replace_type_fidelity_judge`, `replace_relational_consistency_judge`, `replace_attribute_fidelity_judge`, `rewrite_judge`), configured in the `evaluate` section of `models.yaml`. They are **not** consumed by `preview()` / `run()`, so a config that anonymizes fine can still fail validation at `evaluate()` if those roles are unset. Defaults ship in `src/anonymizer/config/default_model_configs/evaluate.yaml`.
 - **`*_valid` verdict columns are `True` / `False` / `None`.** `None` means the judge was unavailable (model/infra failure), **not** that the row passed — treat it as "unscored", never as a pass. Inspect verdicts per record with `evaluated.display_record(i)`.
 - **`EvaluateConfig` is an empty placeholder today** — no knobs to set. `anonymizer.evaluate(result)` is the whole API; pass nothing else.
 
@@ -178,25 +178,31 @@ def main() -> None:
         print("\nFix dropped rows before tweaking strategy. See docs/troubleshooting.md.")
         sys.exit(1)
 
-    # Optional LLM-as-judge evaluation (Replace mode). Opt-in, separate step:
-    # scores how well detection + replacement worked without changing the
-    # output. Substitute -> 4 judges (detection validity, type fidelity,
-    # relational consistency, attribute fidelity); Redact/Annotate/Hash ->
-    # detection-validity judge only. Needs the `evaluate` model roles in
-    # models.yaml (see src/anonymizer/config/default_model_configs/evaluate.yaml).
-    if args.evaluate and config.replace is not None:
+    # Optional LLM-as-judge evaluation (Replace and Rewrite modes). Opt-in, separate
+    # step — scores quality without changing the anonymized output.
+    # Replace: Substitute -> 4 judges (detection validity, type fidelity, relational
+    #   consistency, attribute fidelity); Redact/Annotate/Hash -> detection-validity only.
+    # Rewrite: detection validity + holistic privacy/quality/style judge.
+    # Needs the `evaluate` model roles in models.yaml
+    # (see src/anonymizer/config/default_model_configs/evaluate.yaml).
+    if args.evaluate:
         result = anonymizer.evaluate(result)
         df = result.dataframe
-        for col in (
-            "detection_valid",
-            "type_fidelity_valid",
-            "relational_consistency_valid",
-            "attribute_fidelity_valid",
-        ):
-            if col in df.columns:
-                passed = int(df[col].eq(True).sum())  # None = unscored, never a pass
-                scored = int(df[col].notna().sum())
-                print(f"{col}: {passed}/{scored} passed ({len(df) - scored} unscored)")
+        if config.replace is not None:
+            for col in (
+                "detection_valid",
+                "type_fidelity_valid",
+                "relational_consistency_valid",
+                "attribute_fidelity_valid",
+            ):
+                if col in df.columns:
+                    passed = int(df[col].eq(True).sum())  # None = unscored, never a pass
+                    scored = int(df[col].notna().sum())
+                    print(f"{col}: {passed}/{scored} passed ({len(df) - scored} unscored)")
+        else:
+            if "detection_valid" in df.columns:
+                passed = int(df["detection_valid"].notna().sum())
+                print(f"detection_valid: {passed}/{len(df)} scored")
         # In a notebook, inspect per-record verdicts visually:
         #   result.display_record(0)
 
