@@ -486,21 +486,26 @@ class RewriteWorkflow:
         all_failed: list[FailedRecord] = []
 
         # --- Detection validity judge ---
-        detection_result = self._detection_judge_wf.evaluate(
-            entity_rows,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            preview_num_records=preview_num_records,
-        )
-        entity_rows = _join_preserving(
-            entity_rows,
-            detection_result.dataframe,
-            defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
-        )
-        all_failed.extend(detection_result.failed_records)
-        # Convert bool all_valid → 0–1 fraction so detection validity sits on the
-        # same scale as utility_score and leakage_mass in the rewrite scores section.
-        entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
+        try:
+            detection_result = self._detection_judge_wf.evaluate(
+                entity_rows,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+            )
+            entity_rows = _join_preserving(
+                entity_rows,
+                detection_result.dataframe,
+                defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
+            )
+            all_failed.extend(detection_result.failed_records)
+            # Convert bool all_valid → 0–1 fraction so detection validity sits on the
+            # same scale as utility_score and leakage_mass in the rewrite scores section.
+            entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
+        except Exception:
+            logger.warning("Detection judge step failed; defaulting to detection_valid=None.", exc_info=True)
+            entity_rows[COL_DETECTION_VALID] = None
+            entity_rows[COL_DETECTION_INVALID_ENTITIES] = None
 
         # --- Holistic judge (privacy / quality / style) ---
         try:

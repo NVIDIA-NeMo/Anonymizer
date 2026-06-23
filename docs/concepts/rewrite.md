@@ -12,7 +12,6 @@ Instead of replacing individual entities, rewrite mode transforms the entire tex
 [Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. 
 
 The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
-
 ---
 
 ## Key concepts

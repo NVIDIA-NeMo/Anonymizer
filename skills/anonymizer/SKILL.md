@@ -16,7 +16,7 @@ Anonymize a text dataset using NeMo Anonymizer in the way the user describes:
 
 $ARGUMENTS
 
-The output is a single runnable Python script that builds an `AnonymizerConfig`, previews results on a few rows, inspects failures and quality metrics, optionally scores Replace output with LLM-as-judge evaluation, and (on user approval) runs the full pipeline. The script is the durable artifact — the user keeps it for re-runs, version control, and production.
+The output is a single runnable Python script that builds an `AnonymizerConfig`, previews results on a few rows, inspects failures and quality metrics, optionally scores output with LLM-as-judge evaluation (Replace and Rewrite modes), and (on user approval) runs the full pipeline. The script is the durable artifact — the user keeps it for re-runs, version control, and production.
 
 # Workflow
 
@@ -44,7 +44,7 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 - **Validator pool is the only model role with built-in load-spreading.** Set `entity_validator: [a, b, c]` in `models.yaml` if rate limits drop rows. Other roles (rewriter, evaluator, etc.) are single-alias.
 - **Self-hosted GLiNER** — when detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run the reference server from a **source checkout** (`python tools/serve_gliner.py`; not installed via `pip install nemo-anonymizer`). Add a provider with `endpoint: http://localhost:8001/v1`, route `entity_detector` via a `gliner-pii-detector` alias with `provider: local-gliner` and `skip_health_check: true`. If you pass `--port` or `--host` to the server, set the provider `endpoint` to the same host/port. `model_configs` is a **complete** model pool, not an overlay — copy `src/anonymizer/config/default_model_configs/models.yaml` and change only the detector entry (keep `gpt-oss-120b` and `nemotron-30b-thinking`). See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
 - **The evaluation judges use their own model roles** (`detection_validity_judge`, `replace_type_fidelity_judge`, `replace_relational_consistency_judge`, `replace_attribute_fidelity_judge`, `rewrite_judge`), configured in the `evaluate` section of `models.yaml`. They are **not** consumed by `preview()` / `run()`, so a config that anonymizes fine can still fail validation at `evaluate()` if those roles are unset. Defaults ship in `src/anonymizer/config/default_model_configs/evaluate.yaml`.
-- **`*_valid` verdict columns are `True` / `False` / `None`.** `None` means the judge was unavailable (model/infra failure), **not** that the row passed — treat it as "unscored", never as a pass. Inspect verdicts per record with `evaluated.display_record(i)`.
+- **Verdict columns are null when the judge was unavailable** — `None` means "unscored", never a pass. Replace verdict columns (`type_fidelity_valid`, etc.) are `True` / `False` / `None`. Rewrite `detection_valid` is a `0–1` float fraction (or `None` if unscored). Inspect verdicts per record with `evaluated.display_record(i)`.
 - **`EvaluateConfig` is an empty placeholder today** — no knobs to set. `anonymizer.evaluate(result)` is the whole API; pass nothing else.
 
 # Reference Docs
