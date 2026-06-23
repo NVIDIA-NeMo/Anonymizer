@@ -7,6 +7,8 @@ Usage:
     uv run python tools/measurement/create_wandb_report.py entity/project/run_id
     uv run python tools/measurement/create_wandb_report.py https://wandb.ai/entity/project/runs/run_id --json
     uv run python tools/measurement/create_wandb_report.py entity/project/run_id --publish
+    uv run python tools/measurement/create_wandb_report.py entity/project --workspace
+    uv run python tools/measurement/create_wandb_report.py entity/project --workspace --group sweep_id
 """
 
 from __future__ import annotations
@@ -66,9 +68,15 @@ _NDD_THROUGHPUT_METRICS = [
 _RECORD_PRIVACY_METRICS = [
     "measurement/record/final_entity_count",
     "measurement/record/original_value_leak_count",
+    "measurement/record/leakage_mass_mean",
+    "measurement/record/weighted_leakage_rate_mean",
     "measurement/record/detected_candidate_count",
     "measurement/record/validation_chunk_count",
     "measurement/record/llm_calls_estimated_total",
+]
+_REWRITE_UTILITY_METRICS = [
+    "measurement/record/utility_score_mean",
+    "measurement/record/repair_iterations",
 ]
 _REPLACEMENT_QUALITY_METRICS = [
     "measurement/record/replacement_count",
@@ -92,6 +100,23 @@ _MEASUREMENT_TABLE_KEYS = [
     "measurement_table/model_workflow",
     "measurement_table/record",
     "measurement_table/evaluation_record",
+]
+_WORKSPACE_JOB_FILTERS = ("benchmark", "benchmark-sweep")
+_WORKSPACE_SUMMARY_SCALARS = [
+    "benchmark/case_success_rate",
+    "benchmark/case_completed",
+    "benchmark/case_errored",
+    "benchmark/case_elapsed_sec_mean",
+]
+_WORKSPACE_COMPARISON_COLUMNS = [
+    "config:sweep_arm_id",
+    "config:benchmark_strategies",
+    "config:benchmark_gliner_thresholds",
+    "config:benchmark_risk_tolerances",
+    "summary:benchmark/case_success_rate",
+    "summary:measurement/record/utility_score_mean",
+    "summary:measurement/record/weighted_leakage_rate_mean",
+    "summary:measurement/ndd_workflow/observed_total_tokens",
 ]
 
 
@@ -121,6 +146,13 @@ class WandbReportResult(BaseModel):
     group: str | None = None
     report_url: str
     draft: bool
+    title: str
+
+
+class WandbWorkspaceResult(BaseModel):
+    project_path: str
+    group: str | None = None
+    workspace_url: str
     title: str
 
 
@@ -167,6 +199,16 @@ def require_wandb_report_sdk() -> tuple[Any, Any, Any]:
     return wandb, wr, expr
 
 
+def require_wandb_workspace_sdk() -> tuple[Any, Any]:
+    """Import W&B workspace APIs when workspace generation is requested."""
+    try:
+        import wandb_workspaces.reports.v2 as wr
+        import wandb_workspaces.workspaces as ws
+    except ImportError as exc:
+        raise ImportError(f"W&B workspace generation requires wandb[workspaces]. {_WANDB_REPORT_INSTALL_HINT}") from exc
+    return ws, wr
+
+
 def create_benchmark_report(
     run_path: WandbRunPath,
     *,
@@ -191,6 +233,34 @@ def create_benchmark_report(
         draft=draft,
         title=report_title,
     )
+
+
+def create_benchmark_workspace(
+    project_path: WandbProjectPath,
+    *,
+    group: str | None = None,
+    title: str | None = None,
+) -> WandbWorkspaceResult:
+    """Create a W&B workspace for benchmark runs in a project."""
+    workspace_title = title or _default_workspace_title(group=group)
+    workspace = build_benchmark_workspace(project_path, group=group, title=workspace_title)
+    saved = _save_workspace(workspace)
+    return WandbWorkspaceResult(
+        project_path=project_path.path,
+        group=group,
+        workspace_url=str(saved.url),
+        title=workspace_title,
+    )
+
+
+def create_benchmark_group_workspace(
+    project_path: WandbProjectPath,
+    *,
+    group: str,
+    title: str | None = None,
+) -> WandbWorkspaceResult:
+    """Create a W&B workspace filtered to one benchmark run group."""
+    return create_benchmark_workspace(project_path, group=group, title=title)
 
 
 def create_benchmark_group_report(
@@ -219,6 +289,26 @@ def create_benchmark_group_report(
         report_url=str(report.url),
         draft=draft,
         title=report_title,
+    )
+
+
+def build_benchmark_workspace(
+    project_path: WandbProjectPath,
+    *,
+    group: str | None,
+    title: str,
+) -> Any:
+    """Build an unsaved manual W&B workspace for benchmark runs."""
+    ws, wr = require_wandb_workspace_sdk()
+    groupby = "config:sweep_arm_id" if group else None
+    return ws.Workspace(
+        entity=project_path.entity,
+        project=project_path.project,
+        name=title,
+        auto_generate_panels=False,
+        settings=_benchmark_workspace_settings(ws),
+        runset_settings=_benchmark_runset_settings(ws, group=group),
+        sections=_benchmark_workspace_sections(ws, wr, groupby=groupby),
     )
 
 
@@ -304,6 +394,93 @@ def _sweep_panels(wr: Any) -> list[Any]:
     return _benchmark_panels(wr, groupby="config:sweep_arm_id")
 
 
+def _benchmark_workspace_settings(ws: Any) -> Any:
+    return ws.WorkspaceSettings(
+        sort_panels_alphabetically=False,
+        group_by_prefix="first",
+        max_runs=10,
+    )
+
+
+def _benchmark_runset_settings(ws: Any, *, group: str | None) -> Any:
+    return ws.RunsetSettings(
+        filters=_benchmark_run_filters(ws, group=group),
+        groupby=_benchmark_run_groupby(ws, group=group),
+        order=[ws.Ordering(ws.Metric("CreatedTimestamp"), ascending=False)],
+        pinned_columns=["Name", "State", "CreatedTimestamp", "Group", "JobType", "Tags"],
+    )
+
+
+def _benchmark_run_filters(ws: Any, *, group: str | None) -> Any:
+    job_filter = ws.Or(*(ws.Metric("JobType") == job_type for job_type in _WORKSPACE_JOB_FILTERS))
+    return ws.And(job_filter, ws.Metric("Group") == group) if group else job_filter
+
+
+def _benchmark_run_groupby(ws: Any, *, group: str | None) -> list[Any]:
+    return [ws.Config("sweep_arm_id")] if group else [ws.Metric("Group")]
+
+
+def _benchmark_workspace_sections(ws: Any, wr: Any, *, groupby: str | None) -> list[Any]:
+    return [
+        ws.Section(name="Benchmark Summary", panels=_summary_workspace_panels(wr, groupby=groupby), is_open=True),
+        ws.Section(name="Privacy", panels=_privacy_workspace_panels(wr, groupby=groupby), is_open=True),
+        ws.Section(name="Utility", panels=_utility_workspace_panels(wr, groupby=groupby), is_open=True),
+        ws.Section(name="Cost/Throughput", panels=_cost_workspace_panels(wr, groupby=groupby), is_open=True),
+        ws.Section(name="Sweep Comparison", panels=_comparison_workspace_panels(wr), is_open=True),
+        ws.Section(name="Tables", panels=_table_workspace_panels(wr), is_open=False),
+    ]
+
+
+def _summary_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+    return [
+        *(
+            wr.ScalarChart(title=_metric_title(metric), metric=metric, groupby_aggfunc="mean")
+            for metric in _WORKSPACE_SUMMARY_SCALARS
+        ),
+        _bar_panel(wr, "Case Health", _CASE_HEALTH_METRICS, groupby=groupby),
+        _bar_panel(wr, "Case Latency", _CASE_LATENCY_METRICS, groupby=groupby),
+    ]
+
+
+def _privacy_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+    return [
+        _bar_panel(wr, "Privacy Outcomes", _RECORD_PRIVACY_METRICS, groupby=groupby),
+        _bar_panel(wr, "Replacement Quality", _REPLACEMENT_QUALITY_METRICS, groupby=groupby),
+    ]
+
+
+def _utility_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+    return [_bar_panel(wr, "Rewrite Utility", _REWRITE_UTILITY_METRICS, groupby=groupby)]
+
+
+def _cost_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+    return [
+        _bar_panel(wr, "NDD Request Health", _NDD_REQUEST_HEALTH_METRICS, groupby=groupby),
+        _bar_panel(wr, "NDD Token Usage", _NDD_TOKEN_METRICS, groupby=groupby),
+        _bar_panel(wr, "NDD Throughput", _NDD_THROUGHPUT_METRICS, groupby=groupby),
+        _bar_panel(wr, "Stage Throughput", _STAGE_THROUGHPUT_METRICS, groupby=groupby),
+    ]
+
+
+def _comparison_workspace_panels(wr: Any) -> list[Any]:
+    return [
+        wr.RunComparer(diff_only=True),
+        wr.ParallelCoordinatesPlot(
+            title="Sweep Parameter Tradeoffs",
+            columns=[wr.ParallelCoordinatesPlotColumn(metric=column) for column in _WORKSPACE_COMPARISON_COLUMNS],
+        ),
+        wr.ParameterImportancePlot(with_respect_to="measurement/record/weighted_leakage_rate_mean"),
+    ]
+
+
+def _table_workspace_panels(wr: Any) -> list[Any]:
+    return [wr.MediaBrowser(title="Sanitized Measurement Tables", media_keys=_MEASUREMENT_TABLE_KEYS, mode="grid")]
+
+
+def _metric_title(metric: str) -> str:
+    return metric.rsplit("/", maxsplit=1)[-1].replace("_", " ").title()
+
+
 def _benchmark_panels(wr: Any, *, groupby: str | None = None) -> list[Any]:
     return [
         *_metric_panels(wr, groupby=groupby),
@@ -320,6 +497,7 @@ def _metric_panels(wr: Any, *, groupby: str | None) -> list[Any]:
         _bar_panel(wr, "NDD Token Usage", _NDD_TOKEN_METRICS, groupby=groupby),
         _bar_panel(wr, "NDD Throughput", _NDD_THROUGHPUT_METRICS, groupby=groupby),
         _bar_panel(wr, "Record Privacy", _RECORD_PRIVACY_METRICS, groupby=groupby),
+        _bar_panel(wr, "Rewrite Utility", _REWRITE_UTILITY_METRICS, groupby=groupby),
         _bar_panel(wr, "Replacement Quality", _REPLACEMENT_QUALITY_METRICS, groupby=groupby),
         _bar_panel(wr, "Stage Throughput", _STAGE_THROUGHPUT_METRICS, groupby=groupby),
     ]
@@ -340,6 +518,7 @@ def _all_report_metrics() -> list[str]:
                 *_NDD_TOKEN_METRICS,
                 *_NDD_THROUGHPUT_METRICS,
                 *_RECORD_PRIVACY_METRICS,
+                *_REWRITE_UTILITY_METRICS,
                 *_REPLACEMENT_QUALITY_METRICS,
                 *_STAGE_THROUGHPUT_METRICS,
             ]
@@ -461,9 +640,19 @@ def _save_report_without_project_preflight(report: Any, *, draft: bool) -> Any:
     return report
 
 
+def _save_workspace(workspace: Any) -> Any:
+    """Save a workspace through the W&B Workspaces API."""
+    return workspace.save()
+
+
 def _default_report_title(run: Any) -> str:
     name = str(getattr(run, "name", "") or "Benchmark Run")
     return f"NeMo Anonymizer Benchmark: {name}"[:128]
+
+
+def _default_workspace_title(*, group: str | None) -> str:
+    suffix = f": {group}" if group else ""
+    return f"NeMo Anonymizer Benchmark Workspace{suffix}"[:128]
 
 
 def _workload_line(item: dict[str, Any]) -> str:
@@ -529,9 +718,17 @@ def _metadata_value(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True)
 
 
-def render_result(result: WandbReportResult, *, json_output: bool) -> str:
+def render_result(result: WandbReportResult | WandbWorkspaceResult, *, json_output: bool) -> str:
     if json_output:
         return result.model_dump_json(indent=2)
+    if isinstance(result, WandbWorkspaceResult):
+        return "\n".join(
+            [
+                f"Created W&B workspace: {result.title}",
+                f"Project: {result.project_path}",
+                f"Workspace: {result.workspace_url}",
+            ]
+        )
     state = "draft" if result.draft else "published"
     return "\n".join(
         [
@@ -550,13 +747,17 @@ def main(
     title: Annotated[str | None, cyclopts.Parameter("--title")] = None,
     description: Annotated[str | None, cyclopts.Parameter("--description")] = None,
     publish: Annotated[bool, cyclopts.Parameter("--publish")] = False,
+    workspace: Annotated[bool, cyclopts.Parameter("--workspace")] = False,
     timeout: Annotated[int, cyclopts.Parameter("--timeout")] = 60,
     json_output: Annotated[bool, cyclopts.Parameter("--json")] = False,
     log_format: Annotated[LogFormat, cyclopts.Parameter("--log-format")] = LogFormat.plain,
 ) -> None:
     configure_logging(log_format)
     try:
-        if group:
+        if workspace:
+            project_path = parse_wandb_project_path(target)
+            result = create_benchmark_workspace(project_path, group=group, title=title)
+        elif group:
             project_path = parse_wandb_project_path(target)
             result = create_benchmark_group_report(
                 project_path,

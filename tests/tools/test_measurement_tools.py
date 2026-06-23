@@ -410,8 +410,34 @@ def _assert_wandb_init_state(state: SimpleNamespace) -> None:
             "suite_id": "suite-a",
             "wandb_mode": "offline",
             "wandb_log_tables": False,
+            "benchmark_suite_id": "suite-a",
+            "benchmark_case_count": 2,
+            "benchmark_workload_ids": "workload-a",
+            "benchmark_workload_row_limits": 5,
+            "benchmark_workload_source_kinds": "local_file",
+            "benchmark_workload_source_suffixes": ".csv",
+            "benchmark_config_ids": "redact",
+            "benchmark_modes": "replace",
+            "benchmark_strategies": "redact",
+            "benchmark_gliner_thresholds": 0.3,
+            "benchmark_entity_label_counts": 4,
             "git": {"commit": "abc123456789", "branch": "main", "dirty": False},
-            "configs": [{"id": "redact"}],
+            "benchmark": {"suite_id": "suite-a", "case_count": 2},
+            "workloads": [
+                {
+                    "id": "workload-a",
+                    "row_limit": 5,
+                    "source": {"kind": "local_file", "suffix": ".csv"},
+                }
+            ],
+            "configs": [
+                {
+                    "id": "redact",
+                    "mode": "replace",
+                    "detect": {"gliner_threshold": 0.3, "entity_label_count": 4},
+                    "replace": {"strategy": "redact"},
+                }
+            ],
             "run_tags": {"commit_sha": "abc123"},
         }
     ]
@@ -1700,6 +1726,39 @@ def test_wandb_report_sweep_panels_cover_metric_sections(wandb_report_tool: Modu
     assert "measurement_table/record" in media_keys
 
 
+@pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince20")
+def test_wandb_workspace_builds_manual_benchmark_sections(wandb_report_tool: ModuleType) -> None:
+    workspace = wandb_report_tool.build_benchmark_workspace(
+        wandb_report_tool.WandbProjectPath(entity="entity", project="project"),
+        group="threshold",
+        title="Benchmark Workspace",
+    )
+
+    sections = {section.name: section for section in workspace.sections}
+    comparison_panel_types = {type(panel).__name__ for panel in sections["Sweep Comparison"].panels}
+    summary_metrics = {
+        getattr(panel, "metric", None)
+        for panel in sections["Benchmark Summary"].panels
+        if type(panel).__name__ == "ScalarChart"
+    }
+
+    assert workspace.name == "Benchmark Workspace"
+    assert workspace.auto_generate_panels is False
+    assert "benchmark-sweep" in str(workspace.runset_settings.filters)
+    assert "Metric(\"Group\") == 'threshold'" in str(workspace.runset_settings.filters)
+    assert {
+        "Benchmark Summary",
+        "Privacy",
+        "Utility",
+        "Cost/Throughput",
+        "Sweep Comparison",
+        "Tables",
+    } == set(sections)
+    assert {"RunComparer", "ParallelCoordinatesPlot", "ParameterImportancePlot"}.issubset(comparison_panel_types)
+    assert "benchmark/case_success_rate" in summary_metrics
+    assert sections["Sweep Comparison"].panels[0].diff_only is True
+
+
 def test_wandb_report_markdown_uses_sanitized_fields(wandb_report_tool: ModuleType) -> None:
     run = SimpleNamespace(name="run-a", url="https://wandb.ai/entity/project/runs/run-a")
     summary, config = _wandb_report_fixture()
@@ -1775,6 +1834,44 @@ def test_sweep_run_uses_one_wandb_run_per_arm(
     )
 
     _assert_sweep_arm_run(calls, result, tmp_path)
+
+
+def test_sweep_run_can_create_wandb_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sweep_tool: ModuleType,
+) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(tmp_path, base_suite=base_suite)
+    calls: list[tuple[Path, Path, Any]] = []
+    workspace_calls: list[tuple[Any, str]] = []
+    _patch_sweep_runner(monkeypatch, sweep_tool, calls, status=sweep_tool.run_benchmarks.CaseStatus.completed)
+
+    def fake_create_workspace(project: Any, *, group: str) -> SimpleNamespace:
+        workspace_calls.append((project, group))
+        return SimpleNamespace(workspace_url="https://wandb.ai/entity/project/workspace")
+
+    monkeypatch.setattr(sweep_tool, "create_benchmark_group_workspace", fake_create_workspace)
+
+    result = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=sweep_tool.run_benchmarks.resolve_wandb_settings(
+            wandb_mode=sweep_tool.run_benchmarks.WandbMode.offline,
+            wandb_entity="entity",
+            wandb_project="project",
+        ),
+        create_report=False,
+        create_workspace=True,
+    )
+
+    assert workspace_calls[0][0].path == "entity/project"
+    assert workspace_calls[0][1] == "threshold"
+    assert result.workspace_url == "https://wandb.ai/entity/project/workspace"
 
 
 def test_sweep_fail_fast_stops_after_first_errored_arm(
@@ -1990,7 +2087,25 @@ def test_initialize_wandb_run_adds_routing_and_metadata(
         suite_id="suite-a",
         output_dir=tmp_path,
         run_tags={"commit_sha": "abc123", "secret_tag": "raw secret"},
-        metadata={"git": {"commit": "abc123456789", "branch": "main", "dirty": False}, "configs": [{"id": "redact"}]},
+        metadata={
+            "git": {"commit": "abc123456789", "branch": "main", "dirty": False},
+            "benchmark": {"suite_id": "suite-a", "case_count": 2},
+            "workloads": [
+                {
+                    "id": "workload-a",
+                    "row_limit": 5,
+                    "source": {"kind": "local_file", "suffix": ".csv"},
+                }
+            ],
+            "configs": [
+                {
+                    "id": "redact",
+                    "mode": "replace",
+                    "detect": {"gliner_threshold": 0.3, "entity_label_count": 4},
+                    "replace": {"strategy": "redact"},
+                }
+            ],
+        },
     )
 
     assert created is True

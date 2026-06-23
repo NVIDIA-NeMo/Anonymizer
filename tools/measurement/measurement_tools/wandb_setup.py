@@ -155,12 +155,32 @@ def initialize_benchmark_wandb_run(
     logger.info("WANDB_MODE: %s", settings.wandb_mode.value)
     logger.info("WANDB_PROJECT: %s", project)
 
-    wandb_settings = wandb.Settings(console="wrap")
+    init_kwargs = _wandb_init_kwargs(wandb, settings, suite_id=suite_id, output_dir=output_dir, metadata=metadata)
+    wandb.init(**init_kwargs)
+    _define_benchmark_metrics(wandb)
+    wandb.config.update(
+        _benchmark_wandb_config(settings, suite_id=suite_id, run_tags=run_tags, metadata=metadata),
+        allow_val_change=True,
+    )
+
+    if wandb.run is not None:
+        logger.info("W&B run id: %s", wandb.run.id)
+    return True
+
+
+def _wandb_init_kwargs(
+    wandb: Any,
+    settings: WandbSettings,
+    *,
+    suite_id: str,
+    output_dir: Path,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
     init_kwargs = {
-        "project": project,
+        "project": settings.effective_wandb_project,
         "name": settings.wandb_run_name or _default_run_name(suite_id, metadata),
         "mode": settings.wandb_mode.value,
-        "settings": wandb_settings,
+        "settings": wandb.Settings(console="wrap"),
         "dir": str(output_dir),
         "group": settings.wandb_group or suite_id,
         "job_type": settings.wandb_job_type or "benchmark",
@@ -170,22 +190,28 @@ def initialize_benchmark_wandb_run(
     tags = _effective_wandb_tags(settings, suite_id=suite_id, metadata=metadata)
     if tags:
         init_kwargs["tags"] = tags
-    wandb.init(**init_kwargs)
-    _define_benchmark_metrics(wandb)
+    return init_kwargs
+
+
+def _benchmark_wandb_config(
+    settings: WandbSettings,
+    *,
+    suite_id: str,
+    run_tags: dict[str, Any] | None,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
     config = {
         "suite_id": suite_id,
         "wandb_mode": settings.wandb_mode.value,
         "wandb_log_tables": settings.wandb_log_tables,
     }
     if metadata:
-        config.update(_sanitize_wandb_config(metadata))
+        sanitized_metadata = _sanitize_wandb_config(metadata)
+        config.update(_wandb_comparer_config(sanitized_metadata))
+        config.update(sanitized_metadata)
     if run_tags:
         config["run_tags"] = _scalar_run_tags(run_tags)
-    wandb.config.update(config, allow_val_change=True)
-
-    if wandb.run is not None:
-        logger.info("W&B run id: %s", wandb.run.id)
-    return True
+    return config
 
 
 def finish_benchmark_wandb_run() -> None:
@@ -265,6 +291,94 @@ def _define_benchmark_metrics(wandb: Any) -> None:
             define_metric(metric_name, summary="last")
         except Exception as exc:  # noqa: BLE001 -- presentation polish is best-effort
             logger.warning("Failed to define W&B metric %s: %s", metric_name, exc)
+
+
+def _wandb_comparer_config(metadata: Any) -> dict[str, str | int | float | bool]:
+    """Build flat W&B config fields for Run Comparer and workspace panels."""
+    source = _metadata_dict(metadata)
+    benchmark = _metadata_dict(source.get("benchmark"))
+    workloads = _metadata_list(source.get("workloads"))
+    configs = _metadata_list(source.get("configs"))
+    flat: dict[str, str | int | float | bool] = {}
+    _set_flat(flat, "benchmark_suite_id", benchmark.get("suite_id"))
+    _set_flat(flat, "benchmark_case_count", benchmark.get("case_count"))
+    _set_flat(flat, "benchmark_workload_ids", _compact_values(item.get("id") for item in workloads))
+    _set_flat(flat, "benchmark_workload_row_limits", _compact_values(item.get("row_limit") for item in workloads))
+    _set_flat(
+        flat,
+        "benchmark_workload_source_kinds",
+        _compact_values(_metadata_dict(item.get("source")).get("kind") for item in workloads),
+    )
+    _set_flat(
+        flat,
+        "benchmark_workload_source_suffixes",
+        _compact_values(_metadata_dict(item.get("source")).get("suffix") for item in workloads),
+    )
+    _set_flat(flat, "benchmark_config_ids", _compact_values(item.get("id") for item in configs))
+    _set_flat(flat, "benchmark_modes", _compact_values(item.get("mode") for item in configs))
+    _set_flat(flat, "benchmark_strategies", _compact_values(_config_strategy(item) for item in configs))
+    _set_flat(
+        flat,
+        "benchmark_gliner_thresholds",
+        _compact_values(_detect_value(item, "gliner_threshold") for item in configs),
+    )
+    _set_flat(
+        flat,
+        "benchmark_entity_label_counts",
+        _compact_values(_detect_value(item, "entity_label_count") for item in configs),
+    )
+    _set_flat(
+        flat, "benchmark_risk_tolerances", _compact_values(_rewrite_value(item, "risk_tolerance") for item in configs)
+    )
+    return flat
+
+
+def _set_flat(mapping: dict[str, str | int | float | bool], key: str, value: Any) -> None:
+    if isinstance(value, bool | int | float | str):
+        mapping[key] = value
+
+
+def _compact_values(values: Any) -> str | int | float | bool | None:
+    compacted: list[str | int | float | bool] = []
+    seen: set[tuple[str, str | int | float | bool]] = set()
+    for value in values:
+        if not isinstance(value, bool | int | float | str):
+            continue
+        marker = (type(value).__name__, value)
+        if marker in seen:
+            continue
+        compacted.append(value)
+        seen.add(marker)
+    if len(compacted) == 1:
+        return compacted[0]
+    if len(compacted) > 1:
+        return ",".join(str(value) for value in compacted)
+    return None
+
+
+def _config_strategy(config: dict[str, Any]) -> str | None:
+    replace = _metadata_dict(config.get("replace"))
+    rewrite = _metadata_dict(config.get("rewrite"))
+    strategy = replace.get("strategy")
+    if isinstance(strategy, str):
+        return strategy
+    return "rewrite" if rewrite else None
+
+
+def _detect_value(config: dict[str, Any], key: str) -> Any:
+    return _metadata_dict(config.get("detect")).get(key)
+
+
+def _rewrite_value(config: dict[str, Any], key: str) -> Any:
+    return _metadata_dict(config.get("rewrite")).get(key)
+
+
+def _metadata_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _metadata_list(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _sanitize_wandb_config(value: Any, *, key: str = "") -> Any:

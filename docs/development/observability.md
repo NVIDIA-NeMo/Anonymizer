@@ -114,16 +114,18 @@ sanitizer excludes raw text, prompts, model responses, replacement maps, entity
 payloads, DataDesigner trace records, local paths, URLs, provider payloads, and
 sensitive-looking run tags.
 
-Use `tools/measurement/create_wandb_report.py` to create a W&B benchmark report
-for one benchmark run or for a benchmark run group. Reports include case health
-and latency, DataDesigner row flow, request health, token usage, throughput,
-record privacy counters, replacement quality counters, stage throughput, and
-sanitized measurement tables when present.
+Use `tools/measurement/create_wandb_report.py --workspace` to create a manual
+W&B benchmark workspace for a project or benchmark run group. The workspace
+organizes focused panels for benchmark summary, privacy, utility,
+cost/throughput, sweep comparison, and sanitized measurement tables when
+present. The same utility can still create W&B benchmark reports for one
+benchmark run or a benchmark run group.
 
 Use `tools/measurement/sweep_benchmarks.py` for parameter sweeps. It runs one
 benchmark suite per sweep arm and copies `sweep_id`, `sweep_arm_id`, and
 `sweep_param_*` fields into W&B benchmark config so benchmark reports can
-compare arms directly.
+compare arms directly. Pass `--create-workspace` to create the benchmark
+workspace after the sweep completes.
 See `tools/measurement/README.md` for the full command reference.
 
 ## DataDesigner Message Traces

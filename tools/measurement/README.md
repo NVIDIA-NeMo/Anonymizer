@@ -291,18 +291,25 @@ model responses, replacement maps, entity payloads, trace records, paths, URLs,
 data summaries, model/provider config payloads, and sensitive-looking run tags
 are filtered from W&B payloads.
 
-Create a W&B benchmark report for an uploaded benchmark run with the report
-utility:
+Create a W&B benchmark workspace or report for uploaded benchmark runs with
+the report utility:
 
 ```bash
 uv run python tools/measurement/create_wandb_report.py \
   entity/project/run-id
+
+uv run python tools/measurement/create_wandb_report.py \
+  entity/project \
+  --workspace
 ```
 
-The benchmark report utility uses the W&B SDK report API to build a draft
-report from sanitized benchmark run summary/config fields and a panel grid
-filtered to the selected run. Pass `--publish` when the report should be saved
-as a published report instead of a draft. Report generation requires the
+The benchmark report utility can create a manual W&B workspace with focused
+sections for benchmark summary, privacy, utility, cost/throughput, sweep
+comparison, and sanitized tables. The sweep comparison section includes a Run
+Comparer panel plus parameter-tradeoff panels. The same utility can still build
+a draft report from sanitized benchmark run summary/config fields and a panel
+grid filtered to one run. Pass `--publish` when a report should be saved as a
+published report instead of a draft. Workspace/report generation requires the
 measurement dependency group because it uses the `wandb[workspaces]` extra.
 
 Reports include panels for case health and latency, DataDesigner row flow,
@@ -325,18 +332,23 @@ uv run python tools/measurement/sweep_benchmarks.py sweep.yaml \
   --wandb-mode online \
   --wandb-entity my-team \
   --wandb-project nemo-anonymizer-benchmarks \
-  --create-report
+  --create-workspace
 ```
 
 Each arm materializes a generated suite under the sweep output root and runs
 `run_benchmarks.py` once. Sweep metadata is copied into safe run tags and W&B
 benchmark run config fields such as `sweep_id`, `sweep_arm_id`, and
-`sweep_param_*` so W&B benchmark reports can compare arms directly. A benchmark
-group report can also be created later:
+`sweep_param_*` so W&B benchmark workspaces and reports can compare arms
+directly. A benchmark group workspace or report can also be created later:
 
 ```bash
 uv run python tools/measurement/create_wandb_report.py \
   my-team/nemo-anonymizer-benchmarks \
+  --group qwen-threshold-smoke
+
+uv run python tools/measurement/create_wandb_report.py \
+  my-team/nemo-anonymizer-benchmarks \
+  --workspace \
   --group qwen-threshold-smoke
 ```
 
