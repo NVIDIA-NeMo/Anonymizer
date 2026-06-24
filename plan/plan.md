@@ -32,10 +32,12 @@ The evaluation LLM runs on the **original text** and detects all PII that should
 
 ### Coverage display differs by mode
 
-| Mode | Display | Rationale |
+| Mode | Display format | Example |
 |---|---|---|
-| **Replace** | Satisfied / Not Satisfied | Binary is sufficient — either all PII was caught or it wasn't |
-| **Rewrite** | Float fraction (e.g. `0.87`) | Rewrite already exposes numeric metrics (leakage_mass, utility_score); a fraction fits the pattern |
+| **Replace** | `Entity Coverage: <Satisfied\|Not Satisfied> — n/d (pct%)` | `Entity Coverage: Not Satisfied — 18/21 (86%)` |
+| **Rewrite** | `Entity Coverage: <float> — n/d (pct%)` | `Entity Coverage: 0.86 — 18/21 (86%)` |
+
+Where `n` = `n_entities_detected`, `d` = `n_entities_detected + n_entities_leaked`, and `pct` is derived from the fraction. The fraction gives absolute scale; the percentage makes it immediately readable without mental math. No explanatory subtitle line is shown — entity coverage is self-explanatory.
 
 A value of `1.0` (or Satisfied) means no PII leaked into the output. Any value below `1.0` (or Not Satisfied) means at least one entity was missed, and `leaked_entities` names them.
 
