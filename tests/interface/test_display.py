@@ -779,5 +779,5 @@ def test_rewrite_needs_human_review_label_is_rewrite_need_review() -> None:
         }
     )
     result = render_record_html(row, record_index=0)
-    assert "Rewrite Need Review" in result
+    assert "Rewrite Needs Review" in result
     assert "<strong>Needs Review:</strong>" not in result
