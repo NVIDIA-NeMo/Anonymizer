@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import Mock
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
+from data_designer.plugins.plugin import PluginType
+from data_designer.plugins.registry import PluginRegistry
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -17,15 +20,17 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
+    COL_MERGED_ENTITIES,
     COL_SEED_ENTITIES,
+    COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
 )
-from anonymizer.engine.detection.chunked_validation import ChunkedValidationParams
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _format_label_examples,
@@ -41,6 +46,11 @@ from anonymizer.engine.ndd.model_loader import (
     resolve_model_aliases,
 )
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.workflow_columns.detection.config import (
+    ChunkedValidationConfig,
+    DetectionTransformConfig,
+    DetectionTransformOperation,
+)
 
 
 @pytest.fixture
@@ -453,7 +463,7 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
 
 
 # ---------------------------------------------------------------------------
-# Chunked validation wiring (Commit 2)
+# Workflow column wiring
 # ---------------------------------------------------------------------------
 
 
@@ -464,12 +474,90 @@ def _find_column(columns: list, name: str):
     raise AssertionError(f"Column {name!r} not found in workflow columns: {[getattr(c, 'name', c) for c in columns]}")
 
 
-def test_validation_column_is_custom_chunked_generator(
+def test_detection_workflow_plugins_are_discoverable() -> None:
+    PluginRegistry.reset()
+    try:
+        names = {
+            plugin.name
+            for plugin in PluginRegistry().get_plugins(PluginType.COLUMN_GENERATOR)
+            if plugin.name.startswith("anonymizer-")
+        }
+        assert names == {"anonymizer-detection-transform", "anonymizer-chunked-validation"}
+    finally:
+        PluginRegistry.reset()
+
+
+def test_detection_workflow_uses_plugin_transform_columns(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
-    """COL_VALIDATION_DECISIONS is now a CustomColumnConfig bound to the chunked generator,
-    not an LLMStructuredColumnConfig."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        tag_latent_entities=False,
+    )
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    expected_operations = {
+        COL_SEED_ENTITIES: DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
+        COL_SEED_VALIDATION_CANDIDATES: DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
+        COL_VALIDATED_ENTITIES: DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
+        COL_SEED_ENTITIES_JSON: DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
+        COL_MERGED_ENTITIES: DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+        COL_DETECTED_ENTITIES: DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+    }
+    for name, operation in expected_operations.items():
+        column = _find_column(columns, name)
+        assert isinstance(column, DetectionTransformConfig)
+        assert DetectionTransformOperation(column.operation) == operation
+    assert all(getattr(column, "column_type", None) != "custom" for column in columns)
+
+
+def test_detection_workflow_columns_are_json_serializable(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        tag_latent_entities=False,
+    )
+    payload = json.dumps(
+        [column.model_dump(mode="json") for column in adapter.run_workflow.call_args.kwargs["columns"]]
+    )
+    assert "generator_function" not in payload
+    assert "generator_params" not in payload
+
+
+def test_validation_column_is_chunked_validation_plugin(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
     adapter = Mock()
     adapter.run_workflow.return_value = WorkflowRunResult(
         dataframe=pd.DataFrame(
@@ -490,20 +578,14 @@ def test_validation_column_is_custom_chunked_generator(
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
     validation_col = _find_column(columns, COL_VALIDATION_DECISIONS)
-    assert isinstance(validation_col, CustomColumnConfig)
-    # Must NOT be the old structured-output LLM column.
+    assert isinstance(validation_col, ChunkedValidationConfig)
     assert not isinstance(validation_col, LLMStructuredColumnConfig)
     assert validation_col.drop is True
-    # generator_params must match the Detect config defaults that flow through.
-    assert isinstance(validation_col.generator_params, ChunkedValidationParams)
-    assert validation_col.generator_params.pool == stub_detection_model_selection.entity_validator
-    assert validation_col.generator_params.max_entities_per_call > 0
-    assert validation_col.generator_params.excerpt_window_chars > 0
-    # The decorated generator's metadata must expose the pool and the exact
-    # set of columns it reads, so DataDesigner resolves facades and DAG ordering.
-    metadata = validation_col.generator_function.custom_column_metadata
-    assert metadata["model_aliases"] == list(stub_detection_model_selection.entity_validator)
-    assert set(metadata["required_columns"]) == {
+    assert validation_col.pool == stub_detection_model_selection.entity_validator
+    assert validation_col.max_entities_per_call > 0
+    assert validation_col.excerpt_window_chars > 0
+    assert validation_col.get_model_aliases() == list(stub_detection_model_selection.entity_validator)
+    assert set(validation_col.required_columns) == {
         COL_TEXT,
         COL_SEED_ENTITIES,
         COL_SEED_VALIDATION_CANDIDATES,
@@ -511,12 +593,12 @@ def test_validation_column_is_custom_chunked_generator(
     }
 
 
-def test_validator_pool_kwargs_thread_through_to_generator_params(
+def test_validator_pool_kwargs_thread_through_to_plugin_config(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     """Explicit ``validation_max_entities_per_call`` and ``validation_excerpt_window_chars``
-    propagate from ``run()`` all the way to ``ChunkedValidationParams``."""
+    propagate from ``run()`` to ``ChunkedValidationConfig``."""
     adapter = Mock()
     adapter.run_workflow.return_value = WorkflowRunResult(
         dataframe=pd.DataFrame(
@@ -538,12 +620,12 @@ def test_validator_pool_kwargs_thread_through_to_generator_params(
         tag_latent_entities=False,
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
-    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
-    assert params.max_entities_per_call == 17
-    assert params.excerpt_window_chars == 42
+    config = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert config.max_entities_per_call == 17
+    assert config.excerpt_window_chars == 42
 
 
-def test_validation_single_chunk_full_text_threads_to_generator_params(
+def test_validation_single_chunk_full_text_threads_to_config(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
@@ -567,8 +649,8 @@ def test_validation_single_chunk_full_text_threads_to_generator_params(
         tag_latent_entities=False,
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
-    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
-    assert params.single_chunk_full_text is False
+    config = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert config.single_chunk_full_text is False
 
 
 def test_build_detection_config_threads_validation_single_chunk_full_text(
@@ -587,8 +669,8 @@ def test_build_detection_config_threads_validation_single_chunk_full_text(
         validation_single_chunk_full_text=False,
     )
     columns = adapter.build_config.call_args.kwargs["columns"]
-    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
-    assert params.single_chunk_full_text is False
+    config = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert config.single_chunk_full_text is False
 
 
 def test_build_detection_builder_for_seed_threads_validation_single_chunk_full_text(
@@ -606,8 +688,8 @@ def test_build_detection_builder_for_seed_threads_validation_single_chunk_full_t
         validation_single_chunk_full_text=False,
     )
     columns = adapter.build_config_for_seed.call_args.kwargs["columns"]
-    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
-    assert params.single_chunk_full_text is False
+    config = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert config.single_chunk_full_text is False
 
 
 def test_build_detection_config_uses_default_validation_single_chunk_full_text(
@@ -625,8 +707,8 @@ def test_build_detection_config_uses_default_validation_single_chunk_full_text(
         gliner_detection_threshold=0.5,
     )
     columns = adapter.build_config.call_args.kwargs["columns"]
-    params = _find_column(columns, COL_VALIDATION_DECISIONS).generator_params
-    assert params.single_chunk_full_text is True
+    config = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert config.single_chunk_full_text is True
 
 
 def test_pool_size_greater_than_one_emits_warning(

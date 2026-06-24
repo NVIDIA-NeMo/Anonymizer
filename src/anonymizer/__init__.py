@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from importlib.metadata import version
+from typing import TYPE_CHECKING
 
 __version__ = version("nemo-anonymizer")
 
@@ -20,7 +21,6 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS as _DEFAULT_ENTITY_LABELS
-from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import (
     AnonymizerError,
     AnonymizerIOError,
@@ -29,9 +29,21 @@ from anonymizer.interface.errors import (
 )
 from anonymizer.logging import LoggingConfig, configure_logging
 
+if TYPE_CHECKING:
+    from anonymizer.interface.anonymizer import Anonymizer as Anonymizer
+
 # Export as an immutable public constant so callers can inspect defaults
 # without mutating the internal source-of-truth list.
 DEFAULT_ENTITY_LABELS: tuple[str, ...] = tuple(_DEFAULT_ENTITY_LABELS)
+
+
+def __getattr__(name: str) -> object:
+    if name == "Anonymizer":
+        from anonymizer.interface.anonymizer import Anonymizer
+
+        return Anonymizer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "Anonymizer",

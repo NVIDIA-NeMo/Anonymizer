@@ -10,11 +10,14 @@ fake ``ModelFacade`` that records calls and returns preconfigured responses.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
+from data_designer.engine.models.clients.errors import SyncClientUnavailableError
 
 from anonymizer.engine.constants import (
     COL_MERGED_TAGGED_TEXT,
@@ -32,6 +35,7 @@ from anonymizer.engine.detection.chunked_validation import (
     build_chunk_skeleton,
     chunk_candidates,
     chunked_validate_row,
+    chunked_validate_row_async,
     make_chunked_validation_generator,
     merge_chunk_decisions,
     order_candidates_by_position,
@@ -44,6 +48,8 @@ from anonymizer.engine.schemas import (
     ValidationCandidateSchema,
     ValidationCandidatesSchema,
 )
+from anonymizer.engine.workflow_columns.detection.config import ChunkedValidationConfig
+from anonymizer.engine.workflow_columns.detection.impl import ChunkedValidationGenerator
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -53,11 +59,8 @@ from anonymizer.engine.schemas import (
 class FakeFacade:
     """Test double for ``ModelFacade`` recording invocations and replaying canned responses.
 
-    Exposes a ``generate()`` method because ``_dispatch_chunk`` calls the
-    sync facade primitive directly; per-row chunk concurrency comes from
-    the ``ThreadPoolExecutor`` inside ``chunked_validate_row``. Under DD's
-    async engine the sync ``.generate()`` call is transparently bridged to
-    ``agenerate`` by the DD runtime.
+    Exposes both ``generate()`` and ``agenerate()`` so the sync custom-column
+    wrapper and async plugin path can share assertions.
 
     A canned response can be a ``dict`` (auto-wrapped in a ```json fence), a
     raw string, or a callable that receives the prompt and returns either.
@@ -70,13 +73,21 @@ class FakeFacade:
         response: dict | str | Callable[[str], dict | str] | None = None,
         *,
         raise_on_call: bool = False,
+        max_parallel_requests: int = 4,
     ) -> None:
         self.alias = alias
         self._response = response
         self._raise = raise_on_call
+        self.max_parallel_requests = max_parallel_requests
         self.calls: list[dict[str, Any]] = []
 
     def generate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
+        return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
+
+    async def agenerate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
+        return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
+
+    def _call(self, *, prompt, parser, system_prompt, purpose, kwargs):
         self.calls.append(
             {
                 "prompt": prompt,
@@ -92,6 +103,63 @@ class FakeFacade:
             response = response(prompt)
         raw = response if isinstance(response, str) else f"```json\n{json.dumps(response)}\n```"
         return parser(raw), []
+
+
+class AsyncTrackingFacade(FakeFacade):
+    """Async-only facade that tracks concurrent ``agenerate`` calls."""
+
+    def __init__(
+        self,
+        alias: str,
+        response: dict | str | Callable[[str], dict | str] | None = None,
+        *,
+        raise_on_call: bool = False,
+    ) -> None:
+        super().__init__(alias, response, raise_on_call=raise_on_call)
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    def generate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
+        raise AssertionError("sync generate should not be used by async chunk validation")
+
+    async def agenerate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(0.01)
+            return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
+        finally:
+            self.active_calls -= 1
+
+
+class SyncUnavailableFacade(FakeFacade):
+    def __init__(
+        self,
+        alias: str,
+        response: dict | str | Callable[[str], dict | str] | None = None,
+        *,
+        max_parallel_requests: int = 1,
+    ) -> None:
+        super().__init__(alias, response, max_parallel_requests=max_parallel_requests)
+        self.request_timeout = 1.0
+        self.sync_calls = 0
+        self.async_calls = 0
+
+    def generate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
+        self.sync_calls += 1
+        raise SyncClientUnavailableError("sync client unavailable")
+
+    async def agenerate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
+        self.async_calls += 1
+        return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
+
+
+class FakeModelRegistry:
+    def __init__(self, models: dict[str, Any]) -> None:
+        self.models = models
+
+    def get_model(self, *, model_alias: str) -> Any:
+        return self.models[model_alias]
 
 
 def _entity_span(entity_id: str, value: str, label: str, start: int, end: int) -> EntitySpan:
@@ -581,6 +649,76 @@ class TestChunkedValidateRowPoolOfTwoRoundRobin:
         # 6 candidates / 2 per chunk = 3 chunks; round-robin → v0,v1,v0
         assert len(v0.calls) == 2
         assert len(v1.calls) == 1
+
+
+class TestChunkedValidateRowAsync:
+    def test_async_path_uses_agenerate_and_caps_parallel_chunks(self) -> None:
+        async def run() -> AsyncTrackingFacade:
+            text = "A B C D" + " " * 50
+            spans = [_entity_span(f"e{i}", chr(ord("A") + i), "first_name", i * 2, i * 2 + 1) for i in range(4)]
+            candidates = _candidates_schema(*[(f"e{i}", chr(ord("A") + i), "first_name") for i in range(4)])
+            row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+            facade = AsyncTrackingFacade("v0", response={"decisions": []})
+            params = ChunkedValidationParams(
+                pool=["v0"],
+                max_entities_per_call=1,
+                excerpt_window_chars=50,
+                max_parallel_chunks=2,
+                prompt_template=_MINIMAL_TEMPLATE,
+            )
+
+            await chunked_validate_row_async(row, params, {"v0": facade})
+            return facade
+
+        facade = asyncio.run(run())
+        assert len(facade.calls) == 4
+        assert facade.max_active_calls == 2
+
+    def test_async_primary_failure_falls_over_to_secondary(self) -> None:
+        async def run() -> tuple[dict[str, Any], AsyncTrackingFacade, AsyncTrackingFacade]:
+            spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
+            candidates = _candidates_schema(("a", "Alice", "first_name"))
+            row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+            v0 = AsyncTrackingFacade("v0", raise_on_call=True)
+            v1 = AsyncTrackingFacade("v1", response={"decisions": [{"id": "a", "decision": "keep"}]})
+            params = ChunkedValidationParams(
+                pool=["v0", "v1"],
+                max_entities_per_call=5,
+                excerpt_window_chars=50,
+                prompt_template=_MINIMAL_TEMPLATE,
+            )
+
+            out = await chunked_validate_row_async(row, params, {"v0": v0, "v1": v1})
+            return out, v0, v1
+
+        out, v0, v1 = asyncio.run(run())
+        assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
+        assert len(v0.calls) == 1
+        assert len(v1.calls) == 1
+
+
+class TestChunkedValidationGenerator:
+    def test_generate_bridges_sync_unavailable_to_agenerate(self) -> None:
+        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
+        candidates = _candidates_schema(("a", "Alice", "first_name"))
+        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+        facade = SyncUnavailableFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        generator = ChunkedValidationGenerator(
+            ChunkedValidationConfig(
+                name=COL_VALIDATION_DECISIONS,
+                pool=["v0"],
+                max_entities_per_call=5,
+                excerpt_window_chars=50,
+                prompt_template=_MINIMAL_TEMPLATE,
+            ),
+            resource_provider=SimpleNamespace(model_registry=FakeModelRegistry({"v0": facade})),
+        )
+
+        out = generator.generate(row)
+
+        assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
+        assert facade.sync_calls == 1
+        assert facade.async_calls == 1
 
 
 class TestChunkedValidateRowMultiChunkReassembly:
