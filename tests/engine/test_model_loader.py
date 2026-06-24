@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import pytest
-from data_designer.config.models import ModelConfig
+from data_designer.config.models import ModelConfig, ModelProvider
 
 from anonymizer.config.models import (
     DetectionModelSelection,
@@ -15,12 +15,14 @@ from anonymizer.engine.ndd.model_loader import (
     DEFAULT_CONFIG_DIR,
     WorkflowName,
     get_model_alias,
+    load_default_model_providers,
     load_default_model_selection,
     load_models_config,
     load_workflow_config,
     load_workflow_selections,
     parse_model_configs,
     validate_model_alias_references,
+    validate_model_configs_reference_providers,
 )
 
 
@@ -124,7 +126,7 @@ def test_get_model_alias_rejects_list_valued_role(tmp_path) -> None:
         get_model_alias(WorkflowName.detection, "entity_validator", config_dir)
 
 
-WORKFLOW_YAMLS = [p.stem for p in DEFAULT_CONFIG_DIR.glob("*.yaml") if p.stem != "models"]
+WORKFLOW_YAMLS = [p.stem for p in DEFAULT_CONFIG_DIR.glob("*.yaml") if p.stem not in {"models", "providers"}]
 
 
 @pytest.mark.parametrize("workflow_name", WORKFLOW_YAMLS)
@@ -165,9 +167,56 @@ def test_load_default_model_selection_populates_all_workflows() -> None:
     assert selection.rewrite.judge
 
 
+def test_parse_model_configs_rejects_missing_provider() -> None:
+    yaml_str = """
+model_configs:
+  - alias: custom-detector
+    model: test/model
+"""
+    with pytest.raises(ValueError, match="missing required field 'provider'"):
+        parse_model_configs(yaml_str)
+
+
+def test_parse_model_configs_rejects_empty_provider_string() -> None:
+    yaml_str = """
+model_configs:
+  - alias: custom-detector
+    model: test/model
+    provider: "   "
+"""
+    with pytest.raises(ValueError, match="missing required field 'provider'"):
+        parse_model_configs(yaml_str)
+
+
+def test_parse_model_configs_rejects_non_dict_model_config_entry() -> None:
+    yaml_str = """
+model_configs:
+  - not-a-mapping
+"""
+    with pytest.raises(ValueError, match="model_configs\\[0\\] must be a mapping"):
+        parse_model_configs(yaml_str)
+
+
+def test_bundled_model_providers_cover_bundled_model_configs() -> None:
+    """Every provider name in bundled models.yaml must exist in providers.yaml."""
+    models_config = load_models_config()
+    provider_names = {provider.name for provider in load_default_model_providers()}
+    referenced = {entry["provider"] for entry in models_config.get("model_configs", []) if entry.get("provider")}
+    unknown = referenced - provider_names
+    assert not unknown, f"Bundled models.yaml references unknown providers: {unknown}"
+
+
+def test_validate_model_configs_reference_providers_rejects_unknown_provider() -> None:
+    configs = [ModelConfig(alias="detector", model="test/detector", provider="missing-provider")]
+    providers = [ModelProvider(name="nvidia", endpoint="https://example.com/v1")]
+    with pytest.raises(ValueError, match="missing-provider"):
+        validate_model_configs_reference_providers(configs, providers)
+
+
 def test_parse_model_configs_none_uses_defaults() -> None:
     result = parse_model_configs(None)
     assert len(result.model_configs) > 0
+    assert all(model_config.provider is not None for model_config in result.model_configs)
     assert result.selected_models.detection.entity_detector == "gliner-pii-detector"
 
 
@@ -179,8 +228,10 @@ selected_models:
 model_configs:
   - alias: custom-detector
     model: test/model
+    provider: stub
   - alias: gpt-oss-120b
     model: test/gpt
+    provider: stub
 """
     result = parse_model_configs(yaml_str)
     assert result.selected_models.detection.entity_detector == "custom-detector"
@@ -193,6 +244,7 @@ def test_parse_model_configs_yaml_without_selections_uses_defaults() -> None:
 model_configs:
   - alias: stub-model
     model: test/stub
+    provider: stub
 """
     result = parse_model_configs(yaml_str)
     assert len(result.model_configs) == 1
@@ -214,6 +266,7 @@ selected_models:
 model_configs:
   - alias: gliner-pii-detector
     model: test/gliner
+    provider: stub
 """
     with pytest.raises(ValueError, match="at least one model alias"):
         parse_model_configs(yaml_str)
@@ -229,12 +282,16 @@ selected_models:
 model_configs:
   - alias: gliner-pii-detector
     model: test/gliner
+    provider: stub
   - alias: v1
     model: test/v1
+    provider: stub
   - alias: v2
     model: test/v2
+    provider: stub
   - alias: v3
     model: test/v3
+    provider: stub
 """
     with caplog.at_level("WARNING", logger="anonymizer.config.models"):
         result = parse_model_configs(yaml_str)
@@ -250,10 +307,13 @@ selected_models:
 model_configs:
   - alias: gliner-pii-detector
     model: test/gliner
+    provider: stub
   - alias: v1
     model: test/v1
+    provider: stub
   - alias: v2
     model: test/v2
+    provider: stub
 """
     result = parse_model_configs(yaml_str)
     assert result.selected_models.detection.entity_validator == ["v1", "v2"]
@@ -519,9 +579,9 @@ class TestValidateAliasReferencesHandlesValidatorPool:
     ) -> None:
         """Pool of aliases all present in the model pool — passes."""
         configs = [
-            ModelConfig(alias="v1", model="test/v1"),
-            ModelConfig(alias="v2", model="test/v2"),
-            ModelConfig(alias="known", model="some/model"),
+            ModelConfig(alias="v1", model="test/v1", provider="stub"),
+            ModelConfig(alias="v2", model="test/v2", provider="stub"),
+            ModelConfig(alias="known", model="some/model", provider="stub"),
         ]
         selected_models = stub_slim_model_selection.model_copy(
             update={

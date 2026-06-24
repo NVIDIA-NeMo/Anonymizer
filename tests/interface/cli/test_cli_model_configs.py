@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from anonymizer.engine.ndd.model_loader import parse_model_configs
+from anonymizer.engine.ndd.model_loader import load_default_model_providers, parse_model_configs
 from anonymizer.interface.anonymizer import _resolve_model_providers
 from anonymizer.interface.cli.main import app
 
@@ -204,9 +204,11 @@ def test_model_providers_missing_yaml_message_names_the_file() -> None:
         _resolve_model_providers(bad_path)
 
 
-def test_model_providers_none_returns_none() -> None:
-    """None returns None — no providers registered."""
-    assert _resolve_model_providers(None) is None
+def test_model_providers_none_returns_bundled_defaults() -> None:
+    """None loads Anonymizer's bundled providers — not DataDesigner's global defaults."""
+    result = _resolve_model_providers(None)
+    bundled = load_default_model_providers()
+    assert {p.name for p in result} == {p.name for p in bundled}
 
 
 def test_model_providers_list_passthrough() -> None:
@@ -216,6 +218,18 @@ def test_model_providers_list_passthrough() -> None:
     providers = [ModelProvider(name="my-provider", endpoint="https://example.com/v1")]
     result = _resolve_model_providers(providers)
     assert result is providers
+
+
+def test_model_providers_empty_list_raises() -> None:
+    with pytest.raises(ValueError, match="at least one provider"):
+        _resolve_model_providers([])
+
+
+def test_model_providers_empty_yaml_list_raises(tmp_path: Path) -> None:
+    path = tmp_path / "providers.yaml"
+    path.write_text("providers: []\n")
+    with pytest.raises(ValueError, match="at least one provider"):
+        _resolve_model_providers(str(path))
 
 
 # ---------------------------------------------------------------------------

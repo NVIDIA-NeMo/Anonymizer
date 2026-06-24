@@ -50,19 +50,19 @@ def _isolate_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def stub_detector_model_configs() -> list[ModelConfig]:
     """Model configs with the GLiNER PII detector alias."""
-    return [ModelConfig(alias="gliner-pii-detector", model="nvidia/nemotron-pii")]
+    return [ModelConfig(alias="gliner-pii-detector", model="nvidia/nemotron-pii", provider="stub")]
 
 
 @pytest.fixture
 def stub_model_configs() -> list[ModelConfig]:
     """Generic model configs for workflows that don't care about the alias."""
-    return [ModelConfig(alias="stub-model", model="stub-model")]
+    return [ModelConfig(alias="stub-model", model="stub-model", provider="stub")]
 
 
 @pytest.fixture
 def stub_known_model_configs() -> list[ModelConfig]:
     """Minimal model pool for alias validation tests."""
-    return [ModelConfig(alias="known", model="some/model")]
+    return [ModelConfig(alias="known", model="some/model", provider="stub")]
 
 
 @pytest.fixture

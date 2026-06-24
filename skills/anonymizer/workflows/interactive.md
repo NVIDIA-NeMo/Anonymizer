@@ -7,10 +7,7 @@ Iterative design with the user. Do not disengage from the loop until the user sa
 
 1. **Verify environment**
    - **Install**: run `python -c "import anonymizer; print(anonymizer.__version__)"`. If the import fails, STOP and follow the Troubleshooting section in `SKILL.md`.
-   - **Model providers**: before going further, confirm an LLM provider is configured. Anonymizer cannot run without one. Check that:
-     - An API key is set in the environment (`NVIDIA_API_KEY` for the shipped default, or the equivalent for the user's provider)
-     - A `providers.yaml` exists (defaults ship at `src/anonymizer/config/default_model_configs/providers.yaml`)
-   - If either is missing, STOP and walk the user through [`docs/concepts/models.md`](../../../docs/concepts/models.md) setup. Do not proceed to data inspection until the user confirms providers are ready.
+   - **Model providers**: plain `Anonymizer()` loads bundled providers from `src/anonymizer/config/default_model_configs/providers.yaml`. Before going further, confirm the API key for those defaults is set (`NVIDIA_API_KEY` for build.nvidia.com). Only ask for a custom `providers.yaml` when the user targets a non-default endpoint. If the key is missing, STOP and walk the user through [`docs/concepts/models.md`](../../../docs/concepts/models.md) setup.
 
 2. **Inspect the data** — Read the first few rows of the source file with pandas. You need to know:
    - Path, format, encoding.

@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from data_designer.config.models import ModelConfig, load_model_configs
+from data_designer.config.models import ModelConfig, ModelProvider, load_model_configs
 from data_designer.config.utils.io_helpers import load_config_file
 from pydantic import BaseModel
 
@@ -62,8 +62,10 @@ def parse_model_configs(raw: str | Path | None) -> ParsedModelConfigs:
             parsed = _parse_yaml_string(raw)
 
     user_selections = parsed.pop("selected_models", None)
+    _validate_raw_model_configs_have_provider(parsed)
+    model_configs = load_model_configs(parsed)
     return ParsedModelConfigs(
-        model_configs=load_model_configs(parsed),
+        model_configs=model_configs,
         selected_models=_merge_selections(user_selections),
     )
 
@@ -80,6 +82,16 @@ def load_default_model_selection(config_dir: Path | None = None) -> ModelSelecti
         rewrite=RewriteModelSelection(**load_workflow_selections(WorkflowName.rewrite, resolved_dir)),
         evaluate=EvaluateModelSelection(**load_workflow_selections(WorkflowName.evaluate, resolved_dir)),
     )
+
+
+def load_default_model_providers(config_dir: Path | None = None) -> list[ModelProvider]:
+    """Load bundled provider definitions from ``providers.yaml``."""
+    resolved_dir = config_dir or DEFAULT_CONFIG_DIR
+    config_dict = _load_yaml_dict(resolved_dir / "providers.yaml")
+    raw_providers = config_dict.get("providers")
+    if not isinstance(raw_providers, list):
+        raise ValueError("Bundled providers YAML must contain a top-level 'providers' list.")
+    return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
 
 def load_models_config(config_dir: Path | None = None) -> dict[str, Any]:
@@ -222,6 +234,25 @@ def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> Mode
     )
 
 
+def validate_model_configs_reference_providers(
+    model_configs: list[ModelConfig],
+    providers: list[ModelProvider],
+) -> None:
+    """Validate that every model config ``provider`` name exists in ``providers``."""
+    known_providers = {provider.name for provider in providers}
+    unknown_by_alias = {
+        model_config.alias: model_config.provider
+        for model_config in model_configs
+        if model_config.provider is not None and model_config.provider not in known_providers
+    }
+    if unknown_by_alias:
+        details = ", ".join(f"{alias}={provider!r}" for alias, provider in sorted(unknown_by_alias.items()))
+        raise ValueError(
+            f"Model config provider names not found in model_providers: {details}. "
+            f"Known providers: {sorted(known_providers)}"
+        )
+
+
 def validate_model_alias_references(
     model_configs: list[ModelConfig],
     selected_models: ModelSelection,
@@ -300,6 +331,36 @@ def _validate_alias_references(
     if unknown:
         raise ValueError(
             f"Workflow '{workflow_name}' references unknown model aliases: {unknown}. Known aliases: {known_aliases}"
+        )
+
+
+def _provider_field_missing(entry: dict[str, Any]) -> bool:
+    provider = entry.get("provider")
+    if provider is None:
+        return True
+    if isinstance(provider, str):
+        return not provider.strip()
+    return False
+
+
+def _validate_raw_model_configs_have_provider(parsed: dict[str, Any]) -> None:
+    """Require an explicit ``provider`` on every user-supplied model config entry."""
+    raw_configs = parsed.get("model_configs")
+    if raw_configs is None:
+        return
+    if not isinstance(raw_configs, list):
+        raise ValueError("model_configs must be a list.")
+    missing: list[str] = []
+    for idx, entry in enumerate(raw_configs):
+        if not isinstance(entry, dict):
+            raise ValueError(f"model_configs[{idx}] must be a mapping.")
+        if _provider_field_missing(entry):
+            missing.append(str(entry.get("alias", f"<index {idx}>")))
+    if missing:
+        aliases = ", ".join(repr(alias) for alias in missing)
+        raise ValueError(
+            f"Model config entries missing required field 'provider': {aliases}. "
+            "Each entry in model_configs must specify provider= explicitly."
         )
 
 
