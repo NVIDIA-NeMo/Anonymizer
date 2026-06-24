@@ -24,7 +24,8 @@ The evaluation LLM runs on the **original text** and detects all PII that should
 
 **Key shift:** current judge asks "were our detections correct?" (precision). New judge asks "did any PII survive?" (recall).
 
-**Question TBD**: The evaluation and anonymization currently use the same LLM, and we may need to address potential bias by using a different model for evaluation.
+**Question TBD:** The evaluation and anonymization currently use the same LLM, and we may need to address potential bias by using a different model for evaluation. Potential models: Nemotron Ultra and Nemotron Super (previous [research log](https://nvidia.atlassian.net/wiki/spaces/SDGR/pages/3597435385/2026-06-09+Entity+Validator+Augmentor+Model+Selection+for+NeMo+Anonymizer) around experimenting these 2 models)
+
 ---
 
 ## Design Decisions
@@ -136,6 +137,52 @@ Core task phrasing:
 - "Given the original text, identify all PII present. Report any identifiers that were not already caught by Anonymizer — these are the missed entities."
 - Returns an empty list when Anonymizer caught everything.
 
+#### Strict entity protection (`Rewrite.strict_entity_protection`)
+
+Only applies in rewrite mode. When `strict_entity_protection=True`, the rewrite pipeline disallows `leave_as_is`, bans `combined_risk_level: low`, and overrides the MINIMUM NECESSARY CHANGE and quasi-identifier "not automatically protected" principles. The coverage judge must mirror that posture — otherwise a missed quasi-identifier or low-combined-risk entity would be excused by the judge despite the user having demanded full protection.
+
+The prompt includes a `<strict_entity_protection>` block injected when the flag is set (empty string otherwise):
+
+```
+STRICT PROTECTION MODE IS ENABLED.
+
+Flag ALL entities as leaked if they were not caught — including quasi-identifiers
+and low-risk entities that would normally be given benefit of the doubt.
+Do NOT apply MINIMUM NECESSARY CHANGE reasoning to excuse a missed entity.
+Do NOT excuse a missed entity because its combined re-identification risk is low.
+Any PII span not caught by Anonymizer is a miss in strict mode.
+```
+
+The block mirrors the equivalent block in `sensitivity_disposition.py` so the two prompts enforce the same standard. In replace mode the call site passes `strict_entity_protection=False` (the field does not exist on `Detect`); the block is omitted and the judge uses its default charitable posture.
+
+#### Both flags enabled simultaneously
+
+Both can be active at the same time — there is no config constraint preventing it:
+
+```python
+AnonymizerConfig(
+    detect=Detect(entity_labels=["first_name", "email_address"]),
+    rewrite=Rewrite(strict_entity_protection=True),
+)
+```
+
+The two blocks compose cleanly in the judge prompt: the entity type scope narrows *what* the judge looks for, and the strict protection block raises the bar *within* that scope. No contradiction — scope is applied first, strictness within that scope second. The two blocks are independent injections in `prepare()` and do not interfere with each other.
+
+---
+
+#### Entity type scope (`Detect.entity_labels`)
+
+When the user configures `Detect(entity_labels=[...])`, detection is intentionally limited to those label types. The coverage judge must be scoped to match — otherwise it would flag missed PII of types the user never asked to detect, artificially deflating the score.
+
+The prompt includes an `<entity_type_scope>` block populated per-run in `prepare()`:
+
+- **`entity_labels` is `None`** (default): `"Evaluate for all PII and sensitive entity types."`
+- **`entity_labels` is set**: `"Detection was configured to target ONLY these entity types: <list>. Only report missed entities that belong to one of these types. Do NOT flag PII of other types as leaked — those were intentionally excluded from detection."`
+
+The `<guidance>` section includes a corresponding rule: respect the entity_type_scope and do not penalize Anonymizer for types outside it.
+
+Because `entity_labels` is run-level config (not per-row), the workflow constructor accepts `entity_labels: list[str] | None` and `prepare()` broadcasts it as a constant column (`_entity_type_scope`) across all rows. Call sites (`replace_runner.py`, `rewrite_workflow.py`) pass `config.detect.entity_labels`.
+
 ### Passthrough condition
 
 Rows with no detected entities trivially score `entity_coverage = 1.0` — nothing to miss, LLM skipped.
@@ -220,10 +267,14 @@ COL_LEAKED_ENTITIES,
 
 ## Step 6 — Display (`display.py`)
 
-`display_record()` renders the coverage column:
+`display_record()` renders the coverage column as a single line. The format puts the verdict first, then the fraction for scale, then the percentage for readability:
 
-- **Replace:** `entity_coverage == 1.0` → "Satisfied"; anything less → "Not Satisfied"
-- **Rewrite:** render as numeric fraction (e.g., `0.87`)
+- **Replace:** `Entity Coverage: Satisfied — 21/21 (100%)` / `Entity Coverage: Not Satisfied — 18/21 (86%)`
+- **Rewrite:** `Entity Coverage: 0.86 — 18/21 (86%)` (no Satisfied/Not Satisfied badge — rewrite already uses numeric metrics)
+
+Where the fraction is `n_entities_detected / (n_entities_detected + n_entities_leaked)` and the percentage is derived from it. The fraction gives absolute scale (18/20 and 18/200 look very different); the percentage makes it immediately readable.
+
+Drop the explanatory subtitle line that the old Detection Judge displayed — entity coverage is self-explanatory and does not need a definition sentence. Drop the `"LLM alignment score:"` label prefix — that framing belonged to the old judge (LLM-vs-LLM alignment), not to a count ratio.
 
 The `leaked_entities` dropdown replaces `detection_invalid_entities` with the same layout (value, label, reasoning per row).
 
@@ -294,8 +345,22 @@ All tests use stub adapters — no real LLM calls.
 
 ---
 
+## Test Datasets
+
+The following datasets should be used to validate entity coverage results once the feature is shipped.
+
+| Dataset | Rows | Text column | Ground-truth annotations | Notes |
+|---|---|---|---|---|
+| **usage_logs_seed** (`test-data/usage_logs_seed.parquet`) | 20 | `conversation_trace` | None | LLM conversation traces with embedded PII (names, emails, phone numbers, addresses) across business document scenarios; good for sanity-checking coverage on realistic, high-density PII text |
+| **openPII_ai4_part1** (`openPII_ai4_part1.csv`) | 1000 | `source_text` | `privacy_mask` (character-offset spans with labels: TITLE, GIVENNAME, SURNAME, EMAIL, TELEPHONENUM, DATE, etc.) | Synthetic PII benchmark with ground-truth spans; use `privacy_mask` as the reference to evaluate whether the judge surfaces the same entities Anonymizer missed |
+| **PII_NEW_TESTDATA_part1** (`PII_NEW_TESTDATA_part1.csv`) | 1000 | `text_us` / `text_intl` | `spans_us` / `spans_intl` (character-offset spans with Anonymizer-native labels: first_name, last_name, email, date_of_birth, street_address, bank_routing_number, credit_debit_card, etc.) | Multi-domain synthetic dataset (Life, Finance, etc.) with both US and international text variants and pre-tagged versions; spans use Anonymizer's own label vocabulary, making it the most direct test for coverage scoring |
+
+Run evaluation in both replace and rewrite modes across all three datasets to confirm `entity_coverage` scores are meaningful and `leaked_entities` lists surface real misses rather than noise. `PII_NEW_TESTDATA_part1` is the highest-signal dataset for this feature because its ground-truth spans use the same label set as Anonymizer's detection pipeline.
+
+---
+
 ## Open Questions
 
-- **Prompt v1:** The leakage_eval script is the starting point. The prompt will provide both the original text and the Anonymizer-detected entity list as context — the detected list is what allows the judge to identify the delta efficiently rather than re-detecting everything from scratch. Removing it would mean the judge can't compute a meaningful delta; keeping it is the right call.
+- **Prompt v1:** The leakage_eval script is the starting point. The prompt will provide both the original text and the Anonymizer-detected entity list as context — the detected list is what allows the judge to identify the delta efficiently rather than re-detecting everything from scratch. Removing it would mean the judge can't compute a meaningful delta; keeping it is the right call. Once v1 is shipped and results are observed, a follow-up iteration should explore **NER-style prompting** (instructing the judge to perform explicit named-entity recognition passes over the text before computing the delta) as a potential path to improving recall and reducing missed entities.
 - **`n_entities_detected` denominator:** Currently planned to count `(value, label)` pairs (flattened, same as current detection judge). If the same value has multiple labels, it counts multiple times. Consider whether to count unique values instead to avoid inflating the denominator.
 - **Replace mode threshold:** "Satisfied" is defined as `entity_coverage == 1.0` (strict — even one leaked entity flips to Not Satisfied). Confirm this is the right threshold or whether a small tolerance is acceptable.
