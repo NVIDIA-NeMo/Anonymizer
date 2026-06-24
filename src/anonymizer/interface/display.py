@@ -435,7 +435,7 @@ def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
             f"{weighted_leakage_rate:.2f}</span>"
         )
     if needs_review is not None:
-        label = "Rewrite Need Review" if is_rewrite else "Needs Review"
+        label = "Rewrite Needs Review" if is_rewrite else "Needs Review"
         badge_color = "#ef4444" if needs_review else "#22c55e"
         badge_text = "Yes" if needs_review else "No"
         metric_parts.append(
