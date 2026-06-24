@@ -2,7 +2,7 @@
 
 ## Problem
 
-Currently `detection_valid` scores **precision** of the detection step. Observed scores are predominantly in the lower ranges (issue #176), partly because the judge flags over-detection and mislabeling among other issues. But the actual privacy-sensitive question users care about is the opposite: **did any real PII slip through the anonymizer?**
+Currently `detection_valid` scores **precision** of the detected entities. Observed scores are predominantly in the lower ranges (issue #176), partly because the judge flags over-detection and mislabeling among other issues. But the actual privacy-sensitive question users care about is the opposite: **did any real PII slip through the anonymizer?**
 
 Precision complaints are already surfaced in the entity dropdown for manual inspection, making `detection_valid` feel redundant as a headline metric. What's missing is a **recall** signal: a score that answers "of all the PII that existed, how much did we successfully catch?"
 
@@ -10,20 +10,21 @@ Precision complaints are already surfaced in the entity dropdown for manual insp
 
 ## Proposed Solution: Entity Coverage
 
-Replace `detection_valid` with `entity_coverage`:
+Replace `detection_valid` with `entity_coverage` (name TBD):
 
 ```
-entity_coverage = n_entities / (n_entities + n_leaked)
+entity_coverage = n_entities_detected / (n_entities_detected + n_entities_leaked)
 ```
 
-- **`n_entities`** — entities detected by Anonymizer before anonymization (already available in `COL_ENTITIES_BY_VALUE`)
-- **`n_leaked`** — the number of missed identifiers from the original text, detected by the evaluation LLM in the anonymized / rewritten output
+- **`n_entities_detected`** — identifiers detected by Anonymizer in the original text (via the detection pipeline)
+- **`n_entities_leaked`** — identifiers missed by Anonymizer in the original text, found by the evaluation LLM
 - **`leaked_entities`** — the list of missed entities (shown in a dropdown when coverage < 100%)
 
 The evaluation LLM runs on the **original text** and detects all PII that should have been caught. The delta between what it finds and what Anonymizer already detected gives the leaked entities.
 
 **Key shift:** current judge asks "were our detections correct?" (precision). New judge asks "did any PII survive?" (recall).
 
+**Question TBD**: The evaluation and anonymization currently use the same LLM, and we may need to address potential bias by using a different model for evaluation.
 ---
 
 ## Design Decisions
@@ -142,9 +143,9 @@ Rows with no detected entities trivially score `entity_coverage = 1.0` — nothi
 ### Coverage fraction (postprocess override)
 
 ```python
-def _compute_coverage(self, n_entities: int, n_leaked: int) -> float:
-    total = n_entities + n_leaked
-    return 1.0 if total == 0 else n_entities / total
+def _compute_coverage(self, n_entities_detected: int, n_entities_leaked: int) -> float:
+    total = n_entities_detected + n_entities_leaked
+    return 1.0 if total == 0 else n_entities_detected / total
 ```
 
 Passthrough rows get `entity_coverage = 1.0` and `leaked_entities = []` without calling the LLM.
@@ -163,7 +164,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     WORKFLOW_NAME   = "entity-coverage-judge"
 ```
 
-`postprocess()` is overridden to compute the float fraction from `n_entities` (from `COL_ENTITIES_BY_VALUE`) and `len(leaked_entities)` rather than storing a boolean verdict.
+`postprocess()` is overridden to compute the float fraction from `n_entities_detected` (from `COL_ENTITIES_BY_VALUE`) and `len(leaked_entities)` rather than storing a boolean verdict.
 
 > **Note:** `COL_ENTITIES_BY_VALUE` (`_entities_by_value`) is derived from `COL_FINAL_ENTITIES` (`final_entities`) during detection — it groups spans by value with a labels list. The leakage eval script references `final_entities`, which is the same underlying data in a different shape. `COL_ENTITIES_BY_VALUE` is the right source here since it's already what the judge's `prepare()` step and passthrough mask consume.
 
@@ -256,9 +257,9 @@ test_judge_prompt_runs_on_original_text_column
 test_judge_prompt_includes_detected_entity_context
 test_entity_coverage_schema_accepts_empty_leaked_list
 test_entity_coverage_schema_accepts_leaked_entities
-test_coverage_fraction_all_caught                     # n_leaked=0 → 1.0
-test_coverage_fraction_partial_miss                   # n_leaked=1, n_entities=3 → 0.75
-test_coverage_fraction_total_miss                     # n_leaked=n, n_entities=0 → 0.0
+test_coverage_fraction_all_caught                     # n_entities_leaked=0 → 1.0
+test_coverage_fraction_partial_miss                   # n_entities_leaked=1, n_entities_detected=3 → 0.75
+test_coverage_fraction_total_miss                     # n_entities_leaked=n, n_entities_detected=0 → 0.0
 test_evaluate_short_circuits_when_no_entities         # passthrough → 1.0, no LLM call
 test_evaluate_invokes_adapter_for_rows_with_entities
 test_evaluate_merges_entity_and_empty_rows_in_order
@@ -296,5 +297,5 @@ All tests use stub adapters — no real LLM calls.
 ## Open Questions
 
 - **Prompt v1:** The leakage_eval script is the starting point. The prompt will provide both the original text and the Anonymizer-detected entity list as context — the detected list is what allows the judge to identify the delta efficiently rather than re-detecting everything from scratch. Removing it would mean the judge can't compute a meaningful delta; keeping it is the right call.
-- **`n_entities` denominator:** Currently planned to count `(value, label)` pairs (flattened, same as current detection judge). If the same value has multiple labels, it counts multiple times. Consider whether to count unique values instead to avoid inflating the denominator.
+- **`n_entities_detected` denominator:** Currently planned to count `(value, label)` pairs (flattened, same as current detection judge). If the same value has multiple labels, it counts multiple times. Consider whether to count unique values instead to avoid inflating the denominator.
 - **Replace mode threshold:** "Satisfied" is defined as `entity_coverage == 1.0` (strict — even one leaked entity flips to Not Satisfied). Confirm this is the right threshold or whether a small tolerance is acceptable.
