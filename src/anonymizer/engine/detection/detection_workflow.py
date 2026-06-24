@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
@@ -40,18 +40,6 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
-from anonymizer.engine.detection.chunked_validation import (
-    ChunkedValidationParams,
-    make_chunked_validation_generator,
-)
-from anonymizer.engine.detection.custom_columns import (
-    apply_validation_and_finalize,
-    apply_validation_to_seed_entities,
-    enrich_validation_decisions,
-    merge_and_build_candidates,
-    parse_detected_entities,
-    prepare_validation_inputs,
-)
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
@@ -61,6 +49,11 @@ from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     EntitiesSchema,
     LatentEntitiesSchema,
+)
+from anonymizer.engine.workflow_columns.detection.config import (
+    ChunkedValidationConfig,
+    DetectionTransformConfig,
+    DetectionTransformOperation,
 )
 from anonymizer.measurement import stage_timer
 
@@ -84,7 +77,7 @@ class EntityDetectionResult:
 
 
 class EntityDetectionWorkflow:
-    """Detection workflow using NDD LLM + custom-column steps."""
+    """Detection workflow using NDD LLM and Anonymizer workflow columns."""
 
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
@@ -181,42 +174,36 @@ class EntityDetectionWorkflow:
                 validator_aliases,
             )
 
-        validator_generator = make_chunked_validation_generator(validator_aliases)
-        validator_params = ChunkedValidationParams(
-            pool=list(validator_aliases),
-            max_entities_per_call=validation_max_entities_per_call,
-            excerpt_window_chars=validation_excerpt_window_chars,
-            single_chunk_full_text=validation_single_chunk_full_text,
-            prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
-        )
-
         columns: list[ColumnConfigT] = [
             LLMTextColumnConfig(
                 name=COL_RAW_DETECTED,
                 prompt=_jinja(COL_TEXT),
                 model_alias=detection_alias,
             ),
-            CustomColumnConfig(
+            DetectionTransformConfig(
                 name=COL_SEED_ENTITIES,
-                generator_function=parse_detected_entities,
+                operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
             ),
-            CustomColumnConfig(
+            DetectionTransformConfig(
                 name=COL_SEED_VALIDATION_CANDIDATES,
-                generator_function=prepare_validation_inputs,
+                operation=DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
             ),
-            CustomColumnConfig(
+            ChunkedValidationConfig(
                 name=COL_VALIDATION_DECISIONS,
-                generator_function=validator_generator,
-                generator_params=validator_params,
+                pool=list(validator_aliases),
+                max_entities_per_call=validation_max_entities_per_call,
+                excerpt_window_chars=validation_excerpt_window_chars,
+                single_chunk_full_text=validation_single_chunk_full_text,
+                prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
                 drop=True,
             ),
-            CustomColumnConfig(
+            DetectionTransformConfig(
                 name=COL_VALIDATED_ENTITIES,
-                generator_function=enrich_validation_decisions,
+                operation=DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
             ),
-            CustomColumnConfig(
+            DetectionTransformConfig(
                 name=COL_SEED_ENTITIES_JSON,
-                generator_function=apply_validation_to_seed_entities,
+                operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
             ),
             LLMStructuredColumnConfig(
                 name=COL_AUGMENTED_ENTITIES,
@@ -226,13 +213,13 @@ class EntityDetectionWorkflow:
                 model_alias=augmenter_alias,
                 output_format=AugmentedEntitiesSchema,
             ),
-            CustomColumnConfig(
+            DetectionTransformConfig(
                 name=COL_MERGED_ENTITIES,
-                generator_function=merge_and_build_candidates,
+                operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
             ),
-            CustomColumnConfig(
+            DetectionTransformConfig(
                 name=COL_DETECTED_ENTITIES,
-                generator_function=apply_validation_and_finalize,
+                operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
             ),
         ]
         return workflow_model_configs, columns
@@ -293,9 +280,8 @@ class EntityDetectionWorkflow:
         Same columns as :meth:`build_detection_config`, but the seed dataset points at an
         already-written ``seed_path`` and optionally selects this worker's ordered
         partition (``job_index`` of ``num_jobs``). For a distributed executor (e.g. a SLURM
-        orchestrator) that builds this workflow *in-process on the worker* — the
-        custom-column callables stay live (they can't survive JSON serialization) and the
-        model aliases are resolved by the runtime's providers.
+        orchestrator), the plugin column configs remain serializable and the model aliases
+        are resolved by the runtime's providers.
         """
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
