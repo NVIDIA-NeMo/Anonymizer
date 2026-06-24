@@ -2,7 +2,7 @@
 
 ## Problem
 
-Currently `detection_valid` scores **precision** of the detected entities. Observed scores are predominantly in the lower ranges (issue #176), partly because the judge flags over-detection and mislabeling among other issues. But the actual privacy-sensitive question users care about is the opposite: **did any real PII slip through the anonymizer?**
+Currently `detection_valid` scores **precision** of the detected entities. Observed scores are predominantly in the lower ranges issue [#176](https://github.com/NVIDIA-NeMo/Anonymizer/issues/176), partly because the judge flags over-detection and mislabeling among other issues. But the actual privacy-sensitive question users care about is the opposite: **did any real PII slip through the anonymizer?**
 
 Precision complaints are already surfaced in the entity dropdown for manual inspection, making `detection_valid` feel redundant as a headline metric. What's missing is a **recall** signal: a score that answers "of all the PII that existed, how much did we successfully catch?"
 
@@ -45,7 +45,7 @@ Rows where Anonymizer detected **zero entities** trivially score `entity_coverag
 
 ### Prompt starting point
 
-The entity judge prompt is based on the leakage eval script from the experiments repo. It will be refined as it is tested against real examples. The core task: given the original text, identify all PII — then report any that Anonymizer missed.
+The entity judge prompt is based on the [leakage eval script](https://gitlab-master.nvidia.com/sdg-research/anonymizer-experiments/-/blob/lramaswamy/latency-benchmark/experiments/latency-benchmark/scripts/leakage_eval.py?ref_type=heads#L26) from the experiments repo. It will be refined as it is tested against real examples. The core task: given the original text, identify all PII — then report any that Anonymizer missed.
 
 ### Reuse `_BaseJudgeWorkflow`
 
@@ -155,21 +155,6 @@ Any PII span not caught by Anonymizer is a miss in strict mode.
 
 The block mirrors the equivalent block in `sensitivity_disposition.py` so the two prompts enforce the same standard. In replace mode the call site passes `strict_entity_protection=False` (the field does not exist on `Detect`); the block is omitted and the judge uses its default charitable posture.
 
-#### Both flags enabled simultaneously
-
-Both can be active at the same time — there is no config constraint preventing it:
-
-```python
-AnonymizerConfig(
-    detect=Detect(entity_labels=["first_name", "email_address"]),
-    rewrite=Rewrite(strict_entity_protection=True),
-)
-```
-
-The two blocks compose cleanly in the judge prompt: the entity type scope narrows *what* the judge looks for, and the strict protection block raises the bar *within* that scope. No contradiction — scope is applied first, strictness within that scope second. The two blocks are independent injections in `prepare()` and do not interfere with each other.
-
----
-
 #### Entity type scope (`Detect.entity_labels`)
 
 When the user configures `Detect(entity_labels=[...])`, detection is intentionally limited to those label types. The coverage judge must be scoped to match — otherwise it would flag missed PII of types the user never asked to detect, artificially deflating the score.
@@ -182,6 +167,19 @@ The prompt includes an `<entity_type_scope>` block populated per-run in `prepare
 The `<guidance>` section includes a corresponding rule: respect the entity_type_scope and do not penalize Anonymizer for types outside it.
 
 Because `entity_labels` is run-level config (not per-row), the workflow constructor accepts `entity_labels: list[str] | None` and `prepare()` broadcasts it as a constant column (`_entity_type_scope`) across all rows. Call sites (`replace_runner.py`, `rewrite_workflow.py`) pass `config.detect.entity_labels`.
+
+#### Both flags enabled simultaneously
+
+Both can be active at the same time — there is no config constraint preventing it:
+
+```python
+AnonymizerConfig(
+    detect=Detect(entity_labels=["first_name", "email_address"]),
+    rewrite=Rewrite(strict_entity_protection=True),
+)
+```
+
+The two blocks compose cleanly in the judge prompt: the entity type scope narrows *what* the judge looks for, and the strict protection block raises the bar *within* that scope. No contradiction — scope is applied first, strictness within that scope second. The two blocks are independent injections in `prepare()` and do not interfere with each other.
 
 ### Passthrough condition
 
