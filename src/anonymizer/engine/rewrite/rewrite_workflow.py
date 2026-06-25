@@ -447,6 +447,38 @@ class RewriteWorkflow:
 
         return df, all_failed
 
+    def _run_final_judge(
+        self,
+        df: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+        privacy_goal: PrivacyGoal,
+        evaluation: EvaluationCriteria,
+        preview_num_records: int | None,
+    ) -> tuple[pd.DataFrame, list[FailedRecord]]:
+        try:
+            judge_columns = self._judge_wf.columns(
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+            )
+            judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))
+            judge_result = self._adapter.run_workflow(
+                judge_seed,
+                model_configs=model_configs,
+                columns=judge_columns,
+                workflow_name="rewrite-final-judge",
+                preview_num_records=preview_num_records,
+            )
+            df = _join_judge_columns(df, judge_result.dataframe)
+            return df, judge_result.failed_records
+        except Exception:
+            logger.warning("Final judge step failed; populating defaults", exc_info=True)
+            df[COL_JUDGE_EVALUATION] = None
+            df[COL_NEEDS_HUMAN_REVIEW] = True
+            return df, []
+
     # ---------------------------------------------------------------------------
     # Evaluate (detection judge + final judge)
     # ---------------------------------------------------------------------------
