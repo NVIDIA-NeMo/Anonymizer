@@ -133,6 +133,20 @@ reports can compare arms directly. Pass `--create-workspace` to create the
 benchmark workspace after the sweep completes.
 See `tools/measurement/README.md` for the full command reference.
 
+## Local and Slurm Benchmark Execution
+
+Benchmark observability treats local execution and Slurm execution as backends
+that produce the same measurement artifacts. The shared execution metadata helper
+records sanitized context such as `backend`, hashed output directory, export
+flags, DataDesigner trace flags, and selected Slurm job/array counters when
+`SLURM_*` variables are present.
+
+Slurm does not own measurement aggregation or W&B logging. A Slurm launcher may
+run one or many benchmark cases, but benchmark Python should still combine
+measurement JSONL, export tables, log sanitized W&B summaries, and finish W&B
+runs through the benchmark tooling path. Do not add cluster-specific `sbatch` or
+`srun` scripts to this repository for observability.
+
 ## DataDesigner Message Traces
 
 DataDesigner message traces are optional sidecar artifacts for model-call
@@ -218,6 +232,8 @@ When adding instrumentation:
 | `src/anonymizer/interface/anonymizer.py` | Run-level and per-record measurement integration. |
 | `src/anonymizer/engine/ndd/adapter.py` | DataDesigner workflow measurement, native message trace capture, and scheduler task trace capture. |
 | `tools/measurement/run_benchmarks.py` | Benchmark suite runner that activates measurement sessions and writes per-case artifacts. |
+| `tools/measurement/measurement_tools/execution.py` | Sanitized local/Slurm execution metadata shared by benchmark tools. |
+| `tools/measurement/measurement_tools/wandb_setup.py` | Benchmark-only W&B settings, initialization, finalization, and config sanitization. |
 | `tools/measurement/create_wandb_report.py` | W&B benchmark workspace/report builder for sanitized benchmark runs and run groups. |
 | `tools/measurement/sweep_benchmarks.py` | Parameter sweep runner that logs one W&B benchmark run per sweep arm. |
 | `tools/measurement/README.md` | Detailed benchmark and analysis command reference. |

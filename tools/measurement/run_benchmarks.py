@@ -8,7 +8,6 @@ Usage:
     uv run python tools/measurement/run_benchmarks.py suite.yaml --dry-run --json
 """
 
-import hashlib
 import logging
 import platform
 import shutil
@@ -33,12 +32,14 @@ from data_designer.config.models import ModelProvider
 from data_designer.config.utils.io_helpers import load_config_file
 from export_measurements import export_tables, read_measurements
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.execution import benchmark_execution_metadata, stable_metadata_hash
 from measurement_tools.tables import ExportFormat
-from measurement_tools.wandb_logging import log_benchmark_measurements
 from measurement_tools.wandb_setup import (
     WANDB_SANITIZER_VERSION,
+    BenchmarkWandbFinalization,
     WandbMode,
     WandbSettings,
+    finalize_benchmark_wandb_run,
     finish_benchmark_wandb_run,
     initialize_benchmark_wandb_run,
     require_wandb,
@@ -238,6 +239,7 @@ class BenchmarkResult(BaseModel):
     table_dir: str | None
     detection_artifact_analysis_path: str | None = None
     cases: list[BenchmarkCase]
+    execution: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -477,6 +479,13 @@ def run_suite(
         table_dir=table_dir,
         artifact_analysis_path=artifact_analysis_path,
         cases=cases,
+        execution=_execution_metadata(
+            output_dir=output_dir,
+            export=export,
+            fail_fast=fail_fast,
+            dd_trace=dd_trace,
+            dd_task_trace=dd_task_trace,
+        ),
     )
     write_summary(result)
     return result
@@ -532,6 +541,7 @@ def _benchmark_result(
     table_dir: Path | None,
     artifact_analysis_path: Path | None,
     cases: list[BenchmarkCase],
+    execution: dict[str, Any] | None = None,
 ) -> BenchmarkResult:
     return BenchmarkResult(
         suite_id=spec.suite_id,
@@ -541,6 +551,7 @@ def _benchmark_result(
         table_dir=str(table_dir) if table_dir is not None else None,
         detection_artifact_analysis_path=str(artifact_analysis_path) if artifact_analysis_path is not None else None,
         cases=cases,
+        execution=execution or {},
     )
 
 
@@ -1158,6 +1169,7 @@ def dry_run_result(
     *,
     output_dir: Path,
     export: bool,
+    fail_fast: bool,
     dd_trace: DDTraceMode,
     trace_dir: Path | None,
     dd_task_trace: bool = False,
@@ -1183,6 +1195,13 @@ def dry_run_result(
         table_dir=str(output_dir / "tables") if export else None,
         detection_artifact_analysis_path=str(output_dir / "detection-artifacts.jsonl") if export else None,
         cases=cases,
+        execution=_execution_metadata(
+            output_dir=output_dir,
+            export=export,
+            fail_fast=fail_fast,
+            dd_trace=dd_trace,
+            dd_task_trace=dd_task_trace,
+        ),
     )
 
 
@@ -1244,13 +1263,13 @@ def _execution_metadata(
     dd_trace: DDTraceMode,
     dd_task_trace: bool,
 ) -> dict[str, Any]:
-    return {
-        "output_dir_hash": _stable_hash(str(output_dir)),
-        "export": export,
-        "fail_fast": fail_fast,
-        "dd_trace": dd_trace.value,
-        "dd_task_trace": dd_task_trace,
-    }
+    return benchmark_execution_metadata(
+        output_dir=output_dir,
+        export=export,
+        fail_fast=fail_fast,
+        dd_trace=dd_trace.value,
+        dd_task_trace=dd_task_trace,
+    )
 
 
 def _runtime_metadata() -> dict[str, Any]:
@@ -1420,7 +1439,7 @@ def _file_hash(path: Path) -> str | None:
 
 
 def _stable_hash(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return stable_metadata_hash(value)
 
 
 @app.default
@@ -1514,25 +1533,6 @@ def resolve_wandb_settings(
     return settings.model_copy(update=updates)
 
 
-def _log_benchmark_wandb(
-    wandb_settings: WandbSettings,
-    *,
-    result: BenchmarkResult,
-    measurement_path: Path,
-    table_dir: Path | None,
-) -> None:
-    if not wandb_settings.enabled:
-        return
-    wandb = require_wandb()
-    log_benchmark_measurements(
-        wandb,
-        measurement_path=measurement_path,
-        cases=result.cases,
-        log_tables=wandb_settings.wandb_log_tables,
-        table_dir=table_dir,
-    )
-
-
 def run_or_plan(
     spec_path: Path,
     *,
@@ -1560,13 +1560,13 @@ def run_or_plan(
             benchmark_spec,
             output_dir=output_dir,
             export=export,
+            fail_fast=fail_fast,
             dd_trace=dd_trace,
             trace_dir=trace_dir,
             dd_task_trace=dd_task_trace,
             task_trace_dir=task_trace_dir,
         )
-    if resolved_wandb.enabled:
-        require_wandb()
+    active_wandb = require_wandb() if resolved_wandb.enabled else None
     prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
     wandb_run_created = initialize_benchmark_wandb_run(
         resolved_wandb,
@@ -1599,17 +1599,17 @@ def run_or_plan(
         if wandb_run_created:
             finish_benchmark_wandb_run()
         raise
-    try:
-        table_dir = Path(result.table_dir) if result.table_dir is not None else None
-        _log_benchmark_wandb(
-            resolved_wandb,
-            result=result,
+    table_dir = Path(result.table_dir) if result.table_dir is not None else None
+    finalize_benchmark_wandb_run(
+        resolved_wandb,
+        finalization=BenchmarkWandbFinalization(
             measurement_path=Path(result.measurement_path),
+            cases=result.cases,
             table_dir=table_dir,
-        )
-    finally:
-        if wandb_run_created:
-            finish_benchmark_wandb_run()
+        ),
+        run_created=wandb_run_created,
+        wandb=active_wandb,
+    )
     return result
 
 

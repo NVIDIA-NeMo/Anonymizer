@@ -9,6 +9,9 @@ Anonymizer SDK and product CLI do not auto-initialize W&B.
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,7 @@ DEFAULT_WANDB_PROJECT = "nemo-anonymizer-benchmarks"
 WANDB_SANITIZER_VERSION = 1
 _WANDB_INSTALL_HINT = "Install the optional measurement dependency group: uv sync --group measurement"
 _SENSITIVE_RUN_TAG_PARTS = frozenset({"api_key", "credential", "credentials", "password", "secret", "token"})
+_SENSITIVE_RUN_TAG_VALUE_PREFIXES = ("sk-", "ghp_", "github_pat_", "glpat-", "xoxb-", "xoxp-", "xoxa-")
 
 
 class WandbMode(StrEnum):
@@ -123,6 +127,15 @@ class WandbSettings(BaseSettings):
         return [tag for tag in (part.strip() for part in self.wandb_tags.split(",")) if tag]
 
 
+@dataclass(frozen=True)
+class BenchmarkWandbFinalization:
+    """Artifacts needed to finalize benchmark W&B logging."""
+
+    measurement_path: Path
+    cases: Sequence[Any]
+    table_dir: Path | None
+
+
 def require_wandb() -> Any:
     """Import wandb when W&B logging is enabled."""
     try:
@@ -156,12 +169,16 @@ def initialize_benchmark_wandb_run(
     logger.info("WANDB_PROJECT: %s", project)
 
     init_kwargs = _wandb_init_kwargs(wandb, settings, suite_id=suite_id, output_dir=output_dir, metadata=metadata)
-    wandb.init(**init_kwargs)
-    _define_benchmark_metrics(wandb)
-    wandb.config.update(
-        _benchmark_wandb_config(settings, suite_id=suite_id, run_tags=run_tags, metadata=metadata),
-        allow_val_change=True,
-    )
+    try:
+        wandb.init(**init_kwargs)
+        _define_benchmark_metrics(wandb)
+        wandb.config.update(
+            _benchmark_wandb_config(settings, suite_id=suite_id, run_tags=run_tags, metadata=metadata),
+            allow_val_change=True,
+        )
+    except Exception:
+        _finish_wandb_run(wandb)
+        raise
 
     if wandb.run is not None:
         logger.info("W&B run id: %s", wandb.run.id)
@@ -220,12 +237,42 @@ def finish_benchmark_wandb_run() -> None:
         import wandb
     except ImportError:
         return
+    _finish_wandb_run(wandb)
+
+
+def _finish_wandb_run(wandb: Any) -> None:
+    """Best-effort W&B run finalization for already-imported modules."""
     if wandb.run is None:
         return
     try:
         wandb.finish()
     except Exception as exc:  # noqa: BLE001 -- best-effort cleanup
         logger.warning("Failed to finish W&B run: %s", exc)
+
+
+def finalize_benchmark_wandb_run(
+    settings: WandbSettings,
+    *,
+    finalization: BenchmarkWandbFinalization,
+    run_created: bool,
+    wandb: Any | None = None,
+) -> None:
+    """Log benchmark measurements and finish the W&B run created by benchmark tooling."""
+    try:
+        if settings.enabled:
+            active_wandb = wandb if wandb is not None else require_wandb()
+            from measurement_tools.wandb_logging import log_benchmark_measurements  # noqa: PLC0415
+
+            log_benchmark_measurements(
+                active_wandb,
+                measurement_path=finalization.measurement_path,
+                cases=list(finalization.cases),
+                log_tables=settings.wandb_log_tables,
+                table_dir=finalization.table_dir,
+            )
+    finally:
+        if run_created:
+            finish_benchmark_wandb_run()
 
 
 def _scalar_run_tags(run_tags: dict[str, Any]) -> dict[str, str | int | float | bool]:
@@ -249,7 +296,19 @@ def _run_tag_key_is_sensitive(key: str) -> bool:
 
 
 def _run_tag_string_is_safe(value: str) -> bool:
-    return len(value) <= 256 and "://" not in value and not value.startswith("/")
+    if len(value) > 256 or "://" in value or value.startswith("/"):
+        return False
+    return not _run_tag_value_is_sensitive(value)
+
+
+def _run_tag_value_is_sensitive(value: str) -> bool:
+    normalized = value.lower()
+    if normalized.startswith(_SENSITIVE_RUN_TAG_VALUE_PREFIXES):
+        return True
+    parts = {part for part in re.split(r"[^a-z0-9]+", normalized) if part}
+    if "api" in parts and "key" in parts:
+        return True
+    return bool(parts & _SENSITIVE_RUN_TAG_PARTS)
 
 
 def _default_run_name(suite_id: str, metadata: dict[str, Any] | None) -> str:

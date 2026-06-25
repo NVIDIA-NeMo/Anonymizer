@@ -63,7 +63,7 @@ raw = pd.read_json("benchmark-runs/suite/measurements.jsonl", lines=True)
 
 ## System overview
 
-The measurement system has three layers:
+The measurement system has four cooperating layers:
 
 - Instrumentation in Anonymizer emits JSONL records for runs, stages,
   DataDesigner workflows, direct model workflows, per-record safety metrics,
@@ -71,6 +71,8 @@ The measurement system has three layers:
 - Benchmark runners create repeatable workloads and write those JSONL records
   plus optional sidecars such as detection artifacts and DataDesigner traces.
 - Analysis tools convert raw run artifacts into case, group, and model tables.
+- Shared benchmark helpers record sanitized execution context and finalize W&B
+  benchmark logging without moving aggregation into execution backends.
 
 External/distributed execution is a separate boundary. Detection export APIs are
 responsible for building DataDesigner configs that an external runtime can
@@ -98,9 +100,13 @@ boring command and export policy through `measurement_tools/`:
 
 - `measurement_tools.cli`: `LogFormat`, logging setup, and structured
   bad-input errors.
+- `measurement_tools.execution`: sanitized local/Slurm execution metadata for
+  benchmark summaries and W&B config.
 - `measurement_tools.tables`: `ExportFormat`, model-row table specs, manifest
   writing, and CSV/Parquet/JSONL output.
 - `measurement_tools.stats`: small numeric helpers used by analysis groupers.
+- `measurement_tools.wandb_setup`: benchmark-only W&B settings, initialization,
+  finalization, and config sanitization.
 
 This is intentionally composition-based. New analysis tools should declare
 their own row models and call the shared helpers rather than inheriting from a

@@ -22,6 +22,7 @@ from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_BENCHMARKS_PATH = REPO_ROOT / "tools/measurement/run_benchmarks.py"
 SWEEP_BENCHMARKS_PATH = REPO_ROOT / "tools/measurement/sweep_benchmarks.py"
+EXECUTION_PATH = REPO_ROOT / "tools/measurement/measurement_tools/execution.py"
 WANDB_LOGGING_PATH = REPO_ROOT / "tools/measurement/measurement_tools/wandb_logging.py"
 WANDB_SETUP_PATH = REPO_ROOT / "tools/measurement/measurement_tools/wandb_setup.py"
 WANDB_REPORT_PATH = REPO_ROOT / "tools/measurement/create_wandb_report.py"
@@ -117,6 +118,11 @@ def sweep_tool(request: pytest.FixtureRequest) -> ModuleType:
 
 
 @pytest.fixture
+def execution_tool(request: pytest.FixtureRequest) -> ModuleType:
+    return load_tool(_fixture_module_name("measurement_execution", request), EXECUTION_PATH)
+
+
+@pytest.fixture
 def wandb_logging_tool(request: pytest.FixtureRequest) -> ModuleType:
     load_tool(_fixture_module_name("measurement_wandb_logging_prereq", request), RUN_BENCHMARKS_PATH)
     return load_tool(_fixture_module_name("measurement_wandb_logging", request), WANDB_LOGGING_PATH)
@@ -181,6 +187,10 @@ def _fake_wandb_module(state: SimpleNamespace, *, active_run: bool = False) -> S
         module.run = _fake_run()
         return module.run
 
+    def finish() -> None:
+        state.finished.append("finish")
+        module.run = None
+
     module.config = SimpleNamespace(
         update=lambda payload, *, allow_val_change: _record_config_update(state, payload, allow_val_change)
     )
@@ -190,7 +200,7 @@ def _fake_wandb_module(state: SimpleNamespace, *, active_run: bool = False) -> S
     module.define_metric = lambda *args, **kwargs: state.defined_metrics.append((args, kwargs))
     module.log = lambda payload: state.logged.append(payload)
     module.Table = lambda *, dataframe: dataframe
-    module.finish = lambda: state.finished.append("finish")
+    module.finish = finish
     return module
 
 
@@ -456,6 +466,11 @@ def _patch_fake_benchmark_run(
     )
     monkeypatch.setattr(tool, "export_measurement_tables", lambda *_args: output_dir / "tables")
     monkeypatch.setattr(tool, "require_wandb", lambda: fake_wandb)
+
+
+def _patch_imported_wandb_finish(monkeypatch: pytest.MonkeyPatch, tool: ModuleType, finish: Any) -> None:
+    setup_module = sys.modules[tool.finalize_benchmark_wandb_run.__module__]
+    monkeypatch.setattr(setup_module, "finish_benchmark_wandb_run", finish)
 
 
 def _patch_sweep_runner(
@@ -767,10 +782,15 @@ def test_run_suite_records_detection_artifact_analysis_path(
     )
 
     assert result.detection_artifact_analysis_path == str(analysis_path)
+    assert result.execution["backend"] == "local"
+    assert result.execution["export"] is True
+    assert result.execution["fail_fast"] is False
     assert analysis_path.read_text(encoding="utf-8") == (
         '{"case_id":"input__redact__r000","workflow_name":"entity-detection"}\n'
     )
     summary = (output_dir / "summary.json").read_text(encoding="utf-8")
+    summary_payload = json.loads(summary)
+    assert summary_payload["execution"] == result.execution
     assert "detection_artifact_analysis_path" in summary
     assert "detection_artifact_path" in summary
 
@@ -1042,6 +1062,9 @@ matrix:
 
     assert len(result.cases) == 2
     assert result.table_dir is None
+    assert result.execution["backend"] == "local"
+    assert result.execution["export"] is False
+    assert result.execution["fail_fast"] is False
     assert {case.status for case in result.cases} == {tool.CaseStatus.planned}
     assert not output_dir.exists()
 
@@ -1585,6 +1608,84 @@ def test_wandb_settings_default_disabled(run_benchmarks_tool: ModuleType) -> Non
     assert settings.wandb_log_tables is False
 
 
+def test_execution_metadata_defaults_to_local_without_slurm_env(tmp_path: Path, execution_tool: ModuleType) -> None:
+    metadata = execution_tool.benchmark_execution_metadata(
+        output_dir=tmp_path / "benchmark-output",
+        export=True,
+        fail_fast=False,
+        dd_trace="none",
+        dd_task_trace=False,
+        env={},
+    )
+
+    assert metadata == {
+        "backend": "local",
+        "output_dir_hash": execution_tool.stable_metadata_hash(str(tmp_path / "benchmark-output")),
+        "export": True,
+        "fail_fast": False,
+        "dd_trace": "none",
+        "dd_task_trace": False,
+    }
+
+
+def test_execution_metadata_detects_slurm_without_raw_paths_or_nodes(
+    tmp_path: Path,
+    execution_tool: ModuleType,
+) -> None:
+    dangerous_values = [
+        "private-node",
+        "secret-account",
+        "private-partition",
+        "paid-qos",
+        "secret-cluster",
+        "sensitive-job",
+        "private-submit-host",
+        "private-stdout-path",
+        "private-stderr-path",
+    ]
+    metadata = execution_tool.benchmark_execution_metadata(
+        output_dir=tmp_path / "private" / "benchmark-output",
+        export=False,
+        fail_fast=True,
+        dd_trace="last_message",
+        dd_task_trace=True,
+        env={
+            "SLURM_JOB_ID": "12345",
+            "SLURM_ARRAY_JOB_ID": "12300",
+            "SLURM_ARRAY_TASK_ID": "7",
+            "SLURM_ARRAY_TASK_COUNT": "32",
+            "SLURM_RESTART_COUNT": "1",
+            "SLURM_NTASKS": "8",
+            "SLURM_JOB_NUM_NODES": "2",
+            "SLURM_JOB_NODELIST": "private-node-[1-2]",
+            "SLURM_JOB_ACCOUNT": "secret-account",
+            "SLURM_JOB_PARTITION": "private-partition",
+            "SLURM_JOB_QOS": "paid-qos",
+            "SLURM_CLUSTER_NAME": "secret-cluster",
+            "SLURM_JOB_NAME": "sensitive-job",
+            "SLURM_SUBMIT_HOST": "private-submit-host",
+            "SLURM_SUBMIT_DIR": str(tmp_path / "private"),
+            "SLURM_STDOUT": str(tmp_path / "private-stdout-path"),
+            "SLURM_STDERR": str(tmp_path / "private-stderr-path"),
+        },
+    )
+    serialized = json.dumps(metadata, sort_keys=True)
+
+    assert metadata["backend"] == "slurm"
+    assert metadata["slurm"] == {
+        "job_id": "12345",
+        "array_job_id": "12300",
+        "array_task_id": "7",
+        "array_task_count": 32,
+        "restart_count": 1,
+        "ntasks": 8,
+        "job_num_nodes": 2,
+    }
+    assert str(tmp_path) not in serialized
+    for raw_value in dangerous_values:
+        assert raw_value not in serialized
+
+
 def test_wandb_settings_accepts_field_name_overrides(run_benchmarks_tool: ModuleType) -> None:
     settings = run_benchmarks_tool.WandbSettings(
         wandb_mode=run_benchmarks_tool.WandbMode.online,
@@ -1942,6 +2043,37 @@ def test_build_wandb_metadata_projects_sweep_run_tags(tmp_path: Path, run_benchm
     assert metadata["sweep_param_configs_all_detect_gliner_threshold"] == 0.2
 
 
+def test_build_wandb_metadata_includes_slurm_execution_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_benchmarks_tool: ModuleType,
+) -> None:
+    monkeypatch.setenv("SLURM_JOB_ID", "98765")
+    monkeypatch.setenv("SLURM_ARRAY_TASK_ID", "3")
+    monkeypatch.setenv("SLURM_JOB_NODELIST", "private-node")
+    spec = _minimal_benchmark_spec(run_benchmarks_tool)
+    spec_path = tmp_path / "suite.yaml"
+    spec_path.write_text("suite_id: suite\n", encoding="utf-8")
+
+    metadata = run_benchmarks_tool.build_wandb_metadata(
+        spec,
+        spec_path=spec_path,
+        output_dir=tmp_path / "private-output",
+        export=True,
+        fail_fast=True,
+        dd_trace=run_benchmarks_tool.DDTraceMode.last_message,
+        dd_task_trace=True,
+    )
+    serialized = json.dumps(metadata, sort_keys=True)
+
+    assert metadata["execution"]["backend"] == "slurm"
+    assert metadata["execution"]["dd_trace"] == "last_message"
+    assert metadata["execution"]["slurm"]["job_id"] == "98765"
+    assert metadata["execution"]["slurm"]["array_task_id"] == "3"
+    assert str(tmp_path) not in serialized
+    assert "private-node" not in serialized
+
+
 def test_wandb_extract_scalar_metrics_excludes_sensitive_fields(wandb_logging_tool: ModuleType) -> None:
     dangerous_values = [
         "alice@example.com",
@@ -2058,12 +2190,27 @@ def test_wandb_run_config_filters_sensitive_run_tags(wandb_setup_tool: ModuleTyp
             "attempt": 2,
             "api_key": "sk-secret-token",
             "secret_tag": "raw secret",
+            "pipeline_id": "sk-secret-token",
+            "label": "raw secret",
             "dashboard_url": "https://example.invalid/run",
             "nested": {"not": "scalar"},
         }
     )
 
     assert tags == {"commit_sha": "abc123", "attempt": 2}
+
+
+def test_wandb_run_tags_filter_sensitive_tag_values(wandb_setup_tool: ModuleType) -> None:
+    tags = wandb_setup_tool._effective_wandb_tags(
+        wandb_setup_tool.WandbSettings(
+            wandb_mode=wandb_setup_tool.WandbMode.offline,
+            wandb_tags="tag-a, sk-secret-token, release/api-key, branch:feature/token-fix, tag-b",
+        ),
+        suite_id="suite-a",
+        metadata={"git": {"branch": "main", "dirty": False}},
+    )
+
+    assert tags == ["tag-a", "tag-b", "suite:suite-a", "branch:main", "clean"]
 
 
 def test_initialize_wandb_run_adds_routing_and_metadata(
@@ -2086,7 +2233,7 @@ def test_initialize_wandb_run_adds_routing_and_metadata(
         ),
         suite_id="suite-a",
         output_dir=tmp_path,
-        run_tags={"commit_sha": "abc123", "secret_tag": "raw secret"},
+        run_tags={"commit_sha": "abc123", "secret_tag": "raw secret", "pipeline_id": "sk-secret-token"},
         metadata={
             "git": {"commit": "abc123456789", "branch": "main", "dirty": False},
             "benchmark": {"suite_id": "suite-a", "case_count": 2},
@@ -2132,6 +2279,32 @@ def test_initialize_wandb_run_uses_explicit_run_name(
     )
 
     assert state.init_kwargs["name"] == "operator-name"
+
+
+def test_initialize_wandb_run_finishes_created_run_when_setup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    wandb_setup_tool: ModuleType,
+) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state)
+    monkeypatch.setattr(wandb_setup_tool, "require_wandb", lambda: fake_wandb)
+
+    def fail_config_update(_payload: dict[str, Any], *, allow_val_change: bool) -> None:
+        assert allow_val_change is True
+        raise RuntimeError("config update failed")
+
+    fake_wandb.config.update = fail_config_update
+
+    with pytest.raises(RuntimeError, match="config update failed"):
+        wandb_setup_tool.initialize_benchmark_wandb_run(
+            wandb_setup_tool.WandbSettings(wandb_mode=wandb_setup_tool.WandbMode.offline),
+            suite_id="suite-a",
+            output_dir=tmp_path,
+        )
+
+    assert state.finished == ["finish"]
+    assert fake_wandb.run is None
 
 
 def test_build_wandb_metadata_includes_sanitized_configs(
@@ -2257,7 +2430,7 @@ def test_run_or_plan_logs_benchmark_with_fake_wandb(
         "initialize_benchmark_wandb_run",
         lambda settings, **kwargs: init_calls.append((settings, kwargs)) or True,
     )
-    monkeypatch.setattr(run_benchmarks_tool, "finish_benchmark_wandb_run", lambda: state.finished.append("finish"))
+    _patch_imported_wandb_finish(monkeypatch, run_benchmarks_tool, lambda: state.finished.append("finish"))
 
     result = run_benchmarks_tool.run_or_plan(
         spec_path,
@@ -2272,4 +2445,28 @@ def test_run_or_plan_logs_benchmark_with_fake_wandb(
     assert result.suite_id == "wandb-suite"
     assert len(init_calls) == 1
     assert init_calls[0][0].wandb_mode == run_benchmarks_tool.WandbMode.offline
+    _assert_logged_wandb_payload(state)
+
+
+def test_finalize_benchmark_wandb_run_logs_and_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_benchmarks_tool: ModuleType,
+) -> None:
+    case = _write_case_measurements(run_benchmarks_tool, tmp_path, _minimal_benchmark_case(run_benchmarks_tool))
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state, active_run=True)
+    _patch_imported_wandb_finish(monkeypatch, run_benchmarks_tool, lambda: state.finished.append("finish"))
+
+    run_benchmarks_tool.finalize_benchmark_wandb_run(
+        run_benchmarks_tool.WandbSettings(wandb_mode=run_benchmarks_tool.WandbMode.offline),
+        finalization=run_benchmarks_tool.BenchmarkWandbFinalization(
+            measurement_path=Path(case.measurement_path),
+            cases=[case],
+            table_dir=None,
+        ),
+        run_created=True,
+        wandb=fake_wandb,
+    )
+
     _assert_logged_wandb_payload(state)
