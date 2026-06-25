@@ -15,6 +15,7 @@ import copy
 import itertools
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -59,6 +60,7 @@ class SweepArmResult(BaseModel):
     status: str
     completed_cases: int = 0
     errored_cases: int = 0
+    total_cases: int = 0
     error: str | None = None
 
 
@@ -76,6 +78,25 @@ class SweepResult(BaseModel):
     @property
     def errored_arms(self) -> int:
         return sum(1 for arm in self.arms if arm.status == "error")
+
+
+@dataclass(frozen=True)
+class SweepCliOptions:
+    spec: Path
+    output_root: Path | None
+    overwrite: bool
+    dry_run: bool
+    export: bool
+    fail_fast: bool
+    create_report: bool
+    create_workspace: bool
+    wandb_mode: run_benchmarks.WandbMode | None
+    wandb_entity: str | None
+    wandb_project: str | None
+    wandb_group: str | None
+    wandb_job_type: str | None
+    wandb_tags: str | None
+    wandb_log_tables: bool | None
 
 
 def load_sweep_spec(path: Path) -> SweepSpec:
@@ -264,7 +285,9 @@ def _run_arm(
     suite_path = materialize_arm_suite(spec, arm, output_root=output_root, overwrite=overwrite)
     output_dir = output_root / arm.arm_id / "output"
     run_name = f"{spec.sweep_id}-{arm.arm_id}"
+    total_cases = 0
     try:
+        total_cases = _planned_case_count(suite_path)
         result = run_benchmarks.run_or_plan(
             suite_path,
             output=output_dir,
@@ -275,7 +298,14 @@ def _run_arm(
             wandb_settings=_arm_wandb_settings(wandb_settings, spec=spec, arm=arm, run_name=run_name),
         )
     except Exception as exc:  # noqa: BLE001 -- keep sweeping other arms and report failure
-        return _arm_error(arm, suite_path=suite_path, output_dir=output_dir, run_name=run_name, error=str(exc))
+        return _arm_error(
+            arm,
+            suite_path=suite_path,
+            output_dir=output_dir,
+            run_name=run_name,
+            total_cases=total_cases,
+            error=str(exc),
+        )
     return _arm_result(arm, suite_path=suite_path, output_dir=output_dir, run_name=run_name, result=result)
 
 
@@ -318,10 +348,19 @@ def _arm_result(
         status=status,
         completed_cases=completed,
         errored_cases=errored,
+        total_cases=len(result.cases),
     )
 
 
-def _arm_error(arm: SweepArm, *, suite_path: Path, output_dir: Path, run_name: str, error: str) -> SweepArmResult:
+def _arm_error(
+    arm: SweepArm,
+    *,
+    suite_path: Path,
+    output_dir: Path,
+    run_name: str,
+    total_cases: int,
+    error: str,
+) -> SweepArmResult:
     return SweepArmResult(
         arm_id=arm.arm_id,
         parameters=arm.parameters,
@@ -329,8 +368,13 @@ def _arm_error(arm: SweepArm, *, suite_path: Path, output_dir: Path, run_name: s
         output_dir=str(output_dir),
         wandb_run_name=run_name,
         status="error",
+        total_cases=total_cases,
         error=error,
     )
+
+
+def _planned_case_count(suite_path: Path) -> int:
+    return len(run_benchmarks.build_cases(run_benchmarks.load_spec(suite_path)))
 
 
 def _maybe_create_report(
@@ -424,9 +468,12 @@ def render_result(result: SweepResult, *, json_output: bool) -> str:
     if result.workspace_url:
         lines.append(f"Workspace: {result.workspace_url}")
     for arm in result.arms:
-        lines.append(
-            f"- {arm.arm_id}: {arm.status}, cases={arm.completed_cases}/{arm.completed_cases + arm.errored_cases}"
+        line = (
+            f"- {arm.arm_id}: {arm.status}, cases={arm.completed_cases}/{arm.total_cases}, errors={arm.errored_cases}"
         )
+        if arm.error:
+            line = f"{line}, error={arm.error}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -473,8 +520,25 @@ def main(
     wandb_log_tables: Annotated[bool | None, cyclopts.Parameter("--wandb-log-tables")] = None,
 ) -> None:
     configure_logging(log_format)
+    options = SweepCliOptions(
+        spec=spec,
+        output_root=output_root,
+        overwrite=overwrite,
+        dry_run=dry_run,
+        export=export,
+        fail_fast=fail_fast,
+        create_report=create_report,
+        create_workspace=create_workspace,
+        wandb_mode=wandb_mode,
+        wandb_entity=wandb_entity,
+        wandb_project=wandb_project,
+        wandb_group=wandb_group,
+        wandb_job_type=wandb_job_type,
+        wandb_tags=wandb_tags,
+        wandb_log_tables=wandb_log_tables,
+    )
     try:
-        result = _run_sweep_from_cli(locals())
+        result = _run_sweep_from_cli(options)
     except (ValueError, ValidationError) as exc:
         log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
@@ -483,26 +547,26 @@ def main(
         raise SystemExit(1)
 
 
-def _run_sweep_from_cli(options: dict[str, Any]) -> SweepResult:
+def _run_sweep_from_cli(options: SweepCliOptions) -> SweepResult:
     wandb_settings = _resolve_cli_wandb_settings(
-        wandb_mode=options["wandb_mode"],
-        wandb_entity=options["wandb_entity"],
-        wandb_project=options["wandb_project"],
-        wandb_group=options["wandb_group"],
-        wandb_job_type=options["wandb_job_type"],
-        wandb_tags=options["wandb_tags"],
-        wandb_log_tables=options["wandb_log_tables"],
+        wandb_mode=options.wandb_mode,
+        wandb_entity=options.wandb_entity,
+        wandb_project=options.wandb_project,
+        wandb_group=options.wandb_group,
+        wandb_job_type=options.wandb_job_type,
+        wandb_tags=options.wandb_tags,
+        wandb_log_tables=options.wandb_log_tables,
     )
     return run_sweep(
-        options["spec"],
-        output_root=options["output_root"],
-        overwrite=options["overwrite"],
-        dry_run=options["dry_run"],
-        export=options["export"],
-        fail_fast=options["fail_fast"],
+        options.spec,
+        output_root=options.output_root,
+        overwrite=options.overwrite,
+        dry_run=options.dry_run,
+        export=options.export,
+        fail_fast=options.fail_fast,
         wandb_settings=wandb_settings,
-        create_report=options["create_report"],
-        create_workspace=options["create_workspace"],
+        create_report=options.create_report,
+        create_workspace=options.create_workspace,
     )
 
 

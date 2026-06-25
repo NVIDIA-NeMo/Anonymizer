@@ -1973,6 +1973,39 @@ def test_sweep_fail_fast_stops_after_first_errored_arm(
     assert result.errored_arms == 1
 
 
+def test_sweep_result_shows_planned_cases_for_pre_case_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sweep_tool: ModuleType,
+) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(
+        tmp_path,
+        base_suite=base_suite,
+        parameters={"configs.*.detect.gliner_threshold": [0.2]},
+    )
+
+    def fail_run_or_plan(_spec_path: Path, **_kwargs: Any) -> None:
+        raise RuntimeError("endpoint unavailable")
+
+    monkeypatch.setattr(sweep_tool.run_benchmarks, "run_or_plan", fail_run_or_plan)
+
+    result = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=sweep_tool.run_benchmarks.resolve_wandb_settings(),
+        create_report=False,
+    )
+    rendered = sweep_tool.render_result(result, json_output=False)
+
+    assert result.arms[0].total_cases == 1
+    assert "- arm-000: error, cases=0/1, errors=0, error=endpoint unavailable" in rendered
+
+
 def test_build_wandb_metadata_projects_sweep_run_tags(tmp_path: Path, run_benchmarks_tool: ModuleType) -> None:
     spec = _minimal_benchmark_spec(
         run_benchmarks_tool,

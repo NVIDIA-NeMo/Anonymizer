@@ -503,4 +503,4 @@ def _config_key_is_sensitive(key: str) -> bool:
 def _config_key_is_path_like(key: str) -> bool:
     normalized = key.lower().replace("-", "_").replace(".", "_")
     parts = {part for part in normalized.split("_") if part}
-    return any(part in {"path", "url"} or part.endswith(("_path", "_url")) for part in parts)
+    return bool(parts & {"path", "url"})
