@@ -8,7 +8,7 @@ Anonymizer provides LLM-as-judge evaluation for both modes, replace and rewrite,
 | Mode | How evaluation runs |
 |------|---------------------|
 | **Replace** | Post-hoc, via a separate `Anonymizer.evaluate()` call after `run()` / `preview()`. |
-| **Rewrite** | Runs automatically as part of every `run()` / `preview()` call. A dedicated post-hoc `evaluate()` call, matching replace mode, is planned for a future release. |
+| **Rewrite** | Automatic leakage/utility scoring runs as part of every `run()` / `preview()` call. A separate `Anonymizer.evaluate()` call adds LLM-as-judge quality scoring. |
 
 ---
 
@@ -68,6 +68,15 @@ This judge runs regardless of which replace mode was used. It looks at each dete
 | `detection_valid` | `bool \| None` | `True` if all detections pass; `None` if the judge was unavailable. |
 | `detection_invalid_entities` | `list` | Each flagged detection with value, label, and one-sentence reasoning. |
 
+**Special values:**
+
+| Scenario | `detection_valid` | Display | Log |
+|---|---|---|---|
+| No entities detected in this record | `True` | Satisfied | `INFO`: "N passthrough row(s) have no detected entities — detection_valid set to True (trivially valid)" |
+| Judge ran and all detections passed | `True` | Satisfied | — |
+| Judge ran and flagged one or more detections | `False` | Not Satisfied / Partially Satisfied | — |
+| Judge call failed or returned a malformed response | `None` | Unavailable | — |
+
 ---
 
 ### Entity Replacement Judges
@@ -116,7 +125,7 @@ Relationships inspected include geographic pairings (city ↔ state, city ↔ po
 
 ---
 
-## Reading replace evaluation results
+### Reading replace evaluation results
 
 `display_record()` renders a formatted per-record view that includes all four judge verdicts alongside the replacement map:
 
@@ -141,7 +150,7 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 ---
 
-## Model roles
+### Model roles
 
 All four judges default to `gpt-oss-120b`. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them by passing a `model_configs` YAML to `Anonymizer(model_configs=...)` — see [Models](models.md) for the full override pattern.
 
@@ -161,6 +170,142 @@ selected_models:
 
 ## Rewrite Evaluation
 
-Rewrite evaluation is part of the pipeline and runs automatically — there is no separate call. After the rewritten text is generated, an evaluate–repair loop scores each record for **utility** (how much semantic content was preserved) and **leakage mass** (how much sensitive information survived). Records that exceed the leakage threshold are sent back for repair, up to `max_repair_iterations` times. A final judge then produces a qualitative assessment and flags records that still need human review.
+Rewrite evaluation has two layers:
 
-The key output columns are `utility_score`, `leakage_mass`, `weighted_leakage_rate`, `any_high_leaked`, and `needs_human_review`. See [Rewrite](rewrite.md) for more details.
+1. **Automatic (always runs)** — leakage mass, utility score, weighted leakage rate, and `needs_human_review` are computed as part of every `run()` / `preview()` call. See [Rewrite](rewrite.md) for the repair loop and output columns.
+
+2. **Post-hoc LLM judges (optional)** — call `Anonymizer.evaluate()` on a completed rewrite result to add the entity detection judge and three holistic quality rubrics.
+
+```python
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
+
+anonymizer = Anonymizer()
+cfg = AnonymizerConfig(rewrite=Rewrite())
+src = AnonymizerInput(source="data.csv", text_column="text")
+
+result = anonymizer.run(config=cfg, data=src)
+evaluated = anonymizer.evaluate(result)
+evaluated.display_record(0)
+```
+
+Both `run()` and `preview()` results can be saved and evaluated in a separate session:
+
+```python
+import pickle
+
+preview = anonymizer.preview(config=cfg, data=src, num_records=15)
+
+with open("/tmp/preview.pkl", "wb") as f:
+    pickle.dump(preview, f)
+
+# … later …
+with open("/tmp/preview.pkl", "rb") as f:
+    loaded = pickle.load(f)
+
+evaluated = anonymizer.evaluate(loaded)
+```
+
+---
+
+### Entity Detection Judge
+
+Same judge as in replace mode — see [Entity Detection Judge](#entity-detection-judge) above. In rewrite mode, `detection_valid` is returned as a **0–1 fraction** (the share of detected entities that passed), rather than a boolean. A value of `1.0` means all detections are valid; lower values mean more entities were flagged — the value itself is the fraction that passed.
+
+| Output column | Type | Description |
+|---|---|---|
+| `detection_valid` | `float \| None` | 1.0 if all detections pass; fraction of valid entities otherwise; `None` if the score is unavailable. |
+| `detection_invalid_entities` | `list` | Each flagged detection with value, label, and one-sentence reasoning. |
+
+**Special values:**
+
+| Scenario | `detection_valid` | Display | Log |
+|---|---|---|---|
+| No entities detected in this record | `1.0` | 1.00 | `INFO`: "N passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid)" |
+| Judge ran and all detections passed | `1.0` | 1.00 | — |
+| Judge ran and flagged one or more detections | 0–1 fraction | numeric score | — |
+| Judge call failed or entity data unreadable | `None` | Unavailable | `WARNING`: "Could not parse entities_by_value to compute detection_valid fraction" |
+
+---
+
+### Rewrite Quality Judges
+
+Three rubrics evaluate the holistic quality of the rewritten text. All three run as a single LLM judge call and are stored together under `judge_evaluation`.
+
+#### Privacy
+
+> "Does the rewritten text adequately remove linkage risk to the original record?"
+
+Scores residual linkage risk after the rewrite — comparing rewritten values to originals, distinguishing direct identifiers from quasi-identifiers, and assessing whether remaining details narrow the candidate set of plausible matches.
+
+| Score | Meaning |
+|-------|---------|
+| `high` | Original direct identifiers removed; remaining quasi-identifiers create low linkage risk. |
+| `medium` | No obvious direct identifiers remain, but a distinctive quasi-identifier bundle creates noticeable linkage risk. |
+| `low` | Easily or near-certainly linkable — direct identifiers remain or enough detail survives that re-identification requires minimal effort. |
+
+#### Quality
+
+> "How well does the rewritten text preserve important meaning, facts, and structure?"
+
+Evaluates content preservation independent of privacy and style. Changes made for privacy reasons are not penalized when the core meaning is intact.
+
+| Score | Meaning |
+|-------|---------|
+| `high` | Important meaning, facts, and structure fully preserved. |
+| `medium` | Most content preserved; minor details lost or slightly distorted. |
+| `low` | Material loss of important information, contradictions, or distorted core meaning. |
+
+#### Style
+
+> "Does the rewritten text read as fluent, coherent, and human-written prose?"
+
+Evaluates readability, grammatical correctness, clarity, and phrasing — independent of content changes.
+
+| Score | Meaning |
+|-------|---------|
+| `high` | Fluent, coherent, human-written prose. |
+| `medium` | Mostly readable; isolated awkward phrasing or stiff transitions. |
+| `low` | Noticeably unnatural; broken grammar, placeholder-like language, or machine-generated feel. |
+
+The three rubric scores are stored together under the `judge_evaluation` column as a dict:
+
+```python
+# Example judge_evaluation value for a single record
+{
+    "privacy": {"score": "high",   "reasoning": "All direct identifiers removed..."},
+    "quality": {"score": "medium", "reasoning": "Key facts preserved but some details lost..."},
+    "style":   {"score": "high",   "reasoning": "Reads naturally throughout..."},
+}
+```
+
+---
+
+### Reading rewrite evaluation results
+
+`display_record()` renders a formatted per-record view that includes the detection validity fraction and all three judge rubrics alongside the rewritten text:
+
+```python
+evaluated.display_record(0)
+```
+
+For a tabular overview across all records:
+
+```python
+evaluated.dataframe[["detection_valid", "judge_evaluation"]]
+```
+
+Use `trace_dataframe` for the full internal trace including raw judge outputs.
+
+---
+
+### Model roles
+
+The rewrite quality judge defaults to `nemotron-30b-thinking`. The detection validity judge shares the `detection_validity_judge` role used by replace evaluation. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them via `model_configs`:
+
+```yaml
+# my_models.yaml
+selected_models:
+  evaluate:
+    detection_validity_judge: your-model-alias
+    rewrite_judge: your-model-alias
+```

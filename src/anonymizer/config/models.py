@@ -90,7 +90,6 @@ class RewriteModelSelection(BaseModel):
     rewriter: str
     evaluator: str
     repairer: str
-    judge: str
 
 
 class EvaluateModelSelection(BaseModel):
@@ -106,6 +105,7 @@ class EvaluateModelSelection(BaseModel):
     replace_type_fidelity_judge: str
     replace_relational_consistency_judge: str
     replace_attribute_fidelity_judge: str
+    rewrite_judge: str
 
 
 class ModelSelection(BaseModel):

@@ -9,4 +9,3 @@ selected_models:
   rewriter: gpt-oss-120b
   evaluator: nemotron-30b-thinking
   repairer: gpt-oss-120b
-  judge: nemotron-30b-thinking

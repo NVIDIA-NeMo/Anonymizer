@@ -24,7 +24,8 @@
 # 2. Classifies the domain and assigns sensitivity dispositions
 # 3. Generates a rewritten version that obscures sensitive entities
 # 4. Evaluates quality (utility) and privacy (leakage) with an automated repair loop
-# 5. Runs a final LLM judge for informational scores
+# 5. Runs a final optional LLM judge for informational scores
+#
 #
 # #### 📚 What you'll learn
 #
@@ -32,6 +33,7 @@
 # - Set evaluation criteria and risk tolerance for automated quality checks
 # - Preview rewritten text and inspect utility / leakage scores
 # - Triage flagged records with `needs_human_review`
+# - Run `evaluate()` for detection validity and holistic judge scores (privacy, quality, style)
 #
 # > **Tip:** First time running notebooks? Start with
 # > [setup instructions](https://nvidia-nemo.github.io/Anonymizer/latest/tutorials/).
@@ -154,10 +156,24 @@ print(f"{len(flagged)} of {len(df)} records flagged for human review")
 flagged.head()
 
 # %% [markdown]
+# ## 🔬 Evaluate (optional)
+#
+# Call `evaluate()` to run LLM-as-judge scoring on the rewrite result — detection validity and three quality rubrics (privacy, quality, style).
+# See [Evaluation](../../concepts/evaluation/#rewrite-evaluation) for details.
+
+# %%
+evaluated = anonymizer.evaluate(result)
+
+# %%
+evaluated.display_record(0)
+
+# %% [markdown]
 # ## ⏭️ Next steps
 #
 # - **[⚖️ Rewriting Legal Documents](../05_rewriting_legal_documents/)** --
 #   rewrite legal text with custom entity labels and domain-specific privacy goals.
+# - **[📊 Evaluation](../../concepts/evaluation/#rewrite-evaluation)** --
+#   learn about the detection validity and rewrite quality judges in detail.
 # - **[🎯 Choosing a Replacement Strategy](../03_choosing_a_replacement_strategy/)** --
 #   compare Redact, Annotate, Hash, and Substitute if you prefer token-level replacement.
 # - **[🔍 Inspecting Detected Entities](../02_inspecting_detected_entities/)** --

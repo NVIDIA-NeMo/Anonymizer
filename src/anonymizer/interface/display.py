@@ -139,7 +139,7 @@ def _render_rewrite_html(row: pd.Series, *, text_col: str, record_index: int | N
     entities = _resolve_display_entities(row)
     original_html = _render_highlighted_text(text, entities)
     rewritten_html = f"<span>{html.escape(rewritten_text)}</span>"
-    scores_html = _render_scores_section(row)
+    scores_html = _render_scores_section(row, is_rewrite=True)
     disposition_html = _render_disposition_table(row)
     index_label = f" (record {record_index})" if record_index is not None else ""
 
@@ -413,9 +413,12 @@ def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]
     return result
 
 
-def _render_scores_section(row: pd.Series) -> str:
-    """Render utility/leakage metrics and optional judge scores."""
-    parts: list[str] = []
+def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
+    """Render scores in up to three rows: objective metrics | detection validity | judge."""
+    section_rows: list[str] = []
+
+    # --- Row 1: objective metrics + needs-review badge ---
+    metric_parts: list[str] = []
 
     utility = row.get("utility_score")
     leakage = row.get("leakage_mass")
@@ -423,22 +426,76 @@ def _render_scores_section(row: pd.Series) -> str:
     needs_review = row.get("needs_human_review")
 
     if utility is not None:
-        parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {utility:.2f}</span>")
+        metric_parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {utility:.2f}</span>")
     if leakage is not None:
-        parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {leakage:.2f}</span>")
+        metric_parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {leakage:.2f}</span>")
     if weighted_leakage_rate is not None:
-        parts.append(
+        metric_parts.append(
             "<span style='margin-right:16px'><strong>Weighted Leakage Rate:</strong> "
             f"{weighted_leakage_rate:.2f}</span>"
         )
     if needs_review is not None:
+        label = "Rewrite Needs Review" if is_rewrite else "Needs Review"
         badge_color = "#ef4444" if needs_review else "#22c55e"
         badge_text = "Yes" if needs_review else "No"
-        parts.append(
-            f"<span style='margin-right:16px'><strong>Needs Review:</strong> "
+        metric_parts.append(
+            f"<span style='margin-right:16px'><strong>{label}:</strong> "
             f"<span style='color:{badge_color};font-weight:600'>{badge_text}</span></span>"
         )
+    if metric_parts:
+        section_rows.append("<div style='margin-bottom:6px'>" + "".join(metric_parts) + "</div>")
 
+    # --- Row 2: detection validity inline with flagged-entities dropdown ---
+    detection_valid = row.get(COL_DETECTION_VALID)
+    if COL_DETECTION_VALID in row.index and (detection_valid is None or pd.isna(detection_valid)):
+        section_rows.append(
+            "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px'>"
+            "<span style='margin-right:12px'><strong>Detection Validity:</strong> "
+            "<span style='color:#a3a3a3;font-weight:600'>Unavailable</span></span></div>"
+        )
+    elif detection_valid is not None and not pd.isna(detection_valid):
+        det_span = (
+            f"<span style='margin-right:12px'><strong>Detection Validity:</strong> {float(detection_valid):.2f}</span>"
+        )
+        details_html = ""
+        if float(detection_valid) < 1.0:
+            invalid_entries = _normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
+            if invalid_entries:
+                rows_html: list[str] = []
+                for entry in invalid_entries:
+                    value = html.escape(str(entry.get("value", "")))
+                    label = html.escape(str(entry.get("label", "")))
+                    reasoning = html.escape(str(entry.get("reasoning", "")))
+                    _, border_color = _color_for_label(entry.get("label", ""))
+                    rows_html.append(
+                        "<tr>"
+                        f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{value}</td>"
+                        f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>"
+                        f"<span style='border:1.5px solid {border_color};padding:1px 6px;border-radius:3px;"
+                        f"font-size:0.85em'>{label}</span></td>"
+                        f"<td style='padding:4px 8px;border:1px solid currentColor;opacity:0.85'>{reasoning}</td>"
+                        "</tr>"
+                    )
+                details_html = (
+                    "<details style='font-size:0.85em'>"
+                    f"<summary style='cursor:pointer;opacity:0.8'>Show {len(invalid_entries)} flagged "
+                    "detection(s)</summary>"
+                    "<table style='border-collapse:collapse;margin-top:6px'>"
+                    "<thead><tr>"
+                    "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Value</th>"
+                    "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Label</th>"
+                    "<th style='padding:4px 8px;border:1px solid currentColor;text-align:left'>Reason</th>"
+                    "</tr></thead>"
+                    f"<tbody>{''.join(rows_html)}</tbody>"
+                    "</table>"
+                    "</details>"
+                )
+        section_rows.append(
+            "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px'>"
+            f"{det_span}{details_html}</div>"
+        )
+
+    # --- Row 3: judge scores with highlighted criterion names ---
     judge_raw = row.get(COL_JUDGE_EVALUATION)
     judge_scores = _extract_judge_scores(judge_raw)
     if isinstance(judge_raw, dict) and not judge_scores:
@@ -446,30 +503,42 @@ def _render_scores_section(row: pd.Series) -> str:
             "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
         )
     if judge_scores:
-        score_strs = [f"{name}: {score}/10" for name, score in judge_scores]
-        parts.append(f"<span><strong>Judge:</strong> {html.escape(', '.join(score_strs))}</span>")
+        score_parts = [
+            f"<span style='margin-right:12px'>"
+            f"<strong>{html.escape(str(name))}</strong>: {html.escape(str(score))}</span>"
+            for name, score in judge_scores
+        ]
+        section_rows.append(
+            "<div>"
+            "<div style='font-size:0.8em;font-weight:600;text-transform:uppercase;"
+            "letter-spacing:0.05em;margin-bottom:4px;opacity:0.5'>Judge</div>"
+            "<div>" + "".join(score_parts) + "</div>"
+            "</div>"
+        )
 
-    if not parts:
+    if not section_rows:
         return "<p style='opacity:0.5;font-style:italic'>No scores available.</p>"
-    return "<div style='font-size:0.9em;line-height:1.8'>" + "".join(parts) + "</div>"
+
+    return "<div style='font-size:0.9em'>" + "".join(section_rows) + "</div>"
 
 
-def _extract_judge_scores(raw: object) -> list[tuple[str, int]]:
+def _extract_judge_scores(raw: object) -> list[tuple[str, int | str]]:
     """Extract (name, score) pairs from the judge evaluation column.
 
     LLMJudgeColumnConfig output is a plain dict keyed by rubric name, each
-    value carrying ``{"score": <int>, "reasoning": "..."}``.
+    value carrying ``{"score": <int|str>, "reasoning": "..."}``. Scores are
+    returned as-is — callers must not assume int (rewrite mode uses strings).
     """
     if not isinstance(raw, dict):
         return []
-    result: list[tuple[str, int]] = []
+    result: list[tuple[str, int | str]] = []
     for name, value in raw.items():
         if not isinstance(value, dict) or "score" not in value:
             continue
-        try:
-            result.append((str(name), int(value["score"])))
-        except (ValueError, TypeError):
+        score = value["score"]
+        if score is None:
             continue
+        result.append((str(name), score))
     return result
 
 

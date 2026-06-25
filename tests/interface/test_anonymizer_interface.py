@@ -16,7 +16,9 @@ from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
+    COL_DETECTION_VALID,
     COL_FINAL_ENTITIES,
+    COL_JUDGE_EVALUATION,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
@@ -25,7 +27,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.ndd.model_loader import load_default_model_providers
+from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
@@ -800,3 +802,130 @@ def test_evaluate_raises_value_error_on_legacy_result_without_replace_method() -
 
     with pytest.raises(ValueError, match="replace_method"):
         anonymizer.evaluate(legacy_result)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Anonymizer.evaluate() for rewrite results
+# ---------------------------------------------------------------------------
+
+
+def test_run_rewrite_does_not_include_judge_in_user_dataframe(stub_input: AnonymizerInput) -> None:
+    """run() output must not include COL_JUDGE_EVALUATION — it only appears after evaluate()."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert COL_JUDGE_EVALUATION not in result.dataframe.columns
+
+
+def test_evaluate_rewrite_result_adds_judge_columns(stub_input: AnonymizerInput) -> None:
+    """anonymizer.evaluate() on a rewrite result must add COL_JUDGE_EVALUATION."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [{"privacy": {"score": "high"}}],
+            COL_DETECTION_VALID: [1.0],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    evaluated = anonymizer.evaluate(run_result)
+
+    assert COL_JUDGE_EVALUATION in evaluated.dataframe.columns
+
+
+def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInput) -> None:
+    """anonymizer.evaluate() on a rewrite result must add COL_DETECTION_VALID."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [None],
+            COL_DETECTION_VALID: [0.9],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    evaluated = anonymizer.evaluate(run_result)
+
+    assert COL_DETECTION_VALID in evaluated.dataframe.columns
+
+
+def test_evaluate_rewrite_raises_without_rewrite_config() -> None:
+    """evaluate() must raise ValueError when result has no rewrite_config and no replace_method."""
+    anonymizer, _, _, _ = _make_anonymizer()
+    bare_result = SimpleNamespace(
+        dataframe=pd.DataFrame(),
+        trace_dataframe=pd.DataFrame(),
+        resolved_text_column="text",
+        rewrite_config=None,
+    )
+
+    with pytest.raises(ValueError):
+        anonymizer.evaluate(bare_result)  # type: ignore[arg-type]
+
+
+def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: AnonymizerInput) -> None:
+    """evaluate() on a rewrite result must NOT validate rewrite pipeline model aliases.
+
+    Passing check_rewrite=True would require domain-classifier / rewrite-generator
+    aliases that are irrelevant for post-hoc evaluation. This test asserts the call
+    uses check_rewrite=False so users with evaluate-only configs are not blocked.
+    """
+    from unittest.mock import patch as _patch
+
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [None],
+            COL_DETECTION_VALID: [1.0],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    with _patch(
+        "anonymizer.interface.anonymizer.validate_model_alias_references",
+        wraps=validate_model_alias_references,
+    ) as mock_validate:
+        anonymizer.evaluate(run_result)
+
+    rewrite_eval_calls = [call for call in mock_validate.call_args_list if call.kwargs.get("check_evaluate") is True]
+    assert rewrite_eval_calls, "validate_model_alias_references was not called with check_evaluate=True"
+    for call in rewrite_eval_calls:
+        assert call.kwargs.get("check_rewrite") is False, (
+            "evaluate() on a rewrite result must pass check_rewrite=False to avoid "
+            "requiring rewrite pipeline model aliases that are unused during evaluation"
+        )

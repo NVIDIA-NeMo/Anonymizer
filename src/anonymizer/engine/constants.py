@@ -108,7 +108,7 @@ COL_NEEDS_REPAIR = "_needs_repair"
 COL_LEAKED_PRIVACY_ITEMS = "_leaked_privacy_items"
 COL_REWRITTEN_TEXT_NEXT = COL_REWRITTEN_TEXT + "__next"
 COL_REPAIR_ITERATIONS = "_repair_iterations"
-COL_JUDGE_EVALUATION = "_judge_evaluation"
+COL_JUDGE_EVALUATION = "judge_evaluation"
 
 # User-facing output columns
 COL_UTILITY_SCORE = "utility_score"

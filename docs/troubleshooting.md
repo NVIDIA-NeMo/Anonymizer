@@ -76,7 +76,7 @@ Key columns:
 | `weighted_leakage_rate` | Leakage normalized by maximum possible leakage |
 | `any_high_leaked` | Whether any high-sensitivity entity leaked through |
 | `needs_human_review` | Crossed the configured threshold |
-| `_judge_evaluation` | Final-judge qualitative comments |
+| `judge_evaluation` | Final-judge qualitative comments |
 
 ### Re-run with `Annotate` to see detection output
 

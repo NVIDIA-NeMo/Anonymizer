@@ -104,13 +104,13 @@ def stub_slim_model_selection() -> ModelSelection:
             rewriter="known",
             evaluator="known",
             repairer="known",
-            judge="known",
         ),
         evaluate=EvaluateModelSelection(
             detection_validity_judge="known",
             replace_type_fidelity_judge="known",
             replace_relational_consistency_judge="known",
             replace_attribute_fidelity_judge="known",
+            rewrite_judge="known",
         ),
     )
 
