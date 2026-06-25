@@ -2006,6 +2006,39 @@ def test_sweep_result_shows_planned_cases_for_pre_case_failures(
     assert "- arm-000: error, cases=0/1, errors=0, error=endpoint unavailable" in rendered
 
 
+def test_sweep_materialization_failure_is_reported_per_arm(
+    tmp_path: Path,
+    sweep_tool: ModuleType,
+) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(
+        tmp_path,
+        base_suite=base_suite,
+        parameters={"configs.*.detect.gliner_threshold": [0.2]},
+    )
+    output_root = tmp_path / "runs"
+    spec = sweep_tool.load_sweep_spec(sweep_path)
+    arm = sweep_tool.expand_sweep_arms(spec)[0]
+    sweep_tool.materialize_arm_suite(spec, arm, output_root=output_root, overwrite=False)
+
+    result = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=output_root,
+        overwrite=False,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=sweep_tool.run_benchmarks.resolve_wandb_settings(),
+        create_report=False,
+    )
+    rendered = sweep_tool.render_result(result, json_output=False)
+
+    assert len(result.arms) == 1
+    assert result.arms[0].status == "error"
+    assert result.arms[0].total_cases == 1
+    assert "- arm-000: error, cases=0/1, errors=0, error=sweep arm suite already exists:" in rendered
+
+
 def test_build_wandb_metadata_projects_sweep_run_tags(tmp_path: Path, run_benchmarks_tool: ModuleType) -> None:
     spec = _minimal_benchmark_spec(
         run_benchmarks_tool,

@@ -282,11 +282,12 @@ def _run_arm(
     fail_fast: bool,
     wandb_settings: run_benchmarks.WandbSettings,
 ) -> SweepArmResult:
-    suite_path = materialize_arm_suite(spec, arm, output_root=output_root, overwrite=overwrite)
+    suite_path = output_root / arm.arm_id / "suite.yaml"
     output_dir = output_root / arm.arm_id / "output"
     run_name = f"{spec.sweep_id}-{arm.arm_id}"
     total_cases = 0
     try:
+        suite_path = materialize_arm_suite(spec, arm, output_root=output_root, overwrite=overwrite)
         total_cases = _planned_case_count(suite_path)
         result = run_benchmarks.run_or_plan(
             suite_path,
@@ -303,7 +304,7 @@ def _run_arm(
             suite_path=suite_path,
             output_dir=output_dir,
             run_name=run_name,
-            total_cases=total_cases,
+            total_cases=total_cases or _planned_case_count_if_readable(suite_path),
             error=str(exc),
         )
     return _arm_result(arm, suite_path=suite_path, output_dir=output_dir, run_name=run_name, result=result)
@@ -375,6 +376,15 @@ def _arm_error(
 
 def _planned_case_count(suite_path: Path) -> int:
     return len(run_benchmarks.build_cases(run_benchmarks.load_spec(suite_path)))
+
+
+def _planned_case_count_if_readable(suite_path: Path) -> int:
+    if not suite_path.exists():
+        return 0
+    try:
+        return _planned_case_count(suite_path)
+    except Exception:  # noqa: BLE001 -- keep the original per-arm failure as the reported error
+        return 0
 
 
 def _maybe_create_report(
