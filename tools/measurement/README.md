@@ -77,7 +77,7 @@ The measurement system has four cooperating layers:
 External/distributed execution is a separate boundary. Detection export APIs are
 responsible for building DataDesigner configs that an external runtime can
 execute. The tools here should consume the resulting measurement JSONL,
-detection artifacts, and trace sidecars; they should not own SLURM
+detection artifacts, and trace sidecars; they should not own Slurm
 orchestration or distributed DataDesigner execution.
 
 ## Tool map
@@ -88,10 +88,14 @@ orchestration or distributed DataDesigner execution.
 | Run repeatable Anonymizer suites | `run_benchmarks.py` |
 | Inspect detection artifact sidecars | `analyze_detection_artifacts.py` |
 | Analyze benchmark output directories | `analyze_benchmark_output.py` |
+| Create W&B benchmark workspaces or reports | `create_wandb_report.py` |
+| Run benchmark parameter sweeps | `sweep_benchmarks.py` |
 
 Most workflows start with `run_benchmarks.py`, then either export the raw
 measurement log with `export_measurements.py` or summarize the benchmark output
-directory with `analyze_benchmark_output.py`.
+directory with `analyze_benchmark_output.py`. W&B workflows can also create
+project workspaces, reports, or one-run-per-arm sweeps from the benchmark
+artifacts.
 
 ## Implementation shape
 

@@ -1,0 +1,98 @@
+{
+  "input_text": "Alice has sk-secret-123",
+  "dangerous_values": [
+    "alice@example.com",
+    "bob@example.com",
+    "sk-secret-123",
+    "replacement-output-secret",
+    "nested-malformed-secret",
+    "raw judge prompt",
+    "raw judge response"
+  ],
+  "run_result": {
+    "dataframe": {
+      "text": ["Alice has sk-secret-123"]
+    },
+    "trace_dataframe": {
+      "text": ["Alice has sk-secret-123"]
+    }
+  },
+  "evaluated_result": {
+    "dataframe": {
+      "text": ["Alice has sk-secret-123"],
+      "text_replaced": ["Avery has replacement-output-secret"],
+      "final_entities": [[{"value": "alice@example.com", "label": "email"}]],
+      "detection_valid": [false],
+      "detection_invalid_entities": [
+        {"invalid_entities": [{"value": "alice@example.com", "label": "email"}]}
+      ],
+      "type_fidelity_valid": [false],
+      "type_fidelity_invalid_replacements": [
+        {"invalid_replacements": [{"original": "alice@example.com", "synthetic": "bob@example.com"}]}
+      ],
+      "relational_consistency_valid": [false],
+      "relational_consistency_invalid_relations": [
+        {"invalid_relations": [{"reasoning": "raw judge response"}]}
+      ],
+      "attribute_fidelity_valid": [false],
+      "attribute_fidelity_invalid_entities": ["[{\"entity\": \"nested-malformed-secret\"}"]
+    },
+    "trace_dataframe": {
+      "text": ["Alice has sk-secret-123"],
+      "text_replaced": ["Avery has replacement-output-secret"],
+      "final_entities": [[{"value": "alice@example.com", "label": "email"}]],
+      "detection_valid": [false],
+      "detection_invalid_entities": [
+        {"invalid_entities": [{"value": "alice@example.com", "label": "email"}]}
+      ],
+      "type_fidelity_valid": [false],
+      "type_fidelity_invalid_replacements": [
+        {"invalid_replacements": [{"original": "alice@example.com", "synthetic": "bob@example.com"}]}
+      ],
+      "relational_consistency_valid": [false],
+      "relational_consistency_invalid_relations": [
+        {"invalid_relations": [{"reasoning": "raw judge response"}]}
+      ],
+      "attribute_fidelity_valid": [false],
+      "attribute_fidelity_invalid_entities": ["[{\"entity\": \"nested-malformed-secret\"}"],
+      "_detection_judge": [
+        {
+          "prompt": "raw judge prompt",
+          "response": "raw judge response",
+          "invalid_entities": [{"value": "alice@example.com"}]
+        }
+      ],
+      "_type_fidelity_judge": [
+        {"invalid_replacements": [{"original": "alice@example.com", "synthetic": "bob@example.com"}]}
+      ]
+    }
+  },
+  "expected_evaluation_fields": {
+    "record_type": "evaluation_record",
+    "mode": "replace",
+    "strategy": "Substitute",
+    "row_index": 0,
+    "detection_valid": false,
+    "detection_invalid_entity_count": 1,
+    "type_fidelity_valid": false,
+    "type_fidelity_invalid_replacement_count": 1,
+    "relational_consistency_valid": false,
+    "relational_consistency_invalid_relation_count": 1,
+    "attribute_fidelity_valid": false,
+    "attribute_fidelity_invalid_entity_count": 0
+  },
+  "forbidden_fields": [
+    "text",
+    "text_replaced",
+    "text_with_spans",
+    "final_entities",
+    "detection_invalid_entities",
+    "type_fidelity_invalid_replacements",
+    "relational_consistency_invalid_relations",
+    "attribute_fidelity_invalid_entities",
+    "_detection_judge",
+    "_type_fidelity_judge",
+    "_relational_consistency_judge",
+    "_attribute_fidelity_judge"
+  ]
+}

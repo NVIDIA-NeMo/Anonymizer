@@ -1510,27 +1510,16 @@ def resolve_wandb_settings(
     wandb_tags: str | None = None,
     wandb_log_tables: bool | None = None,
 ) -> WandbSettings:
-    settings = WandbSettings()
-    updates: dict[str, Any] = {}
-    if wandb_mode is not None:
-        updates["wandb_mode"] = wandb_mode
-    if wandb_entity is not None:
-        updates["wandb_entity"] = wandb_entity
-    if wandb_project is not None:
-        updates["wandb_project"] = wandb_project
-    if wandb_group is not None:
-        updates["wandb_group"] = wandb_group
-    if wandb_job_type is not None:
-        updates["wandb_job_type"] = wandb_job_type
-    if wandb_run_name is not None:
-        updates["wandb_run_name"] = wandb_run_name
-    if wandb_tags is not None:
-        updates["wandb_tags"] = wandb_tags
-    if wandb_log_tables is not None:
-        updates["wandb_log_tables"] = wandb_log_tables
-    if not updates:
-        return settings
-    return settings.model_copy(update=updates)
+    return WandbSettings.from_env_and_overrides(
+        wandb_mode=wandb_mode,
+        wandb_entity=wandb_entity,
+        wandb_project=wandb_project,
+        wandb_group=wandb_group,
+        wandb_job_type=wandb_job_type,
+        wandb_run_name=wandb_run_name,
+        wandb_tags=wandb_tags,
+        wandb_log_tables=wandb_log_tables,
+    )
 
 
 def run_or_plan(

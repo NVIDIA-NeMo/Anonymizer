@@ -126,6 +126,35 @@ class WandbSettings(BaseSettings):
             return []
         return [tag for tag in (part.strip() for part in self.wandb_tags.split(",")) if tag]
 
+    @classmethod
+    def from_env_and_overrides(
+        cls,
+        *,
+        wandb_mode: WandbMode | None = None,
+        wandb_entity: str | None = None,
+        wandb_project: str | None = None,
+        wandb_group: str | None = None,
+        wandb_job_type: str | None = None,
+        wandb_run_name: str | None = None,
+        wandb_tags: str | None = None,
+        wandb_log_tables: bool | None = None,
+    ) -> WandbSettings:
+        settings = cls()
+        updates = {
+            "wandb_mode": wandb_mode,
+            "wandb_entity": wandb_entity,
+            "wandb_project": wandb_project,
+            "wandb_group": wandb_group,
+            "wandb_job_type": wandb_job_type,
+            "wandb_run_name": wandb_run_name,
+            "wandb_tags": wandb_tags,
+            "wandb_log_tables": wandb_log_tables,
+        }
+        overrides = {key: value for key, value in updates.items() if value is not None}
+        if not overrides:
+            return settings
+        return settings.model_copy(update=overrides)
+
 
 @dataclass(frozen=True)
 class BenchmarkWandbFinalization:
