@@ -519,6 +519,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#key-concepts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -617,6 +628,17 @@
     <span class="md-ellipsis">
       
         Model roles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluating-rewrite-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluating rewrite output
       
     </span>
   </a>
@@ -2443,6 +2465,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#key-concepts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2547,6 +2580,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#evaluating-rewrite-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluating rewrite output
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2623,8 +2667,7 @@
 <hr />
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <p><a href="../detection/">Detection</a> runs first (same as <a href="../replace/">Replace mode</a>, plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. </p>
-<p>The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. A final judge provides a qualitative assessment of the rewritten record. Any records that failed to meet standards are tagged for human review. </p>
-<hr />
+<h2 id="the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review">The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.<a class="headerlink" href="#the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review" title="Permanent link">&para;</a></h2>
 <h2 id="key-concepts">Key concepts<a class="headerlink" href="#key-concepts" title="Permanent link">&para;</a></h2>
 <p><strong>Sensitivity</strong> measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.</p>
 <table>
@@ -2830,37 +2873,59 @@ A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full 
 <thead>
 <tr>
 <th>Column</th>
+<th>When available</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>{text_col}_rewritten</code></td>
+<td>Always</td>
 <td>The privacy-safe rewritten text.</td>
 </tr>
 <tr>
 <td><code>utility_score</code></td>
+<td>Always</td>
 <td>Quality preservation (0.0--1.0). Higher is better.</td>
 </tr>
 <tr>
 <td><code>leakage_mass</code></td>
+<td>Always</td>
 <td>Weighted privacy leakage. Lower is better.</td>
 </tr>
 <tr>
 <td><code>weighted_leakage_rate</code></td>
+<td>Always</td>
 <td>Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass.</td>
 </tr>
 <tr>
 <td><code>any_high_leaked</code></td>
+<td>Always</td>
 <td>Whether any high-sensitivity entity leaked through.</td>
 </tr>
 <tr>
 <td><code>needs_human_review</code></td>
+<td>Always</td>
 <td>Flag for records that may need manual review.</td>
+</tr>
+<tr>
+<td><code>detection_valid</code></td>
+<td>After <code>evaluate()</code></td>
+<td>Fraction of detected entities that passed the detection judge (0.0--1.0); <code>None</code> if judge unavailable.</td>
+</tr>
+<tr>
+<td><code>detection_invalid_entities</code></td>
+<td>After <code>evaluate()</code></td>
+<td>Flagged detections with value, label, and one-sentence reasoning.</td>
+</tr>
+<tr>
+<td><code>judge_evaluation</code></td>
+<td>After <code>evaluate()</code></td>
+<td>Dict with <code>privacy</code>, <code>quality</code>, and <code>style</code> rubric scores and reasoning.</td>
 </tr>
 </tbody>
 </table>
-<p>Use <code>preview.trace_dataframe</code> for the full pipeline trace (domain, disposition, QA pairs, repair iterations, judge evaluation).</p>
+<p>Use <code>preview.trace_dataframe</code> for the full pipeline trace (domain, disposition, QA pairs, repair iterations).</p>
 <div class="admonition note">
 <p class="admonition-title">No entities? No rewrite.</p>
 <p>Records with no detected entities pass through unchanged with <code>utility_score=1.0</code> and <code>leakage_mass=0.0</code>.</p>
@@ -2926,13 +2991,11 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
 <td><code>gpt-oss-120b</code></td>
 <td>Repairs high-leakage rewrites.</td>
 </tr>
-<tr>
-<td><code>judge</code></td>
-<td><code>nemotron-30b-thinking</code></td>
-<td>Final quality/privacy judge.</td>
-</tr>
 </tbody>
 </table>
+<hr />
+<h2 id="evaluating-rewrite-output">Evaluating rewrite output<a class="headerlink" href="#evaluating-rewrite-output" title="Permanent link">&para;</a></h2>
+<p>After running rewrite, you can score detection quality and the holistic rewrite quality using LLM-as-judge evaluation. See <a href="../evaluation/">Evaluation</a> for details on the detection judge and the three rewrite quality rubrics (privacy, quality, style), and how to call <code>Anonymizer.evaluate()</code>.</p>
 
 
 

@@ -3414,6 +3414,7 @@ result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p
             failed_records=result.failed_records,
             preview_num_records=num_records,
             replace_method=config.replace,
+            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
         )
     except KeyboardInterrupt:
         status = TaskStatusEnum.CANCELED
@@ -3448,9 +3449,8 @@ result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p
     <div class="doc doc-contents ">
 
         <p>Run LLM-as-judge evaluation on a prior <code>preview()</code> / <code>run()</code> output.</p>
-<p>The anonymization strategy is read from <code>output.replace_method</code> (set
-when <code>run()</code> / <code>preview()</code> produced the result), so users don't
-restate it and can't mis-state it.</p>
+<p>The anonymization strategy is read from the result (set when <code>run()</code> /
+<code>preview()</code> produced it), so users don't restate it and can't mis-state it.</p>
 <p>Typical flow::</p>
 <pre class="highlight"><code>preview = anonymizer.preview(config=cfg, data=src, num_records=15)
 evaluated = anonymizer.evaluate(preview)
@@ -3482,11 +3482,11 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
                 <code>output</code>
             </td>
             <td>
-                  <code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None)
+                  <code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None)
 
   
       dataclass
-   (anonymizer.interface.results.AnonymizerResult)" href="../results/#anonymizer.interface.results.AnonymizerResult">AnonymizerResult</a> | <a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None)
+   (anonymizer.interface.results.AnonymizerResult)" href="../results/#anonymizer.interface.results.AnonymizerResult">AnonymizerResult</a> | <a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None)
 
   
       dataclass
@@ -3496,7 +3496,7 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
               <div class="doc-md-description">
                 <p>An :class:<code>AnonymizerResult</code> or :class:<code>PreviewResult</code> from
 a prior <code>preview()</code> / <code>run()</code>. Carries the trace dataframe,
-the resolved text-column name, and the replace strategy.</p>
+the resolved text-column name, and the anonymization config.</p>
               </div>
             </td>
             <td>
@@ -3540,9 +3540,8 @@ per-judge model/prompt overrides, etc.).</p>
 ) -&gt; AnonymizerResult:
     """Run LLM-as-judge evaluation on a prior ``preview()`` / ``run()`` output.
 
-    The anonymization strategy is read from ``output.replace_method`` (set
-    when ``run()`` / ``preview()`` produced the result), so users don't
-    restate it and can't mis-state it.
+    The anonymization strategy is read from the result (set when ``run()`` /
+    ``preview()`` produced it), so users don't restate it and can't mis-state it.
 
     Typical flow::
 
@@ -3564,19 +3563,48 @@ per-judge model/prompt overrides, etc.).</p>
     Args:
         output: An :class:`AnonymizerResult` or :class:`PreviewResult` from
             a prior ``preview()`` / ``run()``. Carries the trace dataframe,
-            the resolved text-column name, and the replace strategy.
+            the resolved text-column name, and the anonymization config.
         config: Optional :class:`EvaluateConfig` for evaluation-specific
             knobs (placeholder today; reserved for metric selection,
             per-judge model/prompt overrides, etc.).
     """
     _ = config  # placeholder; no knobs to read yet
+    rewrite_config = getattr(output, "rewrite_config", None)
     replace_method = getattr(output, "replace_method", None)
+
+    if rewrite_config is not None:
+        try:
+            validate_model_alias_references(
+                self._model_configs,
+                self._selected_models,
+                check_rewrite=False,
+                check_evaluate=True,
+            )
+        except ValueError as exc:
+            raise InvalidConfigError(str(exc)) from exc
+        text_column = output.resolved_text_column
+        internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+        rewrite_result = self._rewrite_runner.evaluate(
+            internal_df,
+            model_configs=self._model_configs,
+            selected_models=self._selected_models.evaluate,
+            privacy_goal=rewrite_config,
+        )
+        renamed_trace = _rename_output_columns(rewrite_result.dataframe, resolved_text_column=text_column)
+        return AnonymizerResult(
+            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
+            trace_dataframe=renamed_trace,
+            resolved_text_column=text_column,
+            failed_records=rewrite_result.failed_records,
+            rewrite_config=rewrite_config,
+        )
+
     if replace_method is None:
         raise ValueError(
-            "Cannot evaluate this output — it has no associated replace strategy. "
-            "Pass an AnonymizerResult / PreviewResult produced by run() / preview() "
-            "on this branch (the strategy is recorded then). Hand-built or legacy "
-            "results need their `replace_method` attribute set before calling evaluate()."
+            "Cannot evaluate this output — it has no associated anonymization config. "
+            "Pass an AnonymizerResult / PreviewResult produced by run() / preview(). "
+            "Hand-built or legacy results need their `replace_method` or `rewrite_config` "
+            "attribute set before calling evaluate()."
         )
     try:
         validate_model_alias_references(

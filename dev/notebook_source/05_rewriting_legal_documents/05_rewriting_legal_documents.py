@@ -180,8 +180,22 @@ print(f"{len(flagged)} of {len(df)} records flagged for human review")
 flagged.head()
 
 # %% [markdown]
+# ## 🔬 Evaluate (optional)
+#
+# Call `evaluate()` to run LLM-as-judge scoring on the rewrite result — detection validity and three quality rubrics (privacy, quality, style).
+# See [Evaluation](../../concepts/evaluation/#rewrite-evaluation) for details.
+
+# %%
+evaluated = anonymizer.evaluate(result)
+
+# %%
+evaluated.display_record(0)
+
+# %% [markdown]
 # ## ⏭️ Next steps
 #
+# - **[📊 Evaluation](../../concepts/evaluation/#rewrite-evaluation)** --
+#   learn about the detection validity and rewrite quality judges in detail.
 # - **[🔍 Inspecting Detected Entities](../02_inspecting_detected_entities/)** --
 #   debug what the detection pipeline found before rewriting.
 # - **Try it on your own data!** Swap in your CSV, define entity labels for your

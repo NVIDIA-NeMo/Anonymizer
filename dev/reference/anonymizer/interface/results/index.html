@@ -2516,7 +2516,7 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None)
+            <td><code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None)
 
   
       dataclass
@@ -2528,7 +2528,7 @@
             </td>
           </tr>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None)
+            <td><code><a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None)
 
   
       dataclass
@@ -2563,7 +2563,7 @@
 
 
 <h3 id="anonymizer.interface.results.AnonymizerResult" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None)</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -2652,6 +2652,25 @@ loaded from a pre-strategy-tracking format.</p>
               </div>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="anonymizer.interface.results.AnonymizerResult.rewrite_config">rewrite_config</span></code></td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="            PrivacyGoal
+
+
+  
+      pydantic-model
+   (anonymizer.config.rewrite.PrivacyGoal)" href="../../config/rewrite/#anonymizer.config.rewrite.PrivacyGoal">PrivacyGoal</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The privacy goal that produced this result when rewrite
+mode was used. Set by <code>run()</code> / <code>preview()</code>; consumed by
+<code>evaluate()</code> to dispatch the rewrite judges. Mutually exclusive
+with <code>replace_method</code>.</p>
+              </div>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -2694,7 +2713,7 @@ loaded from a pre-strategy-tracking format.</p>
 
 
 <h3 id="anonymizer.interface.results.PreviewResult" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None)</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -2791,6 +2810,24 @@ it is the post-rename identifier (e.g. <code>"final_entities__input"</code>).</p
 <code>preview()</code>; consumed by <code>evaluate()</code> to dispatch the right
 judges. <code>None</code> on results that were constructed by hand or loaded
 from a pre-strategy-tracking format.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="anonymizer.interface.results.PreviewResult.rewrite_config">rewrite_config</span></code></td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="            PrivacyGoal
+
+
+  
+      pydantic-model
+   (anonymizer.config.rewrite.PrivacyGoal)" href="../../config/rewrite/#anonymizer.config.rewrite.PrivacyGoal">PrivacyGoal</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The privacy goal that produced this preview when rewrite
+mode was used. Set by <code>preview()</code>; consumed by <code>evaluate()</code> to
+dispatch the rewrite judges. Mutually exclusive with <code>replace_method</code>.</p>
               </div>
             </td>
           </tr>
