@@ -8,9 +8,20 @@ Precision complaints are already surfaced in the entity dropdown for manual insp
 
 ---
 
+## Decision: Precision vs Recall
+
+`detection_valid` measures **precision** — of the entities we detected, were they correct? `entity_coverage` measures **recall** — of all the PII that existed, how much did we catch?
+
+For an anonymizer, recall is the user-facing priority: a missed PII entity is a privacy failure, while an over-detection is a minor inconvenience already visible in the entity dropdown. We therefore:
+
+- **Keep `detection_valid`** as an internal, opt-in feature (`compute_detection_validity=False` by default) — useful for model/threshold experiments during development, not surfaced to end users.
+- **Add `entity_coverage`** as the new customer-facing metric — the subject of this plan.
+
+---
+
 ## Proposed Solution: Entity Coverage
 
-Replace `detection_valid` with `entity_coverage` (name TBD):
+Replace `detection_valid` as the headline evaluate metric with `entity_coverage`:
 
 ```
 entity_coverage = n_entities_detected / (n_entities_detected + n_entities_leaked)
@@ -57,10 +68,11 @@ The new `EntityCoverageWorkflow` extends `_BaseJudgeWorkflow`. The partition-LLM
 
 ## Scope
 
-- Replaces `detection_valid` and `detection_invalid_entities` in both replace and rewrite `evaluate()` output.
-- No new public API symbols beyond new column names (`entity_coverage`, `leaked_entities`) and a renamed model role.
-- `COL_DETECTION_VALID` / `COL_DETECTION_INVALID_ENTITIES` constants are retired; new constants added.
-- `DetectionJudgeWorkflow` is replaced by `EntityCoverageWorkflow` — the old class is removed, not kept as an alias.
+- Adds `entity_coverage` and `leaked_entities` as the new default customer-facing columns in both replace and rewrite `evaluate()` output.
+- Retains `detection_valid` and `detection_invalid_entities` as an opt-in internal feature behind `EvaluateConfig(compute_detection_validity=False)` — not customer-facing, off by default.
+- New public API: `EvaluateConfig.compute_detection_validity: bool = False`; new column name constants (`COL_ENTITY_COVERAGE`, `COL_LEAKED_ENTITIES`); new model role `entity_coverage_judge` in `EvaluateModelSelection`.
+- `COL_DETECTION_VALID` / `COL_DETECTION_INVALID_ENTITIES` constants and `detection_validity_judge` model role are **kept** — they back the opt-in internal feature.
+- `DetectionJudgeWorkflow` is **not removed** — it runs only when `compute_detection_validity=True`.
 
 ---
 
@@ -78,18 +90,21 @@ The new `EntityCoverageWorkflow` extends `_BaseJudgeWorkflow`. The partition-LLM
 
 | File | Change |
 |---|---|
-| `src/anonymizer/engine/constants.py` | Retire `COL_DETECTION_JUDGE`, `COL_DETECTION_VALID`, `COL_DETECTION_INVALID_ENTITIES`; add `COL_ENTITY_COVERAGE_JUDGE`, `COL_ENTITY_COVERAGE`, `COL_LEAKED_ENTITIES` |
-| `src/anonymizer/engine/evaluation/detection_judge.py` | Replace entirely with `entity_coverage_judge.py` — new schema, new prompt, new workflow class |
+| `src/anonymizer/engine/constants.py` | Keep `COL_DETECTION_JUDGE`, `COL_DETECTION_VALID`, `COL_DETECTION_INVALID_ENTITIES`; add `COL_ENTITY_COVERAGE_JUDGE`, `COL_ENTITY_COVERAGE`, `COL_LEAKED_ENTITIES` |
+| `src/anonymizer/engine/evaluation/entity_coverage_judge.py` | **New file** — `EntityCoverageSchema`, `EntityCoverageWorkflow`, coverage fraction `postprocess()` |
+| `src/anonymizer/engine/evaluation/detection_judge.py` | No removal — retained as-is; gated behind `compute_detection_validity` flag in call sites |
 | `src/anonymizer/engine/evaluation/judge_base.py` | No changes needed — `postprocess()` is overridden in the subclass |
 | `src/anonymizer/engine/rewrite/rewrite_workflow.py` | Swap `DetectionJudgeWorkflow` → `EntityCoverageWorkflow` in `evaluate()`; remove `_detection_valid_fraction()`; update column references |
 | `src/anonymizer/engine/replace/replace_runner.py` | Swap `DetectionJudgeWorkflow` → `EntityCoverageWorkflow`; update column references |
 | `src/anonymizer/interface/anonymizer.py` | Update `_build_user_dataframe` allowed columns for both modes; update model role references |
 | `src/anonymizer/interface/display.py` | Render `entity_coverage` as Satisfied/Not Satisfied (replace) or fraction (rewrite); update leaked_entities dropdown |
-| `src/anonymizer/config/models.py` | Rename `detection_validity_judge` → `entity_coverage_judge` in `EvaluateModelSelection` |
-| `src/anonymizer/config/default_model_configs/evaluate.yaml` | Rename the model role key |
+| `src/anonymizer/config/anonymizer_config.py` | Add `compute_detection_validity: bool = False` to `EvaluateConfig` |
+| `src/anonymizer/config/models.py` | Add `entity_coverage_judge` to `EvaluateModelSelection`; keep `detection_validity_judge` |
+| `src/anonymizer/config/default_model_configs/evaluate.yaml` | Add `entity_coverage_judge` key alongside existing `detection_validity_judge` |
 | `docs/concepts/evaluation.md` | Replace Entity Detection Judge section with Entity Coverage section in both replace and rewrite docs |
 | `skills/anonymizer/SKILL.md` | Update evaluation tips and output template column references |
-| `tests/engine/evaluation/test_detection_judge.py` | Replace with `test_entity_coverage_judge.py` — new schema, prompt, and workflow tests |
+| `tests/engine/evaluation/test_detection_judge.py` | Keep as-is — covers the retained internal feature |
+| `tests/engine/evaluation/test_entity_coverage_judge.py` | **New file** — new schema, prompt, and workflow tests |
 | `tests/engine/test_rewrite_workflow.py` | Update column name references; remove `_detection_valid_fraction` tests |
 | `tests/engine/test_evaluate.py` | Update column name assertions |
 | `tests/interface/test_display.py` | Update rendering assertions for entity coverage |
@@ -98,13 +113,13 @@ The new `EntityCoverageWorkflow` extends `_BaseJudgeWorkflow`. The partition-LLM
 
 ## Step 1 — New constants (`constants.py`)
 
-Retire the three detection judge constants and add three replacements:
+Keep the existing detection judge constants and add three new ones alongside them:
 
 ```python
-# Retired (remove):
-# COL_DETECTION_JUDGE = "_detection_judge"
-# COL_DETECTION_VALID = "detection_valid"
-# COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"
+# Retained (no change — back the opt-in internal feature):
+COL_DETECTION_JUDGE             = "_detection_judge"
+COL_DETECTION_VALID             = "detection_valid"
+COL_DETECTION_INVALID_ENTITIES  = "detection_invalid_entities"
 
 # New:
 COL_ENTITY_COVERAGE_JUDGE = "_entity_coverage_judge"   # internal raw output
@@ -116,7 +131,7 @@ COL_LEAKED_ENTITIES       = "leaked_entities"          # user-facing list
 
 ## Step 2 — New workflow (`entity_coverage_judge.py`)
 
-Replace `detection_judge.py` with a new file. Key differences from the old judge:
+Add a new file alongside the existing `detection_judge.py`. Key design:
 
 ### Output schema
 
@@ -223,44 +238,44 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
 ### Replace (`replace_runner.py`)
 
-Swap `DetectionJudgeWorkflow` → `EntityCoverageWorkflow`. The judge runs on `COL_TEXT` (original text) — no change to the input column needed. Update column references for the new output columns.
+Add `EntityCoverageWorkflow` — always runs in `evaluate()`. Gate `DetectionJudgeWorkflow` behind `evaluate_config.compute_detection_validity`. Both judges run on `COL_TEXT` (original text). Update column references for the new output columns.
 
 ### Rewrite (`rewrite_workflow.py`)
 
-Same swap. The judge also runs on `COL_TEXT` (original text), same as replace. Update `evaluate()`:
+Same structure. Add `EntityCoverageWorkflow` as the default; gate `DetectionJudgeWorkflow` behind the flag. Update `evaluate()`:
 
 - Remove `_detection_valid_fraction()` — no longer needed since `entity_coverage` is already a float from `postprocess()`.
 - Update the try/except around the judge call to default `entity_coverage = None` and `leaked_entities = None` on failure.
 
 ---
 
-## Step 4 — Model role rename (`models.py`, `evaluate.yaml`)
+## Step 4 — Model role update (`models.py`, `evaluate.yaml`)
 
 ```python
 class EvaluateModelSelection(BaseModel):
-    entity_coverage_judge: str              # replaces detection_validity_judge
+    entity_coverage_judge: str              # new — always required for evaluate()
+    detection_validity_judge: str           # retained — required only when compute_detection_validity=True
     replace_type_fidelity_judge: str
     replace_relational_consistency_judge: str
     replace_attribute_fidelity_judge: str
     rewrite_judge: str
 ```
 
-Update `evaluate.yaml` default to rename the key. Update `model_loader.py` validation for the new role name.
+Add `entity_coverage_judge` to `evaluate.yaml` alongside the existing `detection_validity_judge`. Update `model_loader.py` validation to check `entity_coverage_judge` unconditionally; `detection_validity_judge` is already present in the YAML default so no user burden is added.
 
 ---
 
 ## Step 5 — Update `_build_user_dataframe` (`anonymizer.py`)
 
-Swap old column names for new in the allowed sets for both replace and rewrite mode:
+Add the new columns to the allowed sets for both replace and rewrite mode. Keep the existing detection validity columns — they remain in the allowed set and will appear in output only when `compute_detection_validity=True` produces them:
 
 ```python
-# Replace (was: COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES)
-COL_ENTITY_COVERAGE,
-COL_LEAKED_ENTITIES,
-
-# Rewrite (same swap)
-COL_ENTITY_COVERAGE,
-COL_LEAKED_ENTITIES,
+# Add to both replace and rewrite allowed sets:
+COL_ENTITY_COVERAGE,            # new — always present after evaluate()
+COL_LEAKED_ENTITIES,            # new — always present after evaluate()
+# Already present (retained):
+# COL_DETECTION_VALID           — only in output when compute_detection_validity=True
+# COL_DETECTION_INVALID_ENTITIES — only in output when compute_detection_validity=True
 ```
 
 ---
@@ -276,7 +291,7 @@ Where the fraction is `n_entities_detected / (n_entities_detected + n_entities_l
 
 Drop the explanatory subtitle line that the old Detection Judge displayed — entity coverage is self-explanatory and does not need a definition sentence. Drop the `"LLM alignment score:"` label prefix — that framing belonged to the old judge (LLM-vs-LLM alignment), not to a count ratio.
 
-The `leaked_entities` dropdown replaces `detection_invalid_entities` with the same layout (value, label, reasoning per row).
+The `leaked_entities` dropdown is added with the same layout (value, label, reasoning per row). The existing `detection_invalid_entities` dropdown continues to render unchanged when `detection_valid` is present (opt-in enabled).
 
 ---
 
@@ -291,11 +306,12 @@ Replace the **Entity Detection Judge** subsection in both Replace and Rewrite se
 - Document `leaked_entities` list shape
 - Update the special-values table (passthrough row → `1.0` / Satisfied)
 - Update model role name (`entity_coverage_judge`)
+- Add a brief **Internal metrics** note: `compute_detection_validity=True` enables `detection_valid` for tag-precision signal during model/threshold experiments — one paragraph, not featured
 
 ### `skills/anonymizer/SKILL.md`
 
 - Update the evaluation tips bullet: `entity_coverage_judge` role; `entity_coverage` type per mode; `leaked_entities` dropdown
-- Update output template: replace `detection_valid` column references with `entity_coverage`
+- Update output template: add `entity_coverage` column references; do not feature `detection_valid` (internal only)
 
 ---
 
@@ -332,16 +348,17 @@ All tests use stub adapters — no real LLM calls.
 
 ## Implementation Order
 
-1. Add new constants to `constants.py`; retire old ones
-2. Write `entity_coverage_judge.py` — schema, prompt (v1 from leakage_eval script), workflow class, `postprocess()` override
-3. Wire into replace evaluate path (`replace_runner.py`)
-4. Wire into rewrite evaluate path (`rewrite_workflow.py`); remove `_detection_valid_fraction()`
-5. Rename model role in `models.py`, `evaluate.yaml`, `model_loader.py`
-6. Update `_build_user_dataframe` allowed columns (`anonymizer.py`)
-7. Update `display.py` rendering
-8. Update `docs/concepts/evaluation.md` and `skills/anonymizer/SKILL.md`
-9. Replace `test_detection_judge.py` with `test_entity_coverage_judge.py`; update all affected tests
-10. Run `make format && make typecheck && make test`
+1. Add new constants to `constants.py`; keep existing `COL_DETECTION_*` constants
+2. Add `compute_detection_validity: bool = False` to `EvaluateConfig` (`anonymizer_config.py`)
+3. Write `entity_coverage_judge.py` — schema, prompt (v1 from leakage_eval script), workflow class, `postprocess()` override
+4. Wire `EntityCoverageWorkflow` into replace evaluate path (`replace_runner.py`); gate `DetectionJudgeWorkflow` behind the flag
+5. Wire `EntityCoverageWorkflow` into rewrite evaluate path (`rewrite_workflow.py`); gate `DetectionJudgeWorkflow` behind the flag; remove `_detection_valid_fraction()`
+6. Add `entity_coverage_judge` to `EvaluateModelSelection` and `evaluate.yaml`; keep `detection_validity_judge`; update `model_loader.py`
+7. Update `_build_user_dataframe` allowed columns (`anonymizer.py`)
+8. Update `display.py` rendering
+9. Update `docs/concepts/evaluation.md` and `skills/anonymizer/SKILL.md`
+10. Add `test_entity_coverage_judge.py`; keep `test_detection_judge.py`; update all affected existing tests
+11. Run `make format && make typecheck && make test`
 
 ---
 
