@@ -107,6 +107,12 @@ class ChunkedValidationParams(BaseModel):
             excerpt window. The default preserves production parity with the
             pre-chunking validation path; benchmarks may disable it to probe
             compact validation prompts.
+        entities_column: Row column containing the entity spans whose
+            positions anchor chunk ordering and excerpt tagging.
+        candidates_column: Row column containing the validation candidate
+            payload to send to the validator.
+        output_column: Row column where merged validation decisions should be
+            written.
         prompt_template: Jinja2 source for the validation prompt (with
             ``_seed_tagged_text``, ``_validation_skeleton``, ``_tag_notation``
             placeholders). Typically produced by ``_get_validation_prompt``.
@@ -126,6 +132,9 @@ class ChunkedValidationParams(BaseModel):
     excerpt_window_chars: int = Field(gt=0)
     max_parallel_chunks: int | None = Field(default=None, gt=0)
     single_chunk_full_text: bool = True
+    entities_column: str = Field(default=COL_SEED_ENTITIES, min_length=1)
+    candidates_column: str = Field(default=COL_SEED_VALIDATION_CANDIDATES, min_length=1)
+    output_column: str = Field(default=COL_VALIDATION_DECISIONS, min_length=1)
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
 
@@ -141,10 +150,9 @@ def order_candidates_by_position(
 ) -> list[tuple[Any, EntitySpan]]:
     """Pair each candidate with its matching seed entity and sort by text position.
 
-    Every candidate id must resolve to a seed entity. A missing id indicates an
-    upstream bug in ``merge_and_build_candidates`` or ``prepare_validation_inputs``
-    (both produce candidates whose ids come from ``EntitySpan.entity_id``). We
-    raise early with the offending id so the failure is easy to triage.
+    Every candidate id must resolve to a source entity. A missing id indicates
+    an upstream bug in the candidate-building transform. We raise early with
+    the offending id so the failure is easy to triage.
     """
     seed_by_id = {span.entity_id: span for span in seed_entities}
     paired: list[tuple[Any, EntitySpan]] = []
@@ -153,10 +161,9 @@ def order_candidates_by_position(
         if seed is None:
             raise ValueError(
                 f"Validation candidate id {candidate.id!r} has no matching seed entity. "
-                "Every candidate produced by merge_and_build_candidates or "
-                "prepare_validation_inputs must correspond to a seed entity with "
+                "Every candidate produced by the upstream candidate builder must correspond to an entity with "
                 "start_position and end_position populated; this inconsistency "
-                "indicates a bug in one of those upstream generators."
+                "indicates a bug in that upstream generator."
             )
         paired.append((candidate, seed))
     paired.sort(key=lambda pair: (pair[1].start_position, pair[1].end_position, pair[1].entity_id))
@@ -460,8 +467,8 @@ def _build_dispatch_kwargs_per_chunk(
         )
 
     text = str(row.get(COL_TEXT, ""))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
-    seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(params.candidates_column, {}))
+    seed_entities_schema = EntitiesSchema.from_raw(row.get(params.entities_column, {}))
     notation_raw = row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value
     notation = TagNotation(str(notation_raw))
 
@@ -594,7 +601,7 @@ def chunked_validate_row(
             futures = [executor.submit(_dispatch_chunk, **kwargs) for kwargs in dispatch_kwargs_per_chunk]
             chunk_results = [f.result() for f in futures]
 
-    row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
+    row[params.output_column] = merge_chunk_decisions(chunk_results, candidates)
     return row
 
 
@@ -613,7 +620,7 @@ async def chunked_validate_row_async(
             *[_bounded_dispatch_chunk_async(semaphore, kwargs) for kwargs in dispatch_kwargs_per_chunk]
         )
 
-    row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
+    row[params.output_column] = merge_chunk_decisions(chunk_results, candidates)
     return row
 
 
@@ -622,7 +629,12 @@ async def chunked_validate_row_async(
 # ---------------------------------------------------------------------------
 
 
-def make_chunked_validation_generator(pool: list[str]) -> Any:
+def make_chunked_validation_generator(
+    pool: list[str],
+    *,
+    entities_column: str = COL_SEED_ENTITIES,
+    candidates_column: str = COL_SEED_VALIDATION_CANDIDATES,
+) -> Any:
     """Build a ``@custom_column_generator``-decorated function bound to ``pool``.
 
     ``model_aliases`` must be declared statically on the decorator so
@@ -638,8 +650,8 @@ def make_chunked_validation_generator(pool: list[str]) -> Any:
     @custom_column_generator(
         required_columns=[
             COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_SEED_VALIDATION_CANDIDATES,
+            entities_column,
+            candidates_column,
             COL_TAG_NOTATION,
         ],
         model_aliases=list(pool),

@@ -14,6 +14,8 @@ from anonymizer.engine.constants import (
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
+    COL_MERGED_VALIDATED_ENTITIES,
+    COL_MERGED_VALIDATION_DECISIONS,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -33,6 +35,7 @@ class DetectionTransformOperation(str, Enum):
     PARSE_DETECTED_ENTITIES = "parse_detected_entities"
     PREPARE_VALIDATION_INPUTS = "prepare_validation_inputs"
     ENRICH_VALIDATION_DECISIONS = "enrich_validation_decisions"
+    ENRICH_MERGED_VALIDATION_DECISIONS = "enrich_merged_validation_decisions"
     APPLY_VALIDATION_TO_SEED_ENTITIES = "apply_validation_to_seed_entities"
     MERGE_AND_BUILD_CANDIDATES = "merge_and_build_candidates"
     APPLY_VALIDATION_AND_FINALIZE = "apply_validation_and_finalize"
@@ -49,6 +52,10 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_VALIDATION_DECISIONS,
             COL_SEED_VALIDATION_CANDIDATES,
         ],
+        DetectionTransformOperation.ENRICH_MERGED_VALIDATION_DECISIONS: [
+            COL_MERGED_VALIDATION_DECISIONS,
+            COL_VALIDATION_CANDIDATES,
+        ],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
             COL_TEXT,
             COL_SEED_ENTITIES,
@@ -62,13 +69,14 @@ class DetectionTransformConfig(SingleColumnConfig):
         DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: [
             COL_TEXT,
             COL_MERGED_ENTITIES,
-            COL_VALIDATED_ENTITIES,
+            COL_MERGED_VALIDATED_ENTITIES,
         ],
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TAG_NOTATION],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_SEED_TAGGED_TEXT],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [],
+        DetectionTransformOperation.ENRICH_MERGED_VALIDATION_DECISIONS: [],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
             COL_INITIAL_TAGGED_TEXT,
             COL_SEED_ENTITIES_JSON,
@@ -101,6 +109,8 @@ class ChunkedValidationConfig(SingleColumnConfig):
     excerpt_window_chars: int = Field(gt=0)
     max_parallel_chunks: int | None = Field(default=None, gt=0)
     single_chunk_full_text: bool = True
+    entities_column: str = Field(default=COL_SEED_ENTITIES, min_length=1)
+    candidates_column: str = Field(default=COL_SEED_VALIDATION_CANDIDATES, min_length=1)
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
 
@@ -112,8 +122,8 @@ class ChunkedValidationConfig(SingleColumnConfig):
     def required_columns(self) -> list[str]:
         return [
             COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_SEED_VALIDATION_CANDIDATES,
+            self.entities_column,
+            self.candidates_column,
             COL_TAG_NOTATION,
         ]
 

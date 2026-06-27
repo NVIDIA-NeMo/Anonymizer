@@ -22,6 +22,8 @@ from anonymizer.engine.constants import (
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
+    COL_MERGED_VALIDATED_ENTITIES,
+    COL_MERGED_VALIDATION_DECISIONS,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -137,40 +139,40 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
 )
 def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
     """Enrich validation decisions with entity value and filter to known candidate IDs only."""
-    raw_decisions = RawValidationDecisionsSchema.from_raw(row.get(COL_VALIDATION_DECISIONS, {}))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
-
-    candidate_lookup = {c.id: c for c in candidates.candidates}
-    valid_ids = set(candidate_lookup)
-
-    enriched = [
-        ValidatedDecisionSchema(
-            id=d.id,
-            decision=d.decision,
-            proposed_label=d.proposed_label,
-            reason=d.reason,
-            value=candidate_lookup[d.id].value,
-            label=candidate_lookup[d.id].label,
-        )
-        for d in raw_decisions.decisions
-        if d.id in valid_ids
-    ]
-
-    row[COL_VALIDATED_ENTITIES] = ValidatedDecisionsSchema(decisions=enriched).model_dump(mode="json")
+    _enrich_validation_decisions(
+        row,
+        decisions_column=COL_VALIDATION_DECISIONS,
+        candidates_column=COL_SEED_VALIDATION_CANDIDATES,
+        output_column=COL_VALIDATED_ENTITIES,
+    )
     return row
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
+    required_columns=[COL_MERGED_VALIDATION_DECISIONS, COL_VALIDATION_CANDIDATES],
+)
+def enrich_merged_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
+    """Enrich merged validation decisions with entity value and filter to known candidate IDs only."""
+    _enrich_validation_decisions(
+        row,
+        decisions_column=COL_MERGED_VALIDATION_DECISIONS,
+        candidates_column=COL_VALIDATION_CANDIDATES,
+        output_column=COL_MERGED_VALIDATED_ENTITIES,
+    )
+    return row
+
+
+@custom_column_generator(
+    required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_MERGED_VALIDATED_ENTITIES],
     side_effect_columns=[COL_TAGGED_TEXT],
 )
 def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
-    """Apply keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
+    """Apply merged keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
     text = str(row.get(COL_TEXT, ""))
     merged = _parse_entity_spans(row.get(COL_MERGED_ENTITIES, {}))
     validated = apply_validation_decisions(
         entities=merged,
-        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
+        validation_output=row.get(COL_MERGED_VALIDATED_ENTITIES, {}),
     )
     expanded = expand_entity_occurrences(text=text, entities=validated)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
@@ -194,3 +196,32 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
         )
         for e in parsed.entities
     ]
+
+
+def _enrich_validation_decisions(
+    row: dict[str, Any],
+    *,
+    decisions_column: str,
+    candidates_column: str,
+    output_column: str,
+) -> None:
+    raw_decisions = RawValidationDecisionsSchema.from_raw(row.get(decisions_column, {}))
+    candidates = ValidationCandidatesSchema.from_raw(row.get(candidates_column, {}))
+
+    candidate_lookup = {c.id: c for c in candidates.candidates}
+    valid_ids = set(candidate_lookup)
+
+    enriched = [
+        ValidatedDecisionSchema(
+            id=d.id,
+            decision=d.decision,
+            proposed_label=d.proposed_label,
+            reason=d.reason,
+            value=candidate_lookup[d.id].value,
+            label=candidate_lookup[d.id].label,
+        )
+        for d in raw_decisions.decisions
+        if d.id in valid_ids
+    ]
+
+    row[output_column] = ValidatedDecisionsSchema(decisions=enriched).model_dump(mode="json")

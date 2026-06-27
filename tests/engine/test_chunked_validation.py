@@ -20,6 +20,7 @@ import pytest
 from data_designer.engine.models.clients.errors import SyncClientUnavailableError
 
 from anonymizer.engine.constants import (
+    COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_SEED_ENTITIES,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -202,7 +203,7 @@ class TestOrderCandidatesByPosition:
 
     def test_missing_seed_raises_with_triage_hint(self) -> None:
         candidates = _candidates_schema(("missing", "x", "y"))
-        with pytest.raises(ValueError, match="merge_and_build_candidates or prepare_validation_inputs"):
+        with pytest.raises(ValueError, match="upstream candidate builder"):
             order_candidates_by_position(candidates, [])
 
 
@@ -458,6 +459,66 @@ class TestChunkedValidateRowPoolOfOne:
         assert len(facade.calls) == 1
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
         assert {d["id"]: d["decision"] for d in decisions} == {"a": "keep", "b": "drop"}
+
+    def test_supports_non_default_entity_and_candidate_columns(self) -> None:
+        text = "Alice met on 12 February 1980."
+        merged_entities = EntitiesSchema(
+            entities=[
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 1.0,
+                    "source": "detector",
+                },
+                {
+                    "id": "api_key_13_29",
+                    "value": "12 February 1980",
+                    "label": "api_key",
+                    "start_position": 13,
+                    "end_position": 29,
+                    "score": 1.0,
+                    "source": "augmenter",
+                },
+            ]
+        ).model_dump(mode="json")
+        candidates = ValidationCandidatesSchema(
+            candidates=[
+                ValidationCandidateSchema(id="first_name_0_5", value="Alice", label="first_name"),
+                ValidationCandidateSchema(id="api_key_13_29", value="12 February 1980", label="api_key"),
+            ]
+        ).model_dump(mode="json")
+        row = {
+            COL_TEXT: text,
+            COL_MERGED_ENTITIES: merged_entities,
+            COL_VALIDATION_CANDIDATES: candidates,
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+
+        facade = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {"id": "first_name_0_5", "decision": "keep"},
+                    {"id": "api_key_13_29", "decision": "drop"},
+                ]
+            },
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=10,
+            excerpt_window_chars=100,
+            entities_column=COL_MERGED_ENTITIES,
+            candidates_column=COL_VALIDATION_CANDIDATES,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        out = chunked_validate_row(row, params, {"v0": facade})
+
+        decisions = {d["id"]: d["decision"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
+        assert decisions == {"first_name_0_5": "keep", "api_key_13_29": "drop"}
 
     def test_single_chunk_sends_single_chunk_tagged_text_not_windowed_excerpt(self) -> None:
         """Single-chunk rows must receive the fully tagged document, not a windowed excerpt.
