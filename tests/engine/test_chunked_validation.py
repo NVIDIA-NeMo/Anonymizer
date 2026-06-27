@@ -22,6 +22,7 @@ from data_designer.engine.models.clients.errors import SyncClientUnavailableErro
 from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
+    COL_MERGED_VALIDATION_DECISIONS,
     COL_SEED_ENTITIES,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
@@ -512,12 +513,15 @@ class TestChunkedValidateRowPoolOfOne:
             excerpt_window_chars=100,
             entities_column=COL_MERGED_ENTITIES,
             candidates_column=COL_VALIDATION_CANDIDATES,
+            output_column=COL_MERGED_VALIDATION_DECISIONS,
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
         out = chunked_validate_row(row, params, {"v0": facade})
 
-        decisions = {d["id"]: d["decision"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
+        decisions = {
+            d["id"]: d["decision"] for d in out[COL_MERGED_VALIDATION_DECISIONS]["decisions"]
+        }
         assert decisions == {"first_name_0_5": "keep", "api_key_13_29": "drop"}
 
     def test_single_chunk_sends_single_chunk_tagged_text_not_windowed_excerpt(self) -> None:

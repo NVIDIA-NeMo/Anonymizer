@@ -641,8 +641,9 @@ def make_chunked_validation_generator(
     DataDesigner knows which facades to materialise for the generator. Since
     the pool is config-driven (per-run), we generate the function dynamically.
     The required_columns are exhaustive for DataDesigner's DAG ordering: the
-    generator reads the raw text, seed entities (for positions), the candidate
-    list (what to decide), and the tag notation (for excerpt tagging).
+    generator reads the raw text, the caller-configured entity column (seed
+    entities by default, for positions), the caller-configured candidate list
+    (what to decide), and the tag notation (for excerpt tagging).
     """
     if not pool:
         raise ValueError("Cannot build chunked validation generator: pool is empty.")
