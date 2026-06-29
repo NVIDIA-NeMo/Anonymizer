@@ -212,5 +212,11 @@ class EvaluateConfig(BaseModel):
     knobs are introduced.
     """
 
-    # Intentionally empty for now. New fields land here as evaluation
-    # configurability is introduced.
+    compute_detection_validity: bool = False
+    """Run the tag-precision judge (detection_valid / detection_invalid_entities).
+
+    Disabled by default — intended for internal use during model and threshold
+    experiments, not a customer-facing metric. When True, adds
+    ``detection_valid`` and ``detection_invalid_entities`` columns to the
+    evaluate() output alongside ``entity_coverage``.
+    """

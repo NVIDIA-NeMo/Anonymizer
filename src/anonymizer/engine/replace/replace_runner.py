@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
@@ -115,6 +116,8 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
+        entity_labels: list[str] | None = None,
+        compute_detection_validity: bool = False,
     ) -> ReplacementResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.
 
@@ -141,10 +144,16 @@ class ReplacementWorkflow:
                 f"missing: {sorted(missing)}. Pass the trace_dataframe from a "
                 f"previous preview()/run() call."
             )
+        entity_coverage_judge = EntityCoverageWorkflow(
+            adapter=self._adapter,  # type: ignore[arg-type]
+            entity_labels=entity_labels,
+        )
         failed_records: list[FailedRecord] = []
         judged_df = self._run_merged_judges(
             dataframe,
             is_substitute=is_substitute,
+            entity_coverage_judge=entity_coverage_judge,
+            compute_detection_validity=compute_detection_validity,
             model_configs=model_configs,
             selected_models=selected_models,
             preview_num_records=preview_num_records,
@@ -161,6 +170,8 @@ class ReplacementWorkflow:
         dataframe: pd.DataFrame,
         *,
         is_substitute: bool,
+        entity_coverage_judge: EntityCoverageWorkflow,
+        compute_detection_validity: bool,
         model_configs: list[ModelConfig],
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None,
@@ -173,7 +184,9 @@ class ReplacementWorkflow:
         + apply passthrough defaults). The adapter sees one workflow with N
         columns and lets DD schedule them in parallel.
         """
-        active = [j for j in [self._detection_judge] if j is not None]
+        active = [entity_coverage_judge]
+        if compute_detection_validity and self._detection_judge is not None:
+            active.append(self._detection_judge)
         if is_substitute:
             active.extend(
                 j

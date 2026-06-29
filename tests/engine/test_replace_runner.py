@@ -15,9 +15,10 @@ from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_JUDGE,
     COL_ATTRIBUTE_FIDELITY_VALID,
-    COL_DETECTION_JUDGE,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_COVERAGE,
+    COL_ENTITY_COVERAGE_JUDGE,
     COL_FINAL_ENTITIES,
     COL_RELATIONAL_CONSISTENCY_JUDGE,
     COL_RELATIONAL_CONSISTENCY_VALID,
@@ -167,7 +168,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
     )
 
     judge_defaults = {
-        COL_DETECTION_JUDGE: {"all_valid": True, "invalid_entities": []},
+        COL_ENTITY_COVERAGE_JUDGE: {"leaked_entities": []},
         COL_TYPE_FIDELITY_JUDGE: {"all_valid": True, "invalid_replacements": []},
         COL_RELATIONAL_CONSISTENCY_JUDGE: {"all_consistent": True, "relations": []},
         COL_ATTRIBUTE_FIDELITY_JUDGE: {"all_valid": True, "entities": []},
@@ -210,9 +211,11 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
     call_columns = adapter.run_workflow.call_args.kwargs["columns"]
     assert {c.name for c in call_columns} == set(judge_defaults)
 
-    # And each judge's VALID column ended up on the result, with True (default payload above).
+    # And each judge's output column ended up on the result.
+    # Entity coverage is a float (1.0 = full coverage); replace judges use bool True.
+    assert COL_ENTITY_COVERAGE in result.dataframe.columns
+    assert result.dataframe[COL_ENTITY_COVERAGE].iloc[0] == 1.0
     for col in (
-        COL_DETECTION_VALID,
         COL_TYPE_FIDELITY_VALID,
         COL_RELATIONAL_CONSISTENCY_VALID,
         COL_ATTRIBUTE_FIDELITY_VALID,
@@ -256,7 +259,7 @@ def test_evaluate_preserves_all_rows_when_llm_drops_some(
     )
 
     judge_payload = {
-        COL_DETECTION_JUDGE: {"all_valid": True, "invalid_entities": []},
+        COL_ENTITY_COVERAGE_JUDGE: {"leaked_entities": []},
         COL_TYPE_FIDELITY_JUDGE: {"all_valid": True, "invalid_replacements": []},
         COL_RELATIONAL_CONSISTENCY_JUDGE: {"all_consistent": True, "relations": []},
         COL_ATTRIBUTE_FIDELITY_JUDGE: {"all_valid": True, "entities": []},
@@ -298,10 +301,12 @@ def test_evaluate_preserves_all_rows_when_llm_drops_some(
 
     # Row count is preserved end-to-end.
     assert len(result.dataframe) == 2
-    # First row got a real verdict.
-    assert bool(result.dataframe[COL_DETECTION_VALID].iloc[0]) is True
+    # First row got a real verdict (entity_coverage is a float, replace judges are bool).
+    assert result.dataframe[COL_ENTITY_COVERAGE].iloc[0] == 1.0
+    assert bool(result.dataframe[COL_TYPE_FIDELITY_VALID].iloc[0]) is True
     # Second row (LLM-dropped) is surfaced as Unavailable, not dropped.
-    assert result.dataframe[COL_DETECTION_VALID].iloc[1] is None
+    # Float column: None becomes NaN in pandas, so use pd.isna instead of `is None`.
+    assert pd.isna(result.dataframe[COL_ENTITY_COVERAGE].iloc[1])
     assert result.dataframe[COL_TYPE_FIDELITY_VALID].iloc[1] is None
     assert result.dataframe[COL_RELATIONAL_CONSISTENCY_VALID].iloc[1] is None
     assert result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[1] is None

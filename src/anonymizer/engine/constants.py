@@ -60,10 +60,15 @@ COL_LATENT_ENTITIES = "_latent_entities"
 # Final output
 COL_FINAL_ENTITIES = "final_entities"
 
-# Replace evaluation: detection-validity judge
+# Replace evaluation: detection-validity judge (opt-in internal feature; default off)
 COL_DETECTION_JUDGE = "_detection_judge"  # raw judge output, internal
 COL_DETECTION_VALID = "detection_valid"  # user-facing bool (None if judge unavailable)
 COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"  # user-facing list of {value, label, reasoning}
+
+# Replace / rewrite evaluation: entity coverage judge (customer-facing recall metric)
+COL_ENTITY_COVERAGE_JUDGE = "_entity_coverage_judge"  # raw judge output, internal
+COL_ENTITY_COVERAGE = "entity_coverage"  # user-facing float | None (0.0–1.0)
+COL_LEAKED_ENTITIES = "leaked_entities"  # user-facing list of {value, label, reasoning}
 
 # Replace evaluation: type-fidelity judge (Substitute only)
 COL_TYPE_FIDELITY_JUDGE = "_type_fidelity_judge"  # raw judge output, internal
