@@ -10,19 +10,21 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_FULL_REWRITE,
+    COL_PREREPLACE_TAGGED_TEXT,
+    COL_PREREPLACE_TEXT,
     COL_REPLACEMENT_MAP,
-    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
+    COL_TEXT,
     _jinja,
 )
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
+    _apply_direct_replacements,
     _extract_rewritten_text,
-    _filter_replacement_map_for_prompt,
     _format_rewrite_disposition_block,
     _get_rewrite_prompt,
 )
@@ -70,14 +72,36 @@ def stub_replacement_map() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_format_rewrite_disposition_block_filters_to_protected_only(
+def test_format_rewrite_disposition_block_excludes_replace_entities(
     stub_sensitivity_disposition: dict,
 ) -> None:
+    # replace entities are handled programmatically; they should not appear in the prompt block
     row = {COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition}
+    result = _format_rewrite_disposition_block(row)
+    assert result[COL_REWRITE_DISPOSITION_BLOCK] == []
+
+
+def test_format_rewrite_disposition_block_includes_non_replace_protected_entities() -> None:
+    disposition = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "quasi_identifier",
+                "sensitivity": "medium",
+                "entity_label": "city",
+                "entity_value": "Portland",
+                "protection_reason": "Quasi-identifier",
+                "protection_method_suggestion": "generalize",
+                "combined_risk_level": "medium",
+            }
+        ]
+    }
+    row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _format_rewrite_disposition_block(row)
     block = result[COL_REWRITE_DISPOSITION_BLOCK]
     assert len(block) == 1
-    assert block[0]["entity_value"] == "Alice"
+    assert block[0]["entity_value"] == "Portland"
 
 
 def test_format_rewrite_disposition_block_excludes_unprotected_entities() -> None:
@@ -101,13 +125,25 @@ def test_format_rewrite_disposition_block_excludes_unprotected_entities() -> Non
     assert result[COL_REWRITE_DISPOSITION_BLOCK] == []
 
 
-def test_format_rewrite_disposition_block_serializes_required_fields(
-    stub_sensitivity_disposition: dict,
-) -> None:
-    row = {COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition}
+def test_format_rewrite_disposition_block_serializes_required_fields() -> None:
+    disposition = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "quasi_identifier",
+                "sensitivity": "medium",
+                "entity_label": "city",
+                "entity_value": "Portland",
+                "protection_reason": "Quasi-identifier",
+                "protection_method_suggestion": "generalize",
+                "combined_risk_level": "medium",
+            }
+        ]
+    }
+    row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _format_rewrite_disposition_block(row)
-    block = result[COL_REWRITE_DISPOSITION_BLOCK]
-    entry = block[0]
+    entry = result[COL_REWRITE_DISPOSITION_BLOCK][0]
     assert set(entry.keys()) == {
         "entity_label",
         "entity_value",
@@ -117,7 +153,42 @@ def test_format_rewrite_disposition_block_serializes_required_fields(
     }
 
 
-def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> None:
+# ---------------------------------------------------------------------------
+# Tests: _apply_direct_replacements
+# ---------------------------------------------------------------------------
+
+
+def test_apply_direct_replacements_substitutes_in_plain_and_tagged_text(
+    stub_sensitivity_disposition: dict,
+    stub_replacement_map: dict,
+) -> None:
+    row = {
+        COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition,
+        COL_REPLACEMENT_MAP: stub_replacement_map,
+        COL_TEXT: "Alice works at TechCorp.",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] works at TechCorp.",
+    }
+    result = _apply_direct_replacements(row)
+    assert result[COL_PREREPLACE_TEXT] == "Maria works at TechCorp."
+    assert result[COL_PREREPLACE_TAGGED_TEXT] == "[[Maria|first_name]] works at TechCorp."
+
+
+def test_apply_direct_replacements_replaces_all_occurrences(
+    stub_sensitivity_disposition: dict,
+    stub_replacement_map: dict,
+) -> None:
+    row = {
+        COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition,
+        COL_REPLACEMENT_MAP: stub_replacement_map,
+        COL_TEXT: "Alice told Alice's manager that Alice would be late.",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] told [[Alice|first_name]]'s manager.",
+    }
+    result = _apply_direct_replacements(row)
+    assert "Alice" not in result[COL_PREREPLACE_TEXT]
+    assert "Alice" not in result[COL_PREREPLACE_TAGGED_TEXT]
+
+
+def test_apply_direct_replacements_passthrough_when_no_replace_entities() -> None:
     disposition = {
         "sensitivity_disposition": [
             {
@@ -127,82 +198,36 @@ def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> 
                 "sensitivity": "low",
                 "entity_label": "city",
                 "entity_value": "Portland",
-                "protection_reason": "Not identifying alone",
+                "protection_reason": "Quasi-identifier",
                 "protection_method_suggestion": "leave_as_is",
                 "combined_risk_level": "low",
             }
         ]
     }
-    row = {COL_SENSITIVITY_DISPOSITION: disposition}
-    result = _format_rewrite_disposition_block(row)
-    assert result[COL_REWRITE_DISPOSITION_BLOCK] == []
+    row = {
+        COL_SENSITIVITY_DISPOSITION: disposition,
+        COL_REPLACEMENT_MAP: {"replacements": []},
+        COL_TEXT: "She lives in Portland.",
+        COL_TAGGED_TEXT: "She lives in [[Portland|city]].",
+    }
+    result = _apply_direct_replacements(row)
+    assert result[COL_PREREPLACE_TEXT] == "She lives in Portland."
+    assert result[COL_PREREPLACE_TAGGED_TEXT] == "She lives in [[Portland|city]]."
 
 
-# ---------------------------------------------------------------------------
-# Tests: _filter_replacement_map_for_prompt
-# ---------------------------------------------------------------------------
-
-
-def test_filter_replacement_map_keeps_only_replace_method_entities(
+def test_apply_direct_replacements_accepts_schema_instance(
     stub_sensitivity_disposition: dict,
     stub_replacement_map: dict,
 ) -> None:
-    disposition_block = [
-        {
-            "entity_label": "first_name",
-            "entity_value": "Alice",
-            "sensitivity": "high",
-            "protection_method_suggestion": "replace",
-            "protection_reason": "Direct identifier",
-        }
-    ]
-    row = {
-        COL_REPLACEMENT_MAP: stub_replacement_map,
-        COL_REWRITE_DISPOSITION_BLOCK: disposition_block,
-    }
-    result = _filter_replacement_map_for_prompt(row)
-    filtered = result[COL_REPLACEMENT_MAP_FOR_PROMPT]
-    assert len(filtered["replacements"]) == 1
-    assert filtered["replacements"][0]["original"] == "Alice"
-
-
-def test_filter_replacement_map_empty_when_no_replace_method() -> None:
-    disposition_block = [
-        {
-            "entity_label": "city",
-            "entity_value": "Portland",
-            "sensitivity": "low",
-            "protection_method_suggestion": "generalize",
-            "protection_reason": "Quasi-identifier",
-        }
-    ]
-    row = {
-        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Portland", "label": "city", "synthetic": "Seattle"}]},
-        COL_REWRITE_DISPOSITION_BLOCK: disposition_block,
-    }
-    result = _filter_replacement_map_for_prompt(row)
-    assert result[COL_REPLACEMENT_MAP_FOR_PROMPT]["replacements"] == []
-
-
-def test_filter_replacement_map_accepts_schema_instance(
-    stub_replacement_map: dict,
-) -> None:
-    disposition_block = [
-        {
-            "entity_label": "first_name",
-            "entity_value": "Alice",
-            "sensitivity": "high",
-            "protection_method_suggestion": "replace",
-            "protection_reason": "Direct identifier",
-        }
-    ]
     schema = EntityReplacementMapSchema.model_validate(stub_replacement_map)
     row = {
+        COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition,
         COL_REPLACEMENT_MAP: schema,
-        COL_REWRITE_DISPOSITION_BLOCK: disposition_block,
+        COL_TEXT: "Alice works here.",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] works here.",
     }
-    result = _filter_replacement_map_for_prompt(row)
-    assert len(result[COL_REPLACEMENT_MAP_FOR_PROMPT]["replacements"]) == 1
+    result = _apply_direct_replacements(row)
+    assert result[COL_PREREPLACE_TEXT] == "Maria works here."
 
 
 # ---------------------------------------------------------------------------
@@ -271,10 +296,14 @@ def test_get_rewrite_prompt_no_data_context_when_none(privacy_goal: PrivacyGoal)
 
 def test_get_rewrite_prompt_references_required_columns(privacy_goal: PrivacyGoal) -> None:
     prompt = _get_rewrite_prompt(privacy_goal)
-    assert _jinja(COL_TAGGED_TEXT) in prompt
+    assert _jinja(COL_PREREPLACE_TAGGED_TEXT) in prompt
     assert COL_TAG_NOTATION in prompt
     assert COL_REWRITE_DISPOSITION_BLOCK in prompt
-    assert _jinja(COL_REPLACEMENT_MAP_FOR_PROMPT) in prompt
+
+
+def test_get_rewrite_prompt_has_no_replacement_map_block(privacy_goal: PrivacyGoal) -> None:
+    prompt = _get_rewrite_prompt(privacy_goal)
+    assert "replacement_map" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +341,7 @@ def test_columns_full_rewrite_uses_rewrite_output_schema(
     assert full_rewrite_col.output_format == RewriteOutputSchema.model_json_schema()
 
 
-def test_columns_includes_custom_configs_for_disposition_and_text_extraction(
+def test_columns_includes_custom_configs_for_disposition_prereplace_and_text_extraction(
     stub_rewrite_model_selection: RewriteModelSelection,
     privacy_goal: PrivacyGoal,
 ) -> None:
@@ -320,5 +349,5 @@ def test_columns_includes_custom_configs_for_disposition_and_text_extraction(
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
     custom_names = {c.name for c in cols if isinstance(c, CustomColumnConfig)}
     assert COL_REWRITE_DISPOSITION_BLOCK in custom_names
-    assert COL_REPLACEMENT_MAP_FOR_PROMPT in custom_names
+    assert COL_PREREPLACE_TEXT in custom_names
     assert COL_REWRITTEN_TEXT in custom_names

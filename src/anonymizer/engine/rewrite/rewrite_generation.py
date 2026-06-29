@@ -14,13 +14,15 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_FULL_REWRITE,
+    COL_PREREPLACE_TAGGED_TEXT,
+    COL_PREREPLACE_TEXT,
     COL_REPLACEMENT_MAP,
-    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
+    COL_TEXT,
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
@@ -49,7 +51,7 @@ def _get_rewrite_prompt(privacy_goal: PrivacyGoal, data_summary: str | None = No
 
 <instructions>
 Your task is to rewrite the text below so that it protects the privacy of the entities described,
-following the entity protection rules and replacement map provided. The rewrite must read naturally as
+following the entity protection rules provided. The rewrite must read naturally as
 plain, fluent text — no tags, brackets, or annotation artifacts.
 
 Apply each protection decision consistently across ALL occurrences of the same entity value.
@@ -85,16 +87,8 @@ Protection decisions for each entity that needs protection:
 Entities NOT listed above may be kept as-is.
 </sensitivity_disposition>
 
-{% if <<REPLACEMENT_MAP_COL>>.replacements %}
-<replacement_map>
-Synthetic replacement values for entities with protection_method "replace":
-<<REPLACEMENT_MAP>>
-</replacement_map>
-{% endif %}
 <output_requirements>
 Apply each protection method as follows:
-- "replace": Substitute the entity value with the corresponding synthetic value from the replacement map.
-  Use the synthetic value consistently for every occurrence.
 - "generalize": Replace with a broader category or range
   (e.g., a specific city → "a city in the Pacific Northwest", exact age → "in their late 30s").
 - "remove": Omit the detail entirely. Rewrite the surrounding sentence so it reads naturally without it.
@@ -113,10 +107,8 @@ Rules:
             "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
             "<<DATA_CONTEXT>>": data_context_section,
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
-            "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+            "<<TAGGED_TEXT>>": _jinja(COL_PREREPLACE_TAGGED_TEXT),
             "<<REWRITE_DISPOSITION_BLOCK>>": COL_REWRITE_DISPOSITION_BLOCK,
-            "<<REPLACEMENT_MAP_COL>>": COL_REPLACEMENT_MAP_FOR_PROMPT,
-            "<<REPLACEMENT_MAP>>": _jinja(COL_REPLACEMENT_MAP_FOR_PROMPT),
         },
     )
 
@@ -128,11 +120,17 @@ Rules:
 
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
-    """Pre-filter and serialize protected entities (protection_method_suggestion != "leave_as_is") for the rewrite prompt."""
+    """Pre-filter and serialize protected entities for the rewrite prompt.
+
+    Excludes leave_as_is entities and replace entities (the latter are handled
+    programmatically by _apply_direct_replacements before the LLM sees the text).
+    """
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     block = []
     for e in disposition.sensitivity_disposition:
         if not e.needs_protection:
+            continue
+        if e.protection_method_suggestion == "replace":
             continue
         d = e.model_dump(mode="json")
         block.append(
@@ -148,29 +146,48 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-@custom_column_generator(required_columns=[COL_REPLACEMENT_MAP, COL_REWRITE_DISPOSITION_BLOCK])
-def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
-    """Keep only replacement entries for entities with protection_method_suggestion='replace'."""
-    disposition_block: list[dict] = row.get(COL_REWRITE_DISPOSITION_BLOCK, [])
+def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return (original, synthetic) pairs for entities with protection_method='replace'."""
+    disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     replace_values = {
-        e["entity_value"] for e in disposition_block if e.get("protection_method_suggestion") == "replace"
+        e.entity_value for e in disposition.sensitivity_disposition if e.protection_method_suggestion == "replace"
     }
     raw_map = row.get(COL_REPLACEMENT_MAP)
-    if raw_map is None:
-        if replace_values:
-            logger.warning(
-                "COL_REPLACEMENT_MAP is None but entities require replacement; prompt will have no replacements."
-            )
-        row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": []}
-        return row
+    if not raw_map or not replace_values:
+        return []
     raw_map = normalize_payload(raw_map)
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
-    filtered = [
-        replacement.model_dump() for replacement in parsed_map.replacements if replacement.original in replace_values
-    ]
-    row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": filtered}
+    return [(r.original, r.synthetic) for r in parsed_map.replacements if r.original in replace_values]
+
+
+@custom_column_generator(
+    required_columns=[COL_SENSITIVITY_DISPOSITION, COL_REPLACEMENT_MAP, COL_TEXT, COL_TAGGED_TEXT],
+    side_effect_columns=[COL_PREREPLACE_TAGGED_TEXT],
+)
+def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
+    """Programmatically replace direct identifier entities before the rewrite LLM call.
+
+    Applies each (original → synthetic) pair as a global string replacement on both
+    the plain text (COL_TEXT → COL_PREREPLACE_TEXT) and the tagged text
+    (COL_TAGGED_TEXT → COL_PREREPLACE_TAGGED_TEXT). Using str.replace() ensures all
+    occurrences are substituted, not just detected spans.
+    """
+    pairs = _get_replace_pairs(row)
+    plain_text = str(row.get(COL_TEXT, ""))
+    tagged_text = str(row.get(COL_TAGGED_TEXT, ""))
+    if not pairs:
+        if not row.get(COL_REPLACEMENT_MAP):
+            logger.warning("COL_REPLACEMENT_MAP is None but entities require replacement; no replacements applied.")
+        row[COL_PREREPLACE_TEXT] = plain_text
+        row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
+        return row
+    for original, synthetic in pairs:
+        plain_text = plain_text.replace(original, synthetic)
+        tagged_text = tagged_text.replace(original, synthetic)
+    row[COL_PREREPLACE_TEXT] = plain_text
+    row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
     return row
 
 
@@ -226,8 +243,8 @@ class RewriteGenerationWorkflow:
                 generator_function=_format_rewrite_disposition_block,
             ),
             CustomColumnConfig(
-                name=COL_REPLACEMENT_MAP_FOR_PROMPT,
-                generator_function=_filter_replacement_map_for_prompt,
+                name=COL_PREREPLACE_TEXT,
+                generator_function=_apply_direct_replacements,
             ),
             LLMStructuredColumnConfig(
                 name=COL_FULL_REWRITE,
