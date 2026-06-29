@@ -159,7 +159,14 @@ def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
-    return [(r.original, r.synthetic) for r in parsed_map.replacements if r.original in replace_values]
+    pairs = [(r.original, r.synthetic) for r in parsed_map.replacements if r.original in replace_values]
+    unmatched = replace_values - {original for original, _ in pairs}
+    if unmatched:
+        logger.warning(
+            "Replace entities have no entry in the replacement map and will pass through unprotected: %s",
+            sorted(unmatched),
+        )
+    return pairs
 
 
 @custom_column_generator(

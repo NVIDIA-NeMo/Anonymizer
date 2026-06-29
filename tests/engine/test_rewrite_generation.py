@@ -154,6 +154,31 @@ def test_format_rewrite_disposition_block_serializes_required_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _get_replace_pairs
+# ---------------------------------------------------------------------------
+
+
+def test_get_replace_pairs_warns_on_unmatched_replace_entity(
+    stub_sensitivity_disposition: dict,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from anonymizer.engine.rewrite.rewrite_generation import _get_replace_pairs
+
+    # Map exists but has no entry for "Alice"
+    row = {
+        COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition,
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Bob", "label": "first_name", "synthetic": "Carlos"}]},
+    }
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.generation"):
+        pairs = _get_replace_pairs(row)
+    assert pairs == []
+    assert "Alice" in caplog.text
+    assert "unprotected" in caplog.text
+
+
+# ---------------------------------------------------------------------------
 # Tests: _apply_direct_replacements
 # ---------------------------------------------------------------------------
 
