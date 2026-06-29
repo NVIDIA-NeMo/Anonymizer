@@ -178,7 +178,11 @@ def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
     plain_text = str(row.get(COL_TEXT, ""))
     tagged_text = str(row.get(COL_TAGGED_TEXT, ""))
     if not pairs:
-        if not row.get(COL_REPLACEMENT_MAP):
+        disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
+        has_replace_entities = any(
+            e.protection_method_suggestion == "replace" for e in disposition.sensitivity_disposition
+        )
+        if has_replace_entities and not row.get(COL_REPLACEMENT_MAP):
             logger.warning("COL_REPLACEMENT_MAP is None but entities require replacement; no replacements applied.")
         row[COL_PREREPLACE_TEXT] = plain_text
         row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
