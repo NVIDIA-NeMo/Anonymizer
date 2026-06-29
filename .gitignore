@@ -111,6 +111,7 @@ ai/tmp/
 .anonymizer-artifacts/
 benchmark-results/
 benchmark-runs/
+.wandb-private/
 docs/notebook_source/data/synth_bios_sample10_anonymized.csv
 
 # TLS certs and keys (if any)

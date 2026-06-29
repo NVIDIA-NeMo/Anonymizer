@@ -289,17 +289,29 @@ Each W&B benchmark run config includes sanitized benchmark metadata: suite/case
 counts, retry and execution flags, package/runtime versions, git
 commit/branch/dirty state, model source presence booleans, workload summaries,
 matrix entries, and one sanitized object per benchmark config. Workload
-metadata stores source kind, suffix, and a hash instead of the raw source.
+metadata stores source kind and suffix instead of the raw source.
 Config metadata records settings such as detection thresholds, entity-label
 count/hash, replacement strategy knobs, rewrite risk tolerance, repair settings,
 and booleans for prompt-bearing fields rather than their raw text.
 
 By default the runner logs only aggregate benchmark and measurement scalars.
 Passing `--wandb-log-tables` uploads sanitized measurement tables as W&B tables;
-this remains separate from DataDesigner trace sidecars. Raw input text, prompts,
-model responses, replacement maps, entity payloads, trace records, paths, URLs,
-data summaries, model/provider config payloads, and sensitive-looking run tags
-are filtered from W&B payloads.
+this remains separate from DataDesigner trace sidecars. Table uploads use a
+per-record-type field allowlist and discard unknown fields. The runner disables
+W&B console, code, Git, machine metadata, system statistics, and requirements
+capture, so benchmark tooling uploads only its projected config, scalar, and
+table payloads. Raw input text, prompts, model responses, replacement maps,
+entity payloads, trace records, paths, URLs, data summaries, model/provider
+config payloads, and suite `run_tags` are excluded. Use `--wandb-tags` for tags
+that are intentionally destined for W&B.
+
+Suite, workload, and config identifiers, Git branch names, and W&B routing
+fields are visible metadata. Keep these values free of customer data and other
+sensitive information.
+
+W&B writes local run state under `<benchmark-output>/.wandb-private`. The runner
+creates this directory with owner-only permissions before calling the W&B SDK.
+Keep the directory when an offline run must be synchronized later.
 
 The goal of W&B support is to get sanitized benchmark data into W&B. Workspaces,
 reports, views, and panels are presentation layers on top of that data. They

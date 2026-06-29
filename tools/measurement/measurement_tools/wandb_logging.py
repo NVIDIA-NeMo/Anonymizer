@@ -96,10 +96,112 @@ _STRING_SCALAR_FIELD_NAMES = frozenset(
         "stage",
         "status",
         "strategy",
-        "workflow_name",
     }
 )
-_MEAN_METRIC_FIELD_SUFFIXES = ("_score", "_rate", "_ratio", "_per_sec")
+_ALLOWED_DIMENSION_VALUES = {
+    "mode": frozenset({"replace", "rewrite"}),
+    "stage": frozenset(
+        {
+            "Anonymizer._run_internal",
+            "EntityDetectionWorkflow.run",
+            "ReplacementWorkflow.run",
+            "RewriteWorkflow.run",
+        }
+    ),
+    "status": frozenset({"completed", "error"}),
+    "strategy": frozenset({"annotate", "hash", "redact", "rewrite", "substitute"}),
+}
+_LAST_METRIC_FIELD_NAMES = _STRING_SCALAR_FIELD_NAMES
+_SUM_METRIC_FIELD_NAMES = frozenset(
+    {
+        "elapsed_sec",
+        "input_row_count",
+        "seed_row_count",
+        "output_row_count",
+        "failed_record_count",
+        "preview_num_records",
+        "column_count",
+        "observed_input_tokens",
+        "observed_output_tokens",
+        "observed_total_tokens",
+        "observed_reasoning_tokens",
+        "observed_successful_requests",
+        "observed_failed_requests",
+        "observed_total_requests",
+        "text_length_chars",
+        "text_length_tokens",
+        "final_entity_count",
+        "ground_truth_entity_count",
+        "entity_true_positive_count",
+        "entity_false_positive_count",
+        "entity_false_negative_count",
+        "entity_relaxed_gt_found_count",
+        "entity_relaxed_detected_tp_count",
+        "entity_relaxed_label_compatible_gt_found_count",
+        "entity_relaxed_label_compatible_detected_tp_count",
+        "replacement_count",
+        "replacement_duplicate_value_count",
+        "replacement_missing_final_entity_count",
+        "replacement_missing_final_value_count",
+        "replacement_synthetic_original_collision_count",
+        "replacement_synthetic_original_collision_value_count",
+        "original_value_leak_count",
+        "detected_candidate_count",
+        "validation_chunk_count",
+        "llm_calls_estimated_total",
+        "detection_invalid_entity_count",
+        "type_fidelity_invalid_replacement_count",
+        "relational_consistency_invalid_relation_count",
+        "attribute_fidelity_invalid_entity_count",
+    }
+)
+_MEAN_METRIC_FIELD_NAMES = frozenset(
+    {
+        "observed_failed_request_rate",
+        "input_rows_per_sec",
+        "output_rows_per_sec",
+        "observed_tokens_per_sec",
+        "observed_requests_per_sec",
+        "observed_tokens_per_successful_request",
+        "entity_precision",
+        "entity_recall",
+        "entity_f1",
+        "utility_score",
+        "leakage_mass",
+        "weighted_leakage_rate",
+        "repair_iterations",
+    }
+)
+_EVALUATION_BOOL_FIELDS = frozenset(
+    {"detection_valid", "type_fidelity_valid", "relational_consistency_valid", "attribute_fidelity_valid"}
+)
+_TRACE_COVERAGE_COUNT_FIELDS = frozenset(
+    {"traced_column_count", "native_trace_column_count", "private_trace_column_count", "unsupported_column_count"}
+)
+_TABLE_NUMERIC_FIELDS = _SUM_METRIC_FIELD_NAMES | _MEAN_METRIC_FIELD_NAMES | _TRACE_COVERAGE_COUNT_FIELDS
+_TABLE_RECORD_NUMERIC_FIELDS = _TABLE_NUMERIC_FIELDS - {"text_length_chars", "text_length_tokens"}
+_TABLE_FIELDS_BY_RECORD_TYPE = {
+    "run": frozenset({"record_type", "mode", "strategy"}) | _TABLE_NUMERIC_FIELDS,
+    "stage": frozenset({"record_type", "stage", "status"}) | _TABLE_NUMERIC_FIELDS,
+    "record": frozenset(
+        {
+            "record_type",
+            "mode",
+            "strategy",
+            "row_index",
+            "record_hash",
+            "text_length_chars_bucket",
+            "text_length_tokens_bucket",
+        }
+    )
+    | _TABLE_RECORD_NUMERIC_FIELDS,
+    "evaluation_record": frozenset({"record_type", "mode", "strategy", "row_index", "record_hash"})
+    | _TABLE_RECORD_NUMERIC_FIELDS
+    | _EVALUATION_BOOL_FIELDS,
+    "ndd_workflow": frozenset({"record_type", "status"}) | _TABLE_NUMERIC_FIELDS,
+    "model_workflow": frozenset({"record_type", "status"}) | _TABLE_NUMERIC_FIELDS,
+    "dd_trace_coverage": frozenset({"record_type"}) | _TRACE_COVERAGE_COUNT_FIELDS,
+}
 
 
 def summarize_benchmark_cases(cases: list[Any]) -> dict[str, float | int]:
@@ -147,14 +249,16 @@ def aggregate_measurement_scalars(records: list[dict[str, Any]]) -> dict[str, fl
     numeric_means: dict[str, list[float]] = {}
     for record in records:
         for key, value in extract_scalar_metrics(record).items():
+            field_name = key.rsplit("/", maxsplit=1)[-1]
             if isinstance(value, bool | str):
-                aggregated[key] = value
+                if field_name in _LAST_METRIC_FIELD_NAMES:
+                    aggregated[key] = value
                 continue
             numeric_value = float(value)
-            if _metric_uses_mean_aggregation(key):
+            if field_name in _MEAN_METRIC_FIELD_NAMES:
                 mean_key = f"{key}_mean"
                 numeric_means.setdefault(mean_key, []).append(numeric_value)
-            else:
+            elif field_name in _SUM_METRIC_FIELD_NAMES:
                 numeric_sums[key] = numeric_sums.get(key, 0.0) + numeric_value
     for key, total in numeric_sums.items():
         aggregated[key] = total
@@ -162,11 +266,6 @@ def aggregate_measurement_scalars(records: list[dict[str, Any]]) -> dict[str, fl
         aggregated[key] = sum(values) / len(values)
     aggregated[f"{_SCALAR_METRIC_PREFIX}/record_count"] = len(records)
     return aggregated
-
-
-def _metric_uses_mean_aggregation(metric_name: str) -> bool:
-    field_name = metric_name.rsplit("/", maxsplit=1)[-1]
-    return field_name.endswith(_MEAN_METRIC_FIELD_SUFFIXES)
 
 
 def log_benchmark_measurements(
@@ -181,18 +280,18 @@ def log_benchmark_measurements(
     if wandb.run is None:
         return
 
-    metrics = summarize_benchmark_cases(cases)
-    if measurement_path.exists() and measurement_path.stat().st_size > 0:
-        records = _read_measurement_records(measurement_path)
-        metrics.update(aggregate_measurement_scalars(records))
-        _assert_privacy_guardrails(metrics)
-        if log_tables:
-            _log_sanitized_tables(wandb, records)
-    elif table_dir is not None and log_tables:
-        _log_sanitized_tables_from_dir(wandb, table_dir)
-
     try:
-        wandb.log(metrics)
+        metrics = summarize_benchmark_cases(cases)
+        tables: dict[str, Any] = {}
+        if measurement_path.exists() and measurement_path.stat().st_size > 0:
+            records = _read_measurement_records(measurement_path)
+            metrics.update(aggregate_measurement_scalars(records))
+            _assert_privacy_guardrails(metrics)
+            if log_tables:
+                tables = _build_sanitized_tables(wandb, records)
+        elif table_dir is not None and log_tables:
+            tables = _build_sanitized_tables_from_dir(wandb, table_dir)
+        wandb.log({**metrics, **tables})
         _update_wandb_summary(wandb, metrics)
     except Exception as exc:  # noqa: BLE001 -- observability is best-effort
         logger.warning("Failed to log benchmark measurements to W&B: %s", exc)
@@ -222,51 +321,97 @@ def _coerce_scalar(value: Any, *, field_name: str) -> float | int | bool | str |
     if isinstance(value, str):
         if field_name not in _STRING_SCALAR_FIELD_NAMES:
             return None
-        if len(value) > 256 or "://" in value or value.startswith("/"):
-            return None
-        return value
+        return _safe_dimension_value(field_name, value)
     return None
 
 
 def _log_sanitized_tables(wandb: Any, records: list[dict[str, Any]]) -> None:
+    tables = _build_sanitized_tables(wandb, records)
+    if tables:
+        wandb.log(tables)
+
+
+def _build_sanitized_tables(wandb: Any, records: list[dict[str, Any]]) -> dict[str, Any]:
     dataframe = pd.DataFrame(records)
     if "record_type" not in dataframe.columns:
-        return
+        return {}
+    tables: dict[str, Any] = {}
     for record_type, rows in dataframe.groupby("record_type", sort=False):
         if record_type in PRIVACY_BLOCKED_RECORD_TYPES:
             continue
         if record_type not in PRIVACY_ALLOWED_RECORD_TYPES:
             continue
         table = normalize_table(rows)
-        table = _drop_blocked_columns(table)
-        if table.empty:
+        table = _project_table(table, record_type=record_type)
+        if table.empty or list(table.columns) == ["record_type"]:
             continue
-        wandb.log({f"measurement_table/{record_type}": wandb.Table(dataframe=table)})
+        tables[f"measurement_table/{record_type}"] = wandb.Table(dataframe=table)
+    return tables
 
 
 def _log_sanitized_tables_from_dir(wandb: Any, table_dir: Path) -> None:
+    tables = _build_sanitized_tables_from_dir(wandb, table_dir)
+    if tables:
+        wandb.log(tables)
+
+
+def _build_sanitized_tables_from_dir(wandb: Any, table_dir: Path) -> dict[str, Any]:
     if not table_dir.is_dir():
-        return
+        return {}
+    tables: dict[str, Any] = {}
     for parquet_path in sorted(table_dir.glob("*.parquet")):
         record_type = parquet_path.stem
         if record_type in PRIVACY_BLOCKED_RECORD_TYPES:
             continue
         if record_type not in PRIVACY_ALLOWED_RECORD_TYPES:
             continue
-        table = _drop_blocked_columns(pd.read_parquet(parquet_path))
-        if table.empty:
+        table = _project_table(pd.read_parquet(parquet_path), record_type=record_type)
+        if table.empty or list(table.columns) == ["record_type"]:
             continue
-        wandb.log({f"measurement_table/{record_type}": wandb.Table(dataframe=table)})
+        tables[f"measurement_table/{record_type}"] = wandb.Table(dataframe=table)
+    return tables
 
 
-def _drop_blocked_columns(table: pd.DataFrame) -> pd.DataFrame:
-    blocked = {column for column in table.columns if _column_is_blocked(column)}
-    if not blocked:
-        return table
-    return table.drop(columns=sorted(blocked), errors="ignore")
+def _project_table(table: pd.DataFrame, *, record_type: str) -> pd.DataFrame:
+    if any(not isinstance(column, str) for column in table.columns):
+        raise ValueError(f"W&B table {record_type!r} contains a non-string column name")
+    allowed = _TABLE_FIELDS_BY_RECORD_TYPE.get(record_type, frozenset())
+    projected = table.loc[:, [column for column in table.columns if column in allowed]].copy()
+    for field_name in _STRING_SCALAR_FIELD_NAMES & set(projected.columns):
+        projected[field_name] = projected[field_name].map(
+            lambda value: _safe_dimension_value(field_name, value) if isinstance(value, str) else None
+        )
+    for field_name in {"text_length_chars_bucket", "text_length_tokens_bucket"} & set(projected.columns):
+        projected[field_name] = projected[field_name].map(_safe_size_bucket)
+    if "record_hash" in projected.columns:
+        projected["record_hash"] = projected["record_hash"].map(_safe_record_hash)
+    return projected.dropna(axis="columns", how="all")
+
+
+def _safe_dimension_value(field_name: str, value: str) -> str | None:
+    allowed = _ALLOWED_DIMENSION_VALUES.get(field_name)
+    if allowed is None:
+        return None
+    comparison = value.casefold() if field_name == "strategy" else value
+    return value if comparison in allowed else None
+
+
+def _safe_size_bucket(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value if value in {"0", "1-127", "128-511", "512-2047", "2048-8191", "8192+"} else None
+
+
+def _safe_record_hash(value: Any) -> str | None:
+    if not isinstance(value, str) or len(value) != 64:
+        return None
+    return value if all(character in "0123456789abcdef" for character in value.lower()) else None
 
 
 def _column_is_blocked(column: str) -> bool:
+    normalized_column = column.lower().replace("-", "_")
+    if normalized_column == "run_tags" or normalized_column.startswith(("run_tags.", "run_tags[")):
+        return True
     parts = _field_name_parts(column)
     return any(part in PRIVACY_BLOCKED_FIELD_NAMES or _part_is_path_like(part) for part in parts)
 

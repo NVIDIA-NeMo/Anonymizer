@@ -9,6 +9,7 @@ Anonymizer SDK and product CLI do not auto-initialize W&B.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -26,6 +27,84 @@ WANDB_SANITIZER_VERSION = 1
 _WANDB_INSTALL_HINT = "Install the optional measurement dependency group: uv sync --group measurement"
 _SENSITIVE_RUN_TAG_PARTS = frozenset({"api_key", "credential", "credentials", "password", "secret", "token"})
 _SENSITIVE_RUN_TAG_VALUE_PREFIXES = ("sk-", "ghp_", "github_pat_", "glpat-", "xoxb-", "xoxp-", "xoxa-")
+_BENCHMARK_METADATA_FIELDS = frozenset(
+    {
+        "metadata_schema_version",
+        "suite_schema_version",
+        "wandb_sanitizer_version",
+        "measurement_schema_version",
+        "suite_id",
+        "workload_count",
+        "config_count",
+        "matrix_entry_count",
+        "case_count",
+        "case_retries",
+        "case_retry_backoff_sec",
+        "suite_file_hash",
+    }
+)
+_EXECUTION_METADATA_FIELDS = frozenset({"backend", "export", "fail_fast", "dd_trace", "dd_task_trace"})
+_SLURM_METADATA_FIELDS = frozenset(
+    {"job_id", "array_job_id", "array_task_id", "array_task_count", "restart_count", "ntasks", "job_num_nodes"}
+)
+_RUNTIME_METADATA_FIELDS = frozenset(
+    {
+        "anonymizer_version",
+        "datadesigner_version",
+        "wandb_version",
+        "python_version",
+        "platform_machine",
+        "platform_system",
+    }
+)
+_GIT_METADATA_FIELDS = frozenset({"commit", "branch", "dirty"})
+_MODEL_SOURCE_METADATA_FIELDS = frozenset({"has_model_configs", "has_model_providers", "has_artifact_path"})
+_WORKLOAD_METADATA_FIELDS = frozenset(
+    {"id", "text_column", "has_id_column", "has_data_summary", "row_limit", "row_offset"}
+)
+_SOURCE_METADATA_FIELDS = frozenset({"kind", "suffix"})
+_CONFIG_METADATA_FIELDS = frozenset({"id", "mode", "evaluate", "emit_telemetry"})
+_DETECT_METADATA_FIELDS = frozenset(
+    {
+        "entity_label_source",
+        "entity_label_count",
+        "entity_label_set_hash",
+        "gliner_threshold",
+        "validation_max_entities_per_call",
+        "validation_excerpt_window_chars",
+    }
+)
+_REPLACE_METADATA_FIELDS = frozenset(
+    {"strategy", "normalize_label", "algorithm", "digest_length", "has_format_template", "has_instructions"}
+)
+_REWRITE_METADATA_FIELDS = frozenset(
+    {
+        "risk_tolerance",
+        "max_repair_iterations",
+        "strict_entity_protection",
+        "has_privacy_goal",
+        "has_protect",
+        "has_preserve",
+        "has_instructions",
+    }
+)
+_MATRIX_METADATA_FIELDS = frozenset({"workload", "config", "repetitions"})
+_NUMERIC_SWEEP_PARAMETER_TAILS = frozenset(
+    {
+        "detect_gliner_threshold",
+        "detect_validation_excerpt_window_chars",
+        "detect_validation_max_entities_per_call",
+        "replace_digest_length",
+        "rewrite_max_repair_iterations",
+    }
+)
+_BOOLEAN_SWEEP_PARAMETER_TAILS = frozenset(
+    {"emit_telemetry", "evaluate", "replace_normalize_label", "rewrite_strict_entity_protection"}
+)
+_ENUM_SWEEP_PARAMETER_VALUES = {
+    "replace_algorithm": frozenset({"md5", "sha1", "sha256"}),
+    "rewrite_risk_tolerance": frozenset({"high", "low", "minimal", "moderate"}),
+}
 
 
 class WandbMode(StrEnum):
@@ -190,14 +269,14 @@ def initialize_benchmark_wandb_run(
 
     wandb = require_wandb()
     if wandb.run is not None:
-        logger.info("Reusing existing W&B run: %s", wandb.run.id)
-        return False
+        raise ValueError("benchmark logging cannot reuse an active W&B run")
 
     project = settings.effective_wandb_project
     logger.info("WANDB_MODE: %s", settings.wandb_mode.value)
     logger.info("WANDB_PROJECT: %s", project)
 
-    init_kwargs = _wandb_init_kwargs(wandb, settings, suite_id=suite_id, output_dir=output_dir, metadata=metadata)
+    staging_dir = _prepare_wandb_staging_dir(output_dir)
+    init_kwargs = _wandb_init_kwargs(wandb, settings, suite_id=suite_id, staging_dir=staging_dir, metadata=metadata)
     try:
         wandb.init(**init_kwargs)
         _define_benchmark_metrics(wandb)
@@ -219,15 +298,25 @@ def _wandb_init_kwargs(
     settings: WandbSettings,
     *,
     suite_id: str,
-    output_dir: Path,
+    staging_dir: Path,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     init_kwargs = {
         "project": settings.effective_wandb_project,
         "name": settings.wandb_run_name or _default_run_name(suite_id, metadata),
         "mode": settings.wandb_mode.value,
-        "settings": wandb.Settings(console="wrap"),
-        "dir": str(output_dir),
+        "settings": wandb.Settings(
+            console="off",
+            disable_code=True,
+            disable_git=True,
+            host="redacted",
+            save_code=False,
+            x_disable_machine_info=True,
+            x_disable_meta=True,
+            x_disable_stats=True,
+            x_save_requirements=False,
+        ),
+        "dir": str(staging_dir),
         "group": settings.wandb_group or suite_id,
         "job_type": settings.wandb_job_type or "benchmark",
     }
@@ -237,6 +326,15 @@ def _wandb_init_kwargs(
     if tags:
         init_kwargs["tags"] = tags
     return init_kwargs
+
+
+def _prepare_wandb_staging_dir(output_dir: Path) -> Path:
+    staging_dir = output_dir / ".wandb-private"
+    if staging_dir.is_symlink():
+        raise ValueError(f"W&B staging directory cannot be a symlink: {staging_dir}")
+    staging_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    staging_dir.chmod(0o700)
+    return staging_dir
 
 
 def _benchmark_wandb_config(
@@ -251,12 +349,11 @@ def _benchmark_wandb_config(
         "wandb_mode": settings.wandb_mode.value,
         "wandb_log_tables": settings.wandb_log_tables,
     }
+    del run_tags
     if metadata:
-        sanitized_metadata = _sanitize_wandb_config(metadata)
-        config.update(_wandb_comparer_config(sanitized_metadata))
-        config.update(sanitized_metadata)
-    if run_tags:
-        config["run_tags"] = _scalar_run_tags(run_tags)
+        projected_metadata = _project_wandb_metadata(metadata)
+        config.update(_wandb_comparer_config(projected_metadata))
+        config.update(projected_metadata)
     return config
 
 
@@ -302,26 +399,6 @@ def finalize_benchmark_wandb_run(
     finally:
         if run_created:
             finish_benchmark_wandb_run()
-
-
-def _scalar_run_tags(run_tags: dict[str, Any]) -> dict[str, str | int | float | bool]:
-    sanitized: dict[str, str | int | float | bool] = {}
-    for key, value in run_tags.items():
-        if _run_tag_key_is_sensitive(key):
-            continue
-        if isinstance(value, bool | int | float):
-            sanitized[key] = value
-        elif isinstance(value, str) and _run_tag_string_is_safe(value):
-            sanitized[key] = value
-    return sanitized
-
-
-def _run_tag_key_is_sensitive(key: str) -> bool:
-    normalized = key.lower().replace("-", "_").replace(".", "_")
-    parts = {part for part in normalized.split("_") if part}
-    if "api" in parts and "key" in parts:
-        return True
-    return bool(parts & _SENSITIVE_RUN_TAG_PARTS)
 
 
 def _run_tag_string_is_safe(value: str) -> bool:
@@ -469,38 +546,113 @@ def _metadata_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
-def _sanitize_wandb_config(value: Any, *, key: str = "") -> Any:
-    if _config_key_is_sensitive(key):
-        return None
+def _project_wandb_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    _set_projected_mapping(projected, metadata, "benchmark", _BENCHMARK_METADATA_FIELDS)
+    _set_projected_execution(projected, metadata)
+    _set_projected_mapping(projected, metadata, "runtime", _RUNTIME_METADATA_FIELDS)
+    _set_projected_mapping(projected, metadata, "git", _GIT_METADATA_FIELDS)
+    _set_projected_mapping(projected, metadata, "model_sources", _MODEL_SOURCE_METADATA_FIELDS)
+    _set_projected_sequence(projected, metadata, "workloads", _project_workload_metadata)
+    _set_projected_sequence(projected, metadata, "configs", _project_config_metadata)
+    _set_projected_sequence(projected, metadata, "matrix", lambda item: _project_fields(item, _MATRIX_METADATA_FIELDS))
+    projected.update(_project_sweep_metadata(metadata))
+    return projected
+
+
+def _set_projected_mapping(
+    target: dict[str, Any], source: dict[str, Any], key: str, allowed_fields: frozenset[str]
+) -> None:
+    value = source.get(key)
     if isinstance(value, dict):
-        sanitized = {
-            item_key: _sanitize_wandb_config(item_value, key=item_key)
-            for item_key, item_value in value.items()
-            if not _config_key_is_sensitive(item_key)
-        }
-        return {item_key: item_value for item_key, item_value in sanitized.items() if item_value is not None}
+        target[key] = _project_fields(value, allowed_fields)
+
+
+def _set_projected_sequence(target: dict[str, Any], source: dict[str, Any], key: str, projector: Any) -> None:
+    value = source.get(key)
     if isinstance(value, list):
-        return [item for item in (_sanitize_wandb_config(item, key=key) for item in value) if item is not None]
-    if isinstance(value, str):
-        if _config_key_is_path_like(key):
-            return None
-        return value if _run_tag_string_is_safe(value) else None
-    if value is None or isinstance(value, bool | int | float):
+        target[key] = [projector(item) for item in value if isinstance(item, dict)]
+
+
+def _set_projected_execution(target: dict[str, Any], source: dict[str, Any]) -> None:
+    execution = source.get("execution")
+    if not isinstance(execution, dict):
+        return
+    projected = _project_fields(execution, _EXECUTION_METADATA_FIELDS)
+    slurm = execution.get("slurm")
+    if isinstance(slurm, dict):
+        projected["slurm"] = _project_fields(slurm, _SLURM_METADATA_FIELDS)
+    target["execution"] = projected
+
+
+def _project_workload_metadata(workload: dict[str, Any]) -> dict[str, Any]:
+    projected = _project_fields(workload, _WORKLOAD_METADATA_FIELDS)
+    source = workload.get("source")
+    if isinstance(source, dict):
+        projected["source"] = _project_fields(source, _SOURCE_METADATA_FIELDS)
+    return projected
+
+
+def _project_config_metadata(config: dict[str, Any]) -> dict[str, Any]:
+    projected = _project_fields(config, _CONFIG_METADATA_FIELDS)
+    for key, fields in (
+        ("detect", _DETECT_METADATA_FIELDS),
+        ("replace", _REPLACE_METADATA_FIELDS),
+        ("rewrite", _REWRITE_METADATA_FIELDS),
+    ):
+        value = config.get(key)
+        if isinstance(value, dict):
+            projected[key] = _project_fields(value, fields)
+    return projected
+
+
+def _project_sweep_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    sweep_id = _safe_projected_scalar(metadata.get("sweep_id"))
+    arm_id = _safe_projected_scalar(metadata.get("sweep_arm_id"))
+    if not isinstance(sweep_id, str) or not isinstance(arm_id, str):
+        return {}
+    params = metadata.get("sweep_params")
+    safe_params = {
+        key: safe
+        for key, value in (params.items() if isinstance(params, dict) else ())
+        if isinstance(key, str) and (safe := _safe_sweep_parameter(key, value)) is not None
+    }
+    projected: dict[str, Any] = {
+        "sweep_id": sweep_id,
+        "sweep_arm_id": arm_id,
+        "sweep": {"id": sweep_id, "arm_id": arm_id, "params": safe_params},
+        "sweep_params": safe_params,
+    }
+    projected.update({f"sweep_param_{key}": value for key, value in safe_params.items()})
+    return projected
+
+
+def _safe_sweep_parameter(key: str, value: Any) -> str | int | float | bool | None:
+    if not key.startswith("configs_") or not key.isascii() or any(not (char.isalnum() or char == "_") for char in key):
+        return None
+    if any(key.endswith(f"_{tail}") for tail in _NUMERIC_SWEEP_PARAMETER_TAILS):
+        return (
+            value if isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value) else None
+        )
+    if any(key.endswith(f"_{tail}") for tail in _BOOLEAN_SWEEP_PARAMETER_TAILS):
+        return value if isinstance(value, bool) else None
+    for tail, allowed_values in _ENUM_SWEEP_PARAMETER_VALUES.items():
+        if key.endswith(f"_{tail}"):
+            return value if isinstance(value, str) and value in allowed_values else None
+    return None
+
+
+def _project_fields(source: dict[str, Any], allowed_fields: frozenset[str]) -> dict[str, Any]:
+    return {
+        key: safe
+        for key, value in source.items()
+        if key in allowed_fields and (safe := _safe_projected_scalar(value)) is not None
+    }
+
+
+def _safe_projected_scalar(value: Any) -> str | int | float | bool | None:
+    if isinstance(value, bool | int | float):
         return value
-    return str(value)
-
-
-def _config_key_is_sensitive(key: str) -> bool:
-    if not key:
-        return False
-    normalized = key.lower().replace("-", "_").replace(".", "_")
-    parts = {part for part in normalized.split("_") if part}
-    if "api" in parts and "key" in parts:
-        return True
-    return bool(parts & _SENSITIVE_RUN_TAG_PARTS)
-
-
-def _config_key_is_path_like(key: str) -> bool:
-    normalized = key.lower().replace("-", "_").replace(".", "_")
-    parts = {part for part in normalized.split("_") if part}
-    return bool(parts & {"path", "url"})
+    if isinstance(value, str) and _run_tag_string_is_safe(value):
+        return value
+    return None

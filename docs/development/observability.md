@@ -109,10 +109,20 @@ uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online
 ```
 
 The runner uploads aggregate benchmark and measurement scalar fields by
-default. `--wandb-log-tables` also uploads sanitized measurement tables. The
-sanitizer excludes raw text, prompts, model responses, replacement maps, entity
-payloads, DataDesigner trace records, local paths, URLs, provider payloads, and
-sensitive-looking run tags.
+default. `--wandb-log-tables` also uploads measurement tables projected through
+per-record-type field allowlists. The W&B integration disables console, code,
+Git, machine metadata, system statistics, and requirements capture. Its config,
+scalar, and table projections exclude raw text, prompts, model responses,
+replacement maps, entity payloads, DataDesigner trace records, local paths,
+URLs, provider payloads, and suite `run_tags`. Use W&B-specific CLI tags for
+metadata that should leave the benchmark environment.
+
+Suite, workload, and config identifiers, Git branch names, and W&B routing
+fields are visible metadata. Do not place customer data or other sensitive
+information in these values.
+
+The runner stages W&B files under `<benchmark-output>/.wandb-private` with
+owner-only permissions. Offline runs retain this directory for later sync.
 
 The main goal is benchmark data in W&B. Workspaces, reports, project views, and
 panels are presentation layers. They can be edited in W&B, regenerated with the

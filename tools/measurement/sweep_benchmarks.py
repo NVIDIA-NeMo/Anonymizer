@@ -453,13 +453,19 @@ def _safe_param_name(path: str) -> str:
 
 def _rebase_suite_paths(suite: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     rebased = copy.deepcopy(suite)
-    for key in ("model_configs", "model_providers", "artifact_path"):
-        if isinstance(rebased.get(key), str):
+    for key in ("model_configs", "model_providers"):
+        if isinstance(rebased.get(key), str) and _is_yaml_file_reference(rebased[key]):
             rebased[key] = str(_resolve_path(rebased[key], base_dir))
+    if isinstance(rebased.get("artifact_path"), str):
+        rebased["artifact_path"] = str(_resolve_path(rebased["artifact_path"], base_dir))
     for workload in rebased.get("workloads", []):
         if isinstance(workload, dict) and isinstance(workload.get("source"), str):
             workload["source"] = _rebase_source(workload["source"], base_dir)
     return rebased
+
+
+def _is_yaml_file_reference(value: str) -> bool:
+    return "\n" not in value and Path(value).suffix.lower() in {".yaml", ".yml"}
 
 
 def _rebase_source(source: str, base_dir: Path) -> str:

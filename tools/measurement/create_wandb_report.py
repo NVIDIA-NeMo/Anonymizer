@@ -56,7 +56,7 @@ _NDD_TOKEN_METRICS = [
     "measurement/ndd_workflow/observed_input_tokens",
     "measurement/ndd_workflow/observed_output_tokens",
     "measurement/ndd_workflow/observed_total_tokens",
-    "measurement/ndd_workflow/observed_tokens_per_successful_request",
+    "measurement/ndd_workflow/observed_tokens_per_successful_request_mean",
 ]
 _NDD_THROUGHPUT_METRICS = [
     "measurement/ndd_workflow/elapsed_sec",
@@ -67,6 +67,9 @@ _NDD_THROUGHPUT_METRICS = [
 ]
 _RECORD_PRIVACY_METRICS = [
     "measurement/record/final_entity_count",
+    "measurement/record/entity_precision_mean",
+    "measurement/record/entity_recall_mean",
+    "measurement/record/entity_f1_mean",
     "measurement/record/original_value_leak_count",
     "measurement/record/leakage_mass_mean",
     "measurement/record/weighted_leakage_rate_mean",
@@ -76,7 +79,7 @@ _RECORD_PRIVACY_METRICS = [
 ]
 _REWRITE_UTILITY_METRICS = [
     "measurement/record/utility_score_mean",
-    "measurement/record/repair_iterations",
+    "measurement/record/repair_iterations_mean",
 ]
 _REPLACEMENT_QUALITY_METRICS = [
     "measurement/record/replacement_count",
@@ -300,7 +303,7 @@ def build_benchmark_workspace(
 ) -> Any:
     """Build an unsaved manual W&B workspace for benchmark runs."""
     ws, wr = require_wandb_workspace_sdk()
-    groupby = "config:sweep_arm_id" if group else None
+    groupby = wr.Config("sweep_arm_id") if group else None
     return ws.Workspace(
         entity=project_path.entity,
         project=project_path.project,
@@ -357,7 +360,7 @@ def build_benchmark_group_report(
         project=project_path.project,
         name="Benchmark sweep",
         filters=[expr.Metric("Group") == group],
-        groupby=["config:sweep_arm_id"],
+        groupby=["config.sweep_arm_id"],
         pinned_columns=["Name", "State", "CreatedTimestamp", "Group", "Tags"],
         visible_columns=_sweep_visible_columns(sweep_param_columns),
     )
@@ -391,7 +394,7 @@ def _sweep_visible_columns(sweep_param_columns: list[str] | None = None) -> list
 
 
 def _sweep_panels(wr: Any) -> list[Any]:
-    return _benchmark_panels(wr, groupby="config:sweep_arm_id")
+    return _benchmark_panels(wr, groupby=wr.Config("sweep_arm_id"))
 
 
 def _benchmark_workspace_settings(ws: Any) -> Any:
@@ -420,7 +423,7 @@ def _benchmark_run_groupby(ws: Any, *, group: str | None) -> list[Any]:
     return [ws.Config("sweep_arm_id")] if group else [ws.Metric("Group")]
 
 
-def _benchmark_workspace_sections(ws: Any, wr: Any, *, groupby: str | None) -> list[Any]:
+def _benchmark_workspace_sections(ws: Any, wr: Any, *, groupby: Any | None) -> list[Any]:
     return [
         ws.Section(name="Benchmark Summary", panels=_summary_workspace_panels(wr, groupby=groupby), is_open=True),
         ws.Section(name="Privacy", panels=_privacy_workspace_panels(wr, groupby=groupby), is_open=True),
@@ -431,7 +434,7 @@ def _benchmark_workspace_sections(ws: Any, wr: Any, *, groupby: str | None) -> l
     ]
 
 
-def _summary_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+def _summary_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
     return [
         *(
             wr.ScalarChart(title=_metric_title(metric), metric=metric, groupby_aggfunc="mean")
@@ -442,18 +445,18 @@ def _summary_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
     ]
 
 
-def _privacy_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+def _privacy_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
     return [
         _bar_panel(wr, "Privacy Outcomes", _RECORD_PRIVACY_METRICS, groupby=groupby),
         _bar_panel(wr, "Replacement Quality", _REPLACEMENT_QUALITY_METRICS, groupby=groupby),
     ]
 
 
-def _utility_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+def _utility_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
     return [_bar_panel(wr, "Rewrite Utility", _REWRITE_UTILITY_METRICS, groupby=groupby)]
 
 
-def _cost_workspace_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+def _cost_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
     return [
         _bar_panel(wr, "NDD Request Health", _NDD_REQUEST_HEALTH_METRICS, groupby=groupby),
         _bar_panel(wr, "NDD Token Usage", _NDD_TOKEN_METRICS, groupby=groupby),
@@ -467,7 +470,10 @@ def _comparison_workspace_panels(wr: Any) -> list[Any]:
         wr.RunComparer(diff_only=True),
         wr.ParallelCoordinatesPlot(
             title="Sweep Parameter Tradeoffs",
-            columns=[wr.ParallelCoordinatesPlotColumn(metric=column) for column in _WORKSPACE_COMPARISON_COLUMNS],
+            columns=[
+                wr.ParallelCoordinatesPlotColumn(metric=_workspace_metric_accessor(wr, column))
+                for column in _WORKSPACE_COMPARISON_COLUMNS
+            ],
         ),
         wr.ParameterImportancePlot(with_respect_to="measurement/record/weighted_leakage_rate_mean"),
     ]
@@ -477,18 +483,27 @@ def _table_workspace_panels(wr: Any) -> list[Any]:
     return [wr.MediaBrowser(title="Sanitized Measurement Tables", media_keys=_MEASUREMENT_TABLE_KEYS, mode="grid")]
 
 
+def _workspace_metric_accessor(wr: Any, column: str) -> Any:
+    section, name = column.split(":", maxsplit=1)
+    if section == "config":
+        return wr.Config(name)
+    if section == "summary":
+        return wr.SummaryMetric(name)
+    raise ValueError(f"Unsupported workspace metric section: {section!r}")
+
+
 def _metric_title(metric: str) -> str:
     return metric.rsplit("/", maxsplit=1)[-1].replace("_", " ").title()
 
 
-def _benchmark_panels(wr: Any, *, groupby: str | None = None) -> list[Any]:
+def _benchmark_panels(wr: Any, *, groupby: Any | None = None) -> list[Any]:
     return [
         *_metric_panels(wr, groupby=groupby),
         wr.MediaBrowser(title="Sanitized Measurement Tables", media_keys=_MEASUREMENT_TABLE_KEYS, mode="grid"),
     ]
 
 
-def _metric_panels(wr: Any, *, groupby: str | None) -> list[Any]:
+def _metric_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
     return [
         _bar_panel(wr, "Case Health", _CASE_HEALTH_METRICS, groupby=groupby),
         _bar_panel(wr, "Case Latency", _CASE_LATENCY_METRICS, groupby=groupby),
@@ -503,7 +518,7 @@ def _metric_panels(wr: Any, *, groupby: str | None) -> list[Any]:
     ]
 
 
-def _bar_panel(wr: Any, title: str, metrics: list[str], *, groupby: str | None = None) -> Any:
+def _bar_panel(wr: Any, title: str, metrics: list[str], *, groupby: Any | None = None) -> Any:
     return wr.BarPlot(title=title, metrics=metrics, groupby=groupby)
 
 

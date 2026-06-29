@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import stat
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -476,7 +477,6 @@ def _assert_wandb_init_state(state: SimpleNamespace) -> None:
                     "replace": {"strategy": "redact"},
                 }
             ],
-            "run_tags": {"commit_sha": "abc123"},
         }
     ]
 
@@ -1761,9 +1761,14 @@ def test_wandb_report_sweep_panels_cover_metric_sections(wandb_report_tool: Modu
         def __init__(self, **kwargs: Any) -> None:
             self.__dict__.update(kwargs)
 
+    class FakeConfig:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
     class FakeWr:
         BarPlot = FakePanel
         MediaBrowser = FakePanel
+        Config = FakeConfig
 
     panels = wandb_report_tool._sweep_panels(FakeWr)
     titles = {panel.title for panel in panels}
@@ -1782,7 +1787,7 @@ def test_wandb_report_sweep_panels_cover_metric_sections(wandb_report_tool: Modu
         "Stage Throughput",
         "Sanitized Measurement Tables",
     }.issubset(titles)
-    assert "measurement/ndd_workflow/observed_tokens_per_successful_request" in metrics
+    assert "measurement/ndd_workflow/observed_tokens_per_successful_request_mean" in metrics
     assert "measurement/record/replacement_synthetic_original_collision_value_count" in metrics
     assert "measurement_table/record" in media_keys
 
@@ -1818,6 +1823,47 @@ def test_wandb_workspace_builds_manual_benchmark_sections(wandb_report_tool: Mod
     assert {"RunComparer", "ParallelCoordinatesPlot", "ParameterImportancePlot"}.issubset(comparison_panel_types)
     assert "benchmark/case_success_rate" in summary_metrics
     assert sections["Sweep Comparison"].panels[0].diff_only is True
+
+
+@pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince20")
+def test_wandb_sweep_report_uses_043_grouping_accessors(wandb_report_tool: ModuleType) -> None:
+    import wandb_workspaces.reports.v2 as wr
+
+    report = wandb_report_tool.build_benchmark_group_report(
+        wandb_report_tool.WandbProjectPath(entity="entity", project="project"),
+        group="threshold",
+        title="Sweep",
+        description="Offline serialization test",
+    )
+    panel_grid = report.blocks[-1]
+    grouped_panels = [panel for panel in panel_grid.panels if type(panel).__name__ == "BarPlot"]
+
+    assert panel_grid.runsets[0].groupby == ["config.sweep_arm_id"]
+    assert grouped_panels
+    assert all(isinstance(panel.groupby, wr.Config) for panel in grouped_panels)
+    assert all(panel.groupby.name == "sweep_arm_id" for panel in grouped_panels)
+    for panel in grouped_panels:
+        panel._to_model()
+
+
+@pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince20")
+def test_wandb_parallel_coordinates_use_typed_accessors(wandb_report_tool: ModuleType) -> None:
+    import wandb_workspaces.reports.v2 as wr
+
+    panels = wandb_report_tool._comparison_workspace_panels(wr)
+    parallel_coordinates = next(panel for panel in panels if isinstance(panel, wr.ParallelCoordinatesPlot))
+
+    assert [type(column.metric) for column in parallel_coordinates.columns] == [
+        wr.Config,
+        wr.Config,
+        wr.Config,
+        wr.Config,
+        wr.SummaryMetric,
+        wr.SummaryMetric,
+        wr.SummaryMetric,
+        wr.SummaryMetric,
+    ]
+    parallel_coordinates._to_model()
 
 
 def test_wandb_report_markdown_uses_sanitized_fields(wandb_report_tool: ModuleType) -> None:
@@ -1867,6 +1913,30 @@ def test_sweep_expands_parameter_grid_and_materializes_arm_suite(
     assert materialized["configs"][0]["detect"]["gliner_threshold"] == 0.2
     assert materialized["configs"][1]["detect"]["gliner_threshold"] == 0.2
     assert materialized["configs"][1]["replace"]["digest_length"] == 8
+
+
+@pytest.mark.parametrize(
+    "inline_key,file_key", [("model_configs", "model_providers"), ("model_providers", "model_configs")]
+)
+def test_sweep_rebase_preserves_inline_model_yaml(
+    tmp_path: Path,
+    sweep_tool: ModuleType,
+    inline_key: str,
+    file_key: str,
+) -> None:
+    inline_yaml = "selected_models:\n  detection:\n    entity_detector: detector\n"
+    suite = {
+        inline_key: inline_yaml,
+        file_key: "models.yml",
+        "artifact_path": "artifacts",
+        "workloads": [],
+    }
+
+    rebased = sweep_tool._rebase_suite_paths(suite, tmp_path)
+
+    assert rebased[inline_key] == inline_yaml
+    assert rebased[file_key] == str(tmp_path / "models.yml")
+    assert rebased["artifact_path"] == str(tmp_path / "artifacts")
 
 
 def test_sweep_run_uses_one_wandb_run_per_arm(
@@ -2150,9 +2220,116 @@ def test_wandb_table_logging_drops_sensitive_dotted_columns(wandb_logging_tool: 
         }
     )
 
-    sanitized = wandb_logging_tool._drop_blocked_columns(table)
+    sanitized = wandb_logging_tool._project_table(table, record_type="record")
 
     assert list(sanitized.columns) == ["final_entity_count"]
+
+
+def test_wandb_table_logging_drops_all_user_run_tags(wandb_logging_tool: ModuleType) -> None:
+    table = pd.DataFrame(
+        {
+            "final_entity_count": [2],
+            "run_tags.customer_label": ["alice@example.com"],
+            "run_tags.account_number": [123456789],
+            "run_tags.benign_name": ["raw PII value"],
+        }
+    )
+
+    sanitized = wandb_logging_tool._project_table(table, record_type="record")
+
+    assert list(sanitized.columns) == ["final_entity_count"]
+
+
+def test_wandb_table_logging_projects_allowlisted_columns(wandb_logging_tool: ModuleType) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state, active_run=True)
+    records = [
+        {
+            "record_type": "stage",
+            "stage": "EntityDetectionWorkflow.run",
+            "status": "completed",
+            "elapsed_sec": 1.5,
+            "input_row_count": 2,
+            "customer_email": "alice@example.com",
+            "payload": {"note": "SSN 123-45-6789"},
+            "model_usage": {"provider": {"response": "raw model response"}},
+        }
+    ]
+
+    wandb_logging_tool._log_sanitized_tables(fake_wandb, records)
+
+    assert len(state.logged) == 1
+    table = state.logged[0]["measurement_table/stage"]
+    assert table.to_dict(orient="records") == [
+        {
+            "record_type": "stage",
+            "stage": "EntityDetectionWorkflow.run",
+            "status": "completed",
+            "elapsed_sec": 1.5,
+            "input_row_count": 2,
+        }
+    ]
+
+
+def test_wandb_record_tables_use_length_buckets(wandb_logging_tool: ModuleType) -> None:
+    table = pd.DataFrame(
+        {
+            "record_type": ["record"],
+            "text_length_chars": [137],
+            "text_length_tokens": [31],
+            "text_length_chars_bucket": ["128-511"],
+            "text_length_tokens_bucket": ["1-127"],
+        }
+    )
+
+    projected = wandb_logging_tool._project_table(table, record_type="record")
+
+    assert projected.to_dict(orient="records") == [
+        {
+            "record_type": "record",
+            "text_length_chars_bucket": "128-511",
+            "text_length_tokens_bucket": "1-127",
+        }
+    ]
+
+
+def test_wandb_table_logging_rejects_unsafe_dimension_values(wandb_logging_tool: ModuleType) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state, active_run=True)
+
+    wandb_logging_tool._log_sanitized_tables(
+        fake_wandb,
+        [{"record_type": "stage", "stage": "alice@example.com", "status": "completed", "elapsed_sec": 1.0}],
+    )
+
+    table = state.logged[0]["measurement_table/stage"]
+    assert "alice@example.com" not in table.to_json()
+
+
+def test_wandb_table_logging_builds_all_tables_before_upload(wandb_logging_tool: ModuleType) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state, active_run=True)
+    table_calls = 0
+
+    def table(*, dataframe: pd.DataFrame) -> pd.DataFrame:
+        nonlocal table_calls
+        table_calls += 1
+        if table_calls == 2:
+            raise ValueError("invalid second table")
+        return dataframe
+
+    fake_wandb.Table = table
+
+    with pytest.raises(ValueError, match="invalid second table"):
+        wandb_logging_tool._log_sanitized_tables(
+            fake_wandb,
+            [
+                {"record_type": "stage", "stage": "Anonymizer._run_internal", "elapsed_sec": 1.0},
+                {"record_type": "record", "mode": "replace", "final_entity_count": 1},
+            ],
+        )
+
+    assert state.logged == []
 
 
 def test_wandb_blocks_engine_internal_columns_by_default(wandb_logging_tool: ModuleType) -> None:
@@ -2180,21 +2357,49 @@ def test_wandb_extract_scalar_metrics_drops_nan_values(wandb_logging_tool: Modul
     assert metrics == {"measurement/record/final_entity_count": 1}
 
 
-def test_wandb_aggregates_scores_and_rates_as_means(wandb_logging_tool: ModuleType) -> None:
+def test_wandb_extract_scalar_metrics_rejects_unsafe_dimensions(wandb_logging_tool: ModuleType) -> None:
+    metrics = wandb_logging_tool.extract_scalar_metrics(
+        {
+            "record_type": "stage",
+            "stage": "alice@example.com",
+            "status": "SSN 123-45-6789",
+            "mode": "customer-a",
+            "strategy": "secret strategy",
+            "elapsed_sec": 1.0,
+        }
+    )
+
+    assert metrics == {"measurement/stage/elapsed_sec": 1.0}
+
+
+def test_wandb_aggregates_with_explicit_metric_policy(wandb_logging_tool: ModuleType) -> None:
     aggregated = wandb_logging_tool.aggregate_measurement_scalars(
         [
             {
                 "record_type": "record",
+                "schema_version": 1,
+                "timestamp_unix_sec": 1_700_000_000.0,
+                "input_has_id_column": True,
                 "final_entity_count": 2,
                 "utility_score": 0.8,
+                "leakage_mass": 0.4,
                 "weighted_leakage_rate": 0.1,
+                "entity_precision": 0.5,
+                "entity_recall": 0.25,
+                "entity_f1": 1 / 3,
                 "input_rows_per_sec": 10.0,
             },
             {
                 "record_type": "record",
+                "schema_version": 1,
+                "timestamp_unix_sec": 1_700_000_001.0,
                 "final_entity_count": 1,
                 "utility_score": 1.0,
+                "leakage_mass": 0.2,
                 "weighted_leakage_rate": 0.3,
+                "entity_precision": 1.0,
+                "entity_recall": 0.75,
+                "entity_f1": 6 / 7,
                 "input_rows_per_sec": 20.0,
             },
         ]
@@ -2202,28 +2407,141 @@ def test_wandb_aggregates_scores_and_rates_as_means(wandb_logging_tool: ModuleTy
 
     assert aggregated["measurement/record/final_entity_count"] == 3.0
     assert aggregated["measurement/record/utility_score_mean"] == pytest.approx(0.9)
+    assert aggregated["measurement/record/leakage_mass_mean"] == pytest.approx(0.3)
     assert aggregated["measurement/record/weighted_leakage_rate_mean"] == pytest.approx(0.2)
+    assert aggregated["measurement/record/entity_precision_mean"] == pytest.approx(0.75)
+    assert aggregated["measurement/record/entity_recall_mean"] == pytest.approx(0.5)
+    assert aggregated["measurement/record/entity_f1_mean"] == pytest.approx(25 / 42)
     assert aggregated["measurement/record/input_rows_per_sec_mean"] == pytest.approx(15.0)
-    assert "measurement/record/utility_score" not in aggregated
-    assert "measurement/record/weighted_leakage_rate" not in aggregated
-    assert "measurement/record/input_rows_per_sec" not in aggregated
+    assert not any("schema_version" in key for key in aggregated)
+    assert not any("timestamp_unix_sec" in key for key in aggregated)
+    assert not any("input_has_id_column" in key for key in aggregated)
 
 
-def test_wandb_run_config_filters_sensitive_run_tags(wandb_setup_tool: ModuleType) -> None:
-    tags = wandb_setup_tool._scalar_run_tags(
-        {
-            "commit_sha": "abc123",
-            "attempt": 2,
-            "api_key": "sk-secret-token",
-            "secret_tag": "raw secret",
-            "pipeline_id": "sk-secret-token",
-            "label": "raw secret",
-            "dashboard_url": "https://example.invalid/run",
-            "nested": {"not": "scalar"},
-        }
+def test_wandb_report_metric_names_match_aggregated_names(
+    wandb_logging_tool: ModuleType,
+    wandb_report_tool: ModuleType,
+) -> None:
+    aggregated = wandb_logging_tool.aggregate_measurement_scalars(
+        [
+            {
+                "record_type": "record",
+                "entity_precision": 0.9,
+                "entity_recall": 0.8,
+                "entity_f1": 0.85,
+                "leakage_mass": 0.1,
+                "repair_iterations": 2,
+            },
+            {
+                "record_type": "ndd_workflow",
+                "observed_tokens_per_successful_request": 42.0,
+            },
+        ]
     )
 
-    assert tags == {"commit_sha": "abc123", "attempt": 2}
+    expected = {
+        "measurement/record/entity_precision_mean",
+        "measurement/record/entity_recall_mean",
+        "measurement/record/entity_f1_mean",
+        "measurement/record/leakage_mass_mean",
+        "measurement/record/repair_iterations_mean",
+        "measurement/ndd_workflow/observed_tokens_per_successful_request_mean",
+    }
+    assert expected <= set(aggregated)
+    assert expected <= set(wandb_report_tool._all_report_metrics())
+
+
+def test_wandb_config_excludes_suite_run_tags(wandb_setup_tool: ModuleType) -> None:
+    config = wandb_setup_tool._benchmark_wandb_config(
+        wandb_setup_tool.WandbSettings(wandb_mode=wandb_setup_tool.WandbMode.offline),
+        suite_id="suite-a",
+        run_tags={
+            "commit_sha": "abc123",
+            "owner_email": "alice@example.com",
+            "customer_id": 123456,
+            "relative_path": "home/alice/input.csv",
+            "opaque_access": "opaque-live-value-9Z",
+        },
+        metadata=None,
+    )
+
+    assert "run_tags" not in config
+
+
+def test_wandb_config_projects_only_declared_metadata(wandb_setup_tool: ModuleType) -> None:
+    config = wandb_setup_tool._benchmark_wandb_config(
+        wandb_setup_tool.WandbSettings(wandb_mode=wandb_setup_tool.WandbMode.offline),
+        suite_id="suite-a",
+        run_tags=None,
+        metadata={
+            "benchmark": {
+                "suite_id": "suite-a",
+                "case_count": 2,
+                "suite_file_hash": "content-hash",
+                "owner_email": "alice@example.com",
+            },
+            "execution": {
+                "backend": "slurm",
+                "output_dir_hash": "path-hash",
+                "export": True,
+                "slurm": {"job_id": "123", "cluster_name": "secret-cluster"},
+            },
+            "runtime": {"anonymizer_version": "1.2.3", "hostname": "private-node"},
+            "git": {"commit": "abc123", "branch": "main", "dirty": False, "remote": "ssh://secret"},
+            "model_sources": {"has_model_configs": True, "provider_payload": "secret"},
+            "workloads": [
+                {
+                    "id": "workload-a",
+                    "row_limit": 5,
+                    "source": {"kind": "local_file", "suffix": ".csv", "source_hash": "path-hash"},
+                    "customer_note": "Alice Smith",
+                }
+            ],
+            "configs": [
+                {
+                    "id": "redact",
+                    "mode": "replace",
+                    "detect": {"gliner_threshold": 0.3, "entity_label_count": 4, "prompt": "raw prompt"},
+                    "replace": {"strategy": "redact", "instructions": "raw instructions"},
+                    "unknown": object(),
+                }
+            ],
+            "matrix": [{"workload": "workload-a", "config": "redact", "repetitions": 1, "note": "Alice"}],
+            "sweep_id": "threshold-sweep",
+            "sweep_arm_id": "arm-001",
+            "sweep_params": {
+                "configs_all_detect_gliner_threshold": 0.3,
+                "configs_all_replace_instructions": "replace Alice using raw instructions",
+                "configs_all_replace_instructions_algorithm": "Alice Smith",
+                "configs_all_replace_algorithm": "Alice Smith",
+            },
+            "unknown_top_level": {"pii": "alice@example.com"},
+        },
+    )
+
+    serialized = json.dumps(config, sort_keys=True)
+    assert config["benchmark"] == {"suite_id": "suite-a", "case_count": 2, "suite_file_hash": "content-hash"}
+    assert config["execution"] == {
+        "backend": "slurm",
+        "export": True,
+        "slurm": {"job_id": "123"},
+    }
+    assert config["workloads"][0]["source"] == {"kind": "local_file", "suffix": ".csv"}
+    assert config["configs"][0]["detect"] == {"gliner_threshold": 0.3, "entity_label_count": 4}
+    assert config["configs"][0]["replace"] == {"strategy": "redact"}
+    assert config["matrix"] == [{"workload": "workload-a", "config": "redact", "repetitions": 1}]
+    assert config["sweep_params"] == {"configs_all_detect_gliner_threshold": 0.3}
+    for forbidden in (
+        "alice@example.com",
+        "Alice Smith",
+        "private-node",
+        "secret-cluster",
+        "path-hash",
+        "raw prompt",
+        "raw instructions",
+        "unknown_top_level",
+    ):
+        assert forbidden not in serialized
 
 
 def test_wandb_run_tags_filter_sensitive_tag_values(wandb_setup_tool: ModuleType) -> None:
@@ -2283,6 +2601,96 @@ def test_initialize_wandb_run_adds_routing_and_metadata(
 
     assert created is True
     _assert_wandb_init_state(state)
+
+
+def test_initialize_wandb_run_rejects_ambient_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    wandb_setup_tool: ModuleType,
+) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state, active_run=True)
+    monkeypatch.setattr(wandb_setup_tool, "require_wandb", lambda: fake_wandb)
+
+    with pytest.raises(ValueError, match="active W&B run"):
+        wandb_setup_tool.initialize_benchmark_wandb_run(
+            wandb_setup_tool.WandbSettings(wandb_mode=wandb_setup_tool.WandbMode.offline),
+            suite_id="suite-a",
+            output_dir=tmp_path,
+        )
+
+    assert state.init_kwargs == {}
+
+
+def test_initialize_wandb_run_disables_implicit_capture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    wandb_setup_tool: ModuleType,
+) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state)
+    monkeypatch.setattr(wandb_setup_tool, "require_wandb", lambda: fake_wandb)
+
+    wandb_setup_tool.initialize_benchmark_wandb_run(
+        wandb_setup_tool.WandbSettings(wandb_mode=wandb_setup_tool.WandbMode.offline),
+        suite_id="suite-a",
+        output_dir=tmp_path,
+    )
+
+    assert state.init_kwargs["settings"] == {
+        "console": "off",
+        "disable_code": True,
+        "disable_git": True,
+        "host": "redacted",
+        "save_code": False,
+        "x_disable_machine_info": True,
+        "x_disable_meta": True,
+        "x_disable_stats": True,
+        "x_save_requirements": False,
+    }
+
+
+def test_initialize_wandb_run_uses_private_staging_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    wandb_setup_tool: ModuleType,
+) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state)
+    monkeypatch.setattr(wandb_setup_tool, "require_wandb", lambda: fake_wandb)
+
+    wandb_setup_tool.initialize_benchmark_wandb_run(
+        wandb_setup_tool.WandbSettings(wandb_mode=wandb_setup_tool.WandbMode.offline),
+        suite_id="suite-a",
+        output_dir=tmp_path,
+    )
+
+    staging_dir = tmp_path / ".wandb-private"
+    assert state.init_kwargs["dir"] == str(staging_dir)
+    assert stat.S_IMODE(staging_dir.stat().st_mode) == 0o700
+
+
+def test_initialize_wandb_run_rejects_symlinked_staging_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    wandb_setup_tool: ModuleType,
+) -> None:
+    state = _wandb_state()
+    fake_wandb = _fake_wandb_module(state)
+    monkeypatch.setattr(wandb_setup_tool, "require_wandb", lambda: fake_wandb)
+    shared_dir = tmp_path / "shared"
+    shared_dir.mkdir()
+    (tmp_path / ".wandb-private").symlink_to(shared_dir, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="cannot be a symlink"):
+        wandb_setup_tool.initialize_benchmark_wandb_run(
+            wandb_setup_tool.WandbSettings(wandb_mode=wandb_setup_tool.WandbMode.offline),
+            suite_id="suite-a",
+            output_dir=tmp_path,
+        )
+
+    assert state.init_kwargs == {}
+    assert stat.S_IMODE(shared_dir.stat().st_mode) != 0o700
 
 
 def test_initialize_wandb_run_uses_explicit_run_name(
