@@ -133,6 +133,7 @@ def stub_slim_model_selection() -> ModelSelection:
             repairer="known",
         ),
         evaluate=EvaluateModelSelection(
+            entity_coverage_judge="known",
             detection_validity_judge="known",
             replace_type_fidelity_judge="known",
             replace_relational_consistency_judge="known",

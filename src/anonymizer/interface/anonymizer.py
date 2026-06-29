@@ -30,9 +30,11 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
+    COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
+    COL_LEAKED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_VALID,
@@ -48,6 +50,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
@@ -326,6 +329,7 @@ class Anonymizer:
                 preview_num_records=num_records,
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+                entity_labels=config.detect.entity_labels,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -380,39 +384,13 @@ class Anonymizer:
                 knobs (placeholder today; reserved for metric selection,
                 per-judge model/prompt overrides, etc.).
         """
-        _ = config  # placeholder; no knobs to read yet
+        evaluate_config = config or EvaluateConfig()
         rewrite_config = getattr(output, "rewrite_config", None)
         replace_method = getattr(output, "replace_method", None)
+        text_column = output.resolved_text_column
+        is_rewrite = rewrite_config is not None
 
-        if rewrite_config is not None:
-            try:
-                validate_model_alias_references(
-                    self._model_configs,
-                    self._selected_models,
-                    check_rewrite=False,
-                    check_evaluate=True,
-                    check_rewrite_judge=True,
-                )
-            except ValueError as exc:
-                raise InvalidConfigError(str(exc)) from exc
-            text_column = output.resolved_text_column
-            internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
-            rewrite_result = self._rewrite_runner.evaluate(
-                internal_df,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.evaluate,
-                privacy_goal=rewrite_config,
-            )
-            renamed_trace = _rename_output_columns(rewrite_result.dataframe, resolved_text_column=text_column)
-            return AnonymizerResult(
-                dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
-                trace_dataframe=renamed_trace,
-                resolved_text_column=text_column,
-                failed_records=rewrite_result.failed_records,
-                rewrite_config=rewrite_config,
-            )
-
-        if replace_method is None:
+        if not is_rewrite and replace_method is None:
             raise ValueError(
                 "Cannot evaluate this output — it has no associated anonymization config. "
                 "Pass an AnonymizerResult / PreviewResult produced by run() / preview(). "
@@ -429,25 +407,62 @@ class Anonymizer:
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
-        text_column = output.resolved_text_column
+
+        entity_labels = getattr(output, "entity_labels", None)
         # trace_dataframe is in user-facing form (e.g., 'biography' instead of
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
         # internal names, so reverse the rename before the DD call and re-apply
         # it on the result.
         internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+
+        if is_rewrite:
+            rewrite_result = self._rewrite_runner.evaluate(
+                internal_df,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.evaluate,
+                privacy_goal=rewrite_config,
+            )
+            all_failed: list[FailedRecord] = list(rewrite_result.failed_records)
+            coverage_wf = EntityCoverageWorkflow(
+                adapter=self._adapter,
+                entity_labels=entity_labels,
+            )
+            judged_df, coverage_failed = coverage_wf.run_non_critical(
+                rewrite_result.dataframe,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.evaluate,
+            )
+            all_failed.extend(coverage_failed)
+            renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
+            return AnonymizerResult(
+                dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
+                trace_dataframe=renamed_trace,
+                resolved_text_column=text_column,
+                failed_records=all_failed,
+                rewrite_config=rewrite_config,
+                entity_labels=entity_labels,
+            )
+
         replace_result = self._replace_runner.evaluate(
             internal_df,
             replace_method=replace_method,
             model_configs=self._model_configs,
             selected_models=self._selected_models.evaluate,
+            entity_labels=entity_labels,
+            compute_detection_validity=evaluate_config.compute_detection_validity,
         )
         renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
+            dataframe=_build_user_dataframe(
+                renamed_trace,
+                resolved_text_column=text_column,
+                compute_detection_validity=evaluate_config.compute_detection_validity,
+            ),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_column,
             failed_records=replace_result.failed_records,
             replace_method=replace_method,
+            entity_labels=entity_labels,
         )
 
     def validate_config(self, config: AnonymizerConfig) -> None:
@@ -638,6 +653,7 @@ class Anonymizer:
             failed_records=all_failures,
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+            entity_labels=config.detect.entity_labels,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
@@ -869,11 +885,17 @@ def _unrename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> 
     return df.rename(columns=rename_map)
 
 
-def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
+def _build_user_dataframe(
+    trace_dataframe: pd.DataFrame,
+    *,
+    resolved_text_column: str,
+    compute_detection_validity: bool = False,
+) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
-                 optional judge verdict columns when available
+                 entity_coverage, leaked_entities (always after evaluate()),
+                 detection_valid, detection_invalid_entities (only when compute_detection_validity=True)
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
@@ -893,6 +915,8 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             COL_DETECTION_VALID,  # only present after evaluate()
             COL_DETECTION_INVALID_ENTITIES,  # only present after evaluate()
             COL_JUDGE_EVALUATION,  # only present after evaluate()
+            COL_ENTITY_COVERAGE,  # only present after evaluate()
+            COL_LEAKED_ENTITIES,  # only present after evaluate()
         }
     elif f"{text_col}_replaced" in t.columns:
         allowed = {
@@ -900,8 +924,8 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             f"{text_col}_replaced",
             f"{text_col}_with_spans",
             COL_FINAL_ENTITIES,
-            COL_DETECTION_VALID,
-            COL_DETECTION_INVALID_ENTITIES,
+            COL_ENTITY_COVERAGE,
+            COL_LEAKED_ENTITIES,
             COL_TYPE_FIDELITY_VALID,
             COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
             COL_RELATIONAL_CONSISTENCY_VALID,
@@ -909,6 +933,8 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             COL_ATTRIBUTE_FIDELITY_VALID,
             COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
         }
+        if compute_detection_validity:
+            allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}
     else:
         allowed = {
             text_col,
