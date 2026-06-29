@@ -183,7 +183,7 @@ def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
         row[COL_PREREPLACE_TEXT] = plain_text
         row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
         return row
-    for original, synthetic in pairs:
+    for original, synthetic in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
         plain_text = plain_text.replace(original, synthetic)
         tagged_text = tagged_text.replace(original, synthetic)
     row[COL_PREREPLACE_TEXT] = plain_text
