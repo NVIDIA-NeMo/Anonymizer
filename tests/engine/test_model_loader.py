@@ -462,6 +462,47 @@ def test_validate_model_alias_references_skips_rewrite_alias_when_not_enabled(
     )
 
 
+def test_validate_model_alias_references_raises_on_unknown_rewrite_judge_when_check_rewrite_judge_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "evaluate": stub_slim_model_selection.evaluate.model_copy(
+                update={"rewrite_judge": "bad-rewrite-judge-alias"}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="bad-rewrite-judge-alias"):
+        validate_model_alias_references(
+            stub_known_model_configs,
+            selected_models,
+            check_evaluate=True,
+            check_rewrite_judge=True,
+        )
+
+
+def test_validate_model_alias_references_skips_rewrite_judge_without_check_rewrite_judge(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "evaluate": stub_slim_model_selection.evaluate.model_copy(
+                update={"rewrite_judge": "bad-rewrite-judge-alias"}
+            )
+        }
+    )
+
+    # check_evaluate=True but check_rewrite_judge not set — rewrite_judge must be skipped
+    validate_model_alias_references(
+        stub_known_model_configs,
+        selected_models,
+        check_evaluate=True,
+    )
+
+
 class TestEntityValidatorNormalization:
     """``DetectionModelSelection.entity_validator`` accepts scalar or list input.
 
