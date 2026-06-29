@@ -1770,7 +1770,7 @@ def test_rewrite_llm_call_estimate_splits_by_stage() -> None:
         "rewrite_pipeline": 5,
         "rewrite_evaluate": 9,
         "rewrite_repair": 2,
-        "rewrite_final_judge": 1,
+        "rewrite_final_judge": 0,
     }
 
 

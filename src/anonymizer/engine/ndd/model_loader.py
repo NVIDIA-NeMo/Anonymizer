@@ -283,6 +283,7 @@ def validate_model_alias_references(
             _collect_role(roles_to_check, f"replace.{role}", alias)
     if check_evaluate:
         evaluate_roles = selected_models.evaluate.model_dump()
+        _collect_role(roles_to_check, "evaluate.entity_coverage_judge", evaluate_roles["entity_coverage_judge"])
         _collect_role(roles_to_check, "evaluate.detection_validity_judge", evaluate_roles["detection_validity_judge"])
         if check_substitute:
             for role in (

@@ -72,6 +72,7 @@ class AnonymizerResult(_DisplayMixin):
     failed_records: list[FailedRecord]
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
+    entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -114,6 +115,7 @@ class PreviewResult(_DisplayMixin):
     preview_num_records: int
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
+    entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
