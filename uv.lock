@@ -704,7 +704,7 @@ wheels = [
 
 [[package]]
 name = "data-designer"
-version = "0.6.1"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "data-designer-config" },
@@ -713,14 +713,14 @@ dependencies = [
     { name = "prompt-toolkit" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bb/81/85bf662d1f7eff3ae182ee0569dee9865472ccc310bd887a4b160bbed147/data_designer-0.6.1.tar.gz", hash = "sha256:bee4baa4779fa1e1592270a64a0f63760de4025693b44344d97679aa1484b163", size = 206602, upload-time = "2026-06-01T22:35:49.598Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/db/d8ac36a0d46790cc793eec7a61b8a349e6a18ae28c5fbff3c43271097c69/data_designer-0.7.0.tar.gz", hash = "sha256:c322682d7d14674e31d936be8db74e71e4eb31c9ab09e3ceef3c0fc84a5ddbeb", size = 208354, upload-time = "2026-06-26T21:40:08.646Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/9e/6da970741c65178e54d4170e3b47d2df87cf4d1ec17da03c809868f389e0/data_designer-0.6.1-py3-none-any.whl", hash = "sha256:257e58e1fb860c59c9d0cc83969c52f313f55f113f112301672382d04be78a05", size = 148383, upload-time = "2026-06-01T22:35:48.467Z" },
+    { url = "https://files.pythonhosted.org/packages/39/be/1d6b1736919346cbda39d347c866947b7afdd6f14c38b73d675b6180b271/data_designer-0.7.0-py3-none-any.whl", hash = "sha256:a97c65c45773ffd00d8a38ed0a3ab82c42fb627198b196e3f62ac3f30f9aee23", size = 150323, upload-time = "2026-06-26T21:40:07.422Z" },
 ]
 
 [[package]]
 name = "data-designer-config"
-version = "0.6.1"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
@@ -736,14 +736,14 @@ dependencies = [
     { name = "rich" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d4/13/76f616fbfffe1b6fe41d6d34cee72ba02b83f4e75d07a98159b6b7e62eec/data_designer_config-0.6.1.tar.gz", hash = "sha256:16f53fc34e11915aa821e3324de8e39bc6b03e7a2cd5402bbeca731bd6eea072", size = 150882, upload-time = "2026-06-01T22:35:43.292Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/8d/362f4fa5a8259b137dae732548e03fcefca057c3d616c5369e294375aa4d/data_designer_config-0.7.0.tar.gz", hash = "sha256:4571cf46fc90e173e9723652f24e31a6555077ef8abe7ac543fd8edf9ce88fc3", size = 148833, upload-time = "2026-06-26T21:40:01.992Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/2c/97fd4210d0021ead0dac3b43fbfa80db13c52a7b8d26704d4d68ef39241a/data_designer_config-0.6.1-py3-none-any.whl", hash = "sha256:69a5de862246933e16e68a8b58fde90dad5156a14a20184fd276b6bff53cf2ae", size = 127974, upload-time = "2026-06-01T22:35:42.087Z" },
+    { url = "https://files.pythonhosted.org/packages/45/1d/14f9380b2474f8900d6753e996ddfa610be4a3fd958f6952fb68ca7eaa8e/data_designer_config-0.7.0-py3-none-any.whl", hash = "sha256:2a18a8cfcf686c5d508db601d6ef749c057df82936d577072c2465b0674144ce", size = 126817, upload-time = "2026-06-26T21:40:00.629Z" },
 ]
 
 [[package]]
 name = "data-designer-engine"
-version = "0.6.1"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyascii" },
@@ -764,15 +764,17 @@ dependencies = [
     { name = "mcp" },
     { name = "networkx" },
     { name = "numpy" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
     { name = "ruff" },
     { name = "scipy" },
     { name = "sqlfluff" },
+    { name = "starlette" },
     { name = "tiktoken" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fe/76/eb44cb07e748caa76330c496035be3f6d8187ff66139bc5a133f04b35237/data_designer_engine-0.6.1.tar.gz", hash = "sha256:fc75c0cb28aa8da0a98fe9a2ee101cdf05fb41d0cac01a9a4d7d2c40e1e72077", size = 900796, upload-time = "2026-06-01T22:35:46.759Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2e/88/955e19ba0858990e05be8574406529dfb30a5858c7995293319dfc2a6f03/data_designer_engine-0.7.0.tar.gz", hash = "sha256:5835dd25e258170fab623867bc6bea19d6c1ce838454e8d0472376b0dbba2cf9", size = 894941, upload-time = "2026-06-26T21:40:05.451Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/97/8465cb2171559ccbbf60b5d0fa1040a9e354a5354f622cabc5fcf32d1f59/data_designer_engine-0.6.1-py3-none-any.whl", hash = "sha256:f0d79b7e41e034ed31e946c617637ce1242a4283eb1031a8d5739d51fe85cfd5", size = 697247, upload-time = "2026-06-01T22:35:45.282Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/86/46a5b1c14e4b4703d3c2062bb840d0053a6d969c3ac7c771eb1e582c944c/data_designer_engine-0.7.0-py3-none-any.whl", hash = "sha256:33f38f6f6af706e70784290f6b40cf93711dc99033598fbdd695204d445918b5", size = 693643, upload-time = "2026-06-26T21:40:03.916Z" },
 ]
 
 [[package]]
@@ -2464,7 +2466,7 @@ notebooks = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
-    { name = "data-designer", specifier = ">=0.6.1,<0.7" },
+    { name = "data-designer", specifier = ">=0.7,<0.8" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "pydantic-settings", specifier = ">=2.12,<3" },
@@ -4032,15 +4034,15 @@ wheels = [
 
 [[package]]
 name = "starlette"
-version = "0.52.1"
+version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/0d/13d1d239a25cbfb19e740db83143e95c772a1fe10202dda4b76792b114dd/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74", size = 74272, upload-time = "2026-01-18T13:34:09.188Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
 ]
 
 [[package]]
