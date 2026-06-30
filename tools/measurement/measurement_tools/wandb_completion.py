@@ -16,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, Validat
 
 from measurement_tools.wandb_ingress import (
     MeasurementSnapshot,
-    StageMeasurement,
     _reject_json_constant,
     _validate_json_nesting_bytes,
     capture_ingress_bytes,
@@ -198,7 +197,9 @@ def _validate_case_identity(snapshot: MeasurementSnapshot, case: ImportedCaseIde
         "repetition": case.repetition,
     }
     for record in snapshot.records:
-        if record.run_id != case.case_id or any(record.run_tags.get(key) != value for key, value in expected_tags.items()):
+        if record.run_id != case.case_id or any(
+            record.run_tags.get(key) != value for key, value in expected_tags.items()
+        ):
             raise ValueError("completion seal case identity does not match measurement records")
 
 

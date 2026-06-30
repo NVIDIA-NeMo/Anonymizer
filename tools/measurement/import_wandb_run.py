@@ -22,7 +22,7 @@ from measurement_tools.wandb_completion import (
     read_completion_seal,
     verify_completion_seal,
 )
-from measurement_tools.wandb_ingress import MeasurementSnapshot, StageMeasurement, read_measurement_snapshot
+from measurement_tools.wandb_ingress import MeasurementSnapshot, read_measurement_snapshot
 from measurement_tools.wandb_logging import build_outbound_measurements
 from measurement_tools.wandb_models import (
     PUBLICATION_COMPLETE_KEY,

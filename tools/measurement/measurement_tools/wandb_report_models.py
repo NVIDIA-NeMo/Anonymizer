@@ -239,7 +239,9 @@ def validate_wandb_returned_url(value: Any, *, expected_base_url: str) -> str:
         allowed_hosts = {expected.hostname}
         if expected.hostname == "api.wandb.ai":
             allowed_hosts.add("wandb.ai")
-        same_origin = parsed.scheme == expected.scheme and parsed.hostname in allowed_hosts and parsed.port == expected.port
+        same_origin = (
+            parsed.scheme == expected.scheme and parsed.hostname in allowed_hosts and parsed.port == expected.port
+        )
     except ValueError as exc:
         raise ValueError("W&B SDK returned an invalid URL") from exc
     if (
