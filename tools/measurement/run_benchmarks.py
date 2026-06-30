@@ -1204,6 +1204,31 @@ def dry_run_result(
     )
 
 
+def plan_suite(
+    spec: BenchmarkSpec,
+    *,
+    spec_path: Path,
+    output_dir: Path,
+    export: bool,
+    fail_fast: bool,
+    dd_trace: DDTraceMode = DDTraceMode.none,
+    trace_dir: Path | None = None,
+    dd_task_trace: bool = False,
+    task_trace_dir: Path | None = None,
+) -> BenchmarkResult:
+    preflight_suite(spec, spec_path=spec_path)
+    return dry_run_result(
+        spec,
+        output_dir=output_dir,
+        export=export,
+        fail_fast=fail_fast,
+        dd_trace=dd_trace,
+        trace_dir=trace_dir,
+        dd_task_trace=dd_task_trace,
+        task_trace_dir=task_trace_dir,
+    )
+
+
 def build_wandb_metadata(
     spec: BenchmarkSpec,
     *,
@@ -1537,10 +1562,10 @@ def run_or_plan(
         raise ValueError("--trace-dir requires --dd-trace")
     if task_trace_dir is not None and not dd_task_trace:
         raise ValueError("--task-trace-dir requires --dd-task-trace")
-    preflight_suite(benchmark_spec, spec_path=spec_path)
     if dry_run:
-        return dry_run_result(
+        return plan_suite(
             benchmark_spec,
+            spec_path=spec_path,
             output_dir=output_dir,
             export=export,
             fail_fast=fail_fast,
@@ -1549,6 +1574,7 @@ def run_or_plan(
             dd_task_trace=dd_task_trace,
             task_trace_dir=task_trace_dir,
         )
+    preflight_suite(benchmark_spec, spec_path=spec_path)
     prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
     result = run_suite(
         benchmark_spec,

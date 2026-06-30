@@ -2435,6 +2435,90 @@ def test_sweep_run_uses_one_wandb_run_per_arm(
     _assert_sweep_arm_run(calls, result, tmp_path)
 
 
+@pytest.mark.parametrize("sweep_id", ["token-ablation", "latency-" + "x" * 80])
+def test_sweep_disabled_wandb_accepts_generated_identifiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sweep_tool: ModuleType,
+    sweep_id: str,
+) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(tmp_path, base_suite=base_suite, sweep_id=sweep_id)
+    calls: list[tuple[Path, Path, Any]] = []
+    _patch_sweep_runner(monkeypatch, sweep_tool, calls, status=sweep_tool.run_benchmarks.CaseStatus.completed)
+
+    result = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=False,
+        dry_run=False,
+        export=False,
+        fail_fast=False,
+        wandb_settings=sweep_tool.run_benchmarks.resolve_wandb_settings(),
+        create_report=False,
+    )
+
+    assert result.completed_arms == 2
+    assert len(calls) == 2
+    assert all(not settings.enabled for _, _, settings in calls)
+    assert all(settings.effective_wandb_tags == [] for _, _, settings in calls)
+
+
+def test_sweep_enabled_wandb_bounds_generated_tags(tmp_path: Path, sweep_tool: ModuleType) -> None:
+    sweep_id = "latency-" + "x" * 80
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(tmp_path, base_suite=base_suite, sweep_id=sweep_id)
+    spec = sweep_tool.load_sweep_spec(sweep_path)
+    arm = sweep_tool.expand_sweep_arms(spec)[0]
+
+    settings = sweep_tool._arm_wandb_settings(
+        sweep_tool.run_benchmarks.resolve_wandb_settings(
+            wandb_mode=sweep_tool.run_benchmarks.WandbMode.offline,
+        ),
+        spec=spec,
+        arm=arm,
+        run_name=f"{sweep_id}-{arm.arm_id}",
+    )
+
+    generated = [tag for tag in settings.effective_wandb_tags if tag.startswith(("sweep:", "arm:"))]
+    assert {tag.split(":", 1)[0] for tag in generated} == {"sweep", "arm"}
+    assert all(len(tag) <= 64 for tag in generated)
+
+
+def test_sweep_dry_run_is_repeatable_without_writing(tmp_path: Path, sweep_tool: ModuleType) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(tmp_path, base_suite=base_suite)
+    _write_text_input(tmp_path)
+    output_root = tmp_path / "runs"
+    settings = sweep_tool.run_benchmarks.resolve_wandb_settings()
+
+    first = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=output_root,
+        overwrite=False,
+        dry_run=True,
+        export=False,
+        fail_fast=False,
+        wandb_settings=settings,
+        create_report=False,
+    )
+    second = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=output_root,
+        overwrite=False,
+        dry_run=True,
+        export=False,
+        fail_fast=False,
+        wandb_settings=settings,
+        create_report=False,
+    )
+
+    assert first.errored_arms == second.errored_arms == 0
+    assert [arm.total_cases for arm in first.arms] == [1, 1]
+    assert [arm.total_cases for arm in second.arms] == [1, 1]
+    assert not output_root.exists()
+
+
 def test_sweep_run_creates_workspace_after_typed_report_migration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

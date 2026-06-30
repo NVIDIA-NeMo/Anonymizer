@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from enum import StrEnum
@@ -29,6 +30,7 @@ DEFAULT_WANDB_PROJECT = "nemo-anonymizer-benchmarks"
 PUBLICATION_COMPLETE_KEY = "publication/complete"
 PUBLICATION_SEAL_DIGEST_KEY = "publication/completion_seal_sha256"
 WANDB_TAG_MAX_LENGTH = 64
+_WANDB_TAG_DIGEST_LENGTH = 12
 _SENSITIVE_WANDB_TAG_PARTS = frozenset({"api_key", "credential", "credentials", "password", "secret", "token"})
 _SENSITIVE_WANDB_TAG_VALUE_PREFIXES = ("sk-", "ghp_", "github_pat_", "glpat-", "xoxb-", "xoxp-", "xoxa-")
 
@@ -164,6 +166,17 @@ def is_safe_wandb_tag(value: str) -> bool:
     if not value or len(value) > WANDB_TAG_MAX_LENGTH or "://" in value or value.startswith("/"):
         return False
     return not wandb_tag_value_is_sensitive(value)
+
+
+def generated_wandb_tag(namespace: str, value: str) -> str | None:
+    candidate = f"{namespace}:{value}"
+    if wandb_tag_value_is_sensitive(candidate) or "://" in candidate or candidate.startswith("/"):
+        return None
+    if len(candidate) <= WANDB_TAG_MAX_LENGTH:
+        return candidate
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:_WANDB_TAG_DIGEST_LENGTH]
+    prefix_length = WANDB_TAG_MAX_LENGTH - len(namespace) - len(digest) - 2
+    return f"{namespace}:{value[:prefix_length]}-{digest}"
 
 
 def wandb_tag_value_is_sensitive(value: str) -> bool:

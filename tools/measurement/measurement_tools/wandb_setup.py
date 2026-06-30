@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import secrets
@@ -21,7 +20,6 @@ from measurement_tools.wandb_models import (
     DEFAULT_WANDB_PROJECT,
     PUBLICATION_COMPLETE_KEY,
     PUBLICATION_SEAL_DIGEST_KEY,
-    WANDB_TAG_MAX_LENGTH,
     BenchmarkMetadata,
     ResolvedWandbConfig,
     WandbConfigPayload,
@@ -31,8 +29,8 @@ from measurement_tools.wandb_models import (
     WandbPublishPayload,
     WandbPublishResult,
     WandbRunMetadata,
+    generated_wandb_tag,
     is_safe_wandb_tag,
-    wandb_tag_value_is_sensitive,
 )
 
 __all__ = [
@@ -46,7 +44,6 @@ __all__ = [
 logger = logging.getLogger("measurement.wandb")
 
 WANDB_SANITIZER_VERSION = 2
-_WANDB_TAG_DIGEST_LENGTH = 12
 _WANDB_INSTALL_HINT = "Install the optional measurement dependency group: uv sync --group measurement"
 
 
@@ -453,17 +450,6 @@ def _validate_directory_metadata(metadata: os.stat_result, *, final: bool) -> No
         raise ValueError("W&B output path contains an untrusted writable directory")
 
 
-def _generated_wandb_tag(namespace: str, value: str) -> str | None:
-    candidate = f"{namespace}:{value}"
-    if wandb_tag_value_is_sensitive(candidate) or "://" in candidate or candidate.startswith("/"):
-        return None
-    if len(candidate) <= WANDB_TAG_MAX_LENGTH:
-        return candidate
-    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:_WANDB_TAG_DIGEST_LENGTH]
-    prefix_length = WANDB_TAG_MAX_LENGTH - len(namespace) - len(digest) - 2
-    return f"{namespace}:{value[:prefix_length]}-{digest}"
-
-
 def _default_run_name(suite_id: str, metadata: WandbRunMetadata | None) -> str:
     git = metadata.git if metadata is not None else None
     if git is None:
@@ -487,7 +473,7 @@ def _effective_wandb_tags(
     metadata: WandbRunMetadata | None,
 ) -> list[str]:
     tags = [tag for tag in settings.effective_wandb_tags if is_safe_wandb_tag(tag)]
-    suite_tag = _generated_wandb_tag("suite", suite_id)
+    suite_tag = generated_wandb_tag("suite", suite_id)
     if suite_tag is not None:
         tags.append(suite_tag)
     git = metadata.git if metadata is not None else None
@@ -495,7 +481,7 @@ def _effective_wandb_tags(
         branch = git.branch
         dirty = git.dirty
         if isinstance(branch, str) and branch:
-            branch_tag = _generated_wandb_tag("branch", branch)
+            branch_tag = generated_wandb_tag("branch", branch)
             if branch_tag is not None:
                 tags.append(branch_tag)
         if isinstance(dirty, bool):

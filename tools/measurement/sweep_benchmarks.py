@@ -24,7 +24,7 @@ import run_benchmarks
 import yaml
 from create_wandb_report import WandbProjectPath, create_benchmark_group_report, create_benchmark_group_workspace
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input, summarize_validation_error
-from measurement_tools.wandb_models import SweepMetadata
+from measurement_tools.wandb_models import SweepMetadata, generated_wandb_tag
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 app = cyclopts.App(help=__doc__)
@@ -125,9 +125,7 @@ def expand_sweep_arms(spec: SweepSpec) -> list[SweepArm]:
 
 
 def materialize_arm_suite(spec: SweepSpec, arm: SweepArm, *, output_root: Path, overwrite: bool) -> Path:
-    base_path = Path(spec.base_suite)
-    suite = _rebase_suite_paths(_read_yaml_mapping(base_path), base_path.parent)
-    patched = _patched_suite(suite, spec=spec, arm=arm)
+    patched = _arm_suite_payload(spec, arm)
     arm_dir = output_root / arm.arm_id
     arm_dir.mkdir(parents=True, exist_ok=True)
     suite_path = arm_dir / "suite.yaml"
@@ -135,6 +133,12 @@ def materialize_arm_suite(spec: SweepSpec, arm: SweepArm, *, output_root: Path, 
         raise ValueError(f"sweep arm suite already exists: {suite_path}")
     suite_path.write_text(yaml.safe_dump(patched, sort_keys=False), encoding="utf-8")
     return suite_path
+
+
+def _arm_suite_payload(spec: SweepSpec, arm: SweepArm) -> dict[str, Any]:
+    base_path = Path(spec.base_suite)
+    suite = _rebase_suite_paths(_read_yaml_mapping(base_path), base_path.parent)
+    return _patched_suite(suite, spec=spec, arm=arm)
 
 
 def _patched_suite(suite: dict[str, Any], *, spec: SweepSpec, arm: SweepArm) -> dict[str, Any]:
@@ -298,17 +302,28 @@ def _run_arm(
     run_name = f"{spec.sweep_id}-{arm.arm_id}"
     total_cases = 0
     try:
-        suite_path = materialize_arm_suite(spec, arm, output_root=output_root, overwrite=overwrite)
-        total_cases = _planned_case_count(suite_path)
-        result = run_benchmarks.run_or_plan(
-            suite_path,
-            output=output_dir,
-            overwrite=overwrite,
-            dry_run=dry_run,
-            export=export,
-            fail_fast=fail_fast,
-            wandb_settings=_arm_wandb_settings(wandb_settings, spec=spec, arm=arm, run_name=run_name),
-        )
+        arm_wandb_settings = _arm_wandb_settings(wandb_settings, spec=spec, arm=arm, run_name=run_name)
+        if dry_run:
+            total_cases, result = _plan_arm(
+                spec,
+                arm,
+                suite_path=suite_path,
+                output_dir=output_dir,
+                export=export,
+                fail_fast=fail_fast,
+            )
+        else:
+            suite_path = materialize_arm_suite(spec, arm, output_root=output_root, overwrite=overwrite)
+            total_cases = _planned_case_count(suite_path)
+            result = run_benchmarks.run_or_plan(
+                suite_path,
+                output=output_dir,
+                overwrite=overwrite,
+                dry_run=False,
+                export=export,
+                fail_fast=fail_fast,
+                wandb_settings=arm_wandb_settings,
+            )
     except Exception as exc:  # noqa: BLE001 -- keep sweeping other arms and report failure
         return _arm_error(
             arm,
@@ -321,6 +336,27 @@ def _run_arm(
     return _arm_result(arm, suite_path=suite_path, output_dir=output_dir, run_name=run_name, result=result)
 
 
+def _plan_arm(
+    spec: SweepSpec,
+    arm: SweepArm,
+    *,
+    suite_path: Path,
+    output_dir: Path,
+    export: bool,
+    fail_fast: bool,
+) -> tuple[int, run_benchmarks.BenchmarkResult]:
+    benchmark_spec = run_benchmarks.BenchmarkSpec.model_validate(_arm_suite_payload(spec, arm))
+    total_cases = len(run_benchmarks.build_cases(benchmark_spec))
+    result = run_benchmarks.plan_suite(
+        benchmark_spec,
+        spec_path=suite_path,
+        output_dir=output_dir,
+        export=export,
+        fail_fast=fail_fast,
+    )
+    return total_cases, result
+
+
 def _arm_wandb_settings(
     settings: run_benchmarks.ResolvedWandbConfig,
     *,
@@ -328,13 +364,18 @@ def _arm_wandb_settings(
     arm: SweepArm,
     run_name: str,
 ) -> run_benchmarks.ResolvedWandbConfig:
+    if not settings.enabled:
+        return settings
+    generated_tags = [
+        tag
+        for tag in (generated_wandb_tag("sweep", spec.sweep_id), generated_wandb_tag("arm", arm.arm_id))
+        if tag is not None
+    ]
     return settings.validated_update(
         wandb_group=settings.wandb_group or spec.sweep_id,
         wandb_job_type=settings.wandb_job_type or "benchmark-sweep",
         wandb_run_name=settings.wandb_run_name or run_name,
-        wandb_tags=_joined_tags(
-            settings.effective_wandb_tags, ["sweep", f"sweep:{spec.sweep_id}", f"arm:{arm.arm_id}"]
-        ),
+        wandb_tags=_joined_tags(settings.effective_wandb_tags, ["sweep", *generated_tags]),
     )
 
 
