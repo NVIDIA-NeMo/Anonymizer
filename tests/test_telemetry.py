@@ -278,7 +278,7 @@ class TestBuildPayload:
         assert payload["clientId"] == "184482118588404"
         assert payload["clientVer"] == "1.2.3"
         assert payload["sessionId"] == "anonymizer-abc"
-        assert payload["eventSchemaVer"] == "1.7"
+        assert payload["eventSchemaVer"] == "1.9"
         assert len(payload["events"]) == 1
         assert payload["events"][0]["name"] == "anonymizer_event"
         assert payload["events"][0]["ts"] == "2026-05-11T12:00:00.000Z"

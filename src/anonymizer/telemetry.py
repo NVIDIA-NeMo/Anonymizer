@@ -65,6 +65,7 @@ class DeploymentTypeEnum(str, Enum):
     CLI = "cli"
     SDK = "sdk"
     NMP = "nmp"
+    NVIDIA_INTERNAL = "nvidia-internal"
     UNDEFINED = "undefined"
 
 
@@ -182,7 +183,7 @@ class AnonymizerEvent(BaseModel):
 
     _event_name: ClassVar[str] = "anonymizer_event"
     # Matches the schemaMeta.schemaVersion of nemo-telemetry's anonymous_events.json.
-    _schema_version: ClassVar[str] = "1.7"
+    _schema_version: ClassVar[str] = "1.9"
 
     # Identity
     nemo_source: NemoSourceEnum = Field(default=NemoSourceEnum.ANONYMIZER, alias="nemoSource")
@@ -198,6 +199,7 @@ class AnonymizerEvent(BaseModel):
     num_success_records: int = Field(default=-1, alias="numSuccessRecords")
     num_failure_records: int = Field(default=-1, alias="numFailureRecords")
     avg_tokens_per_record: int = Field(default=-1, alias="avgTokensPerRecord")
+    input_tokens: int = Field(default=-1, alias="inputTokens")
 
     # Configuration
     transformation_type: str = Field(alias="transformationType")

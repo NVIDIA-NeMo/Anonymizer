@@ -270,7 +270,23 @@ class NddAdapter:
     def __init__(self, data_designer: DataDesigner) -> None:
         self._data_designer = data_designer
         self._run_lock = RLock()
+        self._cumulative_input_tokens: int = 0
         logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
+
+    @property
+    def total_input_tokens(self) -> int:
+        """Cumulative input tokens across all run_workflow calls. -1 if none observed."""
+        return self._cumulative_input_tokens if self._cumulative_input_tokens > 0 else -1
+
+    def _add_input_tokens(self, model_usage: dict[str, Any] | None) -> None:
+        for usage in (model_usage or {}).values():
+            if not isinstance(usage, Mapping):
+                continue
+            token_usage = usage.get("token_usage")
+            if isinstance(token_usage, Mapping):
+                tokens = token_usage.get("input_tokens")
+                if isinstance(tokens, int) and tokens > 0:
+                    self._cumulative_input_tokens += tokens
 
     def run_workflow(
         self,
@@ -323,7 +339,7 @@ class NddAdapter:
         columns = trace_plan.columns
         usage_probe = _DataDesignerUsageProbe(
             self._data_designer,
-            enabled=collector is not None,
+            enabled=True,
             collector=collector,
             workflow_name=workflow_name,
             private_trace_columns=trace_plan.private_columns,
@@ -376,6 +392,8 @@ class NddAdapter:
                     usage_probe.flush_private_trace_records()
                 except Exception:
                     logger.warning("Failed to write DataDesigner private message trace records after workflow failure")
+                _error_model_usage = usage_probe.model_usage()
+                self._add_input_tokens(_error_model_usage)
                 record_ndd_workflow(
                     workflow_name=workflow_name,
                     model_aliases=model_aliases,
@@ -388,7 +406,7 @@ class NddAdapter:
                     preview_num_records=preview_num_records,
                     column_count=len(col_names),
                     column_names=col_names,
-                    model_usage=usage_probe.model_usage(),
+                    model_usage=_error_model_usage,
                 )
                 raise AnonymizerWorkflowError(f"Workflow failed: {exc}") from exc
 
@@ -414,6 +432,8 @@ class NddAdapter:
             ),
             output_df=output_df,
         )
+        _success_model_usage = usage_probe.model_usage()
+        self._add_input_tokens(_success_model_usage)
         record_ndd_workflow(
             workflow_name=workflow_name,
             model_aliases=model_aliases,
@@ -425,7 +445,7 @@ class NddAdapter:
             preview_num_records=preview_num_records,
             column_count=len(col_names),
             column_names=col_names,
-            model_usage=usage_probe.model_usage(),
+            model_usage=_success_model_usage,
         )
         return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
 
