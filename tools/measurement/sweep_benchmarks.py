@@ -446,12 +446,13 @@ def _maybe_create_report(
 ) -> str | None:
     if not create_report or dry_run or not wandb_settings.enabled:
         return None
+    entity = wandb_settings.wandb_entity
+    if not entity:
+        return None
     project = WandbProjectPath(
-        entity=wandb_settings.wandb_entity or "",
+        entity=entity,
         project=wandb_settings.effective_wandb_project,
     )
-    if not project.entity:
-        return None
     try:
         result = create_benchmark_group_report(
             project,
@@ -473,12 +474,13 @@ def _maybe_create_workspace(
 ) -> str | None:
     if not create_workspace or dry_run or not wandb_settings.enabled:
         return None
+    entity = wandb_settings.wandb_entity
+    if not entity:
+        return None
     project = WandbProjectPath(
-        entity=wandb_settings.wandb_entity or "",
+        entity=entity,
         project=wandb_settings.effective_wandb_project,
     )
-    if not project.entity:
-        return None
     try:
         result = create_benchmark_group_workspace(
             project,

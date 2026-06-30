@@ -2558,6 +2558,75 @@ def test_sweep_run_creates_workspace_after_typed_report_migration(
     assert result.workspace_url == "https://wandb.ai/workspace"
 
 
+def test_sweep_report_without_entity_preserves_arm_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sweep_tool: ModuleType,
+) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(tmp_path, base_suite=base_suite)
+    calls: list[tuple[Path, Path, Any]] = []
+    _patch_sweep_runner(monkeypatch, sweep_tool, calls, status=sweep_tool.run_benchmarks.CaseStatus.completed)
+    monkeypatch.setattr(
+        sweep_tool,
+        "create_benchmark_group_report",
+        lambda *_args, **_kwargs: pytest.fail("report creation called without an entity"),
+    )
+
+    result = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=sweep_tool.run_benchmarks.resolve_wandb_settings(
+            wandb_mode=sweep_tool.run_benchmarks.WandbMode.offline,
+            wandb_project="project",
+        ),
+        create_report=True,
+    )
+
+    assert result.completed_arms == 2
+    assert result.report_url is None
+    assert result.report_error is None
+
+
+def test_sweep_workspace_without_entity_preserves_arm_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sweep_tool: ModuleType,
+) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(tmp_path, base_suite=base_suite)
+    calls: list[tuple[Path, Path, Any]] = []
+    _patch_sweep_runner(monkeypatch, sweep_tool, calls, status=sweep_tool.run_benchmarks.CaseStatus.completed)
+    monkeypatch.setattr(
+        sweep_tool,
+        "create_benchmark_group_workspace",
+        lambda *_args, **_kwargs: pytest.fail("workspace creation called without an entity"),
+    )
+
+    result = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=sweep_tool.run_benchmarks.resolve_wandb_settings(
+            wandb_mode=sweep_tool.run_benchmarks.WandbMode.offline,
+            wandb_project="project",
+        ),
+        create_report=False,
+        create_workspace=True,
+    )
+
+    assert result.completed_arms == 2
+    assert result.workspace_url is None
+    assert result.workspace_error is None
+
+
 def test_sweep_preserves_arm_results_when_report_creation_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
