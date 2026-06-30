@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 
 import cyclopts
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.wandb_metric_schema import metric_paths
 from measurement_tools.wandb_models import ConfigMetadata, ResolvedWandbConfig, WandbMode, WorkloadMetadata
 from measurement_tools.wandb_report_models import (
     GroupComparison,
@@ -43,89 +44,109 @@ app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.wandb_report")
 
 _WANDB_REPORT_INSTALL_HINT = "Install the optional measurement dependency group: uv sync --group measurement"
-_CASE_HEALTH_METRICS = [
-    "benchmark/case_total",
-    "benchmark/case_completed",
-    "benchmark/case_errored",
-    "benchmark/case_success_rate",
-]
+
+
+_ROW_FLOW_FIELDS = ("input_row_count", "output_row_count", "failed_record_count")
+_ROW_THROUGHPUT_FIELDS = ("input_rows_per_sec_mean", "output_rows_per_sec_mean")
+_CASE_HEALTH_METRICS = metric_paths(
+    "benchmark",
+    "case_total",
+    "case_completed",
+    "case_errored",
+    "case_success_rate",
+)
 _CASE_LATENCY_METRICS = [
-    "benchmark/case_elapsed_sec_mean",
-    "benchmark/case_elapsed_sec_sum",
-    "measurement/stage/elapsed_sec",
+    *metric_paths("benchmark", "case_elapsed_sec_mean", "case_elapsed_sec_sum"),
+    *metric_paths("measurement/stage", "elapsed_sec"),
 ]
-_NDD_ROW_FLOW_METRICS = [
-    "measurement/ndd_workflow/seed_row_count",
-    "measurement/ndd_workflow/input_row_count",
-    "measurement/ndd_workflow/output_row_count",
-    "measurement/ndd_workflow/failed_record_count",
-    "measurement/ndd_workflow/column_count",
+_NDD_ROW_FLOW_METRICS = metric_paths(
+    "measurement/ndd_workflow",
+    "seed_row_count",
+    *_ROW_FLOW_FIELDS,
+    "column_count",
+)
+_NDD_REQUEST_HEALTH_METRICS = metric_paths(
+    "measurement/ndd_workflow",
+    "observed_total_requests",
+    "observed_successful_requests",
+    "observed_failed_requests",
+    "observed_failed_request_rate_mean",
+)
+_NDD_TOKEN_METRICS = metric_paths(
+    "measurement/ndd_workflow",
+    "observed_input_tokens",
+    "observed_output_tokens",
+    "observed_total_tokens",
+    "observed_tokens_per_successful_request_mean",
+)
+_NDD_THROUGHPUT_METRICS = metric_paths(
+    "measurement/ndd_workflow",
+    "elapsed_sec",
+    *_ROW_THROUGHPUT_FIELDS,
+    "observed_requests_per_sec_mean",
+    "observed_tokens_per_sec_mean",
+)
+_RECORD_PRIVACY_METRICS = metric_paths(
+    "measurement/record",
+    "final_entity_count",
+    "entity_precision_mean",
+    "entity_recall_mean",
+    "entity_f1_mean",
+    "original_value_leak_count",
+    "leakage_mass_mean",
+    "weighted_leakage_rate_mean",
+    "detected_candidate_count",
+    "validation_chunk_count",
+    "llm_calls_estimated_total",
+)
+_REWRITE_UTILITY_METRICS = metric_paths(
+    "measurement/record",
+    "utility_score_mean",
+    "repair_iterations_mean",
+)
+_REPLACEMENT_QUALITY_METRICS = metric_paths(
+    "measurement/record",
+    "replacement_count",
+    "replacement_duplicate_value_count",
+    "replacement_missing_final_entity_count",
+    "replacement_missing_final_value_count",
+    "replacement_synthetic_original_collision_count",
+    "replacement_synthetic_original_collision_value_count",
+)
+_STAGE_THROUGHPUT_METRICS = metric_paths(
+    "measurement/stage",
+    *_ROW_FLOW_FIELDS,
+    *_ROW_THROUGHPUT_FIELDS,
+)
+_METRIC_PANEL_GROUPS = [
+    ("Case Health", _CASE_HEALTH_METRICS),
+    ("Case Latency", _CASE_LATENCY_METRICS),
+    ("NDD Row Flow", _NDD_ROW_FLOW_METRICS),
+    ("NDD Request Health", _NDD_REQUEST_HEALTH_METRICS),
+    ("NDD Token Usage", _NDD_TOKEN_METRICS),
+    ("NDD Throughput", _NDD_THROUGHPUT_METRICS),
+    ("Record Privacy", _RECORD_PRIVACY_METRICS),
+    ("Rewrite Utility", _REWRITE_UTILITY_METRICS),
+    ("Replacement Quality", _REPLACEMENT_QUALITY_METRICS),
+    ("Stage Throughput", _STAGE_THROUGHPUT_METRICS),
 ]
-_NDD_REQUEST_HEALTH_METRICS = [
-    "measurement/ndd_workflow/observed_total_requests",
-    "measurement/ndd_workflow/observed_successful_requests",
-    "measurement/ndd_workflow/observed_failed_requests",
-    "measurement/ndd_workflow/observed_failed_request_rate_mean",
-]
-_NDD_TOKEN_METRICS = [
-    "measurement/ndd_workflow/observed_input_tokens",
-    "measurement/ndd_workflow/observed_output_tokens",
-    "measurement/ndd_workflow/observed_total_tokens",
-    "measurement/ndd_workflow/observed_tokens_per_successful_request_mean",
-]
-_NDD_THROUGHPUT_METRICS = [
-    "measurement/ndd_workflow/elapsed_sec",
-    "measurement/ndd_workflow/input_rows_per_sec_mean",
-    "measurement/ndd_workflow/output_rows_per_sec_mean",
-    "measurement/ndd_workflow/observed_requests_per_sec_mean",
-    "measurement/ndd_workflow/observed_tokens_per_sec_mean",
-]
-_RECORD_PRIVACY_METRICS = [
-    "measurement/record/final_entity_count",
-    "measurement/record/entity_precision_mean",
-    "measurement/record/entity_recall_mean",
-    "measurement/record/entity_f1_mean",
-    "measurement/record/original_value_leak_count",
-    "measurement/record/leakage_mass_mean",
-    "measurement/record/weighted_leakage_rate_mean",
-    "measurement/record/detected_candidate_count",
-    "measurement/record/validation_chunk_count",
-    "measurement/record/llm_calls_estimated_total",
-]
-_REWRITE_UTILITY_METRICS = [
-    "measurement/record/utility_score_mean",
-    "measurement/record/repair_iterations_mean",
-]
-_REPLACEMENT_QUALITY_METRICS = [
-    "measurement/record/replacement_count",
-    "measurement/record/replacement_duplicate_value_count",
-    "measurement/record/replacement_missing_final_entity_count",
-    "measurement/record/replacement_missing_final_value_count",
-    "measurement/record/replacement_synthetic_original_collision_count",
-    "measurement/record/replacement_synthetic_original_collision_value_count",
-]
-_STAGE_THROUGHPUT_METRICS = [
-    "measurement/stage/input_row_count",
-    "measurement/stage/output_row_count",
-    "measurement/stage/failed_record_count",
-    "measurement/stage/input_rows_per_sec_mean",
-    "measurement/stage/output_rows_per_sec_mean",
-]
-_MEASUREMENT_TABLE_KEYS = [
-    "measurement_table/run",
-    "measurement_table/stage",
-    "measurement_table/ndd_workflow",
-    "measurement_table/model_workflow",
-    "measurement_table/record",
-    "measurement_table/evaluation_record",
-]
+_MEASUREMENT_TABLE_KEYS = metric_paths(
+    "measurement_table",
+    "run",
+    "stage",
+    "ndd_workflow",
+    "model_workflow",
+    "record",
+    "evaluation_record",
+)
 _WORKSPACE_JOB_FILTERS = ("benchmark", "benchmark-import", "benchmark-sweep")
-_WORKSPACE_SUMMARY_SCALARS = [
-    "benchmark/case_success_rate",
-    "benchmark/case_completed",
-    "benchmark/case_errored",
-    "benchmark/case_elapsed_sec_mean",
-]
+_WORKSPACE_SUMMARY_SCALARS = metric_paths(
+    "benchmark",
+    "case_success_rate",
+    "case_completed",
+    "case_errored",
+    "case_elapsed_sec_mean",
+)
 _WORKSPACE_COMPARISON_COLUMNS = [
     "config:sweep_arm_id",
     "config:benchmark_strategies",
@@ -600,18 +621,7 @@ def _benchmark_panels(wr: Any, *, groupby: Any | None = None) -> list[Any]:
 
 
 def _metric_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
-    return [
-        _bar_panel(wr, "Case Health", _CASE_HEALTH_METRICS, groupby=groupby),
-        _bar_panel(wr, "Case Latency", _CASE_LATENCY_METRICS, groupby=groupby),
-        _bar_panel(wr, "NDD Row Flow", _NDD_ROW_FLOW_METRICS, groupby=groupby),
-        _bar_panel(wr, "NDD Request Health", _NDD_REQUEST_HEALTH_METRICS, groupby=groupby),
-        _bar_panel(wr, "NDD Token Usage", _NDD_TOKEN_METRICS, groupby=groupby),
-        _bar_panel(wr, "NDD Throughput", _NDD_THROUGHPUT_METRICS, groupby=groupby),
-        _bar_panel(wr, "Record Privacy", _RECORD_PRIVACY_METRICS, groupby=groupby),
-        _bar_panel(wr, "Rewrite Utility", _REWRITE_UTILITY_METRICS, groupby=groupby),
-        _bar_panel(wr, "Replacement Quality", _REPLACEMENT_QUALITY_METRICS, groupby=groupby),
-        _bar_panel(wr, "Stage Throughput", _STAGE_THROUGHPUT_METRICS, groupby=groupby),
-    ]
+    return [_bar_panel(wr, title, metrics, groupby=groupby) for title, metrics in _METRIC_PANEL_GROUPS]
 
 
 def _bar_panel(wr: Any, title: str, metrics: list[str], *, groupby: Any | None = None) -> Any:
@@ -619,22 +629,7 @@ def _bar_panel(wr: Any, title: str, metrics: list[str], *, groupby: Any | None =
 
 
 def _all_report_metrics() -> list[str]:
-    return list(
-        dict.fromkeys(
-            [
-                *_CASE_HEALTH_METRICS,
-                *_CASE_LATENCY_METRICS,
-                *_NDD_ROW_FLOW_METRICS,
-                *_NDD_REQUEST_HEALTH_METRICS,
-                *_NDD_TOKEN_METRICS,
-                *_NDD_THROUGHPUT_METRICS,
-                *_RECORD_PRIVACY_METRICS,
-                *_REWRITE_UTILITY_METRICS,
-                *_REPLACEMENT_QUALITY_METRICS,
-                *_STAGE_THROUGHPUT_METRICS,
-            ]
-        )
-    )
+    return list(dict.fromkeys(metric for _, metrics in _METRIC_PANEL_GROUPS for metric in metrics))
 
 
 def _summary_columns(metrics: list[str]) -> list[str]:

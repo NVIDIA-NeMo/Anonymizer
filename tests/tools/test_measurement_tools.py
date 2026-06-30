@@ -2907,6 +2907,28 @@ def test_wandb_aggregates_with_explicit_metric_policy(
     assert not any("input_has_id_column" in key for key in aggregated)
 
 
+def test_wandb_scalar_registry_matches_package_field_catalog(wandb_logging_tool: ModuleType) -> None:
+    from measurement_tools.wandb_metric_schema import (
+        AGGREGATED_MEASUREMENT_FIELDS,
+        SCALAR_AGGREGATION_BY_FIELD,
+    )
+    from measurement_tools.wandb_models import WandbHistoryPayload
+
+    from anonymizer.measurement.fields import (
+        SCALAR_ADDITIVE_FIELDS,
+        SCALAR_AVERAGED_FIELDS,
+        SCALAR_LAST_VALUE_FIELDS,
+    )
+
+    field_groups = (SCALAR_LAST_VALUE_FIELDS, SCALAR_ADDITIVE_FIELDS, SCALAR_AVERAGED_FIELDS)
+    expected_fields = frozenset().union(*field_groups)
+
+    assert sum(map(len, field_groups)) == len(expected_fields)
+    assert frozenset(SCALAR_AGGREGATION_BY_FIELD) == expected_fields
+    for field_name in AGGREGATED_MEASUREMENT_FIELDS:
+        WandbHistoryPayload(metrics={f"measurement/record/{field_name}": 0})
+
+
 def test_wandb_report_metric_names_match_aggregated_names(
     wandb_ingress_tool: ModuleType,
     wandb_logging_tool: ModuleType,

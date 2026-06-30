@@ -271,12 +271,14 @@ When adding instrumentation:
 | File | Purpose |
 | --- | --- |
 | `src/anonymizer/measurement/` | Collector, config, context managers, safe record builders, and trace sidecar hooks. |
+| `src/anonymizer/measurement/fields.py` | Canonical scalar field groups shared with measurement exporters. |
 | `src/anonymizer/interface/anonymizer.py` | Run-level and per-record measurement integration. |
 | `src/anonymizer/engine/ndd/adapter.py` | DataDesigner workflow measurement, native message trace capture, and scheduler task trace capture. |
 | `tools/measurement/run_benchmarks.py` | Benchmark suite runner that activates measurement sessions and writes per-case artifacts. |
 | `tools/measurement/measurement_tools/execution.py` | Sanitized local/Slurm execution metadata shared by benchmark tools. |
 | `tools/measurement/measurement_tools/wandb_completion.py` | Typed completion-seal construction, atomic writes, and digest verification. |
 | `tools/measurement/measurement_tools/wandb_ingress.py` | Bounded descriptor-based capture and strict measurement parsing. |
+| `tools/measurement/measurement_tools/wandb_metric_schema.py` | Shared W&B metric naming and scalar aggregation policy. |
 | `tools/measurement/measurement_tools/wandb_report_models.py` | Closed v1/v2 report views and explicit comparison axes. |
 | `tools/measurement/measurement_tools/wandb_setup.py` | Resolved W&B settings, environment isolation, SDK lifecycle, and staging. |
 | `tools/measurement/create_wandb_report.py` | Typed W&B benchmark workspace and report builder. |

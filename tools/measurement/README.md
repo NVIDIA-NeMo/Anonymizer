@@ -115,6 +115,8 @@ boring command and export policy through `measurement_tools/`:
   and snapshot verification.
 - `measurement_tools.wandb_ingress`: bounded descriptor-based capture and
   strict measurement record parsing.
+- `measurement_tools.wandb_metric_schema`: shared W&B metric names, path
+  construction, and scalar aggregation policies.
 - `measurement_tools.wandb_models`: resolved settings and outbound payload
   models with field exposure policies.
 - `measurement_tools.wandb_report_models`: historical v1 and current v2 report

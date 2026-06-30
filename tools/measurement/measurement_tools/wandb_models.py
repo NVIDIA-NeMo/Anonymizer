@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from enum import StrEnum
 from ipaddress import ip_address
 from pathlib import Path
+from types import MappingProxyType
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlsplit
 
@@ -25,6 +26,8 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from measurement_tools.wandb_metric_schema import AGGREGATED_MEASUREMENT_FIELDS, BENCHMARK_METRIC_NAMES
 
 DEFAULT_WANDB_PROJECT = "nemo-anonymizer-benchmarks"
 PUBLICATION_COMPLETE_KEY = "publication/complete"
@@ -216,83 +219,6 @@ NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
 NonNegativeFloat = Annotated[FiniteFloat, Field(ge=0)]
 Probability = Annotated[FiniteFloat, Field(ge=0, le=1)]
 MeasurementStrategy = Literal["Annotate", "Hash", "Redact", "Rewrite", "Substitute"]
-_BENCHMARK_METRIC_NAMES = frozenset(
-    {
-        "benchmark/case_total",
-        "benchmark/case_completed",
-        "benchmark/case_errored",
-        "benchmark/case_success_rate",
-        "benchmark/case_elapsed_sec_sum",
-        "benchmark/case_elapsed_sec_mean",
-    }
-)
-_MEASUREMENT_RECORD_TYPES = frozenset(
-    {"run", "stage", "record", "evaluation_record", "ndd_workflow", "model_workflow", "dd_trace_coverage"}
-)
-_MEASUREMENT_METRIC_FIELDS = frozenset(
-    {
-        "mode",
-        "stage",
-        "status",
-        "strategy",
-        "elapsed_sec",
-        "input_row_count",
-        "seed_row_count",
-        "output_row_count",
-        "failed_record_count",
-        "preview_num_records",
-        "column_count",
-        "observed_input_tokens",
-        "observed_output_tokens",
-        "observed_total_tokens",
-        "observed_reasoning_tokens",
-        "observed_successful_requests",
-        "observed_failed_requests",
-        "observed_total_requests",
-        "text_length_chars",
-        "text_length_tokens",
-        "final_entity_count",
-        "ground_truth_entity_count",
-        "entity_true_positive_count",
-        "entity_false_positive_count",
-        "entity_false_negative_count",
-        "entity_relaxed_gt_found_count",
-        "entity_relaxed_detected_tp_count",
-        "entity_relaxed_label_compatible_gt_found_count",
-        "entity_relaxed_label_compatible_detected_tp_count",
-        "replacement_count",
-        "replacement_duplicate_value_count",
-        "replacement_missing_final_entity_count",
-        "replacement_missing_final_value_count",
-        "replacement_synthetic_original_collision_count",
-        "replacement_synthetic_original_collision_value_count",
-        "original_value_leak_count",
-        "detected_candidate_count",
-        "validation_chunk_count",
-        "llm_calls_estimated_total",
-        "detection_invalid_entity_count",
-        "type_fidelity_invalid_replacement_count",
-        "relational_consistency_invalid_relation_count",
-        "attribute_fidelity_invalid_entity_count",
-        "observed_failed_request_rate_mean",
-        "input_rows_per_sec_mean",
-        "output_rows_per_sec_mean",
-        "observed_tokens_per_sec_mean",
-        "observed_requests_per_sec_mean",
-        "observed_tokens_per_successful_request_mean",
-        "entity_precision_mean",
-        "entity_recall_mean",
-        "entity_f1_mean",
-        "utility_score_mean",
-        "leakage_mass_mean",
-        "weighted_leakage_rate_mean",
-        "repair_iterations_mean",
-        "traced_column_count",
-        "native_trace_column_count",
-        "private_trace_column_count",
-        "unsupported_column_count",
-    }
-)
 _NUMERIC_SWEEP_PARAMETER_TAILS = frozenset(
     {
         "detect_gliner_threshold",
@@ -849,6 +775,18 @@ WandbTableRow = Annotated[
     | TraceCoverageTableRow,
     Field(discriminator="record_type"),
 ]
+WANDB_TABLE_ROW_MODELS: Mapping[str, type[BaseModel]] = MappingProxyType(
+    {
+        "run": RunTableRow,
+        "stage": StageTableRow,
+        "record": RecordTableRow,
+        "evaluation_record": EvaluationTableRow,
+        "ndd_workflow": NddWorkflowTableRow,
+        "model_workflow": ModelWorkflowTableRow,
+        "dd_trace_coverage": TraceCoverageTableRow,
+    }
+)
+_MEASUREMENT_RECORD_TYPES = frozenset(WANDB_TABLE_ROW_MODELS)
 
 
 class WandbTablePayload(BaseModel):
@@ -1182,7 +1120,7 @@ validate_outbound_field_policies()
 
 
 def _metric_has_aggregate_policy(key: str) -> bool:
-    if key in _BENCHMARK_METRIC_NAMES or key in {
+    if key in BENCHMARK_METRIC_NAMES or key in {
         "measurement/record_count",
         PUBLICATION_COMPLETE_KEY,
         PUBLICATION_SEAL_DIGEST_KEY,
@@ -1193,5 +1131,5 @@ def _metric_has_aggregate_policy(key: str) -> bool:
         len(parts) == 3
         and parts[0] == "measurement"
         and parts[1] in _MEASUREMENT_RECORD_TYPES
-        and parts[2] in _MEASUREMENT_METRIC_FIELDS
+        and parts[2] in AGGREGATED_MEASUREMENT_FIELDS
     )
