@@ -17,13 +17,14 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import cyclopts
 import run_benchmarks
 import yaml
 from create_wandb_report import WandbProjectPath, create_benchmark_group_report, create_benchmark_group_workspace
-from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input, summarize_validation_error
+from measurement_tools.wandb_models import SweepMetadata
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 app = cyclopts.App(help=__doc__)
@@ -70,6 +71,8 @@ class SweepResult(BaseModel):
     arms: list[SweepArmResult]
     report_url: str | None = None
     workspace_url: str | None = None
+    report_error: str | None = None
+    workspace_error: str | None = None
 
     @property
     def completed_arms(self) -> int:
@@ -93,16 +96,23 @@ class SweepCliOptions:
     wandb_mode: run_benchmarks.WandbMode | None
     wandb_entity: str | None
     wandb_project: str | None
+    wandb_base_url: str | None
     wandb_group: str | None
     wandb_job_type: str | None
     wandb_tags: str | None
     wandb_log_tables: bool | None
 
 
+class WandbViewCreationError(RuntimeError):
+    """A post-benchmark W&B presentation operation failed."""
+
+
 def load_sweep_spec(path: Path) -> SweepSpec:
     raw = _read_yaml_mapping(path)
     spec = SweepSpec.model_validate(raw)
-    return spec.model_copy(update={"base_suite": str(_resolve_path(spec.base_suite, path.parent))})
+    values = spec.model_dump()
+    values["base_suite"] = str(_resolve_path(spec.base_suite, path.parent))
+    return SweepSpec.model_validate(values)
 
 
 def expand_sweep_arms(spec: SweepSpec) -> list[SweepArm]:
@@ -138,9 +148,12 @@ def _patched_suite(suite: dict[str, Any], *, spec: SweepSpec, arm: SweepArm) -> 
 
 
 def _sweep_run_tags(spec: SweepSpec, arm: SweepArm) -> dict[str, Any]:
-    tags: dict[str, Any] = {"sweep_id": spec.sweep_id, "sweep_arm_id": arm.arm_id}
-    tags.update({f"sweep_param_{_safe_param_name(path)}": value for path, value in arm.parameters.items()})
-    return tags
+    sweep = SweepMetadata.from_arm(
+        sweep_id=spec.sweep_id,
+        arm_id=arm.arm_id,
+        params={_safe_param_name(path): value for path, value in arm.parameters.items()},
+    )
+    return {"wandb_sweep": sweep.model_dump(mode="json")}
 
 
 def _apply_parameter(suite: dict[str, Any], path: str, value: Any) -> None:
@@ -178,7 +191,7 @@ def _set_nested(target: dict[str, Any], parts: list[str], value: Any) -> None:
             current[part] = existing
         if not isinstance(existing, dict):
             raise ValueError(f"cannot set nested sweep parameter through non-mapping field: {part}")
-        current = existing
+        current = cast(dict[str, Any], existing)
     current[parts[-1]] = value
 
 
@@ -190,7 +203,7 @@ def run_sweep(
     dry_run: bool,
     export: bool,
     fail_fast: bool,
-    wandb_settings: run_benchmarks.WandbSettings,
+    wandb_settings: run_benchmarks.ResolvedWandbConfig,
     create_report: bool,
     create_workspace: bool = False,
 ) -> SweepResult:
@@ -207,19 +220,36 @@ def run_sweep(
         fail_fast=fail_fast,
         wandb_settings=wandb_settings,
     )
-    report_url, workspace_url = _maybe_create_views(
-        spec,
-        wandb_settings=wandb_settings,
-        create_report=create_report,
-        create_workspace=create_workspace,
-        dry_run=dry_run,
-    )
+    report_url = None
+    workspace_url = None
+    report_error = None
+    workspace_error = None
+    try:
+        report_url = _maybe_create_report(
+            spec,
+            wandb_settings=wandb_settings,
+            create_report=create_report,
+            dry_run=dry_run,
+        )
+    except WandbViewCreationError as exc:
+        report_error = str(exc)
+    try:
+        workspace_url = _maybe_create_workspace(
+            spec,
+            wandb_settings=wandb_settings,
+            create_workspace=create_workspace,
+            dry_run=dry_run,
+        )
+    except WandbViewCreationError as exc:
+        workspace_error = str(exc)
     return SweepResult(
         sweep_id=spec.sweep_id,
         output_root=str(resolved_output_root),
         arms=results,
         report_url=report_url,
         workspace_url=workspace_url,
+        report_error=report_error,
+        workspace_error=workspace_error,
     )
 
 
@@ -232,7 +262,7 @@ def _run_sweep_arms(
     dry_run: bool,
     export: bool,
     fail_fast: bool,
-    wandb_settings: run_benchmarks.WandbSettings,
+    wandb_settings: run_benchmarks.ResolvedWandbConfig,
 ) -> list[SweepArmResult]:
     results: list[SweepArmResult] = []
     for arm in arms:
@@ -252,25 +282,6 @@ def _run_sweep_arms(
     return results
 
 
-def _maybe_create_views(
-    spec: SweepSpec,
-    *,
-    wandb_settings: run_benchmarks.WandbSettings,
-    create_report: bool,
-    create_workspace: bool,
-    dry_run: bool,
-) -> tuple[str | None, str | None]:
-    return (
-        _maybe_create_report(spec, wandb_settings=wandb_settings, create_report=create_report, dry_run=dry_run),
-        _maybe_create_workspace(
-            spec,
-            wandb_settings=wandb_settings,
-            create_workspace=create_workspace,
-            dry_run=dry_run,
-        ),
-    )
-
-
 def _run_arm(
     spec: SweepSpec,
     arm: SweepArm,
@@ -280,7 +291,7 @@ def _run_arm(
     dry_run: bool,
     export: bool,
     fail_fast: bool,
-    wandb_settings: run_benchmarks.WandbSettings,
+    wandb_settings: run_benchmarks.ResolvedWandbConfig,
 ) -> SweepArmResult:
     suite_path = output_root / arm.arm_id / "suite.yaml"
     output_dir = output_root / arm.arm_id / "output"
@@ -311,21 +322,19 @@ def _run_arm(
 
 
 def _arm_wandb_settings(
-    settings: run_benchmarks.WandbSettings,
+    settings: run_benchmarks.ResolvedWandbConfig,
     *,
     spec: SweepSpec,
     arm: SweepArm,
     run_name: str,
-) -> run_benchmarks.WandbSettings:
-    return settings.model_copy(
-        update={
-            "wandb_group": settings.wandb_group or spec.sweep_id,
-            "wandb_job_type": settings.wandb_job_type or "benchmark-sweep",
-            "wandb_run_name": settings.wandb_run_name or run_name,
-            "wandb_tags": _joined_tags(
-                settings.effective_wandb_tags, ["sweep", f"sweep:{spec.sweep_id}", f"arm:{arm.arm_id}"]
-            ),
-        }
+) -> run_benchmarks.ResolvedWandbConfig:
+    return settings.validated_update(
+        wandb_group=settings.wandb_group or spec.sweep_id,
+        wandb_job_type=settings.wandb_job_type or "benchmark-sweep",
+        wandb_run_name=settings.wandb_run_name or run_name,
+        wandb_tags=_joined_tags(
+            settings.effective_wandb_tags, ["sweep", f"sweep:{spec.sweep_id}", f"arm:{arm.arm_id}"]
+        ),
     )
 
 
@@ -390,7 +399,7 @@ def _planned_case_count_if_readable(suite_path: Path) -> int:
 def _maybe_create_report(
     spec: SweepSpec,
     *,
-    wandb_settings: run_benchmarks.WandbSettings,
+    wandb_settings: run_benchmarks.ResolvedWandbConfig,
     create_report: bool,
     dry_run: bool,
 ) -> str | None:
@@ -402,14 +411,22 @@ def _maybe_create_report(
     )
     if not project.entity:
         return None
-    result = create_benchmark_group_report(project, group=wandb_settings.wandb_group or spec.sweep_id)
+    try:
+        result = create_benchmark_group_report(
+            project,
+            settings=wandb_settings,
+            group=wandb_settings.wandb_group or spec.sweep_id,
+            expected_run_kind="sweep_arm",
+        )
+    except Exception as exc:  # noqa: BLE001 -- remote SDK errors must not expose response contents
+        raise WandbViewCreationError(f"W&B report creation failed ({type(exc).__name__})") from None
     return result.report_url
 
 
 def _maybe_create_workspace(
     spec: SweepSpec,
     *,
-    wandb_settings: run_benchmarks.WandbSettings,
+    wandb_settings: run_benchmarks.ResolvedWandbConfig,
     create_workspace: bool,
     dry_run: bool,
 ) -> str | None:
@@ -421,7 +438,15 @@ def _maybe_create_workspace(
     )
     if not project.entity:
         return None
-    result = create_benchmark_group_workspace(project, group=wandb_settings.wandb_group or spec.sweep_id)
+    try:
+        result = create_benchmark_group_workspace(
+            project,
+            settings=wandb_settings,
+            group=wandb_settings.wandb_group or spec.sweep_id,
+            expected_run_kind="sweep_arm",
+        )
+    except Exception as exc:  # noqa: BLE001 -- remote SDK errors must not expose response contents
+        raise WandbViewCreationError(f"W&B workspace creation failed ({type(exc).__name__})") from None
     return result.workspace_url
 
 
@@ -498,15 +523,17 @@ def _resolve_cli_wandb_settings(
     wandb_mode: run_benchmarks.WandbMode | None,
     wandb_entity: str | None,
     wandb_project: str | None,
+    wandb_base_url: str | None,
     wandb_group: str | None,
     wandb_job_type: str | None,
     wandb_tags: str | None,
     wandb_log_tables: bool | None,
-) -> run_benchmarks.WandbSettings:
+) -> run_benchmarks.ResolvedWandbConfig:
     return run_benchmarks.resolve_wandb_settings(
         wandb_mode=wandb_mode,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,
+        wandb_base_url=wandb_base_url,
         wandb_group=wandb_group,
         wandb_job_type=wandb_job_type,
         wandb_tags=wandb_tags,
@@ -530,6 +557,7 @@ def main(
     wandb_mode: Annotated[run_benchmarks.WandbMode | None, cyclopts.Parameter("--wandb-mode")] = None,
     wandb_entity: Annotated[str | None, cyclopts.Parameter("--wandb-entity")] = None,
     wandb_project: Annotated[str | None, cyclopts.Parameter("--wandb-project")] = None,
+    wandb_base_url: Annotated[str | None, cyclopts.Parameter("--wandb-base-url")] = None,
     wandb_group: Annotated[str | None, cyclopts.Parameter("--wandb-group")] = None,
     wandb_job_type: Annotated[str | None, cyclopts.Parameter("--wandb-job-type")] = None,
     wandb_tags: Annotated[str | None, cyclopts.Parameter("--wandb-tags")] = None,
@@ -548,6 +576,7 @@ def main(
         wandb_mode=wandb_mode,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,
+        wandb_base_url=wandb_base_url,
         wandb_group=wandb_group,
         wandb_job_type=wandb_job_type,
         wandb_tags=wandb_tags,
@@ -555,11 +584,14 @@ def main(
     )
     try:
         result = _run_sweep_from_cli(options)
-    except (ValueError, ValidationError) as exc:
+    except ValidationError as exc:
+        log_bad_input(logger, summarize_validation_error(exc))
+        raise SystemExit(125) from exc
+    except ValueError as exc:
         log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
-    if result.errored_arms:
+    if result.errored_arms or result.report_error is not None or result.workspace_error is not None:
         raise SystemExit(1)
 
 
@@ -568,6 +600,7 @@ def _run_sweep_from_cli(options: SweepCliOptions) -> SweepResult:
         wandb_mode=options.wandb_mode,
         wandb_entity=options.wandb_entity,
         wandb_project=options.wandb_project,
+        wandb_base_url=options.wandb_base_url,
         wandb_group=options.wandb_group,
         wandb_job_type=options.wandb_job_type,
         wandb_tags=options.wandb_tags,

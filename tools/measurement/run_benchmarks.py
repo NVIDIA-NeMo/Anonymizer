@@ -31,18 +31,16 @@ from analyze_detection_artifacts import (
 from data_designer.config.models import ModelProvider
 from data_designer.config.utils.io_helpers import load_config_file
 from export_measurements import export_tables, read_measurements
-from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input, summarize_validation_error
 from measurement_tools.execution import benchmark_execution_metadata, stable_metadata_hash
 from measurement_tools.tables import ExportFormat
 from measurement_tools.wandb_setup import (
     WANDB_SANITIZER_VERSION,
     BenchmarkWandbFinalization,
+    ResolvedWandbConfig,
     WandbMode,
-    WandbSettings,
-    finalize_benchmark_wandb_run,
-    finish_benchmark_wandb_run,
-    initialize_benchmark_wandb_run,
-    require_wandb,
+    WandbRunMetadata,
+    publish_benchmark_wandb_best_effort,
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -70,6 +68,7 @@ app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.benchmark")
 
 
+# Compatibility name for callers that imported the branch's initial W&B config type.
 class CaseStatus(StrEnum):
     planned = "planned"
     completed = "completed"
@@ -154,7 +153,7 @@ class MatrixEntry(BaseModel):
 
 RESERVED_RUN_TAG_KEYS = frozenset({"suite_id", "workload_id", "config_id", "repetition", "case_id"})
 BENCHMARK_SUITE_SCHEMA_VERSION = 1
-WANDB_METADATA_SCHEMA_VERSION = 1
+WANDB_METADATA_SCHEMA_VERSION = 2
 
 
 def _duplicates(values: list[str]) -> list[str]:
@@ -1214,8 +1213,10 @@ def build_wandb_metadata(
     fail_fast: bool,
     dd_trace: DDTraceMode,
     dd_task_trace: bool,
-) -> dict[str, Any]:
+) -> WandbRunMetadata:
+    sweep = _sweep_metadata(spec.run_tags)
     metadata = {
+        "run_kind": "sweep_arm" if sweep is not None else "native_suite",
         "benchmark": _benchmark_metadata(spec, spec_path=spec_path),
         "execution": _execution_metadata(
             output_dir=output_dir,
@@ -1230,9 +1231,9 @@ def build_wandb_metadata(
         "workloads": [_workload_metadata(workload) for workload in spec.workloads],
         "configs": [_config_metadata(config) for config in spec.configs],
         "matrix": [entry.model_dump(mode="json") for entry in (spec.matrix or _cross_product_matrix(spec))],
+        "sweep": sweep,
     }
-    metadata.update(_sweep_metadata(spec.run_tags))
-    return metadata
+    return WandbRunMetadata.model_validate(metadata, strict=True)
 
 
 def _benchmark_metadata(spec: BenchmarkSpec, *, spec_path: Path) -> dict[str, Any]:
@@ -1263,13 +1264,15 @@ def _execution_metadata(
     dd_trace: DDTraceMode,
     dd_task_trace: bool,
 ) -> dict[str, Any]:
-    return benchmark_execution_metadata(
+    metadata = benchmark_execution_metadata(
         output_dir=output_dir,
         export=export,
         fail_fast=fail_fast,
         dd_trace=dd_trace.value,
         dd_task_trace=dd_task_trace,
     )
+    metadata.pop("output_dir_hash", None)
+    return metadata
 
 
 def _runtime_metadata() -> dict[str, Any]:
@@ -1320,7 +1323,6 @@ def _source_metadata(source: str) -> dict[str, str | None]:
     return {
         "kind": "remote_file" if is_remote_input_source(source) else "local_file",
         "suffix": _source_suffix(source),
-        "source_hash": _stable_hash(source),
     }
 
 
@@ -1343,24 +1345,9 @@ def _config_metadata(config: ConfigSpec) -> dict[str, Any]:
     }
 
 
-def _sweep_metadata(run_tags: dict[str, Any]) -> dict[str, Any]:
-    sweep_id = run_tags.get("sweep_id")
-    arm_id = run_tags.get("sweep_arm_id")
-    if not isinstance(sweep_id, str) or not isinstance(arm_id, str):
-        return {}
-    params = {
-        key.removeprefix("sweep_param_"): value
-        for key, value in run_tags.items()
-        if key.startswith("sweep_param_") and isinstance(value, str | int | float | bool)
-    }
-    metadata: dict[str, Any] = {
-        "sweep_id": sweep_id,
-        "sweep_arm_id": arm_id,
-        "sweep": {"id": sweep_id, "arm_id": arm_id, "params": params},
-        "sweep_params": params,
-    }
-    metadata.update({f"sweep_param_{key}": value for key, value in params.items()})
-    return metadata
+def _sweep_metadata(run_tags: dict[str, Any]) -> dict[str, Any] | None:
+    sweep = run_tags.get("wandb_sweep")
+    return sweep if isinstance(sweep, dict) else None
 
 
 def _detect_metadata(detect: dict[str, Any]) -> dict[str, Any]:
@@ -1460,6 +1447,7 @@ def main(
     wandb_mode: Annotated[WandbMode | None, cyclopts.Parameter("--wandb-mode")] = None,
     wandb_entity: Annotated[str | None, cyclopts.Parameter("--wandb-entity")] = None,
     wandb_project: Annotated[str | None, cyclopts.Parameter("--wandb-project")] = None,
+    wandb_base_url: Annotated[str | None, cyclopts.Parameter("--wandb-base-url")] = None,
     wandb_group: Annotated[str | None, cyclopts.Parameter("--wandb-group")] = None,
     wandb_job_type: Annotated[str | None, cyclopts.Parameter("--wandb-job-type")] = None,
     wandb_run_name: Annotated[str | None, cyclopts.Parameter("--wandb-run-name")] = None,
@@ -1467,17 +1455,18 @@ def main(
     wandb_log_tables: Annotated[bool | None, cyclopts.Parameter("--wandb-log-tables")] = None,
 ) -> None:
     configure_logging(log_format)
-    wandb_settings = resolve_wandb_settings(
-        wandb_mode=wandb_mode,
-        wandb_entity=wandb_entity,
-        wandb_project=wandb_project,
-        wandb_group=wandb_group,
-        wandb_job_type=wandb_job_type,
-        wandb_run_name=wandb_run_name,
-        wandb_tags=wandb_tags,
-        wandb_log_tables=wandb_log_tables,
-    )
     try:
+        wandb_settings = resolve_wandb_settings(
+            wandb_mode=wandb_mode,
+            wandb_entity=wandb_entity,
+            wandb_project=wandb_project,
+            wandb_base_url=wandb_base_url,
+            wandb_group=wandb_group,
+            wandb_job_type=wandb_job_type,
+            wandb_run_name=wandb_run_name,
+            wandb_tags=wandb_tags,
+            wandb_log_tables=wandb_log_tables,
+        )
         result = run_or_plan(
             spec,
             output=output,
@@ -1491,7 +1480,10 @@ def main(
             task_trace_dir=task_trace_dir,
             wandb_settings=wandb_settings,
         )
-    except (ValueError, ValidationError) as exc:
+    except ValidationError as exc:
+        log_bad_input(logger, summarize_validation_error(exc))
+        raise SystemExit(125) from exc
+    except ValueError as exc:
         log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc
     sys.stdout.write(render_result(result, json_output=json_output) + "\n")
@@ -1504,16 +1496,18 @@ def resolve_wandb_settings(
     wandb_mode: WandbMode | None = None,
     wandb_entity: str | None = None,
     wandb_project: str | None = None,
+    wandb_base_url: str | None = None,
     wandb_group: str | None = None,
     wandb_job_type: str | None = None,
     wandb_run_name: str | None = None,
     wandb_tags: str | None = None,
     wandb_log_tables: bool | None = None,
-) -> WandbSettings:
-    return WandbSettings.from_env_and_overrides(
+) -> ResolvedWandbConfig:
+    return ResolvedWandbConfig.from_env_and_overrides(
         wandb_mode=wandb_mode,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,
+        wandb_base_url=wandb_base_url,
         wandb_group=wandb_group,
         wandb_job_type=wandb_job_type,
         wandb_run_name=wandb_run_name,
@@ -1534,11 +1528,11 @@ def run_or_plan(
     trace_dir: Path | None = None,
     dd_task_trace: bool = False,
     task_trace_dir: Path | None = None,
-    wandb_settings: WandbSettings | None = None,
+    wandb_settings: ResolvedWandbConfig | None = None,
 ) -> BenchmarkResult:
     benchmark_spec = load_spec(spec_path)
     output_dir = output or Path("benchmark-runs") / benchmark_spec.suite_id
-    resolved_wandb = wandb_settings or WandbSettings()
+    resolved_wandb = wandb_settings or ResolvedWandbConfig()
     if trace_dir is not None and dd_trace == DDTraceMode.none:
         raise ValueError("--trace-dir requires --dd-trace")
     if task_trace_dir is not None and not dd_task_trace:
@@ -1555,49 +1549,35 @@ def run_or_plan(
             dd_task_trace=dd_task_trace,
             task_trace_dir=task_trace_dir,
         )
-    active_wandb = require_wandb() if resolved_wandb.enabled else None
     prepare_output_dir(output_dir, overwrite=overwrite, dry_run=dry_run)
-    wandb_run_created = initialize_benchmark_wandb_run(
+    result = run_suite(
+        benchmark_spec,
+        spec_path=spec_path,
+        output_dir=output_dir,
+        export=export,
+        fail_fast=fail_fast,
+        dd_trace=dd_trace,
+        trace_dir=trace_dir,
+        dd_task_trace=dd_task_trace,
+        task_trace_dir=task_trace_dir,
+    )
+    publish_benchmark_wandb_best_effort(
         resolved_wandb,
         suite_id=benchmark_spec.suite_id,
         output_dir=output_dir,
-        run_tags=benchmark_spec.run_tags,
-        metadata=build_wandb_metadata(
-            benchmark_spec,
-            spec_path=spec_path,
-            output_dir=output_dir,
-            export=export,
-            fail_fast=fail_fast,
-            dd_trace=dd_trace,
-            dd_task_trace=dd_task_trace,
-        ),
-    )
-    try:
-        result = run_suite(
-            benchmark_spec,
-            spec_path=spec_path,
-            output_dir=output_dir,
-            export=export,
-            fail_fast=fail_fast,
-            dd_trace=dd_trace,
-            trace_dir=trace_dir,
-            dd_task_trace=dd_task_trace,
-            task_trace_dir=task_trace_dir,
-        )
-    except Exception:
-        if wandb_run_created:
-            finish_benchmark_wandb_run()
-        raise
-    table_dir = Path(result.table_dir) if result.table_dir is not None else None
-    finalize_benchmark_wandb_run(
-        resolved_wandb,
         finalization=BenchmarkWandbFinalization(
             measurement_path=Path(result.measurement_path),
             cases=result.cases,
-            table_dir=table_dir,
         ),
-        run_created=wandb_run_created,
-        wandb=active_wandb,
+        metadata_factory=lambda: build_wandb_metadata(
+            benchmark_spec,
+            spec_path=spec_path,
+            output_dir=output_dir,
+            export=export,
+            fail_fast=fail_fast,
+            dd_trace=dd_trace,
+            dd_task_trace=dd_task_trace,
+        ),
     )
     return result
 

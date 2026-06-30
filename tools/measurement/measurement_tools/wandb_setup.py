@@ -1,238 +1,53 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""W&B setup for Anonymizer benchmark measurement tooling.
-
-Benchmark runners call :func:`initialize_benchmark_wandb_run` explicitly. The
-Anonymizer SDK and product CLI do not auto-initialize W&B.
-"""
+"""Secure native W&B publishing for Anonymizer benchmark tooling."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
-import math
-import re
+import os
+import secrets
+import stat
+import sys
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings
+from measurement_tools.wandb_ingress import read_measurement_snapshot
+from measurement_tools.wandb_models import (
+    DEFAULT_WANDB_PROJECT,
+    PUBLICATION_COMPLETE_KEY,
+    PUBLICATION_SEAL_DIGEST_KEY,
+    WANDB_TAG_MAX_LENGTH,
+    BenchmarkMetadata,
+    ResolvedWandbConfig,
+    WandbConfigPayload,
+    WandbInitPayload,
+    WandbInputs,
+    WandbMode,
+    WandbPublishPayload,
+    WandbPublishResult,
+    WandbRunMetadata,
+    is_safe_wandb_tag,
+    wandb_tag_value_is_sensitive,
+)
+
+__all__ = [
+    "DEFAULT_WANDB_PROJECT",
+    "ResolvedWandbConfig",
+    "WandbInputs",
+    "WandbMode",
+    "WandbRunMetadata",
+]
 
 logger = logging.getLogger("measurement.wandb")
 
-DEFAULT_WANDB_PROJECT = "nemo-anonymizer-benchmarks"
-WANDB_SANITIZER_VERSION = 1
+WANDB_SANITIZER_VERSION = 2
+_WANDB_TAG_DIGEST_LENGTH = 12
 _WANDB_INSTALL_HINT = "Install the optional measurement dependency group: uv sync --group measurement"
-_SENSITIVE_RUN_TAG_PARTS = frozenset({"api_key", "credential", "credentials", "password", "secret", "token"})
-_SENSITIVE_RUN_TAG_VALUE_PREFIXES = ("sk-", "ghp_", "github_pat_", "glpat-", "xoxb-", "xoxp-", "xoxa-")
-_BENCHMARK_METADATA_FIELDS = frozenset(
-    {
-        "metadata_schema_version",
-        "suite_schema_version",
-        "wandb_sanitizer_version",
-        "measurement_schema_version",
-        "suite_id",
-        "workload_count",
-        "config_count",
-        "matrix_entry_count",
-        "case_count",
-        "case_retries",
-        "case_retry_backoff_sec",
-        "suite_file_hash",
-    }
-)
-_EXECUTION_METADATA_FIELDS = frozenset({"backend", "export", "fail_fast", "dd_trace", "dd_task_trace"})
-_SLURM_METADATA_FIELDS = frozenset(
-    {"job_id", "array_job_id", "array_task_id", "array_task_count", "restart_count", "ntasks", "job_num_nodes"}
-)
-_RUNTIME_METADATA_FIELDS = frozenset(
-    {
-        "anonymizer_version",
-        "datadesigner_version",
-        "wandb_version",
-        "python_version",
-        "platform_machine",
-        "platform_system",
-    }
-)
-_GIT_METADATA_FIELDS = frozenset({"commit", "branch", "dirty"})
-_MODEL_SOURCE_METADATA_FIELDS = frozenset({"has_model_configs", "has_model_providers", "has_artifact_path"})
-_WORKLOAD_METADATA_FIELDS = frozenset(
-    {"id", "text_column", "has_id_column", "has_data_summary", "row_limit", "row_offset"}
-)
-_SOURCE_METADATA_FIELDS = frozenset({"kind", "suffix"})
-_CONFIG_METADATA_FIELDS = frozenset({"id", "mode", "evaluate", "emit_telemetry"})
-_DETECT_METADATA_FIELDS = frozenset(
-    {
-        "entity_label_source",
-        "entity_label_count",
-        "entity_label_set_hash",
-        "gliner_threshold",
-        "validation_max_entities_per_call",
-        "validation_excerpt_window_chars",
-    }
-)
-_REPLACE_METADATA_FIELDS = frozenset(
-    {"strategy", "normalize_label", "algorithm", "digest_length", "has_format_template", "has_instructions"}
-)
-_REWRITE_METADATA_FIELDS = frozenset(
-    {
-        "risk_tolerance",
-        "max_repair_iterations",
-        "strict_entity_protection",
-        "has_privacy_goal",
-        "has_protect",
-        "has_preserve",
-        "has_instructions",
-    }
-)
-_MATRIX_METADATA_FIELDS = frozenset({"workload", "config", "repetitions"})
-_NUMERIC_SWEEP_PARAMETER_TAILS = frozenset(
-    {
-        "detect_gliner_threshold",
-        "detect_validation_excerpt_window_chars",
-        "detect_validation_max_entities_per_call",
-        "replace_digest_length",
-        "rewrite_max_repair_iterations",
-    }
-)
-_BOOLEAN_SWEEP_PARAMETER_TAILS = frozenset(
-    {"emit_telemetry", "evaluate", "replace_normalize_label", "rewrite_strict_entity_protection"}
-)
-_ENUM_SWEEP_PARAMETER_VALUES = {
-    "replace_algorithm": frozenset({"md5", "sha1", "sha256"}),
-    "rewrite_risk_tolerance": frozenset({"high", "low", "minimal", "moderate"}),
-}
-
-
-class WandbMode(StrEnum):
-    online = "online"
-    offline = "offline"
-    disabled = "disabled"
-
-
-class WandbSettings(BaseSettings):
-    """W&B configuration for benchmark measurement tooling."""
-
-    wandb_mode: WandbMode = Field(
-        default=WandbMode.disabled,
-        description="Run mode: online, offline, or disabled.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_MODE",
-            "WANDB_MODE",
-        ),
-    )
-    wandb_project: str | None = Field(
-        default=None,
-        description="W&B project name override.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_PROJECT",
-            "WANDB_PROJECT",
-        ),
-    )
-    wandb_entity: str | None = Field(
-        default=None,
-        description="W&B entity override.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_ENTITY",
-            "WANDB_ENTITY",
-        ),
-    )
-    wandb_group: str | None = Field(
-        default=None,
-        description="W&B run group override.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_GROUP",
-            "WANDB_GROUP",
-        ),
-    )
-    wandb_job_type: str | None = Field(
-        default=None,
-        description="W&B job type override.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_JOB_TYPE",
-            "WANDB_JOB_TYPE",
-        ),
-    )
-    wandb_run_name: str | None = Field(
-        default=None,
-        description="W&B display run name override.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_RUN_NAME",
-            "WANDB_NAME",
-        ),
-    )
-    wandb_tags: str | None = Field(
-        default=None,
-        description="Comma-separated W&B run tags.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_TAGS",
-            "WANDB_TAGS",
-        ),
-    )
-    wandb_log_tables: bool = Field(
-        default=False,
-        description="Upload sanitized measurement tables to W&B.",
-        validation_alias=AliasChoices(
-            "ANONYMIZER_MEASUREMENT_WANDB_LOG_TABLES",
-        ),
-    )
-
-    model_config = {"env_prefix": "ANONYMIZER_MEASUREMENT_", "extra": "ignore", "populate_by_name": True}
-
-    @field_validator("wandb_mode", mode="before")
-    @classmethod
-    def validate_wandb_mode(cls, value: str | WandbMode | None) -> WandbMode:
-        if value is None:
-            return WandbMode.disabled
-        if isinstance(value, WandbMode):
-            return value
-        return WandbMode(value)
-
-    @property
-    def enabled(self) -> bool:
-        return self.wandb_mode != WandbMode.disabled
-
-    @property
-    def effective_wandb_project(self) -> str:
-        return self.wandb_project or DEFAULT_WANDB_PROJECT
-
-    @property
-    def effective_wandb_tags(self) -> list[str]:
-        if self.wandb_tags is None:
-            return []
-        return [tag for tag in (part.strip() for part in self.wandb_tags.split(",")) if tag]
-
-    @classmethod
-    def from_env_and_overrides(
-        cls,
-        *,
-        wandb_mode: WandbMode | None = None,
-        wandb_entity: str | None = None,
-        wandb_project: str | None = None,
-        wandb_group: str | None = None,
-        wandb_job_type: str | None = None,
-        wandb_run_name: str | None = None,
-        wandb_tags: str | None = None,
-        wandb_log_tables: bool | None = None,
-    ) -> WandbSettings:
-        settings = cls()
-        updates = {
-            "wandb_mode": wandb_mode,
-            "wandb_entity": wandb_entity,
-            "wandb_project": wandb_project,
-            "wandb_group": wandb_group,
-            "wandb_job_type": wandb_job_type,
-            "wandb_run_name": wandb_run_name,
-            "wandb_tags": wandb_tags,
-            "wandb_log_tables": wandb_log_tables,
-        }
-        overrides = {key: value for key, value in updates.items() if value is not None}
-        if not overrides:
-            return settings
-        return settings.model_copy(update=overrides)
 
 
 @dataclass(frozen=True)
@@ -241,70 +56,325 @@ class BenchmarkWandbFinalization:
 
     measurement_path: Path
     cases: Sequence[Any]
-    table_dir: Path | None
+
+
+_PUBLISHER_WANDB_MODULE: Any | None = None
 
 
 def require_wandb() -> Any:
-    """Import wandb when W&B logging is enabled."""
+    """Import wandb inside the publisher's guarded SDK environment."""
+    global _PUBLISHER_WANDB_MODULE  # noqa: PLW0603
+
+    if _WANDB_ENVIRONMENT_OWNER != threading.get_ident():
+        raise RuntimeError("wandb must be imported inside the guarded SDK environment")
+    preloaded = sys.modules.get("wandb")
+    if _PUBLISHER_WANDB_MODULE is None and preloaded is not None:
+        raise RuntimeError("wandb must not be imported before the guarded publisher")
+    if _PUBLISHER_WANDB_MODULE is not None and preloaded is not _PUBLISHER_WANDB_MODULE:
+        raise RuntimeError("the loaded wandb module changed outside the guarded publisher")
     try:
         import wandb
     except ImportError as exc:
         raise ImportError(
             f"W&B logging is enabled but the wandb package is not installed. {_WANDB_INSTALL_HINT}"
         ) from exc
+    _PUBLISHER_WANDB_MODULE = wandb
     return wandb
 
 
-def initialize_benchmark_wandb_run(
-    settings: WandbSettings,
+_WANDB_AMBIENT_ALLOWLIST = frozenset(
+    {
+        "WANDB_HTTP_TIMEOUT",
+        "WANDB_INIT_TIMEOUT",
+        "WANDB__SERVICE_WAIT",
+    }
+)
+_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
+    {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "PATH",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "TZ",
+    }
+)
+_WANDB_ENVIRONMENT_LOCK = threading.Lock()
+_WANDB_ENVIRONMENT_OWNER: int | None = None
+
+
+class WandbSdkEnvironment:
+    """Process-wide exact environment transaction around W&B SDK use."""
+
+    def __init__(self, settings: ResolvedWandbConfig) -> None:
+        self._settings = settings
+        self._snapshot: dict[str, str] | None = None
+
+    def __enter__(self) -> WandbSdkEnvironment:
+        global _WANDB_ENVIRONMENT_OWNER  # noqa: PLW0603
+
+        if not _WANDB_ENVIRONMENT_LOCK.acquire(blocking=False):
+            raise RuntimeError("nested or concurrent W&B publisher use is not allowed")
+        _WANDB_ENVIRONMENT_OWNER = threading.get_ident()
+        self._snapshot = dict(os.environ)
+        try:
+            preserved = {
+                key: value
+                for key, value in self._snapshot.items()
+                if key in _PROCESS_ENVIRONMENT_ALLOWLIST or key in _WANDB_AMBIENT_ALLOWLIST
+            }
+            os.environ.clear()
+            os.environ.update(preserved)
+            os.environ.update(_publisher_environment(self._settings))
+        except BaseException:
+            self._restore()
+            raise
+        return self
+
+    def __exit__(self, _exc_type: Any, _exc: Any, _traceback: Any) -> None:
+        self._restore()
+
+    def _restore(self) -> None:
+        global _WANDB_ENVIRONMENT_OWNER  # noqa: PLW0603
+
+        if self._snapshot is None:
+            return
+        os.environ.clear()
+        os.environ.update(self._snapshot)
+        self._snapshot = None
+        _WANDB_ENVIRONMENT_OWNER = None
+        _WANDB_ENVIRONMENT_LOCK.release()
+
+
+def _publisher_environment(settings: ResolvedWandbConfig) -> dict[str, str]:
+    environment = {
+        "WANDB_ERROR_REPORTING": "false",
+        "WANDB_MODE": settings.wandb_mode.value,
+        "WANDB_PROJECT": settings.wandb_project,
+        "WANDB_SILENT": "true",
+    }
+    optional = {
+        "WANDB_BASE_URL": settings.wandb_base_url,
+        "WANDB_ENTITY": settings.wandb_entity,
+        "WANDB_GROUP": settings.wandb_group,
+        "WANDB_JOB_TYPE": settings.wandb_job_type,
+        "WANDB_NAME": settings.wandb_run_name,
+        "WANDB_TAGS": settings.wandb_tags or None,
+    }
+    environment.update({key: value for key, value in optional.items() if value is not None})
+    return environment
+
+
+class WandbPublisher:
+    """Own the complete strict native W&B publication lifecycle."""
+
+    def publish(
+        self,
+        settings: ResolvedWandbConfig,
+        *,
+        suite_id: str,
+        output_dir: Path,
+        finalization: BenchmarkWandbFinalization,
+        metadata: WandbRunMetadata | None = None,
+    ) -> WandbPublishResult:
+        if not settings.enabled:
+            return WandbPublishResult(published=False)
+        payload, snapshot_sha256, record_count = _build_publish_payload(
+            settings,
+            suite_id=suite_id,
+            output_dir=output_dir,
+            finalization=finalization,
+            metadata=metadata,
+        )
+        return self.publish_payload(
+            settings,
+            payload=payload,
+            measurement_sha256=snapshot_sha256,
+            record_count=record_count,
+        )
+
+    def publish_payload(
+        self,
+        settings: ResolvedWandbConfig,
+        *,
+        payload: WandbPublishPayload,
+        measurement_sha256: str,
+        record_count: int,
+    ) -> WandbPublishResult:
+        """Publish a complete typed payload without access to source artifacts."""
+        if not settings.enabled:
+            return WandbPublishResult(published=False)
+        with WandbSdkEnvironment(settings):
+            wandb = require_wandb()
+            if getattr(wandb, "run", None) is not None:
+                raise RuntimeError("an ambient W&B run is active")
+            run: Any | None = None
+            result: WandbPublishResult | None = None
+            primary_error: BaseException | None = None
+            try:
+                run = wandb.init(**_sdk_init_kwargs(wandb, payload.init))
+                if run is None:
+                    raise RuntimeError("wandb.init did not return an explicit run handle")
+                run_id = str(getattr(run, "id", ""))
+                if run_id != payload.init.run_id:
+                    raise RuntimeError("wandb.init returned a different run identity")
+                already_complete = _publication_already_complete(run, payload)
+                if not already_complete:
+                    _define_benchmark_metrics(run)
+                    run.config.update(payload.config.sdk_values(), allow_val_change=True)
+                    tables = {
+                        table.name: wandb.Table(columns=list(table.columns), data=[list(row) for row in table.data])
+                        for table in payload.tables
+                    }
+                    logged = {**payload.history.metrics, **tables}
+                    if payload.init.resume == "allow":
+                        run.log(logged, step=0)
+                    else:
+                        run.log(logged)
+                    run.summary.update(payload.summary.metrics)
+                logger.info("W&B run id: %s", run_id)
+                result = WandbPublishResult(
+                    published=True,
+                    run_id=run_id,
+                    measurement_sha256=measurement_sha256,
+                    record_count=record_count,
+                )
+            except BaseException as exc:
+                primary_error = exc
+            finish_error: BaseException | None = None
+            if run is not None:
+                try:
+                    run.finish()
+                except BaseException as exc:
+                    finish_error = exc
+            _raise_lifecycle_failures(primary_error, finish_error)
+            if result is None:
+                raise RuntimeError("W&B publisher completed without a result")
+            return result
+
+
+def publish_benchmark_wandb_best_effort(
+    settings: ResolvedWandbConfig,
     *,
     suite_id: str,
     output_dir: Path,
-    run_tags: dict[str, Any] | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> bool:
-    """Initialize a W&B run for a benchmark suite when mode is not disabled."""
+    finalization: BenchmarkWandbFinalization,
+    metadata: WandbRunMetadata | None = None,
+    metadata_factory: Callable[[], WandbRunMetadata] | None = None,
+) -> WandbPublishResult:
+    """Publish after native execution without changing benchmark status."""
     if not settings.enabled:
-        return False
-
-    wandb = require_wandb()
-    if wandb.run is not None:
-        raise ValueError("benchmark logging cannot reuse an active W&B run")
-
-    project = settings.effective_wandb_project
-    logger.info("WANDB_MODE: %s", settings.wandb_mode.value)
-    logger.info("WANDB_PROJECT: %s", project)
-
-    staging_dir = _prepare_wandb_staging_dir(output_dir)
-    init_kwargs = _wandb_init_kwargs(wandb, settings, suite_id=suite_id, staging_dir=staging_dir, metadata=metadata)
+        return WandbPublishResult(published=False)
     try:
-        wandb.init(**init_kwargs)
-        _define_benchmark_metrics(wandb)
-        wandb.config.update(
-            _benchmark_wandb_config(settings, suite_id=suite_id, run_tags=run_tags, metadata=metadata),
-            allow_val_change=True,
+        if metadata is not None and metadata_factory is not None:
+            raise ValueError("provide metadata or metadata_factory, not both")
+        resolved_metadata = metadata_factory() if metadata_factory is not None else metadata
+        return WandbPublisher().publish(
+            settings,
+            suite_id=suite_id,
+            output_dir=output_dir,
+            finalization=finalization,
+            metadata=resolved_metadata,
         )
-    except Exception:
-        _finish_wandb_run(wandb)
-        raise
-
-    if wandb.run is not None:
-        logger.info("W&B run id: %s", wandb.run.id)
-    return True
+    except Exception as exc:  # noqa: BLE001 -- native observability is explicitly best-effort
+        logger.warning("Failed to publish benchmark measurements to W&B (%s)", type(exc).__name__)
+        return WandbPublishResult(published=False)
 
 
-def _wandb_init_kwargs(
-    wandb: Any,
-    settings: WandbSettings,
+def _build_publish_payload(
+    settings: ResolvedWandbConfig,
     *,
     suite_id: str,
-    staging_dir: Path,
-    metadata: dict[str, Any] | None,
-) -> dict[str, Any]:
-    init_kwargs = {
-        "project": settings.effective_wandb_project,
-        "name": settings.wandb_run_name or _default_run_name(suite_id, metadata),
-        "mode": settings.wandb_mode.value,
+    output_dir: Path,
+    finalization: BenchmarkWandbFinalization,
+    metadata: WandbRunMetadata | None,
+) -> tuple[WandbPublishPayload, str, int]:
+    from measurement_tools.wandb_logging import build_outbound_measurements  # noqa: PLC0415
+
+    cases = list(finalization.cases)
+    expected_statuses = {str(case.case_id): str(case.status.value) for case in cases}
+    snapshot = read_measurement_snapshot(finalization.measurement_path, expected_statuses=expected_statuses)
+    history, summary, tables = build_outbound_measurements(
+        snapshot,
+        cases=cases,
+        log_tables=settings.wandb_log_tables,
+    )
+    staging_dir = prepare_wandb_staging_dir(output_dir)
+    resolved_metadata = metadata or WandbRunMetadata(
+        benchmark=BenchmarkMetadata(suite_id=suite_id),
+    )
+    init = WandbInitPayload(
+        run_id=secrets.token_hex(16),
+        project=settings.wandb_project,
+        name=settings.wandb_run_name or _default_run_name(suite_id, resolved_metadata),
+        mode=settings.wandb_mode,
+        directory=staging_dir,
+        group=settings.wandb_group or suite_id,
+        job_type=settings.wandb_job_type or "benchmark",
+        entity=settings.wandb_entity,
+        tags=tuple(_effective_wandb_tags(settings, suite_id=suite_id, metadata=resolved_metadata)),
+    )
+    config = WandbConfigPayload.from_run_metadata(settings, suite_id=suite_id, metadata=resolved_metadata)
+    payload = WandbPublishPayload(
+        init=init,
+        config=config,
+        history=history,
+        summary=summary,
+        tables=tables,
+    )
+    return payload, snapshot.sha256, len(snapshot.records)
+
+
+def _publication_already_complete(run: Any, payload: WandbPublishPayload) -> bool:
+    if payload.init.resume != "allow":
+        return False
+    expected_digest = payload.summary.metrics[PUBLICATION_SEAL_DIGEST_KEY]
+    summary = getattr(run, "summary", None)
+    get_value = getattr(summary, "get", None)
+    config = getattr(run, "config", None)
+    get_config = getattr(config, "get", None)
+    if not callable(get_value) or not callable(get_config):
+        raise RuntimeError("resumed W&B run does not expose readable publication state")
+    observed_complete = get_value(PUBLICATION_COMPLETE_KEY)
+    observed_digest = get_value(PUBLICATION_SEAL_DIGEST_KEY)
+    observed_imported = get_config("imported")
+    observed_config_digest = (
+        observed_imported.get("completion_seal_sha256") if isinstance(observed_imported, dict) else None
+    )
+    if observed_config_digest not in {None, expected_digest}:
+        raise RuntimeError("resumed W&B run config contains different sealed content")
+    if observed_complete is True:
+        if observed_digest != expected_digest or observed_config_digest != expected_digest:
+            raise RuntimeError("resumed W&B run is complete for different sealed content")
+        return True
+    if observed_complete not in {None, False}:
+        raise RuntimeError("resumed W&B run has an invalid publication marker")
+    if observed_digest not in {None, expected_digest}:
+        raise RuntimeError("resumed W&B run contains different sealed content")
+    return False
+
+
+def _raise_lifecycle_failures(primary: BaseException | None, finish: BaseException | None) -> None:
+    if primary is not None and finish is not None:
+        if isinstance(primary, Exception) and isinstance(finish, Exception):
+            raise ExceptionGroup("W&B publication and finish both failed", [primary, finish]) from primary
+        raise BaseExceptionGroup("W&B publication and finish both failed", [primary, finish]) from primary
+    if primary is not None:
+        raise primary.with_traceback(primary.__traceback__)
+    if finish is not None:
+        raise finish.with_traceback(finish.__traceback__)
+
+
+def _sdk_init_kwargs(wandb: Any, payload: WandbInitPayload) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "project": payload.project,
+        "id": payload.run_id,
+        "resume": payload.resume,
+        "name": payload.name,
+        "mode": payload.mode.value,
         "settings": wandb.Settings(
             console="off",
             disable_code=True,
@@ -316,113 +386,90 @@ def _wandb_init_kwargs(
             x_disable_stats=True,
             x_save_requirements=False,
         ),
-        "dir": str(staging_dir),
-        "group": settings.wandb_group or suite_id,
-        "job_type": settings.wandb_job_type or "benchmark",
+        "dir": str(payload.directory),
+        "group": payload.group,
+        "job_type": payload.job_type,
     }
-    if settings.wandb_entity:
-        init_kwargs["entity"] = settings.wandb_entity
-    tags = _effective_wandb_tags(settings, suite_id=suite_id, metadata=metadata)
-    if tags:
-        init_kwargs["tags"] = tags
-    return init_kwargs
+    if payload.entity is not None:
+        values["entity"] = payload.entity
+    if payload.tags:
+        values["tags"] = list(payload.tags)
+    return values
 
 
-def _prepare_wandb_staging_dir(output_dir: Path) -> Path:
+def prepare_wandb_staging_dir(output_dir: Path) -> Path:
+    output_descriptor = _open_directory_no_follow(output_dir)
     staging_dir = output_dir / ".wandb-private"
-    if staging_dir.is_symlink():
-        raise ValueError(f"W&B staging directory cannot be a symlink: {staging_dir}")
-    staging_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    staging_dir.chmod(0o700)
+    try:
+        try:
+            os.mkdir(".wandb-private", mode=0o700, dir_fd=output_descriptor)
+        except FileExistsError:
+            pass
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+        staging_descriptor = os.open(
+            ".wandb-private",
+            flags | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=output_descriptor,
+        )
+        try:
+            metadata = os.fstat(staging_descriptor)
+            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+                raise ValueError("W&B staging directory must be an owned directory")
+            os.fchmod(staging_descriptor, 0o700)
+        finally:
+            os.close(staging_descriptor)
+    except OSError as exc:
+        raise ValueError("W&B staging directory cannot contain symlinks or special files") from exc
+    finally:
+        os.close(output_descriptor)
     return staging_dir
 
 
-def _benchmark_wandb_config(
-    settings: WandbSettings,
-    *,
-    suite_id: str,
-    run_tags: dict[str, Any] | None,
-    metadata: dict[str, Any] | None,
-) -> dict[str, Any]:
-    config = {
-        "suite_id": suite_id,
-        "wandb_mode": settings.wandb_mode.value,
-        "wandb_log_tables": settings.wandb_log_tables,
-    }
-    del run_tags
-    if metadata:
-        projected_metadata = _project_wandb_metadata(metadata)
-        config.update(_wandb_comparer_config(projected_metadata))
-        config.update(projected_metadata)
-    return config
-
-
-def finish_benchmark_wandb_run() -> None:
-    """Finish the active W&B run, if any."""
+def _open_directory_no_follow(path: Path) -> int:
+    absolute = path.absolute()
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        import wandb
-    except ImportError:
-        return
-    _finish_wandb_run(wandb)
+        descriptor = os.open(absolute.anchor, flags)
+        for part in absolute.parts[1:]:
+            child = os.open(part, flags | no_follow, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            _validate_directory_metadata(os.fstat(descriptor), final=part == absolute.name)
+        return descriptor
+    except (OSError, ValueError) as exc:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise ValueError("W&B output path cannot contain symlinks, untrusted directories, or special files") from exc
 
 
-def _finish_wandb_run(wandb: Any) -> None:
-    """Best-effort W&B run finalization for already-imported modules."""
-    if wandb.run is None:
-        return
-    try:
-        wandb.finish()
-    except Exception as exc:  # noqa: BLE001 -- best-effort cleanup
-        logger.warning("Failed to finish W&B run: %s", exc)
+def _validate_directory_metadata(metadata: os.stat_result, *, final: bool) -> None:
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError("W&B output path must contain only directories")
+    if final and metadata.st_uid != os.geteuid():
+        raise ValueError("W&B output directory must be owned by the current user")
+    writable_by_others = metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    if writable_by_others and not metadata.st_mode & stat.S_ISVTX:
+        raise ValueError("W&B output path contains an untrusted writable directory")
 
 
-def finalize_benchmark_wandb_run(
-    settings: WandbSettings,
-    *,
-    finalization: BenchmarkWandbFinalization,
-    run_created: bool,
-    wandb: Any | None = None,
-) -> None:
-    """Log benchmark measurements and finish the W&B run created by benchmark tooling."""
-    try:
-        if settings.enabled:
-            active_wandb = wandb if wandb is not None else require_wandb()
-            from measurement_tools.wandb_logging import log_benchmark_measurements  # noqa: PLC0415
-
-            log_benchmark_measurements(
-                active_wandb,
-                measurement_path=finalization.measurement_path,
-                cases=list(finalization.cases),
-                log_tables=settings.wandb_log_tables,
-                table_dir=finalization.table_dir,
-            )
-    finally:
-        if run_created:
-            finish_benchmark_wandb_run()
+def _generated_wandb_tag(namespace: str, value: str) -> str | None:
+    candidate = f"{namespace}:{value}"
+    if wandb_tag_value_is_sensitive(candidate) or "://" in candidate or candidate.startswith("/"):
+        return None
+    if len(candidate) <= WANDB_TAG_MAX_LENGTH:
+        return candidate
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:_WANDB_TAG_DIGEST_LENGTH]
+    prefix_length = WANDB_TAG_MAX_LENGTH - len(namespace) - len(digest) - 2
+    return f"{namespace}:{value[:prefix_length]}-{digest}"
 
 
-def _run_tag_string_is_safe(value: str) -> bool:
-    if len(value) > 256 or "://" in value or value.startswith("/"):
-        return False
-    return not _run_tag_value_is_sensitive(value)
-
-
-def _run_tag_value_is_sensitive(value: str) -> bool:
-    normalized = value.lower()
-    if normalized.startswith(_SENSITIVE_RUN_TAG_VALUE_PREFIXES):
-        return True
-    parts = {part for part in re.split(r"[^a-z0-9]+", normalized) if part}
-    if "api" in parts and "key" in parts:
-        return True
-    return bool(parts & _SENSITIVE_RUN_TAG_PARTS)
-
-
-def _default_run_name(suite_id: str, metadata: dict[str, Any] | None) -> str:
-    git = metadata.get("git", {}) if isinstance(metadata, dict) else {}
-    if not isinstance(git, dict):
+def _default_run_name(suite_id: str, metadata: WandbRunMetadata | None) -> str:
+    git = metadata.git if metadata is not None else None
+    if git is None:
         return suite_id
-    commit = git.get("commit")
-    branch = git.get("branch")
+    commit = git.commit
+    branch = git.branch
     if isinstance(commit, str) and commit:
         suffix = commit[:7]
         if isinstance(branch, str) and branch:
@@ -433,226 +480,35 @@ def _default_run_name(suite_id: str, metadata: dict[str, Any] | None) -> str:
     return suite_id
 
 
-def _effective_wandb_tags(settings: WandbSettings, *, suite_id: str, metadata: dict[str, Any] | None) -> list[str]:
-    tags = list(settings.effective_wandb_tags)
-    tags.append(f"suite:{suite_id}")
-    git = metadata.get("git", {}) if isinstance(metadata, dict) else {}
-    if isinstance(git, dict):
-        branch = git.get("branch")
-        dirty = git.get("dirty")
+def _effective_wandb_tags(
+    settings: ResolvedWandbConfig,
+    *,
+    suite_id: str,
+    metadata: WandbRunMetadata | None,
+) -> list[str]:
+    tags = [tag for tag in settings.effective_wandb_tags if is_safe_wandb_tag(tag)]
+    suite_tag = _generated_wandb_tag("suite", suite_id)
+    if suite_tag is not None:
+        tags.append(suite_tag)
+    git = metadata.git if metadata is not None else None
+    if git is not None:
+        branch = git.branch
+        dirty = git.dirty
         if isinstance(branch, str) and branch:
-            tags.append(f"branch:{branch}")
+            branch_tag = _generated_wandb_tag("branch", branch)
+            if branch_tag is not None:
+                tags.append(branch_tag)
         if isinstance(dirty, bool):
             tags.append("dirty" if dirty else "clean")
-    return [tag for tag in tags if _run_tag_string_is_safe(tag)]
+    return tags
 
 
-def _define_benchmark_metrics(wandb: Any) -> None:
-    define_metric = getattr(wandb, "define_metric", None)
+def _define_benchmark_metrics(run: Any) -> None:
+    define_metric = getattr(run, "define_metric", None)
     if not callable(define_metric):
         return
     for metric_name in ("benchmark/*", "measurement/*"):
         try:
             define_metric(metric_name, summary="last")
         except Exception as exc:  # noqa: BLE001 -- presentation polish is best-effort
-            logger.warning("Failed to define W&B metric %s: %s", metric_name, exc)
-
-
-def _wandb_comparer_config(metadata: Any) -> dict[str, str | int | float | bool]:
-    """Build flat W&B config fields for Run Comparer and workspace panels."""
-    source = _metadata_dict(metadata)
-    benchmark = _metadata_dict(source.get("benchmark"))
-    workloads = _metadata_list(source.get("workloads"))
-    configs = _metadata_list(source.get("configs"))
-    flat: dict[str, str | int | float | bool] = {}
-    _set_flat(flat, "benchmark_suite_id", benchmark.get("suite_id"))
-    _set_flat(flat, "benchmark_case_count", benchmark.get("case_count"))
-    _set_flat(flat, "benchmark_workload_ids", _compact_values(item.get("id") for item in workloads))
-    _set_flat(flat, "benchmark_workload_row_limits", _compact_values(item.get("row_limit") for item in workloads))
-    _set_flat(
-        flat,
-        "benchmark_workload_source_kinds",
-        _compact_values(_metadata_dict(item.get("source")).get("kind") for item in workloads),
-    )
-    _set_flat(
-        flat,
-        "benchmark_workload_source_suffixes",
-        _compact_values(_metadata_dict(item.get("source")).get("suffix") for item in workloads),
-    )
-    _set_flat(flat, "benchmark_config_ids", _compact_values(item.get("id") for item in configs))
-    _set_flat(flat, "benchmark_modes", _compact_values(item.get("mode") for item in configs))
-    _set_flat(flat, "benchmark_strategies", _compact_values(_config_strategy(item) for item in configs))
-    _set_flat(
-        flat,
-        "benchmark_gliner_thresholds",
-        _compact_values(_detect_value(item, "gliner_threshold") for item in configs),
-    )
-    _set_flat(
-        flat,
-        "benchmark_entity_label_counts",
-        _compact_values(_detect_value(item, "entity_label_count") for item in configs),
-    )
-    _set_flat(
-        flat, "benchmark_risk_tolerances", _compact_values(_rewrite_value(item, "risk_tolerance") for item in configs)
-    )
-    return flat
-
-
-def _set_flat(mapping: dict[str, str | int | float | bool], key: str, value: Any) -> None:
-    if isinstance(value, bool | int | float | str):
-        mapping[key] = value
-
-
-def _compact_values(values: Any) -> str | int | float | bool | None:
-    compacted: list[str | int | float | bool] = []
-    seen: set[tuple[str, str | int | float | bool]] = set()
-    for value in values:
-        if not isinstance(value, bool | int | float | str):
-            continue
-        marker = (type(value).__name__, value)
-        if marker in seen:
-            continue
-        compacted.append(value)
-        seen.add(marker)
-    if len(compacted) == 1:
-        return compacted[0]
-    if len(compacted) > 1:
-        return ",".join(str(value) for value in compacted)
-    return None
-
-
-def _config_strategy(config: dict[str, Any]) -> str | None:
-    replace = _metadata_dict(config.get("replace"))
-    rewrite = _metadata_dict(config.get("rewrite"))
-    strategy = replace.get("strategy")
-    if isinstance(strategy, str):
-        return strategy
-    return "rewrite" if rewrite else None
-
-
-def _detect_value(config: dict[str, Any], key: str) -> Any:
-    return _metadata_dict(config.get("detect")).get(key)
-
-
-def _rewrite_value(config: dict[str, Any], key: str) -> Any:
-    return _metadata_dict(config.get("rewrite")).get(key)
-
-
-def _metadata_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _metadata_list(value: Any) -> list[dict[str, Any]]:
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
-
-
-def _project_wandb_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    projected: dict[str, Any] = {}
-    _set_projected_mapping(projected, metadata, "benchmark", _BENCHMARK_METADATA_FIELDS)
-    _set_projected_execution(projected, metadata)
-    _set_projected_mapping(projected, metadata, "runtime", _RUNTIME_METADATA_FIELDS)
-    _set_projected_mapping(projected, metadata, "git", _GIT_METADATA_FIELDS)
-    _set_projected_mapping(projected, metadata, "model_sources", _MODEL_SOURCE_METADATA_FIELDS)
-    _set_projected_sequence(projected, metadata, "workloads", _project_workload_metadata)
-    _set_projected_sequence(projected, metadata, "configs", _project_config_metadata)
-    _set_projected_sequence(projected, metadata, "matrix", lambda item: _project_fields(item, _MATRIX_METADATA_FIELDS))
-    projected.update(_project_sweep_metadata(metadata))
-    return projected
-
-
-def _set_projected_mapping(
-    target: dict[str, Any], source: dict[str, Any], key: str, allowed_fields: frozenset[str]
-) -> None:
-    value = source.get(key)
-    if isinstance(value, dict):
-        target[key] = _project_fields(value, allowed_fields)
-
-
-def _set_projected_sequence(target: dict[str, Any], source: dict[str, Any], key: str, projector: Any) -> None:
-    value = source.get(key)
-    if isinstance(value, list):
-        target[key] = [projector(item) for item in value if isinstance(item, dict)]
-
-
-def _set_projected_execution(target: dict[str, Any], source: dict[str, Any]) -> None:
-    execution = source.get("execution")
-    if not isinstance(execution, dict):
-        return
-    projected = _project_fields(execution, _EXECUTION_METADATA_FIELDS)
-    slurm = execution.get("slurm")
-    if isinstance(slurm, dict):
-        projected["slurm"] = _project_fields(slurm, _SLURM_METADATA_FIELDS)
-    target["execution"] = projected
-
-
-def _project_workload_metadata(workload: dict[str, Any]) -> dict[str, Any]:
-    projected = _project_fields(workload, _WORKLOAD_METADATA_FIELDS)
-    source = workload.get("source")
-    if isinstance(source, dict):
-        projected["source"] = _project_fields(source, _SOURCE_METADATA_FIELDS)
-    return projected
-
-
-def _project_config_metadata(config: dict[str, Any]) -> dict[str, Any]:
-    projected = _project_fields(config, _CONFIG_METADATA_FIELDS)
-    for key, fields in (
-        ("detect", _DETECT_METADATA_FIELDS),
-        ("replace", _REPLACE_METADATA_FIELDS),
-        ("rewrite", _REWRITE_METADATA_FIELDS),
-    ):
-        value = config.get(key)
-        if isinstance(value, dict):
-            projected[key] = _project_fields(value, fields)
-    return projected
-
-
-def _project_sweep_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    sweep_id = _safe_projected_scalar(metadata.get("sweep_id"))
-    arm_id = _safe_projected_scalar(metadata.get("sweep_arm_id"))
-    if not isinstance(sweep_id, str) or not isinstance(arm_id, str):
-        return {}
-    params = metadata.get("sweep_params")
-    safe_params = {
-        key: safe
-        for key, value in (params.items() if isinstance(params, dict) else ())
-        if isinstance(key, str) and (safe := _safe_sweep_parameter(key, value)) is not None
-    }
-    projected: dict[str, Any] = {
-        "sweep_id": sweep_id,
-        "sweep_arm_id": arm_id,
-        "sweep": {"id": sweep_id, "arm_id": arm_id, "params": safe_params},
-        "sweep_params": safe_params,
-    }
-    projected.update({f"sweep_param_{key}": value for key, value in safe_params.items()})
-    return projected
-
-
-def _safe_sweep_parameter(key: str, value: Any) -> str | int | float | bool | None:
-    if not key.startswith("configs_") or not key.isascii() or any(not (char.isalnum() or char == "_") for char in key):
-        return None
-    if any(key.endswith(f"_{tail}") for tail in _NUMERIC_SWEEP_PARAMETER_TAILS):
-        return (
-            value if isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value) else None
-        )
-    if any(key.endswith(f"_{tail}") for tail in _BOOLEAN_SWEEP_PARAMETER_TAILS):
-        return value if isinstance(value, bool) else None
-    for tail, allowed_values in _ENUM_SWEEP_PARAMETER_VALUES.items():
-        if key.endswith(f"_{tail}"):
-            return value if isinstance(value, str) and value in allowed_values else None
-    return None
-
-
-def _project_fields(source: dict[str, Any], allowed_fields: frozenset[str]) -> dict[str, Any]:
-    return {
-        key: safe
-        for key, value in source.items()
-        if key in allowed_fields and (safe := _safe_projected_scalar(value)) is not None
-    }
-
-
-def _safe_projected_scalar(value: Any) -> str | int | float | bool | None:
-    if isinstance(value, bool | int | float):
-        return value
-    if isinstance(value, str) and _run_tag_string_is_safe(value):
-        return value
-    return None
+            logger.warning("Failed to define W&B metric %s (%s)", metric_name, type(exc).__name__)

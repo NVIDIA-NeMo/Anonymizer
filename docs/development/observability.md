@@ -38,7 +38,10 @@ Instrumentation uses these entry points:
 - `record_ndd_workflow(...)` records DataDesigner workflow summaries at the
   `NddAdapter` boundary.
 - `record_model_workflow(...)` records benchmark-only direct model calls that do
-  not use DataDesigner.
+  not use DataDesigner. Its optional `extra_fields` mapping remains part of the
+  local measurement artifact under `local_fields`. W&B ingress validates and
+  drops that explicit object before constructing an outbound payload; unknown
+  top-level fields remain schema errors.
 
 The public API and CLI do not read measurement environment variables by default.
 Benchmark and developer tools opt into measurement explicitly.
@@ -109,20 +112,29 @@ uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online
 ```
 
 The runner uploads aggregate benchmark and measurement scalar fields by
-default. `--wandb-log-tables` also uploads measurement tables projected through
-per-record-type field allowlists. The W&B integration disables console, code,
-Git, machine metadata, system statistics, and requirements capture. Its config,
-scalar, and table projections exclude raw text, prompts, model responses,
-replacement maps, entity payloads, DataDesigner trace records, local paths,
-URLs, provider payloads, and suite `run_tags`. Use W&B-specific CLI tags for
-metadata that should leave the benchmark environment.
+default. `--wandb-log-tables` also uploads tables built from strict row models.
+The native publisher parses its bounded JSONL snapshot once and does not use
+Pandas for W&B tables. Strict outbound models cover run config, scalar metrics,
+and each table row family. The W&B integration disables console, code, Git,
+machine metadata, system statistics, requirements capture, and SDK error
+reporting. Self-hosted remote endpoints require HTTPS; plain HTTP is accepted
+only for loopback development endpoints. Online runs use W&B's local credential
+files through the preserved home directory. The publisher removes
+`WANDB_API_KEY` and other environment credentials before importing the SDK.
+Outbound models exclude raw text, prompts, model responses, replacement maps,
+entity payloads,
+DataDesigner trace records, local paths, URLs, provider payloads, and suite
+`run_tags`. Use W&B-specific CLI tags for metadata that should leave the
+benchmark environment.
 
 Suite, workload, and config identifiers, Git branch names, and W&B routing
 fields are visible metadata. Do not place customer data or other sensitive
 information in these values.
 
 The runner stages W&B files under `<benchmark-output>/.wandb-private` with
-owner-only permissions. Offline runs retain this directory for later sync.
+owner-only permissions. Descriptor-relative traversal rejects symlinks and
+untrusted writable directories. Offline runs retain this directory for later
+sync.
 
 The main goal is benchmark data in W&B. Workspaces, reports, project views, and
 panels are presentation layers. They can be edited in W&B, regenerated with the
@@ -136,12 +148,32 @@ cost/throughput, sweep comparison, and sanitized measurement tables when
 present. The same utility can still create W&B benchmark reports for one
 benchmark run or a benchmark run group.
 
+The report reader accepts historical v1 and current v2 metadata through closed
+run-view models. It uses suite, sweep-arm, or imported-config comparison axes
+according to the declared run kind and rejects mixed-kind groups. Renderers
+escape every dynamic Markdown context, reconstruct run URLs from validated W&B
+identifiers, and reject SDK URLs outside the configured origin or containing
+terminal control characters.
+
 Use `tools/measurement/sweep_benchmarks.py` for parameter sweeps. It runs one
-benchmark suite per sweep arm and copies `sweep_id`, `sweep_arm_id`, and
-`sweep_param_*` fields into W&B benchmark config so benchmark workspaces and
-reports can compare arms directly. Pass `--create-workspace` to create the
-benchmark workspace after the sweep completes.
+benchmark suite per sweep arm and publishes validated sweep identity and safe
+parameter fields in W&B benchmark config. `--create-workspace` and
+`--create-report` validate the remote group as one sweep before creating a
+view. A report or workspace service failure is recorded separately on the
+returned sweep result, preserves all completed arm results, and causes the CLI
+to exit nonzero instead of classifying the outage as bad input.
 See `tools/measurement/README.md` for the full command reference.
+
+External Slurm cases use a per-case `completion-seal.json`. The producer writes
+the seal atomically after the measurement writer closes. The seal records the
+measurement digest, byte and record counts, run ID, case identity, Slurm
+provenance, and producer commit. Seal creation and import share the same
+completed-run invariant and require every record's reserved case tags to match
+the seal identity. `write_completion_seal.py` owns the producer contract;
+`import_wandb_run.py` captures and verifies the sealed JSONL before a strict W&B
+publication. Identical completed imports reuse a destination-scoped run ID with
+`resume="allow"` and become no-ops. Changed sealed content receives a different
+run ID.
 
 ## Local and Slurm Benchmark Execution
 
@@ -243,7 +275,11 @@ When adding instrumentation:
 | `src/anonymizer/engine/ndd/adapter.py` | DataDesigner workflow measurement, native message trace capture, and scheduler task trace capture. |
 | `tools/measurement/run_benchmarks.py` | Benchmark suite runner that activates measurement sessions and writes per-case artifacts. |
 | `tools/measurement/measurement_tools/execution.py` | Sanitized local/Slurm execution metadata shared by benchmark tools. |
-| `tools/measurement/measurement_tools/wandb_setup.py` | Benchmark-only W&B settings, initialization, finalization, and config sanitization. |
-| `tools/measurement/create_wandb_report.py` | W&B benchmark workspace/report builder for sanitized benchmark runs and run groups. |
+| `tools/measurement/measurement_tools/wandb_completion.py` | Typed completion-seal construction, atomic writes, and digest verification. |
+| `tools/measurement/measurement_tools/wandb_ingress.py` | Bounded descriptor-based capture and strict measurement parsing. |
+| `tools/measurement/measurement_tools/wandb_report_models.py` | Closed v1/v2 report views and explicit comparison axes. |
+| `tools/measurement/measurement_tools/wandb_setup.py` | Resolved W&B settings, environment isolation, SDK lifecycle, and staging. |
+| `tools/measurement/create_wandb_report.py` | Typed W&B benchmark workspace and report builder. |
+| `tools/measurement/import_wandb_run.py` | Strict stable import of one sealed external case. |
 | `tools/measurement/sweep_benchmarks.py` | Parameter sweep runner that logs one W&B benchmark run per sweep arm. |
 | `tools/measurement/README.md` | Detailed benchmark and analysis command reference. |
