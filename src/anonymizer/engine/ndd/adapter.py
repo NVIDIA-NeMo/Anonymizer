@@ -376,7 +376,6 @@ class NddAdapter:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
                             output_df = preview_results.dataset
-                    self._add_input_tokens(_error_model_usage)
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s) on model(s) %s: %s",
@@ -394,6 +393,7 @@ class NddAdapter:
                 except Exception:
                     logger.warning("Failed to write DataDesigner private message trace records after workflow failure")
                 _error_model_usage = usage_probe.model_usage()
+                self._add_input_tokens(_error_model_usage)
                 record_ndd_workflow(
                     workflow_name=workflow_name,
                     model_aliases=model_aliases,
