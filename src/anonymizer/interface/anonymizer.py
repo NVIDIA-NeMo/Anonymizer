@@ -730,6 +730,7 @@ class Anonymizer:
             num_success_records=success_count,
             num_failure_records=failure_count,
             avg_tokens_per_record=avg_tokens,
+            input_tokens=self._adapter.total_input_tokens,
             transformation_type=transformation_type,
             custom_data_summary_provided=bool(data.data_summary),
             custom_privacy_goal_provided=_custom_privacy_goal_provided(rewrite),
