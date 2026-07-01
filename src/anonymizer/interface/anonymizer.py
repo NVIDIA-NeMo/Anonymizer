@@ -383,6 +383,7 @@ class Anonymizer:
                     self._selected_models,
                     check_rewrite=False,
                     check_evaluate=True,
+                    check_rewrite_judge=True,
                 )
             except ValueError as exc:
                 raise InvalidConfigError(str(exc)) from exc

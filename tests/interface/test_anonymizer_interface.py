@@ -887,6 +887,35 @@ def test_evaluate_rewrite_raises_without_rewrite_config() -> None:
         anonymizer.evaluate(bare_result)  # type: ignore[arg-type]
 
 
+def test_evaluate_rewrite_raises_on_bad_rewrite_judge_alias(
+    stub_input: AnonymizerInput,
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    """evaluate() on a rewrite result must raise InvalidConfigError for an unknown rewrite_judge alias.
+
+    This is the integration-level counterpart to the unit tests on
+    validate_model_alias_references — it guards the path from Anonymizer.evaluate()
+    through to the validator so that a misconfigured evaluate.rewrite_judge is caught
+    before any LLM call is made.
+    """
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "evaluate": stub_slim_model_selection.evaluate.model_copy(
+                update={"rewrite_judge": "bad-rewrite-judge-alias"}
+            )
+        }
+    )
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    with pytest.raises(InvalidConfigError, match="bad-rewrite-judge-alias"):
+        anonymizer.evaluate(run_result)
+
+
 def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: AnonymizerInput) -> None:
     """evaluate() on a rewrite result must NOT validate rewrite pipeline model aliases.
 

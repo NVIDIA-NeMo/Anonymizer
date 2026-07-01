@@ -260,13 +260,16 @@ def validate_model_alias_references(
     check_substitute: bool = False,
     check_rewrite: bool = False,
     check_evaluate: bool = False,
+    check_rewrite_judge: bool = False,
 ) -> None:
     """Validate that active workflow model aliases exist in the model pool.
 
-    ``check_evaluate`` validates the evaluation roles. ``detection_validity_judge``
-    is always checked when evaluation is on; the three ``replace_*_judge`` roles
-    are additionally checked when ``check_substitute`` is also True (those only
-    fire on the Substitute replace strategy).
+    ``check_evaluate`` validates the shared evaluation roles (``detection_validity_judge``
+    is always checked when on; the three ``replace_*_judge`` roles are additionally
+    checked when ``check_substitute`` is also True). ``check_rewrite_judge`` validates
+    ``evaluate.rewrite_judge`` and must be set independently when evaluating a rewrite
+    result — it is separate from ``check_rewrite`` so that full rewrite pipeline roles
+    are not required just to call ``evaluate()`` on an existing rewrite result.
     """
     known_aliases = {model_config.alias for model_config in model_configs}
     detection_roles = selected_models.detection.model_dump()
@@ -284,6 +287,8 @@ def validate_model_alias_references(
     if check_evaluate:
         evaluate_roles = selected_models.evaluate.model_dump()
         _collect_role(roles_to_check, "evaluate.detection_validity_judge", evaluate_roles["detection_validity_judge"])
+        if check_rewrite_judge:
+            _collect_role(roles_to_check, "evaluate.rewrite_judge", evaluate_roles["rewrite_judge"])
         if check_substitute:
             for role in (
                 "replace_type_fidelity_judge",
@@ -291,8 +296,6 @@ def validate_model_alias_references(
                 "replace_attribute_fidelity_judge",
             ):
                 _collect_role(roles_to_check, f"evaluate.{role}", evaluate_roles[role])
-        if check_rewrite:
-            _collect_role(roles_to_check, "evaluate.rewrite_judge", evaluate_roles["rewrite_judge"])
 
     unknown = {path: alias for path, alias in roles_to_check.items() if alias not in known_aliases}
     if unknown:
