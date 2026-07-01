@@ -10,6 +10,8 @@ import logging
 import sys
 from enum import StrEnum
 
+from pydantic import ValidationError
+
 
 class LogFormat(StrEnum):
     plain = "plain"
@@ -32,3 +34,14 @@ def log_bad_input(logger: logging.Logger, error: str) -> None:
         sys.stderr.write(json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n")
         return
     logger.error("bad_input error=%s", error)
+
+
+def summarize_validation_error(error: ValidationError) -> str:
+    """Describe rejected fields without echoing their potentially sensitive values."""
+    details = sorted(
+        {
+            f"{'.'.join(str(part) for part in item['loc']) or 'input'}:{item['type']}"
+            for item in error.errors(include_input=False, include_context=False, include_url=False)
+        }
+    )
+    return "validation failed at " + ", ".join(details[:12])
