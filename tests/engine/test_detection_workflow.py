@@ -37,6 +37,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_augment_prompt,
     _get_latent_prompt,
     _get_validation_prompt,
+    _pad_empty_latent_column,
     _resolve_detection_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -786,3 +787,37 @@ def test_pool_size_one_does_not_emit_warning(
         if r.name == "anonymizer.detection" and "pool of" in r.getMessage() and "aliases" in r.getMessage()
     ]
     assert pool_warnings == []
+
+
+class TestPadEmptyLatentColumn:
+    """``_pad_empty_latent_column`` keeps the latent column parquet-writable by
+    replacing empty/missing cells with a sentinel struct (PyArrow cannot infer a
+    struct schema from a column of only empty lists)."""
+
+    def test_empty_struct_cell_gets_sentinel(self) -> None:
+        df = pd.DataFrame({COL_LATENT_ENTITIES: [{"latent_entities": []}]})
+        out = _pad_empty_latent_column(df)
+        assert out[COL_LATENT_ENTITIES].iloc[0]["latent_entities"], "empty struct should be padded"
+
+    def test_populated_struct_cell_untouched(self) -> None:
+        populated = {"latent_entities": [{"label": "employer", "value": "Acme"}]}
+        df = pd.DataFrame({COL_LATENT_ENTITIES: [populated]})
+        out = _pad_empty_latent_column(df)
+        assert out[COL_LATENT_ENTITIES].iloc[0] == populated
+
+    def test_empty_bare_list_cell_gets_sentinel(self) -> None:
+        df = pd.DataFrame({COL_LATENT_ENTITIES: [[]]})
+        out = _pad_empty_latent_column(df)
+        assert out[COL_LATENT_ENTITIES].iloc[0], "empty bare list should be padded"
+
+    def test_none_and_nan_cells_normalize_to_sentinel_struct(self) -> None:
+        df = pd.DataFrame({COL_LATENT_ENTITIES: [None, float("nan")]})
+        out = _pad_empty_latent_column(df)
+        for i in range(2):
+            cell = out[COL_LATENT_ENTITIES].iloc[i]
+            assert isinstance(cell, dict) and cell["latent_entities"], f"row {i} should be a padded struct"
+
+    def test_missing_column_is_a_noop(self) -> None:
+        df = pd.DataFrame({"other": [1, 2]})
+        out = _pad_empty_latent_column(df)
+        assert list(out.columns) == ["other"]
