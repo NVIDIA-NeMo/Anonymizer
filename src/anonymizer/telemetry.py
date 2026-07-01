@@ -199,7 +199,7 @@ class AnonymizerEvent(BaseModel):
     num_success_records: int = Field(default=-1, alias="numSuccessRecords")
     num_failure_records: int = Field(default=-1, alias="numFailureRecords")
     avg_tokens_per_record: int = Field(default=-1, alias="avgTokensPerRecord")
-    input_tokens: int = Field(default=-1, alias="inputTokens")
+    input_tokens: int = Field(default=0, alias="inputTokens")
 
     # Configuration
     transformation_type: str = Field(alias="transformationType")
