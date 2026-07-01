@@ -54,6 +54,12 @@ class WandbMode(StrEnum):
     disabled = "disabled"
 
 
+class WandbPublicationState(StrEnum):
+    created = "created"
+    resumed = "resumed"
+    already_complete = "already_complete"
+
+
 class WandbInputs(BaseSettings):
     """Optional operator inputs; dedicated measurement variables only."""
 
@@ -805,6 +811,10 @@ class WandbPublishPayload(StrictFrozenModel):
 class WandbPublishResult(StrictFrozenModel):
     published: StrictBool
     run_id: StrictStr | None = None
+    entity: StrictStr | None = None
+    project: StrictStr | None = None
+    run_url: StrictStr | None = None
+    publication_state: WandbPublicationState | None = None
     measurement_sha256: Annotated[StrictStr | None, Field(pattern=r"^[0-9a-f]{64}$")] = None
     record_count: StrictInt = 0
 
@@ -1059,6 +1069,10 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
     WandbPublishResult: {
         "published": FieldPolicy(data_class=DataClass.operational, exposure=Exposure.local_only),
         "run_id": FieldPolicy(data_class=DataClass.pseudonymous, exposure=Exposure.local_only),
+        "entity": FieldPolicy(data_class=DataClass.operational, exposure=Exposure.local_only),
+        "project": FieldPolicy(data_class=DataClass.operational, exposure=Exposure.local_only),
+        "run_url": FieldPolicy(data_class=DataClass.operational, exposure=Exposure.local_only),
+        "publication_state": FieldPolicy(data_class=DataClass.operational, exposure=Exposure.local_only),
         "measurement_sha256": FieldPolicy(data_class=DataClass.pseudonymous, exposure=Exposure.local_only),
         "record_count": FieldPolicy(data_class=DataClass.operational, exposure=Exposure.local_only),
     },

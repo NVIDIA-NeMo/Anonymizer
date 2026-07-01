@@ -371,6 +371,27 @@ the native runner logs only the exception type to avoid echoing source values.
 
 ### Import a Sealed Slurm Case
 
+Before an external launcher starts benchmark work, verify W&B authentication from
+the same account or container and the same preserved home directory used by the
+publisher. Keep credentials in the local W&B credential files; do not pass a key
+through the launcher environment or command line.
+
+```bash
+# W&B public cloud
+env -u WANDB_API_KEY uv run wandb login --verify --cloud
+
+# Self-hosted or dedicated cloud
+env -u WANDB_API_KEY uv run wandb login --verify \
+  --host https://wandb.example.com
+```
+
+Both commands verify the stored credential against the selected endpoint and
+exit nonzero on failure. Pass the same endpoint to the benchmark or importer
+through `--wandb-base-url`; the publisher ignores ambient `WANDB_BASE_URL`.
+Avoid `wandb status` in launcher logs because it prints active settings that can
+include credential material. The publisher also withholds proxy and custom-CA
+environment variables, so test connectivity without relying on those variables.
+
 External Slurm workflows must write `completion-seal.json` after the
 measurement writer closes and the case reaches its completed terminal stage
 without an errored workflow or stage record. Every measurement record must

@@ -41,6 +41,7 @@ def _fake_wandb_module(state: SimpleNamespace, *, active_run: bool = False) -> S
 
     run = SimpleNamespace(
         id=None,
+        resumed=False,
         config=SimpleNamespace(
             update=lambda payload, *, allow_val_change: _record_config_update(state, payload, allow_val_change),
             get=state.remote_config.get,
@@ -61,6 +62,8 @@ def _fake_wandb_module(state: SimpleNamespace, *, active_run: bool = False) -> S
     def init(**kwargs: Any) -> SimpleNamespace:
         state.init_kwargs.update(kwargs)
         run.id = kwargs["id"]
+        run.resumed = state.init_count > 0
+        state.init_count += 1
         module.run = run
         return run
 
@@ -88,6 +91,7 @@ def _wandb_state() -> SimpleNamespace:
         summary_updates=[],
         remote_summary={},
         finished=[],
+        init_count=0,
     )
 
 
@@ -314,7 +318,9 @@ def test_strict_import_retry_is_a_remote_publication_noop(
 ) -> None:
     measurement_path, seal_path = _write_sealed_import_case(wandb_import_tool, tmp_path)
     settings = wandb_import_tool.ResolvedWandbConfig(
-        wandb_mode=wandb_import_tool.WandbMode.offline,
+        wandb_mode=wandb_import_tool.WandbMode.online,
+        wandb_base_url="https://wandb.example",
+        wandb_entity="entity",
         wandb_project="project",
     )
     prepared = wandb_import_tool.prepare_sealed_import(
@@ -341,6 +347,11 @@ def test_strict_import_retry_is_a_remote_publication_noop(
     )
 
     assert first.run_id == second.run_id
+    assert first.publication_state == "created"
+    assert second.publication_state == "already_complete"
+    assert first.entity == second.entity == "entity"
+    assert first.project == second.project == "project"
+    assert first.run_url == second.run_url == f"https://wandb.example/entity/project/runs/{first.run_id}"
     assert len(state.config_updates) == 1
     assert len(state.logged) == 1
     assert state.log_kwargs == [{"step": 0}]
@@ -355,6 +366,85 @@ def test_strict_import_retry_is_a_remote_publication_noop(
             measurement_sha256=prepared.measurement_sha256,
             record_count=prepared.record_count,
         )
+
+
+def test_strict_import_reports_resumed_incomplete_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    wandb_import_tool: ModuleType,
+) -> None:
+    measurement_path, seal_path = _write_sealed_import_case(wandb_import_tool, tmp_path)
+    settings = wandb_import_tool.ResolvedWandbConfig(
+        wandb_mode=wandb_import_tool.WandbMode.online,
+        wandb_entity="entity",
+        wandb_project="project",
+    )
+    prepared = wandb_import_tool.prepare_sealed_import(
+        measurement_path,
+        seal_path=seal_path,
+        settings=settings,
+    )
+    setup = sys.modules[wandb_import_tool.WandbPublisher.__module__]
+    state = _wandb_state()
+    state.init_count = 1
+    monkeypatch.setattr(setup, "require_wandb", lambda: _fake_wandb_module(state))
+
+    result = setup.WandbPublisher().publish_payload(
+        settings,
+        payload=prepared.payload,
+        measurement_sha256=prepared.measurement_sha256,
+        record_count=prepared.record_count,
+    )
+
+    assert result.publication_state == "resumed"
+    assert result.run_url == f"https://wandb.ai/entity/project/runs/{result.run_id}"
+
+
+def test_strict_import_cli_reports_destination_and_publication_state(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    wandb_import_tool: ModuleType,
+) -> None:
+    measurement_path, seal_path = _write_sealed_import_case(wandb_import_tool, tmp_path)
+    models = sys.modules[wandb_import_tool.WandbPublishResult.__module__]
+    result = wandb_import_tool.WandbPublishResult(
+        published=True,
+        run_id="run-a",
+        entity="entity",
+        project="project",
+        run_url="https://wandb.ai/entity/project/runs/run-a",
+        publication_state=models.WandbPublicationState.already_complete,
+        measurement_sha256="a" * 64,
+        record_count=1,
+    )
+    monkeypatch.setattr(wandb_import_tool.WandbPublisher, "publish_payload", lambda *_args, **_kwargs: result)
+
+    wandb_import_tool.main(
+        measurement_path,
+        seal_path=seal_path,
+        wandb_mode=wandb_import_tool.WandbMode.online,
+        wandb_entity="entity",
+        wandb_project="project",
+        json_output=True,
+    )
+    json_result = json.loads(capsys.readouterr().out)
+
+    assert json_result["run_url"] == result.run_url
+    assert json_result["publication_state"] == "already_complete"
+
+    wandb_import_tool.main(
+        measurement_path,
+        seal_path=seal_path,
+        wandb_mode=wandb_import_tool.WandbMode.online,
+        wandb_entity="entity",
+        wandb_project="project",
+        json_output=False,
+    )
+
+    assert (
+        capsys.readouterr().out == "Imported W&B run (already_complete): https://wandb.ai/entity/project/runs/run-a\n"
+    )
 
 
 def test_strict_import_identity_is_destination_scoped_and_rejects_mismatch(

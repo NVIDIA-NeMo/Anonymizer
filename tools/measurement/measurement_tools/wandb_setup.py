@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote
 
 from measurement_tools.wandb_ingress import read_measurement_snapshot
 from measurement_tools.wandb_models import (
@@ -26,6 +27,7 @@ from measurement_tools.wandb_models import (
     WandbInitPayload,
     WandbInputs,
     WandbMode,
+    WandbPublicationState,
     WandbPublishPayload,
     WandbPublishResult,
     WandbRunMetadata,
@@ -219,6 +221,7 @@ class WandbPublisher:
                 if run_id != payload.init.run_id:
                     raise RuntimeError("wandb.init returned a different run identity")
                 already_complete = _publication_already_complete(run, payload)
+                publication_state = _publication_state(run, already_complete=already_complete)
                 if not already_complete:
                     _define_benchmark_metrics(run)
                     run.config.update(payload.config.sdk_values(), allow_val_change=True)
@@ -236,6 +239,10 @@ class WandbPublisher:
                 result = WandbPublishResult(
                     published=True,
                     run_id=run_id,
+                    entity=settings.wandb_entity,
+                    project=settings.wandb_project,
+                    run_url=_wandb_run_url(settings, run_id=run_id),
+                    publication_state=publication_state,
                     measurement_sha256=measurement_sha256,
                     record_count=record_count,
                 )
@@ -352,6 +359,22 @@ def _publication_already_complete(run: Any, payload: WandbPublishPayload) -> boo
     if observed_digest not in {None, expected_digest}:
         raise RuntimeError("resumed W&B run contains different sealed content")
     return False
+
+
+def _publication_state(run: Any, *, already_complete: bool) -> WandbPublicationState:
+    if already_complete:
+        return WandbPublicationState.already_complete
+    return WandbPublicationState.resumed if bool(getattr(run, "resumed", False)) else WandbPublicationState.created
+
+
+def _wandb_run_url(settings: ResolvedWandbConfig, *, run_id: str) -> str | None:
+    if settings.wandb_mode != WandbMode.online or settings.wandb_entity is None:
+        return None
+    base_url = settings.wandb_base_url or "https://wandb.ai"
+    if base_url == "https://api.wandb.ai":
+        base_url = "https://wandb.ai"
+    segments = (settings.wandb_entity, settings.wandb_project, "runs", run_id)
+    return f"{base_url}/{'/'.join(quote(segment, safe='') for segment in segments)}"
 
 
 def _raise_lifecycle_failures(primary: BaseException | None, finish: BaseException | None) -> None:

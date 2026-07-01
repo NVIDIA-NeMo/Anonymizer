@@ -179,8 +179,9 @@ def _record_model_workflow(
         "column_count": column_count,
         "column_names": column_names or [],
         "model_usage": dict(model_usage or {}),
-        "local_fields": dict(extra_fields or {}),
     }
+    if record_type == "model_workflow":
+        workflow_fields["local_fields"] = dict(extra_fields or {})
     collector.record(record_type, **_model_workflow_fields(workflow_fields, observed_usage))
 
 

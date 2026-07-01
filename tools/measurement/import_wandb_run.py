@@ -298,7 +298,9 @@ def main(
     if json_output:
         sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
     else:
-        sys.stdout.write(f"Imported W&B run: {result.run_id}\n")
+        destination = result.run_url or result.run_id or "unavailable"
+        state = result.publication_state.value if result.publication_state is not None else "not_published"
+        sys.stdout.write(f"Imported W&B run ({state}): {destination}\n")
 
 
 if __name__ == "__main__":

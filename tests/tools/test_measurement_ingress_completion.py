@@ -673,3 +673,32 @@ def test_wandb_ingress_accepts_collector_model_workflow(tmp_path: Path, wandb_in
     path.write_text(json.dumps(source_record) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="operator_note"):
         wandb_ingress_tool.read_measurement_snapshot(path)
+
+
+def test_wandb_ingress_accepts_collector_ndd_workflow(tmp_path: Path, wandb_ingress_tool: ModuleType) -> None:
+    from anonymizer.measurement import (
+        MeasurementCollector,
+        MeasurementConfig,
+        measurement_session,
+        record_ndd_workflow,
+    )
+
+    path = tmp_path / "measurements.jsonl"
+    collector = MeasurementCollector(run_id="collector-run", record_hash_key="test-key")
+    with measurement_session(collector):
+        record_ndd_workflow(
+            workflow_name="entity-detection",
+            model_aliases=["detector"],
+            input_row_count=1,
+            output_row_count=1,
+            failed_record_count=0,
+            elapsed_sec=0.25,
+        )
+    MeasurementConfig(output_path=path).write_collector(collector)
+
+    snapshot = wandb_ingress_tool.read_measurement_snapshot(path)
+
+    assert len(snapshot.records) == 1
+    assert snapshot.records[0].record_type == "ndd_workflow"
+    source_record = json.loads(path.read_text(encoding="utf-8"))
+    assert "local_fields" not in source_record
