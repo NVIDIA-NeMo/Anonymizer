@@ -3,26 +3,14 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def load_tool(module_name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    sys.path.insert(0, str(path.parent))
-    spec.loader.exec_module(module)
-    return module
 
 
 def _entity(value: str, label: str, start: int, end: int, *, source: str = "detector") -> dict[str, object]:
@@ -43,7 +31,9 @@ def _write_artifact(root: Path, workflow: str, rows: list[dict[str, object]]) ->
     pd.DataFrame(rows).to_parquet(parquet_dir / "batch_00000.parquet", index=False)
 
 
-def test_detection_artifact_analysis_reports_augmentation_contribution(tmp_path: Path) -> None:
+def test_detection_artifact_analysis_reports_augmentation_contribution(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_detection_artifact_analysis",
         REPO_ROOT / "tools/measurement/analyze_detection_artifacts.py",
@@ -120,7 +110,9 @@ def test_detection_artifact_analysis_reports_augmentation_contribution(tmp_path:
     assert "12 February" not in serialized
 
 
-def test_detection_artifact_analysis_handles_no_augment_rows(tmp_path: Path) -> None:
+def test_detection_artifact_analysis_handles_no_augment_rows(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_detection_artifact_analysis_no_augment",
         REPO_ROOT / "tools/measurement/analyze_detection_artifacts.py",

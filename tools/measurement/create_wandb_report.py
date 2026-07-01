@@ -157,9 +157,35 @@ _WORKSPACE_COMPARISON_COLUMNS = [
     "summary:measurement/record/weighted_leakage_rate_mean",
     "summary:measurement/ndd_workflow/observed_total_tokens",
 ]
+_WORKSPACE_BAR_SECTIONS = (
+    ("Benchmark Summary", (("Case Health", _CASE_HEALTH_METRICS), ("Case Latency", _CASE_LATENCY_METRICS)), True),
+    (
+        "Privacy",
+        (("Privacy Outcomes", _RECORD_PRIVACY_METRICS), ("Replacement Quality", _REPLACEMENT_QUALITY_METRICS)),
+        True,
+    ),
+    ("Utility", (("Rewrite Utility", _REWRITE_UTILITY_METRICS),), True),
+    (
+        "Cost/Throughput",
+        (
+            ("NDD Request Health", _NDD_REQUEST_HEALTH_METRICS),
+            ("NDD Token Usage", _NDD_TOKEN_METRICS),
+            ("NDD Throughput", _NDD_THROUGHPUT_METRICS),
+            ("Stage Throughput", _STAGE_THROUGHPUT_METRICS),
+        ),
+        True,
+    ),
+)
 
 
-class WandbReportResult(BaseModel):
+class _WandbOutputValidation:
+    @field_validator("project_path", "group", "title")
+    @classmethod
+    def validate_output_text(cls, value: str | None) -> str | None:
+        return _validate_output_text(value)
+
+
+class WandbReportResult(_WandbOutputValidation, BaseModel):
     run_path: str | None = None
     run_url: str | None = None
     project_path: str
@@ -175,13 +201,8 @@ class WandbReportResult(BaseModel):
     def validate_output_urls(cls, value: str | None) -> str | None:
         return _validate_output_url(value)
 
-    @field_validator("project_path", "group", "title")
-    @classmethod
-    def validate_output_text(cls, value: str | None) -> str | None:
-        return _validate_output_text(value)
 
-
-class WandbWorkspaceResult(BaseModel):
+class WandbWorkspaceResult(_WandbOutputValidation, BaseModel):
     project_path: str
     group: str | None = None
     workspace_url: str
@@ -196,11 +217,6 @@ class WandbWorkspaceResult(BaseModel):
         if validated is None:
             raise ValueError("W&B workspace URL is required")
         return validated
-
-    @field_validator("project_path", "group", "title")
-    @classmethod
-    def validate_output_text(cls, value: str | None) -> str | None:
-        return _validate_output_text(value)
 
 
 def require_wandb_report_sdk() -> tuple[Any, Any, Any]:
@@ -236,12 +252,7 @@ def create_benchmark_report(
 ) -> WandbReportResult:
     """Create a W&B report for one benchmark run."""
     resolved = _report_settings(settings, run_path)
-    effective_run_path = WandbRunPath(
-        entity=run_path.entity,
-        project=run_path.project,
-        run_id=run_path.run_id,
-        base_url=resolved.wandb_base_url or run_path.base_url,
-    )
+    effective_run_path = run_path.with_base_url(resolved.wandb_base_url or run_path.base_url)
     with WandbSdkEnvironment(resolved):
         wandb, wr, expr = require_wandb_report_sdk()
         run = wandb.Api(timeout=timeout).run(run_path.path)
@@ -283,11 +294,7 @@ def create_benchmark_workspace(
 ) -> WandbWorkspaceResult:
     """Create a W&B workspace for benchmark runs in a project."""
     resolved = _report_settings(settings, project_path)
-    effective_project_path = WandbProjectPath(
-        entity=project_path.entity,
-        project=project_path.project,
-        base_url=resolved.wandb_base_url or project_path.base_url,
-    )
+    effective_project_path = project_path.with_base_url(resolved.wandb_base_url or project_path.base_url)
     with WandbSdkEnvironment(resolved):
         comparison: GroupComparison | None = None
         if group is not None:
@@ -314,24 +321,6 @@ def create_benchmark_workspace(
     )
 
 
-def create_benchmark_group_workspace(
-    project_path: WandbProjectPath,
-    *,
-    settings: ResolvedWandbConfig | None = None,
-    group: str,
-    title: str | None = None,
-    expected_run_kind: Literal["native_suite", "sweep_arm", "imported_case"] | None = None,
-) -> WandbWorkspaceResult:
-    """Create a W&B workspace filtered to one benchmark run group."""
-    return create_benchmark_workspace(
-        project_path,
-        settings=settings,
-        group=group,
-        title=title,
-        expected_run_kind=expected_run_kind,
-    )
-
-
 def create_benchmark_group_report(
     project_path: WandbProjectPath,
     *,
@@ -344,11 +333,7 @@ def create_benchmark_group_report(
 ) -> WandbReportResult:
     """Create a W&B report for a benchmark run group."""
     resolved = _report_settings(settings, project_path)
-    effective_project_path = WandbProjectPath(
-        entity=project_path.entity,
-        project=project_path.project,
-        base_url=resolved.wandb_base_url or project_path.base_url,
-    )
+    effective_project_path = project_path.with_base_url(resolved.wandb_base_url or project_path.base_url)
     with WandbSdkEnvironment(resolved):
         wandb, wr, expr = require_wandb_report_sdk()
         views = _read_group_views(wandb, project_path=effective_project_path, group=group)
@@ -533,12 +518,18 @@ def _benchmark_workspace_sections(
     groupby: Any | None,
     comparison_config_key: str,
 ) -> list[Any]:
-    sections = [
-        ws.Section(name="Benchmark Summary", panels=_summary_workspace_panels(wr, groupby=groupby), is_open=True),
-        ws.Section(name="Privacy", panels=_privacy_workspace_panels(wr, groupby=groupby), is_open=True),
-        ws.Section(name="Utility", panels=_utility_workspace_panels(wr, groupby=groupby), is_open=True),
-        ws.Section(name="Cost/Throughput", panels=_cost_workspace_panels(wr, groupby=groupby), is_open=True),
-    ]
+    sections = []
+    for name, panel_defs, is_open in _WORKSPACE_BAR_SECTIONS:
+        panels = _workspace_bar_panels(wr, panel_defs, groupby=groupby)
+        if name == "Benchmark Summary":
+            panels = [
+                *(
+                    wr.ScalarChart(title=_metric_title(metric), metric=metric, groupby_aggfunc="mean")
+                    for metric in _WORKSPACE_SUMMARY_SCALARS
+                ),
+                *panels,
+            ]
+        sections.append(ws.Section(name=name, panels=panels, is_open=is_open))
     if groupby is not None:
         sections.append(
             ws.Section(
@@ -551,35 +542,13 @@ def _benchmark_workspace_sections(
     return sections
 
 
-def _summary_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
-    return [
-        *(
-            wr.ScalarChart(title=_metric_title(metric), metric=metric, groupby_aggfunc="mean")
-            for metric in _WORKSPACE_SUMMARY_SCALARS
-        ),
-        _bar_panel(wr, "Case Health", _CASE_HEALTH_METRICS, groupby=groupby),
-        _bar_panel(wr, "Case Latency", _CASE_LATENCY_METRICS, groupby=groupby),
-    ]
-
-
-def _privacy_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
-    return [
-        _bar_panel(wr, "Privacy Outcomes", _RECORD_PRIVACY_METRICS, groupby=groupby),
-        _bar_panel(wr, "Replacement Quality", _REPLACEMENT_QUALITY_METRICS, groupby=groupby),
-    ]
-
-
-def _utility_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
-    return [_bar_panel(wr, "Rewrite Utility", _REWRITE_UTILITY_METRICS, groupby=groupby)]
-
-
-def _cost_workspace_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
-    return [
-        _bar_panel(wr, "NDD Request Health", _NDD_REQUEST_HEALTH_METRICS, groupby=groupby),
-        _bar_panel(wr, "NDD Token Usage", _NDD_TOKEN_METRICS, groupby=groupby),
-        _bar_panel(wr, "NDD Throughput", _NDD_THROUGHPUT_METRICS, groupby=groupby),
-        _bar_panel(wr, "Stage Throughput", _STAGE_THROUGHPUT_METRICS, groupby=groupby),
-    ]
+def _workspace_bar_panels(
+    wr: Any,
+    panel_defs: tuple[tuple[str, list[str]], ...],
+    *,
+    groupby: Any | None,
+) -> list[Any]:
+    return [_bar_panel(wr, title, metrics, groupby=groupby) for title, metrics in panel_defs]
 
 
 def _comparison_workspace_panels(wr: Any, *, comparison_config_key: str = "sweep_arm_id") -> list[Any]:

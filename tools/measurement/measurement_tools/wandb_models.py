@@ -27,6 +27,16 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from measurement_tools.validation import (
+    MeasurementStrategy,
+    NonNegativeFloat,
+    NonNegativeInt,
+    Probability,
+    RedactedStrictFrozenModel,
+    StrictFrozenModel,
+    VisibleIdentifier,
+    VisibleSlurmIdentifier,
+)
 from measurement_tools.wandb_metric_schema import AGGREGATED_MEASUREMENT_FIELDS, BENCHMARK_METRIC_NAMES
 
 DEFAULT_WANDB_PROJECT = "nemo-anonymizer-benchmarks"
@@ -66,7 +76,7 @@ class WandbInputs(BaseSettings):
     )
 
 
-class ResolvedWandbConfig(BaseModel):
+class ResolvedWandbConfig(RedactedStrictFrozenModel):
     """Immutable, fully resolved publisher configuration."""
 
     wandb_mode: WandbMode = WandbMode.disabled
@@ -78,8 +88,6 @@ class ResolvedWandbConfig(BaseModel):
     wandb_run_name: str | None = None
     wandb_tags: str = ""
     wandb_log_tables: bool = False
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
 
     @field_validator(
         "wandb_project",
@@ -213,13 +221,7 @@ class FieldPolicy(BaseModel):
 
 
 SafeScalar = StrictBool | StrictInt | FiniteFloat | StrictStr
-VisibleIdentifier = Annotated[StrictStr, Field(min_length=1, max_length=256)]
-VisibleSlurmIdentifier = Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")]
 WandbTag = Annotated[StrictStr, Field(min_length=1, max_length=WANDB_TAG_MAX_LENGTH)]
-NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
-NonNegativeFloat = Annotated[FiniteFloat, Field(ge=0)]
-Probability = Annotated[FiniteFloat, Field(ge=0, le=1)]
-MeasurementStrategy = Literal["Annotate", "Hash", "Redact", "Rewrite", "Substitute"]
 _NUMERIC_SWEEP_PARAMETER_TAILS = frozenset(
     {
         "detect_gliner_threshold",
@@ -238,7 +240,7 @@ _ENUM_SWEEP_PARAMETER_VALUES = {
 }
 
 
-class WandbInitPayload(BaseModel):
+class WandbInitPayload(StrictFrozenModel):
     run_id: VisibleIdentifier
     resume: Literal["allow", "never"] = "never"
     project: StrictStr
@@ -250,10 +252,8 @@ class WandbInitPayload(BaseModel):
     entity: StrictStr | None = None
     tags: tuple[WandbTag, ...] = ()
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class BenchmarkMetadata(BaseModel):
+class BenchmarkMetadata(StrictFrozenModel):
     metadata_schema_version: NonNegativeInt | None = None
     suite_schema_version: NonNegativeInt | None = None
     wandb_sanitizer_version: NonNegativeInt | None = None
@@ -267,17 +267,13 @@ class BenchmarkMetadata(BaseModel):
     case_retry_backoff_sec: NonNegativeFloat | None = None
     suite_file_hash: StrictStr | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class SlurmJobMetadata(BaseModel):
+class SlurmJobMetadata(StrictFrozenModel):
     role: VisibleSlurmIdentifier
     job_id: VisibleSlurmIdentifier
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class SlurmMetadata(BaseModel):
+class SlurmMetadata(StrictFrozenModel):
     job_id: VisibleIdentifier | None = None
     array_job_id: VisibleIdentifier | None = None
     array_task_id: VisibleIdentifier | None = None
@@ -289,10 +285,8 @@ class SlurmMetadata(BaseModel):
         default_factory=list
     )
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class ExecutionMetadata(BaseModel):
+class ExecutionMetadata(StrictFrozenModel):
     backend: Literal["local", "slurm"] | None = None
     export: StrictBool | None = None
     fail_fast: StrictBool | None = None
@@ -300,10 +294,8 @@ class ExecutionMetadata(BaseModel):
     dd_task_trace: StrictBool | None = None
     slurm: SlurmMetadata | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class RuntimeMetadata(BaseModel):
+class RuntimeMetadata(StrictFrozenModel):
     anonymizer_version: StrictStr | None = None
     datadesigner_version: StrictStr | None = None
     wandb_version: StrictStr | None = None
@@ -311,33 +303,25 @@ class RuntimeMetadata(BaseModel):
     platform_machine: StrictStr | None = None
     platform_system: StrictStr | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class GitMetadata(BaseModel):
+class GitMetadata(StrictFrozenModel):
     commit: StrictStr | None = None
     branch: StrictStr | None = None
     dirty: StrictBool | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class ModelSourcesMetadata(BaseModel):
+class ModelSourcesMetadata(StrictFrozenModel):
     has_model_configs: StrictBool | None = None
     has_model_providers: StrictBool | None = None
     has_artifact_path: StrictBool | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class WorkloadSourceMetadata(BaseModel):
+class WorkloadSourceMetadata(StrictFrozenModel):
     kind: Literal["local_file", "remote_file"] | None = None
     suffix: StrictStr | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class WorkloadMetadata(BaseModel):
+class WorkloadMetadata(StrictFrozenModel):
     id: VisibleIdentifier | None = None
     text_column: VisibleIdentifier | None = None
     has_id_column: StrictBool | None = None
@@ -346,10 +330,8 @@ class WorkloadMetadata(BaseModel):
     row_offset: NonNegativeInt | None = None
     source: WorkloadSourceMetadata | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class DetectMetadata(BaseModel):
+class DetectMetadata(StrictFrozenModel):
     entity_label_source: Literal["custom", "default"] | None = None
     entity_label_count: NonNegativeInt | None = None
     entity_label_set_hash: StrictStr | None = None
@@ -357,10 +339,8 @@ class DetectMetadata(BaseModel):
     validation_max_entities_per_call: NonNegativeInt | None = None
     validation_excerpt_window_chars: NonNegativeInt | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class ReplaceMetadata(BaseModel):
+class ReplaceMetadata(StrictFrozenModel):
     strategy: Literal["annotate", "hash", "redact", "substitute"] | None = None
     normalize_label: StrictBool | None = None
     algorithm: Literal["md5", "sha1", "sha256"] | None = None
@@ -368,10 +348,8 @@ class ReplaceMetadata(BaseModel):
     has_format_template: StrictBool | None = None
     has_instructions: StrictBool | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class RewriteMetadata(BaseModel):
+class RewriteMetadata(StrictFrozenModel):
     risk_tolerance: Literal["minimal", "low", "moderate", "high"] | None = None
     max_repair_iterations: NonNegativeInt | None = None
     strict_entity_protection: StrictBool | None = None
@@ -380,10 +358,8 @@ class RewriteMetadata(BaseModel):
     has_preserve: StrictBool | None = None
     has_instructions: StrictBool | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class ConfigMetadata(BaseModel):
+class ConfigMetadata(StrictFrozenModel):
     id: VisibleIdentifier | None = None
     mode: Literal["replace", "rewrite"] | None = None
     evaluate: StrictBool | None = None
@@ -392,23 +368,17 @@ class ConfigMetadata(BaseModel):
     replace: ReplaceMetadata | None = None
     rewrite: RewriteMetadata | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class MatrixMetadata(BaseModel):
+class MatrixMetadata(StrictFrozenModel):
     workload: VisibleIdentifier | None = None
     config: VisibleIdentifier | None = None
     repetitions: NonNegativeInt | None = None
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class SweepMetadata(BaseModel):
+class SweepMetadata(StrictFrozenModel):
     id: VisibleIdentifier
     arm_id: VisibleIdentifier
     params: dict[StrictStr, SafeScalar]
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     @field_validator("params")
     @classmethod
@@ -428,7 +398,7 @@ class SweepMetadata(BaseModel):
         return cls(id=sweep_id, arm_id=arm_id, params=safe_params)
 
 
-class ImportedRunMetadata(BaseModel):
+class ImportedRunMetadata(StrictFrozenModel):
     completion_seal_schema_version: NonNegativeInt
     completion_seal_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     producer_repository: VisibleIdentifier
@@ -436,10 +406,8 @@ class ImportedRunMetadata(BaseModel):
     phase: VisibleIdentifier
     case_id: VisibleIdentifier
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-
-class WandbRunMetadata(BaseModel):
+class WandbRunMetadata(StrictFrozenModel):
     """Validated benchmark metadata that is safe to project into W&B config."""
 
     run_kind: Literal["native_suite", "sweep_arm", "imported_case"] = "native_suite"
@@ -453,8 +421,6 @@ class WandbRunMetadata(BaseModel):
     matrix: tuple[MatrixMetadata, ...] = ()
     sweep: SweepMetadata | None = None
     imported: ImportedRunMetadata | None = None
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     @field_validator("workloads", "configs", "matrix", mode="before")
     @classmethod
@@ -542,8 +508,6 @@ class WandbConfigPayload(WandbRunMetadata):
     imported_config_id: VisibleIdentifier | None = None
     sweep_params: dict[StrictStr, SafeScalar] = Field(default_factory=dict)
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
     def sdk_values(self) -> dict[str, Any]:
         values = self.model_dump(mode="json", exclude_none=True)
         values.update({f"sweep_param_{key}": value for key, value in self.sweep_params.items()})
@@ -581,10 +545,8 @@ class WandbConfigPayload(WandbRunMetadata):
         return cls.model_validate(values, strict=True)
 
 
-class WandbHistoryPayload(BaseModel):
+class WandbHistoryPayload(StrictFrozenModel):
     metrics: dict[StrictStr, SafeScalar]
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     @field_validator("metrics")
     @classmethod
@@ -595,10 +557,8 @@ class WandbHistoryPayload(BaseModel):
         return metrics
 
 
-class WandbSummaryPayload(BaseModel):
+class WandbSummaryPayload(StrictFrozenModel):
     metrics: dict[StrictStr, SafeScalar]
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     @field_validator("metrics")
     @classmethod
@@ -606,7 +566,7 @@ class WandbSummaryPayload(BaseModel):
         return WandbHistoryPayload.metric_keys_have_policy(metrics)
 
 
-class _MetricTableRow(BaseModel):
+class _MetricTableRow(StrictFrozenModel):
     elapsed_sec: NonNegativeFloat | None = None
     input_row_count: NonNegativeInt | None = None
     seed_row_count: NonNegativeInt | None = None
@@ -659,8 +619,6 @@ class _MetricTableRow(BaseModel):
     leakage_mass: NonNegativeFloat | None = None
     weighted_leakage_rate: Probability | None = None
     repair_iterations: NonNegativeInt | None = None
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 _METRIC_TABLE_POLICY_FIELDS = (
@@ -766,14 +724,12 @@ class ModelWorkflowTableRow(_MetricTableRow):
     status: Literal["completed", "error"]
 
 
-class TraceCoverageTableRow(BaseModel):
+class TraceCoverageTableRow(StrictFrozenModel):
     record_type: Literal["dd_trace_coverage"]
     traced_column_count: NonNegativeInt
     native_trace_column_count: NonNegativeInt
     private_trace_column_count: NonNegativeInt
     unsupported_column_count: NonNegativeInt
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 WandbTableRow = Annotated[
@@ -800,11 +756,9 @@ WANDB_TABLE_ROW_MODELS: Mapping[str, type[BaseModel]] = MappingProxyType(
 _MEASUREMENT_RECORD_TYPES = frozenset(WANDB_TABLE_ROW_MODELS)
 
 
-class WandbTablePayload(BaseModel):
+class WandbTablePayload(StrictFrozenModel):
     record_type: StrictStr
     rows: tuple[WandbTableRow, ...]
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     @model_validator(mode="after")
     def rows_match_record_type(self) -> WandbTablePayload:
@@ -828,14 +782,12 @@ class WandbTablePayload(BaseModel):
         return tuple(tuple(getattr(row, column) for column in columns) for row in self.rows)
 
 
-class WandbPublishPayload(BaseModel):
+class WandbPublishPayload(StrictFrozenModel):
     init: WandbInitPayload
     config: WandbConfigPayload
     history: WandbHistoryPayload
     summary: WandbSummaryPayload
     tables: tuple[WandbTablePayload, ...] = ()
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     @model_validator(mode="after")
     def validate_resume_contract(self) -> WandbPublishPayload:
@@ -850,13 +802,11 @@ class WandbPublishPayload(BaseModel):
         return self
 
 
-class WandbPublishResult(BaseModel):
+class WandbPublishResult(StrictFrozenModel):
     published: StrictBool
     run_id: StrictStr | None = None
     measurement_sha256: Annotated[StrictStr | None, Field(pattern=r"^[0-9a-f]{64}$")] = None
     record_count: StrictInt = 0
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 def _set_scalar(mapping: dict[str, SafeScalar], key: str, value: Any) -> None:

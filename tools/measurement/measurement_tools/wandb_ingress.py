@@ -13,10 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
-    FiniteFloat,
     JsonValue,
     StrictBool,
     StrictInt,
@@ -25,25 +22,28 @@ from pydantic import (
     ValidationError,
 )
 
+from measurement_tools.validation import (
+    MeasurementStrategy,
+    NonNegativeFloat,
+    NonNegativeInt,
+    Probability,
+    StrictFrozenModel,
+)
+
 DEFAULT_MAX_MEASUREMENT_BYTES = 32 * 1024 * 1024
 DEFAULT_MAX_MEASUREMENT_RECORDS = 100_000
 DEFAULT_MAX_MEASUREMENT_LINE_BYTES = 1024 * 1024
 DEFAULT_MAX_JSON_NESTING = 16
 
-NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
-NonNegativeFloat = Annotated[FiniteFloat, Field(ge=0)]
-Probability = Annotated[FiniteFloat, Field(ge=0, le=1)]
-Strategy = Literal["Annotate", "Hash", "Redact", "Rewrite", "Substitute"]
+Strategy = MeasurementStrategy
 RowIndex = StrictInt | None
 
 
-class _MeasurementEnvelope(BaseModel):
+class _MeasurementEnvelope(StrictFrozenModel):
     schema_version: Literal[1]
     run_id: StrictStr = Field(min_length=1, max_length=256)
     run_tags: dict[StrictStr, JsonValue]
     timestamp_unix_sec: NonNegativeFloat
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 class RunMeasurement(_MeasurementEnvelope):
@@ -225,13 +225,11 @@ MeasurementRecord = Annotated[
 _RECORD_ADAPTER = TypeAdapter(MeasurementRecord)
 
 
-class MeasurementSnapshot(BaseModel):
+class MeasurementSnapshot(StrictFrozenModel):
     path: Path
     sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     byte_count: NonNegativeInt
     records: tuple[MeasurementRecord, ...]
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     def terminal_stage(self, *, expected_status: Literal["completed", "error"] = "completed") -> StageMeasurement:
         """Return the single terminal stage after enforcing the shared run-status invariant."""

@@ -68,7 +68,6 @@ app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.benchmark")
 
 
-# Compatibility name for callers that imported the branch's initial W&B config type.
 class CaseStatus(StrEnum):
     planned = "planned"
     completed = "completed"

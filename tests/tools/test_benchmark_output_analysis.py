@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import shutil
-import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -14,17 +13,6 @@ import pandas as pd
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def load_tool(module_name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    sys.path.insert(0, str(path.parent))
-    spec.loader.exec_module(module)
-    return module
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
@@ -38,7 +26,9 @@ def _copy_fixture(tmp_path: Path, fixture_name: str) -> Path:
     return destination
 
 
-def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -100,7 +90,9 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(tmp
     assert "sk-test" not in serialized
 
 
-def test_analyze_benchmark_output_counts_generic_model_workflow_records(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_counts_generic_model_workflow_records(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_model_workflow",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -187,7 +179,9 @@ def test_analyze_benchmark_output_counts_generic_model_workflow_records(tmp_path
     assert result.model_usage_groups[0].sum_observed_total_tokens == 42
 
 
-def test_analyze_benchmark_output_rolls_up_evaluation_records(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_rolls_up_evaluation_records(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_evaluation_rollups",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -285,7 +279,9 @@ def test_analyze_benchmark_output_rolls_up_evaluation_records(tmp_path: Path) ->
     assert group.sum_attribute_fidelity_invalid_entity_count == 5
 
 
-def test_analyze_benchmark_output_accepts_detection_artifact_override(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_accepts_detection_artifact_override(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_artifact_override",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -347,7 +343,9 @@ def test_analyze_benchmark_output_accepts_detection_artifact_override(tmp_path: 
     }
 
 
-def test_analyze_benchmark_output_requires_detection_artifact_override_path(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_requires_detection_artifact_override_path(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_artifact_override_missing",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -369,7 +367,9 @@ def test_analyze_benchmark_output_requires_detection_artifact_override_path(tmp_
         tool.analyze_benchmark_output(benchmark_dir, detection_artifacts=tmp_path / "missing.jsonl")
 
 
-def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> None:
+def test_write_analysis_tables_exports_case_and_group_tables(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_export",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -454,7 +454,9 @@ def test_write_analysis_tables_exports_case_and_group_tables(tmp_path: Path) -> 
     assert (output_dir / "manifest.json").exists()
 
 
-def test_analyze_benchmark_output_preserves_zero_entity_cases(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_preserves_zero_entity_cases(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_zero",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -485,7 +487,9 @@ def test_analyze_benchmark_output_preserves_zero_entity_cases(tmp_path: Path) ->
     assert result.groups[0].median_final_entity_count == 0
 
 
-def test_analyze_benchmark_output_groups_replacement_strategies_separately(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_groups_replacement_strategies_separately(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_replacement_strategy_groups",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -531,7 +535,7 @@ def test_analyze_benchmark_output_groups_replacement_strategies_separately(tmp_p
     }
 
 
-def test_analyze_benchmark_output_surfaces_failed_cases(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_surfaces_failed_cases(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_failures",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
@@ -602,7 +606,9 @@ def test_analyze_benchmark_output_surfaces_failed_cases(tmp_path: Path) -> None:
     assert "failed_cases=1/2" in tool.render_result(result, json_output=False)
 
 
-def test_analyze_benchmark_output_groups_artifact_contribution_metrics(tmp_path: Path) -> None:
+def test_analyze_benchmark_output_groups_artifact_contribution_metrics(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_output_analysis_artifact_group",
         REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",

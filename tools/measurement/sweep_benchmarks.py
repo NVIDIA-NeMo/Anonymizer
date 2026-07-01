@@ -17,12 +17,12 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Callable, cast
 
 import cyclopts
 import run_benchmarks
 import yaml
-from create_wandb_report import WandbProjectPath, create_benchmark_group_report, create_benchmark_group_workspace
+from create_wandb_report import WandbProjectPath, create_benchmark_group_report, create_benchmark_workspace
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input, summarize_validation_error
 from measurement_tools.wandb_models import SweepMetadata, generated_wandb_tag
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -105,6 +105,14 @@ class SweepCliOptions:
 
 class WandbViewCreationError(RuntimeError):
     """A post-benchmark W&B presentation operation failed."""
+
+
+@dataclass(frozen=True)
+class _WandbViewOperation:
+    enabled: bool
+    label: str
+    url_attribute: str
+    create: Callable[..., Any]
 
 
 def load_sweep_spec(path: Path) -> SweepSpec:
@@ -228,24 +236,22 @@ def run_sweep(
     workspace_url = None
     report_error = None
     workspace_error = None
-    try:
-        report_url = _maybe_create_report(
-            spec,
-            wandb_settings=wandb_settings,
-            create_report=create_report,
-            dry_run=dry_run,
-        )
-    except WandbViewCreationError as exc:
-        report_error = str(exc)
-    try:
-        workspace_url = _maybe_create_workspace(
-            spec,
-            wandb_settings=wandb_settings,
-            create_workspace=create_workspace,
-            dry_run=dry_run,
-        )
-    except WandbViewCreationError as exc:
-        workspace_error = str(exc)
+    for operation in (
+        _WandbViewOperation(create_report, "report", "report_url", create_benchmark_group_report),
+        _WandbViewOperation(create_workspace, "workspace", "workspace_url", create_benchmark_workspace),
+    ):
+        try:
+            url = _maybe_create_view(spec, wandb_settings=wandb_settings, dry_run=dry_run, operation=operation)
+        except WandbViewCreationError as exc:
+            if operation.label == "report":
+                report_error = str(exc)
+            else:
+                workspace_error = str(exc)
+        else:
+            if operation.label == "report":
+                report_url = url
+            else:
+                workspace_url = url
     return SweepResult(
         sweep_id=spec.sweep_id,
         output_root=str(resolved_output_root),
@@ -437,14 +443,14 @@ def _planned_case_count_if_readable(suite_path: Path) -> int:
         return 0
 
 
-def _maybe_create_report(
+def _maybe_create_view(
     spec: SweepSpec,
     *,
     wandb_settings: run_benchmarks.ResolvedWandbConfig,
-    create_report: bool,
     dry_run: bool,
+    operation: _WandbViewOperation,
 ) -> str | None:
-    if not create_report or dry_run or not wandb_settings.enabled:
+    if not operation.enabled or dry_run or not wandb_settings.enabled:
         return None
     entity = wandb_settings.wandb_entity
     if not entity:
@@ -454,43 +460,15 @@ def _maybe_create_report(
             entity=entity,
             project=wandb_settings.effective_wandb_project,
         )
-        result = create_benchmark_group_report(
+        result = operation.create(
             project,
             settings=wandb_settings,
             group=wandb_settings.wandb_group or spec.sweep_id,
             expected_run_kind="sweep_arm",
         )
     except Exception as exc:  # noqa: BLE001 -- remote SDK errors must not expose response contents
-        raise WandbViewCreationError(f"W&B report creation failed ({type(exc).__name__})") from None
-    return result.report_url
-
-
-def _maybe_create_workspace(
-    spec: SweepSpec,
-    *,
-    wandb_settings: run_benchmarks.ResolvedWandbConfig,
-    create_workspace: bool,
-    dry_run: bool,
-) -> str | None:
-    if not create_workspace or dry_run or not wandb_settings.enabled:
-        return None
-    entity = wandb_settings.wandb_entity
-    if not entity:
-        return None
-    try:
-        project = WandbProjectPath(
-            entity=entity,
-            project=wandb_settings.effective_wandb_project,
-        )
-        result = create_benchmark_group_workspace(
-            project,
-            settings=wandb_settings,
-            group=wandb_settings.wandb_group or spec.sweep_id,
-            expected_run_kind="sweep_arm",
-        )
-    except Exception as exc:  # noqa: BLE001 -- remote SDK errors must not expose response contents
-        raise WandbViewCreationError(f"W&B workspace creation failed ({type(exc).__name__})") from None
-    return result.workspace_url
+        raise WandbViewCreationError(f"W&B {operation.label} creation failed ({type(exc).__name__})") from None
+    return getattr(result, operation.url_attribute)
 
 
 def _joined_tags(first: list[str], second: list[str]) -> str:
@@ -561,27 +539,8 @@ def render_result(result: SweepResult, *, json_output: bool) -> str:
     return "\n".join(lines)
 
 
-def _resolve_cli_wandb_settings(
-    *,
-    wandb_mode: run_benchmarks.WandbMode | None,
-    wandb_entity: str | None,
-    wandb_project: str | None,
-    wandb_base_url: str | None,
-    wandb_group: str | None,
-    wandb_job_type: str | None,
-    wandb_tags: str | None,
-    wandb_log_tables: bool | None,
-) -> run_benchmarks.ResolvedWandbConfig:
-    return run_benchmarks.resolve_wandb_settings(
-        wandb_mode=wandb_mode,
-        wandb_entity=wandb_entity,
-        wandb_project=wandb_project,
-        wandb_base_url=wandb_base_url,
-        wandb_group=wandb_group,
-        wandb_job_type=wandb_job_type,
-        wandb_tags=wandb_tags,
-        wandb_log_tables=wandb_log_tables,
-    )
+def _resolve_cli_wandb_settings(**overrides: Any) -> run_benchmarks.ResolvedWandbConfig:
+    return run_benchmarks.ResolvedWandbConfig.from_env_and_overrides(**overrides)
 
 
 @app.default

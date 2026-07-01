@@ -16,13 +16,18 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StrictInt,
     StrictStr,
     ValidationError,
     field_validator,
     model_validator,
 )
 
+from measurement_tools.validation import (
+    NonNegativeInt,
+    RedactedStrictFrozenModel,
+    VisibleIdentifier,
+    VisibleSlurmIdentifier,
+)
 from measurement_tools.wandb_ingress import (
     MeasurementSnapshot,
     _reject_json_constant,
@@ -37,30 +42,23 @@ COMPLETION_SEAL_FILENAME = "completion-seal.json"
 COMPLETION_SEAL_SCHEMA_VERSION = 1
 DEFAULT_MAX_COMPLETION_SEAL_BYTES = 64 * 1024
 
-NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
-VisibleIdentifier = Annotated[StrictStr, Field(min_length=1, max_length=256)]
-VisibleSlurmIdentifier = Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")]
 Sha256Digest = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")]
 GitCommit = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{40,64}$")]
 
 
-class ImportedCaseIdentity(BaseModel):
+class ImportedCaseIdentity(RedactedStrictFrozenModel):
     case_id: VisibleIdentifier
     workload_id: VisibleIdentifier
     config_id: VisibleIdentifier
     repetition: NonNegativeInt
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
 
-
-class SlurmJobProvenance(BaseModel):
+class SlurmJobProvenance(RedactedStrictFrozenModel):
     role: VisibleSlurmIdentifier
     job_id: VisibleSlurmIdentifier
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
 
-
-class SlurmCaseProvenance(BaseModel):
+class SlurmCaseProvenance(RedactedStrictFrozenModel):
     backend: Literal["slurm"] = "slurm"
     phase: VisibleIdentifier
     case_index: NonNegativeInt
@@ -71,8 +69,6 @@ class SlurmCaseProvenance(BaseModel):
         tuple[SlurmJobProvenance, ...],
         Field(max_length=64, exclude_if=lambda value: not value),
     ] = ()
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
 
     @field_validator("jobs", mode="before")
     @classmethod
@@ -98,14 +94,12 @@ def parse_slurm_jobs(values: list[str]) -> tuple[SlurmJobProvenance, ...]:
     return tuple(jobs)
 
 
-class CompletionSealProducer(BaseModel):
+class CompletionSealProducer(RedactedStrictFrozenModel):
     repository: VisibleIdentifier
     commit: GitCommit
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
 
-
-class CompletionSeal(BaseModel):
+class CompletionSeal(RedactedStrictFrozenModel):
     seal_schema_version: Literal[1] = COMPLETION_SEAL_SCHEMA_VERSION
     terminal_status: Literal["completed"]
     measurement_schema_version: Literal[1]
@@ -116,8 +110,6 @@ class CompletionSeal(BaseModel):
     case: ImportedCaseIdentity
     slurm: SlurmCaseProvenance
     producer: CompletionSealProducer
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
 
 
 class CompletionSealSnapshot(BaseModel):

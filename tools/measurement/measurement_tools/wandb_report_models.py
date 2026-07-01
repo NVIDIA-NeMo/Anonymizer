@@ -7,11 +7,12 @@ from __future__ import annotations
 import math
 import unicodedata
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import quote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StrictInt, StrictStr, ValidationError, field_validator
 
+from measurement_tools.validation import StrictFrozenModel
 from measurement_tools.wandb_models import (
     BenchmarkMetadata,
     ConfigMetadata,
@@ -37,18 +38,23 @@ VisibleText = Annotated[StrictStr, Field(min_length=1, max_length=512)]
 MetricValue = StrictInt | FiniteFloat
 
 
-class WandbRunPath(BaseModel):
+class _WandbPathBase(StrictFrozenModel):
     entity: RemoteIdentifier
     project: RemoteIdentifier
-    run_id: RemoteIdentifier
-    base_url: StrictStr = "https://wandb.ai"
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    @field_validator("base_url")
+    @field_validator("base_url", check_fields=False)
     @classmethod
     def validate_base_url(cls, value: str) -> str:
         return _validate_base_url(value)
+
+    def with_base_url(self, base_url: str) -> Self:
+        """Return this path with a separately validated W&B origin."""
+        return type(self).model_validate({**self.model_dump(), "base_url": base_url})
+
+
+class WandbRunPath(_WandbPathBase):
+    run_id: RemoteIdentifier
+    base_url: StrictStr = "https://wandb.ai"
 
     @property
     def path(self) -> str:
@@ -60,17 +66,8 @@ class WandbRunPath(BaseModel):
         return f"{self.base_url}/{'/'.join(quote(segment, safe='') for segment in segments)}"
 
 
-class WandbProjectPath(BaseModel):
-    entity: RemoteIdentifier
-    project: RemoteIdentifier
+class WandbProjectPath(_WandbPathBase):
     base_url: StrictStr = "https://wandb.ai"
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    @field_validator("base_url")
-    @classmethod
-    def validate_base_url(cls, value: str) -> str:
-        return _validate_base_url(value)
 
     @property
     def path(self) -> str:
