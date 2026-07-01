@@ -12,16 +12,18 @@ from pathlib import Path
 from typing import Annotated
 
 import cyclopts
-from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
+from measurement_tools.cli import LogFormat, configure_logging, log_bad_input, summarize_validation_error
 from measurement_tools.wandb_completion import (
     COMPLETION_SEAL_FILENAME,
     CompletionSealProducer,
     ImportedCaseIdentity,
     SlurmCaseProvenance,
     build_completion_seal,
+    parse_slurm_jobs,
     read_measurement_snapshot,
     write_completion_seal,
 )
+from pydantic import ValidationError
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.completion_seal")
@@ -43,6 +45,7 @@ def main(
     slurm_job_id: Annotated[str | None, cyclopts.Parameter("--slurm-job-id")] = None,
     slurm_array_job_id: Annotated[str | None, cyclopts.Parameter("--slurm-array-job-id")] = None,
     slurm_array_task_id: Annotated[str | None, cyclopts.Parameter("--slurm-array-task-id")] = None,
+    slurm_job: Annotated[list[str] | None, cyclopts.Parameter("--slurm-job")] = None,
     json_output: Annotated[bool, cyclopts.Parameter("--json")] = False,
     log_format: Annotated[LogFormat, cyclopts.Parameter("--log-format")] = LogFormat.plain,
 ) -> None:
@@ -64,10 +67,14 @@ def main(
                 job_id=slurm_job_id,
                 array_job_id=slurm_array_job_id,
                 array_task_id=slurm_array_task_id,
+                jobs=parse_slurm_jobs(slurm_job or []),
             ),
             producer=CompletionSealProducer(repository=producer_repository, commit=producer_commit),
         )
         write_completion_seal(resolved_seal_path, seal)
+    except ValidationError as exc:
+        log_bad_input(logger, summarize_validation_error(exc))
+        raise SystemExit(125) from exc
     except (OSError, ValueError) as exc:
         log_bad_input(logger, str(exc))
         raise SystemExit(125) from exc

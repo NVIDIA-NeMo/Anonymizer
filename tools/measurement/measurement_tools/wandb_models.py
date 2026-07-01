@@ -214,6 +214,7 @@ class FieldPolicy(BaseModel):
 
 SafeScalar = StrictBool | StrictInt | FiniteFloat | StrictStr
 VisibleIdentifier = Annotated[StrictStr, Field(min_length=1, max_length=256)]
+VisibleSlurmIdentifier = Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")]
 WandbTag = Annotated[StrictStr, Field(min_length=1, max_length=WANDB_TAG_MAX_LENGTH)]
 NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
 NonNegativeFloat = Annotated[FiniteFloat, Field(ge=0)]
@@ -269,6 +270,13 @@ class BenchmarkMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
+class SlurmJobMetadata(BaseModel):
+    role: VisibleSlurmIdentifier
+    job_id: VisibleSlurmIdentifier
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
 class SlurmMetadata(BaseModel):
     job_id: VisibleIdentifier | None = None
     array_job_id: VisibleIdentifier | None = None
@@ -277,6 +285,9 @@ class SlurmMetadata(BaseModel):
     restart_count: NonNegativeInt | None = None
     ntasks: NonNegativeInt | None = None
     job_num_nodes: NonNegativeInt | None = None
+    jobs: Annotated[list[SlurmJobMetadata], Field(max_length=64, exclude_if=lambda value: not value)] = Field(
+        default_factory=list
+    )
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -924,6 +935,7 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "case_retry_backoff_sec",
         "suite_file_hash",
     ),
+    SlurmJobMetadata: _aggregate_policies("role", "job_id", data_class=DataClass.pseudonymous),
     SlurmMetadata: _aggregate_policies(
         "job_id",
         "array_job_id",
@@ -932,6 +944,7 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "restart_count",
         "ntasks",
         "job_num_nodes",
+        "jobs",
         data_class=DataClass.pseudonymous,
     ),
     ExecutionMetadata: _aggregate_policies("backend", "export", "fail_fast", "dd_trace", "dd_task_trace", "slurm"),

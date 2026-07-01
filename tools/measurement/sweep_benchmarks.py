@@ -449,11 +449,11 @@ def _maybe_create_report(
     entity = wandb_settings.wandb_entity
     if not entity:
         return None
-    project = WandbProjectPath(
-        entity=entity,
-        project=wandb_settings.effective_wandb_project,
-    )
     try:
+        project = WandbProjectPath(
+            entity=entity,
+            project=wandb_settings.effective_wandb_project,
+        )
         result = create_benchmark_group_report(
             project,
             settings=wandb_settings,
@@ -477,11 +477,11 @@ def _maybe_create_workspace(
     entity = wandb_settings.wandb_entity
     if not entity:
         return None
-    project = WandbProjectPath(
-        entity=entity,
-        project=wandb_settings.effective_wandb_project,
-    )
     try:
+        project = WandbProjectPath(
+            entity=entity,
+            project=wandb_settings.effective_wandb_project,
+        )
         result = create_benchmark_group_workspace(
             project,
             settings=wandb_settings,

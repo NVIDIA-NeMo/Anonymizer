@@ -32,6 +32,7 @@ WANDB_LOGGING_PATH = REPO_ROOT / "tools/measurement/measurement_tools/wandb_logg
 WANDB_SETUP_PATH = REPO_ROOT / "tools/measurement/measurement_tools/wandb_setup.py"
 WANDB_INGRESS_PATH = REPO_ROOT / "tools/measurement/measurement_tools/wandb_ingress.py"
 WANDB_COMPLETION_PATH = REPO_ROOT / "tools/measurement/measurement_tools/wandb_completion.py"
+WRITE_COMPLETION_SEAL_PATH = REPO_ROOT / "tools/measurement/write_completion_seal.py"
 WANDB_IMPORT_PATH = REPO_ROOT / "tools/measurement/import_wandb_run.py"
 WANDB_REPORT_PATH = REPO_ROOT / "tools/measurement/create_wandb_report.py"
 
@@ -2156,7 +2157,11 @@ def test_wandb_report_preserves_typed_execution_metadata(wandb_report_tool: Modu
         "execution": {
             "backend": "slurm",
             "export": True,
-            "slurm": {"job_id": "123", "array_task_id": "4"},
+            "slurm": {
+                "job_id": "123",
+                "array_task_id": "4",
+                "jobs": [{"role": "detect", "job_id": "234"}, {"role": "replace", "job_id": "345"}],
+            },
         },
     }
     path = wandb_report_tool.WandbRunPath(entity="entity", project="project", run_id="run-a")
@@ -2171,6 +2176,10 @@ def test_wandb_report_preserves_typed_execution_metadata(wandb_report_tool: Modu
     assert view.metadata.execution.backend == "slurm"
     assert view.metadata.execution.slurm is not None
     assert view.metadata.execution.slurm.array_task_id == "4"
+    assert [(job.role, job.job_id) for job in view.metadata.execution.slurm.jobs] == [
+        ("detect", "234"),
+        ("replace", "345"),
+    ]
 
 
 def test_wandb_report_markdown_escapes_hostile_remote_values(wandb_report_tool: ModuleType) -> None:
@@ -2663,6 +2672,41 @@ def test_sweep_preserves_arm_results_when_report_creation_fails(
     assert "remote secret response" not in result.model_dump_json()
 
 
+@pytest.mark.parametrize("view_kind", ["report", "workspace"])
+def test_sweep_preserves_arm_results_when_project_validation_fails_redacted(
+    view_kind: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sweep_tool: ModuleType,
+) -> None:
+    base_suite = _write_yaml(tmp_path / "base.yaml", _simple_suite_payload())
+    sweep_path = _write_threshold_sweep(tmp_path, base_suite=base_suite)
+    calls: list[tuple[Path, Path, Any]] = []
+    _patch_sweep_runner(monkeypatch, sweep_tool, calls, status=sweep_tool.run_benchmarks.CaseStatus.completed)
+    secret_entity = "private/entity"
+
+    result = sweep_tool.run_sweep(
+        sweep_path,
+        output_root=tmp_path / "runs",
+        overwrite=True,
+        dry_run=False,
+        export=True,
+        fail_fast=False,
+        wandb_settings=sweep_tool.run_benchmarks.resolve_wandb_settings(
+            wandb_mode=sweep_tool.run_benchmarks.WandbMode.offline,
+            wandb_entity=secret_entity,
+            wandb_project="project",
+        ),
+        create_report=view_kind == "report",
+        create_workspace=view_kind == "workspace",
+    )
+
+    error = result.report_error if view_kind == "report" else result.workspace_error
+    assert result.completed_arms == 2
+    assert error == f"W&B {view_kind} creation failed (ValidationError)"
+    assert secret_entity not in result.model_dump_json()
+
+
 def test_sweep_fail_fast_stops_after_first_errored_arm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2905,6 +2949,50 @@ def test_wandb_aggregates_with_explicit_metric_policy(
     assert not any("schema_version" in key for key in aggregated)
     assert not any("timestamp_unix_sec" in key for key in aggregated)
     assert not any("input_has_id_column" in key for key in aggregated)
+
+
+def test_wandb_stage_summary_uses_only_terminal_stage_but_table_preserves_all(
+    wandb_ingress_tool: ModuleType,
+    wandb_logging_tool: ModuleType,
+) -> None:
+    records = tuple(
+        wandb_ingress_tool.StageMeasurement.model_validate(
+            {
+                "schema_version": 1,
+                "record_type": "stage",
+                "run_id": "run-a",
+                "run_tags": {},
+                "timestamp_unix_sec": float(index),
+                "stage": stage,
+                "status": "completed",
+                "elapsed_sec": elapsed_sec,
+                "input_row_count": 10,
+                "output_row_count": 10,
+            },
+            strict=True,
+        )
+        for index, (stage, elapsed_sec) in enumerate(
+            (
+                ("EntityDetectionWorkflow.run", 60.0),
+                ("ReplacementWorkflow.run", 30.0),
+                ("Anonymizer._run_internal", 100.0),
+            ),
+            start=1,
+        )
+    )
+
+    aggregated = wandb_logging_tool.aggregate_measurement_scalars(records)
+    tables = wandb_logging_tool._typed_tables(records)
+
+    assert aggregated["measurement/stage/elapsed_sec"] == 100.0
+    assert aggregated["measurement/stage/input_row_count"] == 10.0
+    assert aggregated["measurement/stage/output_row_count"] == 10.0
+    assert len(tables) == 1
+    assert [row.stage for row in tables[0].rows] == [
+        "EntityDetectionWorkflow.run",
+        "ReplacementWorkflow.run",
+        "Anonymizer._run_internal",
+    ]
 
 
 def test_wandb_scalar_registry_matches_package_field_catalog(wandb_logging_tool: ModuleType) -> None:
@@ -3583,6 +3671,7 @@ def test_completion_seal_round_trip_and_digest_verification(
 
     assert seal_path.read_bytes() == first_bytes
     assert captured_seal.seal.case.config_id == "config"
+    assert "jobs" not in json.loads(first_bytes)["slurm"]
     assert not list(tmp_path.glob(".*.tmp"))
 
     real_parent = tmp_path / "real-parent"
@@ -3627,6 +3716,93 @@ def test_completion_seal_rejects_failed_or_missing_terminal_stage(
                 commit="b" * 40,
             ),
         )
+
+
+def test_completion_seal_cli_writes_typed_multi_job_provenance_and_redacts_invalid_input(
+    tmp_path: Path,
+) -> None:
+    measurement_path = tmp_path / "measurements.jsonl"
+    measurement_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "record_type": "stage",
+                "run_id": "case",
+                "run_tags": {
+                    "case_id": "case",
+                    "workload_id": "workload",
+                    "config_id": "config",
+                    "repetition": 0,
+                },
+                "timestamp_unix_sec": 1.0,
+                "stage": "Anonymizer._run_internal",
+                "status": "completed",
+                "elapsed_sec": 1.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    base_command = [
+        sys.executable,
+        str(WRITE_COMPLETION_SEAL_PATH),
+        str(measurement_path),
+        "--case-id",
+        "case",
+        "--workload-id",
+        "workload",
+        "--config-id",
+        "config",
+        "--repetition",
+        "0",
+        "--phase",
+        "baseline",
+        "--case-index",
+        "0",
+        "--producer-repository",
+        "anonymizer-experiments",
+        "--producer-commit",
+        "a" * 40,
+    ]
+
+    completed = subprocess.run(
+        [*base_command, "--slurm-job", "detect=123", "--slurm-job", "replace=456"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads((tmp_path / "completion-seal.json").read_text(encoding="ascii"))
+
+    assert completed.returncode == 0
+    assert payload["slurm"]["jobs"] == [
+        {"job_id": "123", "role": "detect"},
+        {"job_id": "456", "role": "replace"},
+    ]
+
+    invalid_value = "private/value"
+    rejected = subprocess.run(
+        [*base_command, "--slurm-job", f"detect={invalid_value}"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert rejected.returncode == 125
+    assert invalid_value not in rejected.stderr
+
+    duplicate = subprocess.run(
+        [*base_command, "--slurm-job", "same=123", "--slurm-job", "same=456"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert duplicate.returncode == 125
+    assert "123" not in duplicate.stderr
+    assert "456" not in duplicate.stderr
 
 
 def test_completion_seal_rejects_case_identity_mismatch_and_hidden_workflow_error(
@@ -3722,7 +3898,12 @@ def test_completion_seal_rejects_case_identity_mismatch_and_hidden_workflow_erro
         )
 
 
-def _write_sealed_import_case(tool: ModuleType, root: Path) -> tuple[Path, Path]:
+def _write_sealed_import_case(
+    tool: ModuleType,
+    root: Path,
+    *,
+    jobs: tuple[tuple[str, str], ...] = (),
+) -> tuple[Path, Path]:
     completion = sys.modules[tool.read_completion_seal.__module__]
     measurement_path = root / "measurements.jsonl"
     measurement_path.write_text(
@@ -3759,6 +3940,7 @@ def _write_sealed_import_case(tool: ModuleType, root: Path) -> tuple[Path, Path]
             phase="baseline",
             case_index=7,
             job_id="12345",
+            jobs=tuple(completion.SlurmJobProvenance(role=role, job_id=job_id) for role, job_id in jobs),
         ),
         producer=completion.CompletionSealProducer(
             repository="anonymizer-experiments",
@@ -3815,6 +3997,29 @@ def test_strict_import_builds_stable_typed_payload_without_source_path(
     assert payload.config.imported.completion_seal_sha256
     assert str(measurement_path) not in serialized
     assert calls[0][2] == 1
+
+
+def test_strict_import_exposes_multi_job_slurm_metadata(
+    tmp_path: Path,
+    wandb_import_tool: ModuleType,
+) -> None:
+    measurement_path, seal_path = _write_sealed_import_case(
+        wandb_import_tool,
+        tmp_path,
+        jobs=(("detect", "123"), ("replace", "456")),
+    )
+    prepared = wandb_import_tool.prepare_sealed_import(
+        measurement_path,
+        seal_path=seal_path,
+        settings=wandb_import_tool.ResolvedWandbConfig(wandb_mode=wandb_import_tool.WandbMode.offline),
+    )
+
+    assert prepared.payload.config.execution is not None
+    assert prepared.payload.config.execution.slurm is not None
+    assert [(job.role, job.job_id) for job in prepared.payload.config.execution.slurm.jobs] == [
+        ("detect", "123"),
+        ("replace", "456"),
+    ]
 
 
 def test_strict_import_retry_is_a_remote_publication_noop(

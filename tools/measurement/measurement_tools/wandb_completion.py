@@ -12,7 +12,16 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from measurement_tools.wandb_ingress import (
     MeasurementSnapshot,
@@ -30,6 +39,7 @@ DEFAULT_MAX_COMPLETION_SEAL_BYTES = 64 * 1024
 
 NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
 VisibleIdentifier = Annotated[StrictStr, Field(min_length=1, max_length=256)]
+VisibleSlurmIdentifier = Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")]
 Sha256Digest = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")]
 GitCommit = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{40,64}$")]
 
@@ -43,6 +53,13 @@ class ImportedCaseIdentity(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
 
 
+class SlurmJobProvenance(BaseModel):
+    role: VisibleSlurmIdentifier
+    job_id: VisibleSlurmIdentifier
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
+
+
 class SlurmCaseProvenance(BaseModel):
     backend: Literal["slurm"] = "slurm"
     phase: VisibleIdentifier
@@ -50,8 +67,35 @@ class SlurmCaseProvenance(BaseModel):
     job_id: VisibleIdentifier | None = None
     array_job_id: VisibleIdentifier | None = None
     array_task_id: VisibleIdentifier | None = None
+    jobs: Annotated[
+        tuple[SlurmJobProvenance, ...],
+        Field(max_length=64, exclude_if=lambda value: not value),
+    ] = ()
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
+
+    @field_validator("jobs", mode="before")
+    @classmethod
+    def parse_json_jobs(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
+    @model_validator(mode="after")
+    def roles_are_unique(self) -> SlurmCaseProvenance:
+        roles = [job.role for job in self.jobs]
+        if len(roles) != len(set(roles)):
+            raise ValueError("Slurm job roles must be unique")
+        return self
+
+
+def parse_slurm_jobs(values: list[str]) -> tuple[SlurmJobProvenance, ...]:
+    """Parse repeatable redaction-safe ``role=job_id`` CLI values."""
+    jobs: list[SlurmJobProvenance] = []
+    for value in values:
+        role, separator, job_id = value.partition("=")
+        if not separator:
+            raise ValueError("invalid --slurm-job: expected role=job_id")
+        jobs.append(SlurmJobProvenance(role=role, job_id=job_id))
+    return tuple(jobs)
 
 
 class CompletionSealProducer(BaseModel):

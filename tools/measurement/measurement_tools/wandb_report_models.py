@@ -24,6 +24,7 @@ from measurement_tools.wandb_models import (
     ReplaceMetadata,
     RewriteMetadata,
     RuntimeMetadata,
+    SlurmJobMetadata,
     SlurmMetadata,
     SweepMetadata,
     WandbRunMetadata,
@@ -362,7 +363,11 @@ def _project_execution(value: dict[str, Any]) -> dict[str, Any]:
     projected = _project_fields(value, ExecutionMetadata, exclude={"slurm"})
     slurm = value.get("slurm")
     if isinstance(slurm, dict):
-        projected["slurm"] = _project_fields(slurm, SlurmMetadata)
+        projected_slurm = _project_fields(slurm, SlurmMetadata, exclude={"jobs"})
+        projected_slurm["jobs"] = [
+            _project_fields(item, SlurmJobMetadata) for item in _strict_list(slurm.get("jobs"), "execution.slurm.jobs")
+        ]
+        projected["slurm"] = projected_slurm
     return projected
 
 

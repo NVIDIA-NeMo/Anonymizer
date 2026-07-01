@@ -94,6 +94,8 @@ def aggregate_measurement_scalars(records: tuple[MeasurementRecord, ...]) -> dic
     """Aggregate scalar metrics across strict measurement records."""
     accumulator = ScalarMetricAccumulator()
     for record in records:
+        if record.record_type == "stage" and getattr(record, "stage", None) != "Anonymizer._run_internal":
+            continue
         accumulator.update(extract_scalar_metrics(record))
     aggregated = accumulator.metrics()
     aggregated[metric_path(_SCALAR_METRIC_PREFIX, "record_count")] = len(records)

@@ -390,6 +390,8 @@ uv run python tools/measurement/write_completion_seal.py \
   --repetition 0 \
   --phase baseline \
   --case-index 0 \
+  --slurm-job detection=12345 \
+  --slurm-job replacement=12346 \
   --producer-repository anonymizer-experiments \
   --producer-commit 0123456789abcdef0123456789abcdef01234567
 ```
