@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from data_designer.config.models import ModelProvider
+from data_designer.config.run_config import RunConfig
 from data_designer.config.utils.io_helpers import load_config_file
 from data_designer.interface.data_designer import DataDesigner
 
@@ -99,6 +100,13 @@ def _initialize_logging() -> None:
     configure_logging()
 
 
+def _set_data_designer_run_config(data_designer: DataDesigner, run_config: RunConfig) -> None:
+    set_run_config = getattr(data_designer, "set_run_config", None)
+    if not callable(set_run_config):
+        raise InvalidConfigError("The configured DataDesigner instance does not support set_run_config().")
+    set_run_config(run_config)
+
+
 class Anonymizer:
     """Public facade for anonymization workflows."""
 
@@ -109,6 +117,7 @@ class Anonymizer:
         model_providers: list[ModelProvider] | str | Path | None = None,
         artifact_path: str | Path | None = None,
         data_designer: DataDesigner | None = None,
+        data_designer_run_config: RunConfig | None = None,
         detection_workflow: EntityDetectionWorkflow | None = None,
         replace_runner: ReplacementWorkflow | None = None,
         rewrite_runner: RewriteWorkflow | None = None,
@@ -125,6 +134,10 @@ class Anonymizer:
             artifact_path: Directory for intermediate artifacts. Defaults to
                 ``.anonymizer-artifacts``.
             data_designer: Pre-configured DataDesigner instance (advanced usage).
+            data_designer_run_config: Optional DataDesigner run configuration
+                applied to the Anonymizer-managed or caller-supplied DataDesigner
+                instance. Use this for DataDesigner execution knobs such as
+                ``buffer_size`` and ``max_in_flight_tasks``.
             detection_workflow: Custom detection workflow (advanced/testing).
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
@@ -164,6 +177,8 @@ class Anonymizer:
                 model_providers=self._resolved_providers,
             )
             reapply_log_levels()
+        if data_designer_run_config is not None:
+            _set_data_designer_run_config(self._data_designer, data_designer_run_config)
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
         self._replace_runner = replace_runner or ReplacementWorkflow(
