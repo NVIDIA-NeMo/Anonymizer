@@ -413,6 +413,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.evaluate,
                 privacy_goal=rewrite_config,
+                compute_detection_validity=evaluate_config.compute_detection_validity,
             )
             all_failed: list[FailedRecord] = list(rewrite_result.failed_records)
             coverage_wf = EntityCoverageWorkflow(
@@ -427,7 +428,11 @@ class Anonymizer:
             all_failed.extend(coverage_failed)
             renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
             return AnonymizerResult(
-                dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
+                dataframe=_build_user_dataframe(
+                    renamed_trace,
+                    resolved_text_column=text_column,
+                    compute_detection_validity=evaluate_config.compute_detection_validity,
+                ),
                 trace_dataframe=renamed_trace,
                 resolved_text_column=text_column,
                 failed_records=all_failed,
@@ -904,12 +909,12 @@ def _build_user_dataframe(
             COL_WEIGHTED_LEAKAGE_RATE,
             COL_ANY_HIGH_LEAKED,
             COL_NEEDS_HUMAN_REVIEW,
-            COL_DETECTION_VALID,  # only present after evaluate()
-            COL_DETECTION_INVALID_ENTITIES,  # only present after evaluate()
             COL_JUDGE_EVALUATION,  # only present after evaluate()
             COL_ENTITY_COVERAGE,  # only present after evaluate()
             COL_LEAKED_ENTITIES,  # only present after evaluate()
         }
+        if compute_detection_validity:
+            allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}
     elif f"{text_col}_replaced" in t.columns:
         allowed = {
             text_col,

@@ -438,6 +438,7 @@ def test_detection_judge_partial_row_loss_preserves_all_rows(
         model_configs=stub_model_configs,
         selected_models=stub_evaluate_model_selection,
         privacy_goal=_PRIVACY_GOAL,
+        compute_detection_validity=True,
     )
 
     assert len(result.dataframe) == 2
@@ -939,6 +940,7 @@ def test_evaluate_produces_detection_valid_column(
         model_configs=stub_model_configs,
         selected_models=stub_evaluate_model_selection,
         privacy_goal=_PRIVACY_GOAL,
+        compute_detection_validity=True,
     )
 
     assert COL_DETECTION_VALID in result.dataframe.columns
@@ -976,6 +978,7 @@ def test_evaluate_skips_passthrough_rows(
         model_configs=stub_model_configs,
         selected_models=stub_evaluate_model_selection,
         privacy_goal=_PRIVACY_GOAL,
+        compute_detection_validity=True,
     )
 
     detection_call_df = wf._detection_judge_wf.evaluate.call_args.args[0]
@@ -1010,6 +1013,7 @@ def test_evaluate_passthrough_rows_get_none_judge_defaults(
         model_configs=stub_model_configs,
         selected_models=stub_evaluate_model_selection,
         privacy_goal=_PRIVACY_GOAL,
+        compute_detection_validity=True,
     )
 
     passthrough_result = result.dataframe[

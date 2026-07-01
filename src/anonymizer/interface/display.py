@@ -144,7 +144,7 @@ def _render_rewrite_html(row: pd.Series, *, text_col: str, record_index: int | N
     original_html = _render_highlighted_text(text, entities)
     rewritten_html = f"<span>{html.escape(rewritten_text)}</span>"
     scores_html = _render_scores_section(row, is_rewrite=True)
-    entity_coverage_html = _render_entity_coverage_section(row)
+    entity_coverage_html = _render_entity_coverage_section(row, is_rewrite=True)
     disposition_html = _render_disposition_table(row)
     index_label = f" (record {record_index})" if record_index is not None else ""
 
@@ -582,35 +582,35 @@ def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
     return badge, rate_html
 
 
-def _render_entity_coverage_section(row: pd.Series) -> str:
-    """Render entity coverage (recall metric) for replace mode. Returns "" when judge has not run."""
+def _render_entity_coverage_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
+    """Render entity coverage. Returns "" when judge has not run.
+
+    Rewrite mode shows a numeric score (e.g. "0.86 — 18/21 (86%)").
+    Replace mode shows a Satisfied / Not Satisfied badge.
+    """
     if COL_ENTITY_COVERAGE not in row.index:
         return ""
     coverage = row.get(COL_ENTITY_COVERAGE)
     leaked_entries = _normalize_invalid_entities(row.get(COL_LEAKED_ENTITIES))
     n_leaked = len(leaked_entries)
+    n_detected = _count_detected_entity_label_pairs(row)
+    total = n_detected + n_leaked
 
     if coverage is None:
-        badge = "<span style='color:#888;font-weight:600'>Unavailable</span>"
-        fraction_html = ""
+        summary_html = "<span style='color:#888;font-weight:600'>Unavailable</span>"
+    elif is_rewrite:
+        pct = round(float(coverage) * 100)
+        covered = total - n_leaked
+        summary_html = f"<span style='font-weight:600'>{float(coverage):.2f}</span> — {covered}/{total} ({pct}%)"
     elif coverage >= 1.0:
-        badge = "<span style='color:#16a34a;font-weight:600'>Satisfied</span>"
-        n_detected = _count_detected_entity_label_pairs(row)
-        total = n_detected + n_leaked
         pct = 100
-        fraction_html = f" — {total}/{total} ({pct}%)"
+        summary_html = f"<span style='color:#16a34a;font-weight:600'>Satisfied</span> — {total}/{total} ({pct}%)"
     else:
-        badge = "<span style='color:#dc2626;font-weight:600'>Not Satisfied</span>"
-        n_detected = _count_detected_entity_label_pairs(row)
-        total = n_detected + n_leaked
-        pct = round(coverage * 100)
-        fraction_html = f" — {n_detected}/{total} ({pct}%)"
+        covered = total - n_leaked
+        pct = round(float(coverage) * 100)
+        summary_html = f"<span style='color:#dc2626;font-weight:600'>Not Satisfied</span> — {covered}/{total} ({pct}%)"
 
-    header = (
-        "<div style='font-size:0.9em;line-height:1.8'>"
-        f"<strong>Entity Coverage:</strong> {badge}{html.escape(fraction_html)}"
-        "</div>"
-    )
+    header = f"<div style='font-size:0.9em;line-height:1.8'><strong>Entity Coverage:</strong> {summary_html}</div>"
 
     body = header
     if leaked_entries:
