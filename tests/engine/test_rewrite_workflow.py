@@ -508,10 +508,6 @@ def test_repair_loop_runs_up_to_max_iterations(
     repaired_df = eval_needs_repair.copy()
     repaired_df[COL_REWRITTEN_TEXT_NEXT] = "Repaired text"
 
-    judge_df = repaired_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = True
-
     replace_df = stub_df_with_entities.copy()
     replace_df["_replacement_map"] = [{"replacements": []}]
 
@@ -528,8 +524,6 @@ def test_repair_loop_runs_up_to_max_iterations(
         WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
         # evaluate-final (after loop exhaustion)
         WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
-        # judge
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -583,14 +577,6 @@ def test_only_failing_rows_sent_to_repair(
     eval_after_repair[COL_LEAKAGE_MASS] = 0.1
     eval_after_repair[COL_ANY_HIGH_LEAKED] = False
 
-    judge_df = rewrite_gen_df.copy()
-    judge_df[COL_NEEDS_REPAIR] = False
-    judge_df[COL_UTILITY_SCORE] = 0.9
-    judge_df[COL_LEAKAGE_MASS] = 0.1
-    judge_df[COL_ANY_HIGH_LEAKED] = False
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
     replace_df = df.copy()
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
@@ -599,7 +585,6 @@ def test_only_failing_rows_sent_to_repair(
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
         WorkflowRunResult(dataframe=repaired_row, failed_records=[]),
         WorkflowRunResult(dataframe=eval_after_repair, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -654,10 +639,6 @@ def test_repair_iterations_tracked_per_row(
     eval_pass[COL_ANY_HIGH_LEAKED] = False
     eval_pass[COL_REPAIR_ITERATIONS] = 1
 
-    judge_df = eval_pass.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
     replace_df = stub_df_with_entities.copy()
     replace_df["_replacement_map"] = [{"replacements": []}]
 
@@ -666,7 +647,6 @@ def test_repair_iterations_tracked_per_row(
         WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
         WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_pass, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -744,10 +724,6 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     eval_df[COL_LEAKAGE_MASS] = 0.1
     eval_df[COL_ANY_HIGH_LEAKED] = False
 
-    judge_df = eval_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
     replace_df = df.copy()
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
@@ -756,7 +732,6 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     adapter.run_workflow.side_effect = [
         WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[eval_failed]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -816,10 +791,6 @@ def test_repair_dropping_rows_degrades_gracefully(
     eval_after[COL_LEAKAGE_MASS] = 0.1
     eval_after[COL_ANY_HIGH_LEAKED] = False
 
-    judge_df = eval_after.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
     replace_df = df.copy()
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
@@ -831,8 +802,6 @@ def test_repair_dropping_rows_degrades_gracefully(
         WorkflowRunResult(dataframe=repaired_df, failed_records=[repair_failed]),
         # re-evaluate
         WorkflowRunResult(dataframe=eval_after, failed_records=[]),
-        # judge
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -884,17 +853,12 @@ def test_passthrough_rows_get_defaults(
     eval_df[COL_LEAKAGE_MASS] = 0.3
     eval_df[COL_ANY_HIGH_LEAKED] = False
 
-    judge_df = eval_df.copy()
-    judge_df[COL_JUDGE_EVALUATION] = None
-    judge_df[COL_NEEDS_HUMAN_REVIEW] = False
-
     replace_df = entity_df.copy()
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
         WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
         WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=judge_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
