@@ -34,7 +34,6 @@ from anonymizer.engine.schemas import (
     EntityCategory,
     EntityDispositionSchema,
     EntitySource,
-    MeaningUnitAspect,
     MeaningUnitImportance,
     MeaningUnitSchema,
     MeaningUnitsSchema,
@@ -75,13 +74,13 @@ _STUB_MEANING_UNITS = MeaningUnitsSchema(
     units=[
         MeaningUnitSchema(
             id=1,
-            aspect=MeaningUnitAspect.ROLE,
+            aspect="role",
             unit="An individual works as a software engineer.",
             importance=MeaningUnitImportance.critical,
         ),
         MeaningUnitSchema(
             id=2,
-            aspect=MeaningUnitAspect.ENVIRONMENT,
+            aspect="environment",
             unit="The individual works remotely.",
             importance=MeaningUnitImportance.important,
         ),
