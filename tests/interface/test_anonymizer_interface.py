@@ -12,12 +12,13 @@ import pytest
 from data_designer.config.models import ModelConfig
 
 from anonymizer import RunConfig
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_VALID,
+    COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_REPLACED_TEXT,
@@ -896,11 +897,12 @@ def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInpu
             "needs_human_review": [False],
             COL_JUDGE_EVALUATION: [None],
             COL_DETECTION_VALID: [0.9],
+            COL_ENTITIES_BY_VALUE: [{}],
         }
     )
     rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
 
-    evaluated = anonymizer.evaluate(run_result)
+    evaluated = anonymizer.evaluate(run_result, config=EvaluateConfig(compute_detection_validity=True))
 
     assert COL_DETECTION_VALID in evaluated.dataframe.columns
 
