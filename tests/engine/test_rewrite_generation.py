@@ -178,6 +178,40 @@ def test_get_replace_pairs_warns_on_unmatched_replace_entity(
     assert "unprotected" in caplog.text
 
 
+def test_get_replace_pairs_matches_unicode_whitespace_variant(caplog: pytest.LogCaptureFixture) -> None:
+    """Disposition has U+202F (narrow no-break space); map was normalized to regular space by LLM."""
+    import logging
+
+    from anonymizer.engine.rewrite.rewrite_generation import _get_replace_pairs
+
+    narrow_nbsp = " "
+    disposition = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "entity_label": "street_address",
+                "entity_value": f"204{narrow_nbsp}Bluegrass",
+                "protection_reason": "Street address identifies the subject.",
+                "protection_method_suggestion": "replace",
+                "combined_risk_level": "high",
+            }
+        ]
+    }
+    row = {
+        COL_SENSITIVITY_DISPOSITION: disposition,
+        COL_REPLACEMENT_MAP: {
+            "replacements": [{"original": "204 Bluegrass", "label": "street_address", "synthetic": "500 Oak Lane"}]
+        },
+    }
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.generation"):
+        pairs = _get_replace_pairs(row)
+    assert pairs == [(f"204{narrow_nbsp}Bluegrass", "500 Oak Lane")]
+    assert "unprotected" not in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # Tests: _apply_direct_replacements
 # ---------------------------------------------------------------------------

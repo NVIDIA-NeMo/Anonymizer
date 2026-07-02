@@ -147,8 +147,19 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _normalize_ws(s: str) -> str:
+    """Collapse all Unicode whitespace variants to a single ASCII space."""
+    return " ".join(s.split())
+
+
 def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
-    """Return (original, synthetic) pairs for entities with protection_method='replace'."""
+    """Return (original, synthetic) pairs for entities with protection_method='replace'.
+
+    Falls back to whitespace-normalized matching when the map's ``original`` field
+    differs only in Unicode whitespace from the disposition entity value (e.g. the
+    LLM normalised U+202F → U+0020). In that case the disposition value is used as
+    the substitution key because it reflects what is actually present in the text.
+    """
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     replace_values = {
         e.entity_value for e in disposition.sensitivity_disposition if e.protection_method_suggestion == "replace"
@@ -163,8 +174,23 @@ def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
-    pairs = [(r.original, r.synthetic) for r in parsed_map.replacements if r.original in replace_values]
-    unmatched = replace_values - {original for original, _ in pairs}
+
+    # normalized form → original disposition value (for fuzzy fallback)
+    normalized_to_disposition: dict[str, str] = {_normalize_ws(v): v for v in replace_values}
+
+    pairs: list[tuple[str, str]] = []
+    matched: set[str] = set()
+    for r in parsed_map.replacements:
+        if r.original in replace_values:
+            pairs.append((r.original, r.synthetic))
+            matched.add(r.original)
+        else:
+            disposition_value = normalized_to_disposition.get(_normalize_ws(r.original))
+            if disposition_value is not None and disposition_value not in matched:
+                pairs.append((disposition_value, r.synthetic))
+                matched.add(disposition_value)
+
+    unmatched = replace_values - matched
     if unmatched:
         logger.warning(
             "Replace entities have no entry in the replacement map and will pass through unprotected: %s",
