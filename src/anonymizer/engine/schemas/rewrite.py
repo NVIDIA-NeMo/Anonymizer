@@ -150,8 +150,9 @@ class EntityDispositionSchema(BaseModel):
             self.combined_risk_level == CombinedRiskLevel.low
             and self.protection_method_suggestion != ProtectionMethod.leave_as_is
         ):
-            # LLM occasionally returns an inconsistent combination; coerce rather than reject.
-            self.protection_method_suggestion = ProtectionMethod.leave_as_is
+            # Trust the protection intent over the risk label; promote risk to medium
+            # rather than suppressing the protection.
+            self.combined_risk_level = CombinedRiskLevel.medium
         if (
             self.combined_risk_level == CombinedRiskLevel.high
             and self.protection_method_suggestion == ProtectionMethod.leave_as_is
