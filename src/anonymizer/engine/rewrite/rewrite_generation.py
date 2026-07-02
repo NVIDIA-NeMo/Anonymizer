@@ -153,8 +153,11 @@ def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
     replace_values = {
         e.entity_value for e in disposition.sensitivity_disposition if e.protection_method_suggestion == "replace"
     }
+    if not replace_values:
+        return []
     raw_map = row.get(COL_REPLACEMENT_MAP)
-    if not raw_map or not replace_values:
+    if not raw_map:
+        logger.warning("COL_REPLACEMENT_MAP is None but entities require replacement; no replacements applied.")
         return []
     raw_map = normalize_payload(raw_map)
     if hasattr(raw_map, "model_dump"):
@@ -179,27 +182,19 @@ def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
 
     Applies each (original → synthetic) pair as a global string replacement on both
     the plain text (COL_TEXT → COL_PREREPLACE_TEXT) and the tagged text
-    (COL_TAGGED_TEXT → COL_PREREPLACE_TAGGED_TEXT). Using str.replace() ensures all
-    occurrences are substituted, not just detected spans.
+    (COL_TAGGED_TEXT → COL_PREREPLACE_TAGGED_TEXT). A single-pass regex substitution
+    ensures all occurrences are replaced without cascade (a synthetic value matching
+    another entity's original is never re-substituted).
     """
     pairs = _get_replace_pairs(row)
     plain_text = str(row.get(COL_TEXT, ""))
     tagged_text = str(row.get(COL_TAGGED_TEXT, ""))
-    if not pairs:
-        disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
-        has_replace_entities = any(
-            e.protection_method_suggestion == "replace" for e in disposition.sensitivity_disposition
-        )
-        if has_replace_entities and not row.get(COL_REPLACEMENT_MAP):
-            logger.warning("COL_REPLACEMENT_MAP is None but entities require replacement; no replacements applied.")
-        row[COL_PREREPLACE_TEXT] = plain_text
-        row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
-        return row
-    sorted_pairs = sorted(pairs, key=lambda p: len(p[0]), reverse=True)
-    pattern = re.compile("|".join(re.escape(original) for original, _ in sorted_pairs))
-    lookup = dict(sorted_pairs)
-    plain_text = pattern.sub(lambda m: lookup[m.group(0)], plain_text)
-    tagged_text = pattern.sub(lambda m: lookup[m.group(0)], tagged_text)
+    if pairs:
+        sorted_pairs = sorted(pairs, key=lambda p: len(p[0]), reverse=True)
+        pattern = re.compile("|".join(re.escape(original) for original, _ in sorted_pairs))
+        lookup = dict(sorted_pairs)
+        plain_text = pattern.sub(lambda m: lookup[m.group(0)], plain_text)
+        tagged_text = pattern.sub(lambda m: lookup[m.group(0)], tagged_text)
     row[COL_PREREPLACE_TEXT] = plain_text
     row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
     return row
