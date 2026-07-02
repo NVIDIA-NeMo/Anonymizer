@@ -38,9 +38,12 @@ Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+
+logger = logging.getLogger("anonymizer.schemas.rewrite")
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -150,10 +153,16 @@ class EntityDispositionSchema(BaseModel):
             self.combined_risk_level == CombinedRiskLevel.low
             and self.protection_method_suggestion != ProtectionMethod.leave_as_is
         ):
-            raise ValueError(
-                f"Entity {self.id}: combined_risk_level='low' requires protection_method_suggestion='leave_as_is', "
-                f"got '{self.protection_method_suggestion}'"
+            logger.warning(
+                "Entity %d (%r): combined_risk_level='low' conflicts with "
+                "protection_method_suggestion=%r; promoting risk to 'medium'.",
+                self.id,
+                self.entity_value,
+                self.protection_method_suggestion,
             )
+            # Trust the protection intent over the risk label; promote risk to medium
+            # rather than suppressing the protection.
+            self.combined_risk_level = CombinedRiskLevel.medium
         if (
             self.combined_risk_level == CombinedRiskLevel.high
             and self.protection_method_suggestion == ProtectionMethod.leave_as_is
