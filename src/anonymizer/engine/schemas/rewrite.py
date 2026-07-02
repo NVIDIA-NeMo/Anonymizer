@@ -139,7 +139,6 @@ class EntityDispositionSchema(BaseModel):
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
     combined_risk_level: CombinedRiskLevel
-    generalization_suggestion: str = Field(default="N/A", min_length=1)
 
     @property
     def needs_protection(self) -> bool:
@@ -218,6 +217,20 @@ class SensitivityDispositionSchema(BaseModel):
                 f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion} (Reason: {e.protection_reason})'
             )
         return "\n".join(lines)
+
+
+class GeneralizationSuggestionSchema(BaseModel):
+    """LLM output schema for one generalization suggestion."""
+
+    entity_value: str
+    entity_label: str
+    generalization_suggestion: str
+
+
+class GeneralizationSuggestionsSchema(BaseModel):
+    """LLM output schema for a chunk of generalization suggestions."""
+
+    suggestions: list[GeneralizationSuggestionSchema]
 
 
 class StrictProtectionMethod(str, Enum):

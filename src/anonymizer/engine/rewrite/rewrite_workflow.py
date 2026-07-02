@@ -30,6 +30,7 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
+from anonymizer.engine.rewrite.generalization_suggestions import GeneralizationSuggestionsWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
@@ -179,6 +180,7 @@ class RewriteWorkflow:
         self._disposition_wf = SensitivityDispositionWorkflow()
         self._qa_wf = QAGenerationWorkflow()
         self._rewrite_gen_wf = RewriteGenerationWorkflow()
+        self._generalization_wf = GeneralizationSuggestionsWorkflow()
         self._evaluate_wf = EvaluateWorkflow(adapter)
         self._repair_wf = RepairWorkflow(adapter)
         self._judge_wf = FinalJudgeWorkflow()
@@ -225,6 +227,7 @@ class RewriteWorkflow:
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
             ),
+            *self._generalization_wf.columns(selected_models=selected_models),
             *self._qa_wf.columns(selected_models=selected_models),
             *self._rewrite_gen_wf.columns(
                 selected_models=selected_models,
