@@ -1,65 +1,42 @@
 # Contributing to NeMo Anonymizer
 
-Thank you for your interest in contributing to NeMo Anonymizer! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to NeMo Anonymizer. Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
+This document covers contribution policy and pull request expectations. For local setup, test commands, docs commands, and day-to-day development tasks, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Table of Contents
 
-- [Getting Started](#getting-started)
-- [Repository Settings](#repository-settings)
-  - [Branch Naming Convention](#branch-naming-convention)
+- [Contribution Flow](#contribution-flow)
+- [Repository Rules](#repository-rules)
+  - [Branch Naming](#branch-naming)
   - [Conventional Commits](#conventional-commits)
-  - [Semantic Versioning for Tags](#semantic-versioning-for-tags)
+  - [Release Tags](#release-tags)
   - [Branch Protection](#branch-protection)
-- [Pull Request Process](#pull-request-process)
-- [Issues and Discussions](#issues-and-discussions)
+- [Pull Request Expectations](#pull-request-expectations)
+- [Agent-Assisted Development](#agent-assisted-development)
 - [Developer Certificate of Origin](#developer-certificate-of-origin)
-- [Testing](#testing)
-- [Code Style](#code-style)
+- [Issues and Discussions](#issues-and-discussions)
 
-## Getting Started
+## Contribution Flow
 
-### Prerequisites
+1. Search existing issues and pull requests before starting work.
+2. Create or link an issue for the change. Bug fixes, features, and non-trivial development tasks should start from an issue so maintainers can confirm scope.
+3. Create a branch from the latest `main` using the [branch naming](#branch-naming) convention.
+4. For non-trivial changes, submit a plan PR before implementation. See [Agent-Assisted Development](#agent-assisted-development).
+5. Implement the change following [AGENTS.md](AGENTS.md), [STYLEGUIDE.md](STYLEGUIDE.md), and [DEVELOPMENT.md](DEVELOPMENT.md).
+6. Run the relevant local checks from [DEVELOPMENT.md](DEVELOPMENT.md#validation-before-opening-a-pr).
+7. Open a pull request with a conventional title, a linked issue, and a completed checklist.
+8. Address review feedback. CODEOWNERS are assigned automatically.
 
-- Python 3.11+
-- Git
-- [uv](https://docs.astral.sh/uv/) - Python package manager
-- [gh](https://cli.github.com/) - GitHub CLI (optional, for PR workflows)
+## Repository Rules
 
-> **Note:** Dev tools like [ruff](https://docs.astral.sh/ruff/) and [ty](https://github.com/astral-sh/ty) are installed automatically by `uv sync --group dev`.
+This repository uses GitHub rulesets, branch protection, CODEOWNERS, semantic PR title checks, and DCO checks. These are enforced automatically, but contributors should understand the expected shape before opening a PR.
 
-### Setup
+### Branch Naming
 
-1. Fork the repository on GitHub
-2. Clone your fork:
-  ```bash
-   git clone https://github.com/<your-username>/anonymizer.git
-   cd anonymizer
-  ```
-3. Set up the development environment:
-  ```bash
-   # Install Python dependencies (includes ruff, ty, pre-commit, pytest)
-   make bootstrap           # dev dependencies
-   make install-dev-docs    # dev + docs dependencies (needed for make docs-serve)
+All branches except `main` must follow one of these patterns:
 
-   # Install pre-commit hooks
-   make install-pre-commit
-  ```
-4. Add the upstream remote:
-  ```bash
-   git remote add upstream https://github.com/NVIDIA-NeMo/anonymizer.git
-  ```
-
-## Repository Settings
-
-This repository uses GitHub Rulesets to enforce consistent contribution standards. These rules are automatically enforced—you don't need to configure anything, but you should understand them to contribute successfully.
-
-### Branch Naming Convention
-
-All branches (except `main`) must follow this naming pattern:
-
-```
+```text
 <author>/<description>
 <author>/<issue-id>-<description>
 <author>/<type>/<description>
@@ -68,36 +45,31 @@ All branches (except `main`) must follow this naming pattern:
 
 Rules:
 
-- `<author>`: Your GitHub username (lowercase, alphanumeric, hyphens allowed)
-- `<issue-id>`: Optional GitHub issue number prefix (e.g., `123-`)
-- `<description>`: Brief description (lowercase, alphanumeric, hyphens)
-- `<type>`: Optional category prefix
-
-Valid types: `feature`, `bugfix`, `hotfix`, `release`, `docs`, `chore`, `test`
+- `<author>`: GitHub username or team name, lowercase, with alphanumeric characters and hyphens.
+- `<issue-id>`: Optional GitHub issue number prefix, such as `123-`.
+- `<description>`: Short lowercase description with alphanumeric characters and hyphens.
+- `<type>`: Optional category. Valid types are `feature`, `bugfix`, `hotfix`, `release`, `docs`, `chore`, and `test`.
 
 Examples:
 
-
-| Branch Name                       | Valid               |
-| --------------------------------- | ------------------- |
-| `jsmith/add-login-feature`        | ✅                   |
-| `jsmith/123-add-login-feature`    | ✅                   |
-| `jsmith/feature/123-add-login`    | ✅                   |
-| `aagonzales/bugfix/456-fix-crash` | ✅                   |
-| `dev-team/docs/update-readme`     | ✅                   |
-| `feature/add-login`               | ❌ Missing author    |
-| `JSmith/123-Add-Login`            | ❌ Must be lowercase |
-
+| Branch Name                       | Valid                |
+| --------------------------------- | -------------------- |
+| `jsmith/add-login-feature`        | Yes                  |
+| `jsmith/123-add-login-feature`    | Yes                  |
+| `jsmith/feature/123-add-login`    | Yes                  |
+| `aagonzales/bugfix/456-fix-crash` | Yes                  |
+| `feature/add-login`               | No, missing author   |
+| `JSmith/123-Add-Login`            | No, use lowercase    |
 
 ### Conventional Commits
 
-All commits merged to `main` must follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+Pull request titles must follow [Conventional Commits](https://www.conventionalcommits.org/) because squash merging uses the PR title as the commit message:
 
-```
+```text
 <type>(<scope>): <description>
 ```
 
-or without scope:
+or without a scope:
 
 ```text
 <type>: <description>
@@ -105,229 +77,136 @@ or without scope:
 
 Rules:
 
-- `<type>`: Required, must be one of the valid types below
-- `<scope>`: Optional, indicates the area of the codebase affected
-- `<description>`: Required, brief description (max 100 characters)
-- Add `!` after type/scope for breaking changes
+- `<type>` is required and must be lowercase.
+- `<scope>` is optional and names the affected area.
+- `<description>` is required and should be concise.
+- Add `!` after type or scope for breaking changes.
 
 Valid types:
-
 
 | Type       | Description                                      |
 | ---------- | ------------------------------------------------ |
 | `feat`     | New feature                                      |
 | `fix`      | Bug fix                                          |
 | `docs`     | Documentation changes                            |
-| `style`    | Code style changes (formatting, no logic change) |
-| `refactor` | Code refactoring (no feature or fix)             |
+| `style`    | Code style changes without logic changes         |
+| `refactor` | Code refactoring without feature or fix changes  |
 | `perf`     | Performance improvements                         |
 | `test`     | Adding or updating tests                         |
-| `build`    | Build system or dependencies                     |
+| `build`    | Build system or dependency changes               |
 | `ci`       | CI/CD configuration                              |
 | `chore`    | Maintenance tasks                                |
 | `revert`   | Reverting previous commits                       |
 
-
 Examples:
 
+| PR Title                                  | Valid             |
+| ----------------------------------------- | ----------------- |
+| `feat: add user authentication`           | Yes               |
+| `fix(auth): resolve token expiration bug` | Yes               |
+| `docs: update API documentation`          | Yes               |
+| `chore(deps)!: bump major dependencies`   | Yes, breaking     |
+| `Added new feature`                       | No, missing type  |
+| `FIX: resolve bug`                        | No, type must be lowercase |
 
-| Commit Message                            | Valid                    |
-| ----------------------------------------- | ------------------------ |
-| `feat: add user authentication`           | ✅                        |
-| `fix(auth): resolve token expiration bug` | ✅                        |
-| `docs: update API documentation`          | ✅                        |
-| `chore(deps)!: bump major dependencies`   | ✅ Breaking change        |
-| `Added new feature`                       | ❌ Missing type           |
-| `fix - resolve bug`                       | ❌ Wrong format           |
-| `FIX: resolve bug`                        | ❌ Type must be lowercase |
+### Release Tags
 
-
-> Since we use squash merging, your PR title should follow this format as it becomes the commit message.
-
-### Semantic Versioning for Tags
-
-Release tags must follow [Semantic Versioning](https://semver.org/):
+GitHub release tags use a `v` prefix followed by a semantic version:
 
 ```text
-MAJOR.MINOR.PATCH[-prerelease][+build]
+vMAJOR.MINOR.PATCH[-prerelease][+build]
 ```
+
+The Python package version remains the PEP 440 version without the `v` prefix. Release automation creates GitHub releases from `v${VERSION}` tags and deploys docs using the unprefixed package version.
 
 Examples:
 
-
-| Tag                    | Valid           |
-| ---------------------- | --------------- |
-| `1.0.0`                | ✅               |
-| `2.1.3`                | ✅               |
-| `1.0.0-alpha`          | ✅               |
-| `1.0.0-beta.1`         | ✅               |
-| `1.0.0-rc.1+build.123` | ✅               |
-| `v1.0.0`               | ❌ No `v` prefix |
-| `release-1.0`          | ❌ Wrong format  |
-
+| Tag                         | Valid              |
+| --------------------------- | ------------------ |
+| `v1.0.0`                    | Yes                |
+| `v2.1.3`                    | Yes                |
+| `v1.0.0-alpha`              | Yes                |
+| `v1.0.0-beta.1`             | Yes                |
+| `v1.0.0-rc.1+build.123`     | Yes                |
+| `1.0.0`                     | No, missing `v`    |
+| `release-1.0`               | No, wrong format   |
 
 ### Branch Protection
 
-The `main` branch has the following protections:
-
+The `main` branch has these protections:
 
 | Rule                            | Setting     |
 | ------------------------------- | ----------- |
 | Required approvals              | 1           |
 | Code owner review               | Required    |
-| Dismiss stale reviews           | No          |
 | Require conversation resolution | Yes         |
 | Linear history                  | Required    |
 | Force pushes                    | Blocked     |
 | Deletions                       | Blocked     |
 | Merge strategy                  | Squash only |
 
+## Pull Request Expectations
 
-## Pull Request Process
+Every PR should include:
 
-1. Create an issue first (if one doesn't exist) to discuss the change
-2. Create a branch following the [naming convention](#branch-naming-convention):
-  ```bash
-   git checkout -b <username>/<issue-id>-<description>
-  ```
-3. Make your changes and commit using [conventional commits](#conventional-commits)
-4. Run tests locally:
-  ```bash
-   make test
-  ```
-5. Push your branch:
-  ```bash
-   git push origin <your-branch>
-  ```
-6. Open a Pull Request using the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
-7. Address review feedback — reviewers from [CODEOWNERS](.github/CODEOWNERS) will be automatically assigned
-8. Merge — once approved, your PR will be squash-merged and the branch auto-deleted
+- A linked issue using `Fixes #NNN`, `Closes #NNN`, or `Resolves #NNN`, or a clear explanation for why no issue is needed.
+- A conventional PR title.
+- A summary of user-visible behavior, developer-facing behavior, or policy changed by the PR.
+- Relevant tests or a brief explanation for why tests do not apply.
+- Documentation updates when public behavior, CLI behavior, examples, notebooks, or contributor workflow changes.
+- A public API impact check. If a public symbol or default changes, check whether [`skills/anonymizer/SKILL.md`](skills/anonymizer/SKILL.md) also needs an update.
+- A PII fixture check. Do not add real PII to tests, docs, notebooks, or artifacts. Use synthetic examples.
+- A secrets check. Do not commit API keys, service tokens, private keys, credentials, or real endpoint secrets. Use
+  environment variables, local `.env` files, or GitHub Actions secrets instead.
 
-### CODEOWNERS
+CODEOWNERS:
 
-- All `src` and `tests` files: `@NVIDIA-NeMo/anonymizer-reviewers`
-- All remaining files (`pyproject.toml`, `uv.lock`, `SECURITY.md`, `LICENSE`, `.github/`, etc.): `@NVIDIA-NeMo/anonymizer-maintainers`
+- `src` and `tests`: `@NVIDIA-NeMo/anonymizer-reviewers`
+- All remaining files, including `pyproject.toml`, `uv.lock`, `SECURITY.md`, `LICENSE`, and `.github/`: `@NVIDIA-NeMo/anonymizer-maintainers`
 
-### Agent-Assisted Development
+## Agent-Assisted Development
 
-When automating edits with coding agents (IDE assistants, CLI tools, or hosted models), follow the standard [Pull Request Process](#pull-request-process) plus these additions:
+Coding agents can help with implementation, review, tests, and documentation, but contributors remain responsible for the final change.
 
-1. **For non-trivial changes, draft a plan first.** Non-trivial includes: changes spanning more than one of the `config` / `engine` / `interface` subsystems, introducing a new public API, or modifying an invariant called out in [AGENTS.md](AGENTS.md) or [STYLEGUIDE.md](STYLEGUIDE.md).
-   - Write a markdown file detailing the approach, trade-offs considered, affected subsystems, and delivery strategy — enough for reviewers to evaluate the design before implementation begins. (Have the agent draft it; review and refine before submitting.)
-   - Save it at `plans/<issue-number>/<short-name>.md` and submit it as its own PR for review.
-   - Once the plan is approved, implement it in a follow-up PR.
+For non-trivial changes, draft a plan first. Non-trivial includes:
 
-2. **Implement following [AGENTS.md](AGENTS.md) and [STYLEGUIDE.md](STYLEGUIDE.md).** Both capture pipeline structure, naming conventions, and invariants ruff and ty cannot enforce. Implementers — human or agentic — should read these before non-trivial changes.
+- Changes spanning more than one of the `config`, `engine`, or `interface` subsystems.
+- New or changed public APIs.
+- Changes to rewrite pipeline behavior or data-flow invariants.
+- Changes to repository policy, CI, release automation, or documentation publishing.
+- Changes to invariants called out in [AGENTS.md](AGENTS.md) or [STYLEGUIDE.md](STYLEGUIDE.md).
 
-## Issues and Discussions
+Plan PR expectations:
 
-### Issue Templates
+- Save the plan at `plans/<issue-number>/<short-name>.md`.
+- Explain the goal, affected subsystems, trade-offs considered, validation strategy, and rollout plan.
+- Get maintainer review before implementation.
+- Link the plan PR from the implementation PR.
 
-We provide structured issue templates:
+Implementation expectations:
 
-- Bug Report — Report a bug with reproduction steps
-- Feature Request — Propose a new feature
-- Development Task — Track internal development work
-
-### Questions
-
-For general questions, please use [GitHub Discussions](https://github.com/NVIDIA-NeMo/anonymizer/discussions) instead of opening an issue.
+- Agents and humans should read [AGENTS.md](AGENTS.md) and [STYLEGUIDE.md](STYLEGUIDE.md) before non-trivial work.
+- Agent-authored changes should be self-reviewed before requesting human review.
+- Keep generated or exploratory artifacts out of the PR unless they are intentionally part of the deliverable.
 
 ## Developer Certificate of Origin
 
-All contributions must be signed off to certify that you have the right to submit the code. This is done by adding a `Signed-off-by` line to your commit messages.
-
-Sign off your commits:
+All contributions must be signed off to certify that you have the right to submit the code. Add a `Signed-off-by` line to your commit messages:
 
 ```bash
 git commit -s -m "feat: add new feature"
 ```
 
-This adds a line like:
+This adds:
 
 ```text
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-By signing off, you certify the [Developer Certificate of Origin](DCO):
+By signing off, you certify the [Developer Certificate of Origin](DCO). See the full [DCO](DCO) file for details.
 
-> By making a contribution to this project, I certify that:
->
-> (a) The contribution was created in whole or in part by me and I have the right to submit it under the open source license indicated in the file; or
->
-> (b) The contribution is based upon previous work that, to the best of my knowledge, is covered under an appropriate open source license and I have the right under that license to submit that work with modifications...
+## Issues and Discussions
 
-See the full [DCO](DCO) file for details.
+We provide structured issue templates for bug reports, feature requests, and development tasks.
 
-## Testing
-
-### Running Tests
-
-```bash
-# Run unit tests
-make test
-
-# Run tests with coverage report
-make coverage
-
-# Run end-to-end tests
-make test-e2e
-
-# Run a specific test file
-uv run pytest tests/engine/test_detection_workflow.py
-```
-
-### Test Requirements
-
-Before submitting a PR:
-
-- All existing tests pass (`make test`)
-- New features include tests
-- Bug fixes include regression tests
-
-## Code Style
-
-### Formatting and Checks
-
-We use [Ruff](https://docs.astral.sh/ruff/) for code formatting and import sorting, and [ty](https://github.com/astral-sh/ty) for type checking. Both run on changed files against `main`.
-
-```bash
-# Format code and sort imports (auto-fixes in place)
-make format
-
-# Check formatting without modifying files (used in CI)
-make format-check
-
-# Type check with ty (advisory, non-blocking)
-make typecheck
-
-# Run all read-only checks (format-check + typecheck + lock-check)
-make check
-```
-
-### Pre-commit Hooks
-
-We recommend setting up pre-commit hooks to catch formatting, linting, and type issues before committing:
-
-```bash
-make install-pre-commit
-```
-
-This installs hooks that run Ruff (format + lint), ty type checking, and uv lock verification on each commit.
-
-> **Note:** If `pyproject.toml` changes and `uv.lock` is stale, the uv-lock hook regenerates `uv.lock` and then fails the commit. Run `git add uv.lock` and retry.
-
-### Documentation
-
-```bash
-# Start local docs server with live-reload
-make install-dev-docs    # first time only
-make docs-serve          # visit http://127.0.0.1:8000
-
-# Build docs locally (strict mode catches broken links)
-make docs-build
-```
-
----
-
-Thank you for contributing to NeMo Anonymizer!
+For general questions, use [GitHub Discussions](https://github.com/NVIDIA-NeMo/Anonymizer/discussions) instead of opening an issue.
