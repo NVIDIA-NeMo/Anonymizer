@@ -21,6 +21,8 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_MERGED_VALIDATED_ENTITIES,
+    COL_MERGED_VALIDATION_DECISIONS,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -28,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
+    COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
 )
@@ -516,6 +519,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
         COL_VALIDATED_ENTITIES: DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
         COL_SEED_ENTITIES_JSON: DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
         COL_MERGED_ENTITIES: DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+        COL_MERGED_VALIDATED_ENTITIES: DetectionTransformOperation.ENRICH_MERGED_VALIDATION_DECISIONS,
         COL_DETECTED_ENTITIES: DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
     }
     for name, operation in expected_operations.items():
@@ -589,6 +593,17 @@ def test_validation_column_is_chunked_validation_plugin(
         COL_TEXT,
         COL_SEED_ENTITIES,
         COL_SEED_VALIDATION_CANDIDATES,
+        COL_TAG_NOTATION,
+    }
+
+    merged_validation_col = _find_column(columns, COL_MERGED_VALIDATION_DECISIONS)
+    assert isinstance(merged_validation_col, ChunkedValidationConfig)
+    assert merged_validation_col.entities_column == COL_MERGED_ENTITIES
+    assert merged_validation_col.candidates_column == COL_VALIDATION_CANDIDATES
+    assert set(merged_validation_col.required_columns) == {
+        COL_TEXT,
+        COL_MERGED_ENTITIES,
+        COL_VALIDATION_CANDIDATES,
         COL_TAG_NOTATION,
     }
 

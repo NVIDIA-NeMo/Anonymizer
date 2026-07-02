@@ -22,6 +22,7 @@ from anonymizer.engine.detection.chunked_validation import (
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
+    enrich_merged_validation_decisions,
     enrich_validation_decisions,
     merge_and_build_candidates,
     parse_detected_entities,
@@ -37,6 +38,7 @@ _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[s
     DetectionTransformOperation.PARSE_DETECTED_ENTITIES: parse_detected_entities,
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
     DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
+    DetectionTransformOperation.ENRICH_MERGED_VALIDATION_DECISIONS: enrich_merged_validation_decisions,
     DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
     DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: merge_and_build_candidates,
     DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: apply_validation_and_finalize,
@@ -115,6 +117,9 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
             excerpt_window_chars=self.config.excerpt_window_chars,
             max_parallel_chunks=self.config.max_parallel_chunks or _derive_max_parallel_chunks(models),
             single_chunk_full_text=self.config.single_chunk_full_text,
+            entities_column=self.config.entities_column,
+            candidates_column=self.config.candidates_column,
+            output_column=self.config.name,
             prompt_template=self.config.prompt_template,
             system_prompt=self.config.system_prompt,
         )

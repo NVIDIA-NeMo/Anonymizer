@@ -38,6 +38,8 @@ COL_VALIDATION_CANDIDATES = "_validation_candidates"
 COL_VALIDATION_SKELETON = "_validation_skeleton"
 COL_VALIDATION_DECISIONS = "_validation_decisions"
 COL_VALIDATED_ENTITIES = "_validated_entities"
+COL_MERGED_VALIDATION_DECISIONS = "_merged_validation_decisions"
+COL_MERGED_VALIDATED_ENTITIES = "_merged_validated_entities"
 
 # Step 6: apply_validation_and_finalize
 COL_DETECTED_ENTITIES = "_detected_entities"

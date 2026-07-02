@@ -17,6 +17,8 @@ from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_MERGED_VALIDATED_ENTITIES,
+    COL_MERGED_VALIDATION_DECISIONS,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -30,6 +32,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.custom_columns import (
     _parse_entity_spans,
     apply_validation_and_finalize,
+    enrich_merged_validation_decisions,
     enrich_validation_decisions,
     merge_and_build_candidates,
     parse_detected_entities,
@@ -146,8 +149,89 @@ def test_apply_validation_and_finalize_handles_malformed_merged_entities() -> No
     row: dict[str, Any] = {
         COL_TEXT: "Alice works at Acme.",
         COL_MERGED_ENTITIES: ["bad-shape"],
-        COL_VALIDATED_ENTITIES: {"decisions": []},
+        COL_MERGED_VALIDATED_ENTITIES: {"decisions": []},
     }
 
     result = apply_validation_and_finalize(row)
     assert result[COL_DETECTED_ENTITIES] == {"entities": []}
+
+
+def test_enrich_merged_validation_decisions_uses_merged_candidates() -> None:
+    row = {
+        COL_MERGED_VALIDATION_DECISIONS: {
+            "decisions": [
+                {"id": "id2", "decision": "drop", "proposed_label": "", "reason": "hallucinated"},
+            ]
+        },
+        COL_VALIDATION_CANDIDATES: {
+            "candidates": [
+                {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""},
+                {"id": "id2", "value": "12 February 1980", "label": "api_key", "context_before": "", "context_after": ""},
+            ]
+        },
+    }
+    result = enrich_merged_validation_decisions(row)
+    decisions = result[COL_MERGED_VALIDATED_ENTITIES]["decisions"]
+    assert decisions == [
+        {
+            "id": "id2",
+            "value": "12 February 1980",
+            "label": "api_key",
+            "decision": "drop",
+            "proposed_label": "",
+            "reason": "hallucinated",
+        }
+    ]
+
+
+def test_apply_validation_and_finalize_drops_augmented_entity_when_merged_validation_drops_it() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "Alice met on 12 February 1980.",
+        COL_MERGED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 0.95,
+                    "source": "detector",
+                },
+                {
+                    "id": "api_key_13_29",
+                    "value": "12 February 1980",
+                    "label": "api_key",
+                    "start_position": 13,
+                    "end_position": 29,
+                    "score": 1.0,
+                    "source": "augmenter",
+                },
+            ]
+        },
+        COL_MERGED_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "decision": "keep",
+                    "proposed_label": "",
+                    "reason": "real first name",
+                },
+                {
+                    "id": "api_key_13_29",
+                    "value": "12 February 1980",
+                    "label": "api_key",
+                    "decision": "drop",
+                    "proposed_label": "",
+                    "reason": "hallucinated augmentation",
+                },
+            ]
+        },
+    }
+
+    result = apply_validation_and_finalize(row)
+    entities = result[COL_DETECTED_ENTITIES]["entities"]
+    assert len(entities) == 1
+    assert entities[0]["value"] == "Alice"

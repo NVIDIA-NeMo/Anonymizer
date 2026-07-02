@@ -25,6 +25,8 @@ from anonymizer.engine.constants import (
     COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_MERGED_VALIDATED_ENTITIES,
+    COL_MERGED_VALIDATION_DECISIONS,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -34,6 +36,7 @@ from anonymizer.engine.constants import (
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
+    COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
@@ -96,7 +99,8 @@ class EntityDetectionWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
-        """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
+        """Run the core detection pipeline: GLiNER NER, seed validation, LLM augmentation,
+        merged validation, and finalization.
 
         This is the primary detection workflow. It detects entities via GLiNER,
         validates/reclassifies them with an LLM (chunked across a pool of
@@ -216,6 +220,21 @@ class EntityDetectionWorkflow:
             DetectionTransformConfig(
                 name=COL_MERGED_ENTITIES,
                 operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+            ),
+            ChunkedValidationConfig(
+                name=COL_MERGED_VALIDATION_DECISIONS,
+                pool=list(validator_aliases),
+                max_entities_per_call=validation_max_entities_per_call,
+                excerpt_window_chars=validation_excerpt_window_chars,
+                single_chunk_full_text=validation_single_chunk_full_text,
+                entities_column=COL_MERGED_ENTITIES,
+                candidates_column=COL_VALIDATION_CANDIDATES,
+                prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
+                drop=True,
+            ),
+            DetectionTransformConfig(
+                name=COL_MERGED_VALIDATED_ENTITIES,
+                operation=DetectionTransformOperation.ENRICH_MERGED_VALIDATION_DECISIONS,
             ),
             DetectionTransformConfig(
                 name=COL_DETECTED_ENTITIES,
