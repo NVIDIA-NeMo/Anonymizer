@@ -255,6 +255,50 @@ def test_apply_direct_replacements_accepts_schema_instance(
     assert result[COL_PREREPLACE_TEXT] == "Maria works here."
 
 
+def test_apply_direct_replacements_no_cascade_when_synthetic_matches_another_original() -> None:
+    """Single-pass regex prevents Alice→Bob→Carlos cascade."""
+    disposition = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "entity_label": "first_name",
+                "entity_value": "Alice",
+                "protection_reason": "Direct identifier.",
+                "protection_method_suggestion": "replace",
+                "combined_risk_level": "high",
+            },
+            {
+                "id": 2,
+                "source": "tagged",
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "entity_label": "first_name",
+                "entity_value": "Bob",
+                "protection_reason": "Direct identifier.",
+                "protection_method_suggestion": "replace",
+                "combined_risk_level": "high",
+            },
+        ]
+    }
+    replacement_map = {
+        "replacements": [
+            {"original": "Alice", "label": "first_name", "synthetic": "Bob"},
+            {"original": "Bob", "label": "first_name", "synthetic": "Carlos"},
+        ]
+    }
+    row = {
+        COL_SENSITIVITY_DISPOSITION: disposition,
+        COL_REPLACEMENT_MAP: replacement_map,
+        COL_TEXT: "Alice and Bob met.",
+        COL_TAGGED_TEXT: "Alice and Bob met.",
+    }
+    result = _apply_direct_replacements(row)
+    assert result[COL_PREREPLACE_TEXT] == "Bob and Carlos met."
+
+
 # ---------------------------------------------------------------------------
 # Tests: _extract_rewritten_text
 # ---------------------------------------------------------------------------

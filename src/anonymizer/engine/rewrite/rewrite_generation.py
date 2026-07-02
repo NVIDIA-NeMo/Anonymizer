@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -194,9 +195,11 @@ def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
         row[COL_PREREPLACE_TEXT] = plain_text
         row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
         return row
-    for original, synthetic in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
-        plain_text = plain_text.replace(original, synthetic)
-        tagged_text = tagged_text.replace(original, synthetic)
+    sorted_pairs = sorted(pairs, key=lambda p: len(p[0]), reverse=True)
+    pattern = re.compile("|".join(re.escape(original) for original, _ in sorted_pairs))
+    lookup = dict(sorted_pairs)
+    plain_text = pattern.sub(lambda m: lookup[m.group(0)], plain_text)
+    tagged_text = pattern.sub(lambda m: lookup[m.group(0)], tagged_text)
     row[COL_PREREPLACE_TEXT] = plain_text
     row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
     return row
