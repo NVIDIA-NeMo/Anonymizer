@@ -157,7 +157,7 @@ class LatentEntitySchema(BaseModel):
     )
     rationale: str = Field(
         min_length=20,
-        max_length=150,
+        max_length=250,
         description="One sentence explaining the inference without adding new facts",
     )
 
