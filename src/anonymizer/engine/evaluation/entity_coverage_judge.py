@@ -8,7 +8,7 @@ import logging
 from typing import ClassVar
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_JUDGE,
     COL_LEAKED_ENTITIES,
     COL_TEXT,
+    DEFAULT_ENTITY_LABELS,
     _jinja,
 )
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
@@ -105,6 +106,9 @@ def _coverage_prompt(
         else ""
     )
 
+    active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
+    labels_str = ", ".join(active_labels)
+
     prompt = f"""You are a privacy auditor. Given ORIGINAL text and a list of PII ENTITIES that were \
 detected by an anonymization pipeline, identify any direct or quasi-identifiers in the \
 original text that are NOT covered by the detected entities.
@@ -135,10 +139,11 @@ covered if a full file path containing that username is listed as an entity).
 </coverage_definition>
 
 <identifier_taxonomy>
-Direct identifiers: person names, email addresses, phone numbers, SSNs, physical \
-addresses, IP addresses, usernames, account IDs, API keys / tokens.
+The following entity types are considered sensitive and must be flagged if missed: {labels_str}.
 Quasi-identifiers: combinations of values that together re-identify someone \
-(e.g. job title + employer + city appearing together).
+(e.g. job title + employer + city appearing together). Time values (specific timestamps, \
+times of day, schedules) can act as quasi-identifiers when combined with other attributes \
+in the same text — flag them if they appear alongside other identifying information.
 </identifier_taxonomy>
 
 <task>
@@ -168,9 +173,8 @@ Do flag:
 </guidance>
 
 <output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-outside the JSON object. Your entire response must be a single valid JSON object.
+Return ONLY the JSON object that matches the required schema. Do NOT include any commentary, \
+reasoning, preamble, or text outside the JSON object.
 </output_format>
 """
     return substitute_placeholders(
@@ -203,8 +207,13 @@ def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
     if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
     if isinstance(raw, str):
+        # Strip optional ```json ... ``` fence before parsing so models that
+        # return fenced or unfenced JSON are both handled.
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         try:
-            raw = json.loads(raw)
+            raw = json.loads(stripped)
         except (json.JSONDecodeError, ValueError):
             return None
     if not isinstance(raw, dict):
@@ -279,16 +288,15 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     # ----------------------------------------------------------------- overrides
 
-    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
+    def column_config(self, selected_models: EvaluateModelSelection) -> LLMTextColumnConfig:
         """Override to inject instance-specific entity_labels and strict_entity_protection."""
-        return LLMStructuredColumnConfig(
+        return LLMTextColumnConfig(
             name=self.RAW_COL,
             prompt=_coverage_prompt(
                 entity_labels=self._entity_labels,
                 strict_entity_protection=self._strict_entity_protection,
             ),
             model_alias=resolve_model_alias(self.MODEL_ROLE, selected_models),
-            output_format=self.SCHEMA,
         )
 
     def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:
