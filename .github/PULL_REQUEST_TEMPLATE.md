@@ -19,6 +19,7 @@
 - [ ] For non-trivial changes, a plan PR is linked or not needed
 - [ ] Public API impact checked; `skills/anonymizer/SKILL.md` updated if needed
 - [ ] No real PII added to tests, docs, notebooks, fixtures, or artifacts
+- [ ] No API keys, service tokens, private keys, credentials, or real endpoint secrets added
 
 ## Testing
 - [ ] `make test` passes locally

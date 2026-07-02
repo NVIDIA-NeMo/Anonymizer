@@ -156,6 +156,8 @@ Every PR should include:
 - Documentation updates when public behavior, CLI behavior, examples, notebooks, or contributor workflow changes.
 - A public API impact check. If a public symbol or default changes, check whether [`skills/anonymizer/SKILL.md`](skills/anonymizer/SKILL.md) also needs an update.
 - A PII fixture check. Do not add real PII to tests, docs, notebooks, or artifacts. Use synthetic examples.
+- A secrets check. Do not commit API keys, service tokens, private keys, credentials, or real endpoint secrets. Use
+  environment variables, local `.env` files, or GitHub Actions secrets instead.
 
 CODEOWNERS:
 

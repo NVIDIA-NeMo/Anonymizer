@@ -187,6 +187,16 @@ Hooks run Ruff format and lint, ty type checking, uv lock verification, DCO sign
 
 If `pyproject.toml` changes and `uv.lock` is stale, the uv-lock hook may regenerate `uv.lock` and fail the commit. Add the updated `uv.lock` and retry.
 
+## Secrets and Credentials
+
+Do not commit API keys, service tokens, private keys, passwords, real endpoint secrets, or credential-bearing logs.
+
+Use environment variables, local `.env` files, or GitHub Actions secrets for credentials. `.env` and `.env.*` are ignored
+by Git in this repository, but still review diffs before committing.
+
+If a secret is committed or pushed by mistake, treat it as compromised: rotate or revoke it, then remove it from the
+repository history before sharing the branch further.
+
 ## Documentation
 
 Serve docs locally:
@@ -216,7 +226,9 @@ When editing tutorial sources, regenerate notebooks with:
 make convert-notebooks
 ```
 
-Notebook execution can require configured model provider credentials. If notebooks cannot be regenerated locally, state that clearly in the PR and include the exact failure mode.
+Notebook execution can require configured model provider credentials. If notebooks cannot be regenerated locally, state
+that clearly in the PR and include the exact failure mode. Do not save credentials or credential-bearing outputs in
+generated notebooks.
 
 ## Releases
 
