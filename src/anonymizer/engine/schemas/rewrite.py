@@ -150,10 +150,8 @@ class EntityDispositionSchema(BaseModel):
             self.combined_risk_level == CombinedRiskLevel.low
             and self.protection_method_suggestion != ProtectionMethod.leave_as_is
         ):
-            raise ValueError(
-                f"Entity {self.id}: combined_risk_level='low' requires protection_method_suggestion='leave_as_is', "
-                f"got '{self.protection_method_suggestion}'"
-            )
+            # LLM occasionally returns an inconsistent combination; coerce rather than reject.
+            self.protection_method_suggestion = ProtectionMethod.leave_as_is
         if (
             self.combined_risk_level == CombinedRiskLevel.high
             and self.protection_method_suggestion == ProtectionMethod.leave_as_is

@@ -244,11 +244,11 @@ def mixed_disposition() -> SensitivityDispositionSchema:
 # EntityDispositionSchema — protection consistency
 
 
-def test_entity_disposition_invalid_low_risk_but_not_leave_as_is() -> None:
-    with pytest.raises(ValidationError, match="combined_risk_level='low'"):
-        EntityDispositionSchema.model_validate(
-            _make_entity(combined_risk_level="low", protection_method_suggestion="replace")
-        )
+def test_entity_disposition_low_risk_non_leave_as_is_is_coerced() -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(combined_risk_level="low", protection_method_suggestion="replace")
+    )
+    assert entity.protection_method_suggestion == "leave_as_is"
 
 
 def test_entity_disposition_invalid_high_risk_but_leave_as_is() -> None:
