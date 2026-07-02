@@ -7,7 +7,7 @@
 #
 # This is the read-only counterpart to `ruff check --fix` in format.sh.
 # ruff exposes format and check as separate commands; this script wraps
-# the read-only check so CI and `make format-check` can verify lint rules
+# the read-only check so CI and `mise run format-check` can verify lint rules
 # without modifying files.
 #
 # Usage:

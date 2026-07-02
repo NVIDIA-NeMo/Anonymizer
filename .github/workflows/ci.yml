@@ -32,14 +32,15 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           fetch-depth: "0"
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: mise run bootstrap
 
       - name: Run tests with coverage
-        run: make coverage
+        run: mise run coverage
 
   lint:
     name: Lint and Format Check
@@ -53,20 +54,21 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           fetch-depth: "0"
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: mise run bootstrap
 
       - name: Run formatting check
-        run: make format-check
+        run: mise run format-check
 
       - name: Check copyright headers
-        run: make copyright-check
+        run: mise run copyright-check
 
       - name: Check uv.lock is up to date
-        run: make lock-check
+        run: mise run lock-check
 
   typecheck:
     name: Type Check (advisory)
@@ -81,11 +83,12 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           fetch-depth: "0"
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: mise run bootstrap
 
       - name: Run type checks
-        run: uv run tools/codestyle/typecheck.sh || true
+        run: mise run typecheck

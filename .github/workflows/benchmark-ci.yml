@@ -63,28 +63,18 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - name: Checkout benchmark target
-        uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-env
         with:
           ref: ${{ env.BENCHMARK_REF }}
           fetch-depth: "0"
+          python-version: "3.11"
 
       - name: Resolve benchmark target commit
         id: target
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
       - name: Install dependencies
-        run: uv sync --group dev
+        run: mise run bootstrap
 
       - name: Check NVIDIA API key
         env:

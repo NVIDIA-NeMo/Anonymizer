@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[test]
+description = "Run all unit tests."
+run = "uv run --group dev pytest"
+
+["test:e2e"]
+description = "Run the end-to-end test suite."
+alias = "test-e2e"
+run = "uv run --group dev pytest -m e2e tests_e2e/test_e2e.py"
+
+[coverage]
+description = "Run tests with a terminal and HTML coverage report."
+run = "uv run --group dev pytest --cov=anonymizer --cov-report=term-missing --cov-report=html"

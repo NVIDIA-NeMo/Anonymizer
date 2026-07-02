@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[format]
+description = "Format and fix Python code."
+run = "tools/codestyle/format.sh"
+
+["format-check"]
+description = "Check formatting and lint rules without modifying files."
+run = [
+  "tools/codestyle/format.sh --check",
+  "tools/codestyle/ruff_check.sh",
+]
+
+[typecheck]
+description = "Run advisory ty type checks."
+run = "tools/codestyle/typecheck.sh || true"
+
+[copyright]
+description = "Add missing SPDX headers to source files."
+run = "uv run tools/codestyle/copyright_fixer.py ."
+
+["copyright-check"]
+description = "Check SPDX headers without modifying files."
+run = "uv run tools/codestyle/copyright_fixer.py --check ."
+
+["lock-check"]
+description = "Verify that uv.lock matches pyproject.toml."
+run = "uv lock --check"
+
+[check]
+description = "Run the repository read-only quality checks."
+run = [
+  { task = "format-check" },
+  { task = "typecheck" },
+  { task = "lock-check" },
+  { task = "copyright-check" },
+]
