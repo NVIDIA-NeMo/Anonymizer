@@ -205,6 +205,8 @@ def prepare_sealed_import(
     """Capture and validate one sealed case without importing the W&B SDK."""
     if not settings.enabled:
         raise ImportInputError("strict W&B import requires online or offline mode")
+    if settings.wandb_mode == WandbMode.online and settings.wandb_entity is None:
+        raise ImportInputError("strict online W&B imports require an explicit W&B entity")
     try:
         seal_snapshot = read_completion_seal(seal_path)
         seal = seal_snapshot.seal

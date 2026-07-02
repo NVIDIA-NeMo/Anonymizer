@@ -400,6 +400,24 @@ def test_strict_import_reports_resumed_incomplete_publication(
     assert result.run_url == f"https://wandb.ai/entity/project/runs/{result.run_id}"
 
 
+def test_strict_online_import_requires_explicit_entity(
+    tmp_path: Path,
+    wandb_import_tool: ModuleType,
+) -> None:
+    measurement_path, seal_path = _write_sealed_import_case(wandb_import_tool, tmp_path)
+    settings = wandb_import_tool.ResolvedWandbConfig(
+        wandb_mode=wandb_import_tool.WandbMode.online,
+        wandb_project="project",
+    )
+
+    with pytest.raises(wandb_import_tool.ImportInputError, match="explicit W&B entity"):
+        wandb_import_tool.prepare_sealed_import(
+            measurement_path,
+            seal_path=seal_path,
+            settings=settings,
+        )
+
+
 def test_strict_import_cli_reports_destination_and_publication_state(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,

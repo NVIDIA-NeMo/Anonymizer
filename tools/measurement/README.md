@@ -439,6 +439,10 @@ and conflicting sealed content is rejected. Changed bytes require a new valid
 seal and produce a different run ID. Init, config, log, summary, and finish failures exit
 nonzero; error logs include the exception type without its message.
 
+Strict online imports require `--wandb-entity` (or
+`ANONYMIZER_MEASUREMENT_WANDB_ENTITY`) so the result always identifies the
+destination and includes a W&B run URL. Offline imports may omit the entity.
+
 The goal of W&B support is to get sanitized benchmark data into W&B. Workspaces,
 reports, views, and panels are presentation layers on top of that data. They
 can be edited in W&B, regenerated with the tooling below, or replaced as the
