@@ -244,12 +244,13 @@ def mixed_disposition() -> SensitivityDispositionSchema:
 # EntityDispositionSchema — protection consistency
 
 
-def test_entity_disposition_low_risk_non_leave_as_is_promotes_risk_to_medium() -> None:
+@pytest.mark.parametrize("method", ["replace", "generalize", "remove", "suppress_inference"])
+def test_entity_disposition_low_risk_non_leave_as_is_promotes_risk_to_medium(method: str) -> None:
     entity = EntityDispositionSchema.model_validate(
-        _make_entity(combined_risk_level="low", protection_method_suggestion="replace")
+        _make_entity(combined_risk_level="low", protection_method_suggestion=method)
     )
     assert entity.combined_risk_level == "medium"
-    assert entity.protection_method_suggestion == "replace"
+    assert entity.protection_method_suggestion == method
 
 
 def test_entity_disposition_invalid_high_risk_but_leave_as_is() -> None:
