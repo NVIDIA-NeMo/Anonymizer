@@ -327,7 +327,6 @@ class RewriteWorkflow:
                 model_configs=model_configs,
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                evaluation=evaluation,
                 preview_num_records=preview_num_records,
             )
             all_failed.extend(judge_failed)
@@ -454,14 +453,12 @@ class RewriteWorkflow:
         model_configs: list[ModelConfig],
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
         preview_num_records: int | None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         try:
             judge_columns = self._judge_wf.columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                evaluation=evaluation,
             )
             judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))
             judge_result = self._adapter.run_workflow(
