@@ -10,6 +10,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_FULL_REWRITE,
+    COL_GENERALIZATION_SUGGESTIONS,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
@@ -132,11 +133,13 @@ def test_format_rewrite_disposition_block_includes_generalization_suggestion_for
                 "protection_reason": "City combined with other quasi-identifiers enables re-identification",
                 "protection_method_suggestion": "generalize",
                 "combined_risk_level": "medium",
-                "generalization_suggestion": "a city in the Pacific Northwest",
             }
         ]
     }
-    row = {COL_SENSITIVITY_DISPOSITION: disposition}
+    row = {
+        COL_SENSITIVITY_DISPOSITION: disposition,
+        COL_GENERALIZATION_SUGGESTIONS: {"Portland": "a city in the Pacific Northwest"},
+    }
     result = _format_rewrite_disposition_block(row)
     block = result[COL_REWRITE_DISPOSITION_BLOCK]
     assert len(block) == 1

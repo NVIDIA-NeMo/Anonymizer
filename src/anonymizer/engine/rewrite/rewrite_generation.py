@@ -14,6 +14,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_FULL_REWRITE,
+    COL_GENERALIZATION_SUGGESTIONS,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_DISPOSITION_BLOCK,
@@ -79,7 +80,8 @@ Protection decisions for each entity that needs protection:
 - {{ entity.entity_label }}: "{{ entity.entity_value }}"
   Sensitivity: {{ entity.sensitivity }}
   Protection method: {{ entity.protection_method_suggestion }}
-  Reason: {{ entity.protection_reason }}
+  Reason: {{ entity.protection_reason }}{% if entity.generalization_suggestion is defined %}
+  Suggestion: {{ entity.generalization_suggestion }}{% endif %}
 {% endfor %}
 
 Entities NOT listed above may be kept as-is.
@@ -127,10 +129,11 @@ Rules:
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
+@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_GENERALIZATION_SUGGESTIONS])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-filter and serialize protected entities (protection_method_suggestion != "leave_as_is") for the rewrite prompt."""
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
+    suggestions: dict[str, str] = row.get(COL_GENERALIZATION_SUGGESTIONS) or {}
     block = []
     for e in disposition.sensitivity_disposition:
         if not e.needs_protection:
@@ -144,7 +147,9 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
             "protection_reason": d["protection_reason"],
         }
         if d["protection_method_suggestion"] == "generalize":
-            entry["generalization_suggestion"] = d["generalization_suggestion"]
+            suggestion = suggestions.get(d["entity_value"])
+            if suggestion:
+                entry["generalization_suggestion"] = suggestion
         block.append(entry)
     row[COL_REWRITE_DISPOSITION_BLOCK] = block
     return row

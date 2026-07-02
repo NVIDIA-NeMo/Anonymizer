@@ -14,6 +14,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
+    COL_GENERALIZATION_SUGGESTIONS,
     COL_LATENT_ENTITIES,
     COL_MEANING_UNITS,
     COL_MEANING_UNITS_SERIALIZED,
@@ -52,7 +53,7 @@ if _DOMAIN_KEY is None:
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_LATENT_ENTITIES])
+@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_LATENT_ENTITIES, COL_GENERALIZATION_SUGGESTIONS])
 def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Serialize sensitivity disposition into a JSON block for the meaning unit extraction prompt."""
     disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
@@ -62,6 +63,7 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     evidence_by_label_value: dict[tuple[str, str], list[str]] = {
         (e["label"], e["value"]): e.get("evidence", []) for e in latent_list if isinstance(e, dict)
     }
+    suggestions: dict[str, str] = row.get(COL_GENERALIZATION_SUGGESTIONS) or {}
 
     block = []
     for e in disposition.sensitivity_disposition:
@@ -72,7 +74,9 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
             "category": e.category,
         }
         if e.protection_method_suggestion == "generalize":
-            entry["generalization_suggestion"] = e.generalization_suggestion
+            suggestion = suggestions.get(e.entity_value)
+            if suggestion:
+                entry["generalization_suggestion"] = suggestion
         if e.protection_method_suggestion == "suppress_inference":
             entry["evidence"] = evidence_by_label_value.get((e.entity_label, e.entity_value), [])
         block.append(entry)

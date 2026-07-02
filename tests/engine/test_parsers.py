@@ -212,7 +212,6 @@ def test_parse_sensitivity_disposition_corrects_low_with_generalize() -> None:
     result = parse_sensitivity_disposition(raw)
     entity = result.sensitivity_disposition[0]
     assert entity.protection_method_suggestion == "leave_as_is"
-    assert entity.generalization_suggestion == "N/A"
 
 
 def test_parse_sensitivity_disposition_corrects_low_with_suppress_inference() -> None:
