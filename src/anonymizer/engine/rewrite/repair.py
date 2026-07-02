@@ -18,11 +18,11 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
+    COL_PREREPLACE_TEXT,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
-    COL_TEXT,
     COL_UTILITY_SCORE,
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
@@ -168,7 +168,7 @@ Provide ONLY the rewritten text.
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
-        "<<ORIGINAL_TEXT>>": str(row.get(COL_TEXT, "")),
+        "<<ORIGINAL_TEXT>>": str(row.get(COL_PREREPLACE_TEXT, "")),
         "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
         "<<LEAKAGE_MASS>>": str(row.get(COL_LEAKAGE_MASS, 0.0)),
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
@@ -201,7 +201,7 @@ def _make_repair_column(repairer_alias: str) -> Any:
         required_columns=[
             COL_LEAKED_PRIVACY_ITEMS,
             COL_REWRITTEN_TEXT,
-            COL_TEXT,
+            COL_PREREPLACE_TEXT,
             COL_LEAKAGE_MASS,
             COL_ANY_HIGH_LEAKED,
             COL_UTILITY_SCORE,
