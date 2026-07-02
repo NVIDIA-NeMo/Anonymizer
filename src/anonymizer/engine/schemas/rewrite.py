@@ -256,7 +256,7 @@ class MeaningUnitImportance(str, Enum):
 
 class MeaningUnitSchema(BaseModel):
     id: int = Field(ge=1)
-    aspect: str
+    aspect: str = Field(min_length=1)
     unit: str = Field(min_length=1)
     importance: MeaningUnitImportance
 
@@ -275,7 +275,7 @@ class MeaningUnitsSchema(BaseModel):
 
 class QualityQAItemSchema(BaseModel):
     id: int
-    aspect: str
+    aspect: str = Field(min_length=1)
     importance: MeaningUnitImportance
     question: str
     reference_answer: str
