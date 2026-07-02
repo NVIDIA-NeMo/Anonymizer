@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#MISE description="Convert and execute tutorial Python files as notebooks."
+
+set -euo pipefail
+
+mkdir -p docs/notebooks
+uv run --group notebooks python -m ipykernel install --user --name anonymizer-venv
+uv run --group notebooks --group docs jupytext --to ipynb --set-kernel anonymizer-venv --execute docs/notebook_source/*.py
+mv docs/notebook_source/*.ipynb docs/notebooks/

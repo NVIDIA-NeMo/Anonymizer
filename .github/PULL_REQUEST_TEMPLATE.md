@@ -26,12 +26,12 @@
 
 ## Validation
 <!-- Choose from the relevant commands below and list what you actually ran. If a relevant check was skipped, explain why. -->
-<!-- Common options: make check, make test, make coverage, make test-e2e, make docs-build, make convert-notebooks -->
+<!-- Common options: mise run check, mise run test, mise run coverage, mise run test:e2e, mise run docs:build, mise run convert-notebooks -->
 - Commands run:
 - Skipped checks or known failures:
 
 ## Documentation and Artifacts
 - [ ] Docs updated, or not needed
-- [ ] If docs changed: `make docs-build` passes locally
-- [ ] If tutorial sources changed: notebooks regenerated with `make convert-notebooks`
+- [ ] If docs changed: `mise run docs:build` passes locally
+- [ ] If tutorial sources changed: notebooks regenerated with `mise run convert-notebooks`
 - [ ] If e2e, benchmark, or model-provider behavior changed: relevant validation is listed above

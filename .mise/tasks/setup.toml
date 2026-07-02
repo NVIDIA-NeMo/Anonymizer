@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[setup]
+description = "Install pinned mise tools and create the project virtual environment."
+run = [
+  "MISE_YES=1 mise trust",
+  "MISE_YES=1 mise install",
+  "uv venv --allow-existing --python \"$(tr -d '[:space:]' < .python-version)\" \"$VIRTUAL_ENV\"",
+]
+
+[install]
+description = "Install project dependencies into the configured virtual environment."
+run = [{ task = "setup" }, "uv sync"]
+
+[bootstrap]
+description = "Install project and development dependencies."
+run = [{ task = "setup" }, "uv sync --group dev"]
+
+["install-dev"]
+description = "Install project and development dependencies."
+run = [{ task = "bootstrap" }]
+
+["install-dev-notebooks"]
+description = "Install project, development, and notebook dependencies."
+run = [{ task = "setup" }, "uv sync --group dev --group notebooks"]
+
+["install-dev-docs"]
+description = "Install project, development, and documentation dependencies."
+run = [{ task = "setup" }, "uv sync --group dev --group docs"]
+
+["install-pre-commit"]
+description = "Install the repository pre-commit hooks."
+run = "uv run pre-commit install"

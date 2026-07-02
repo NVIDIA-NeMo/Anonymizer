@@ -13,7 +13,7 @@
 # limitations under the License.
 
 name: "Setup Python Environment"
-description: "Common setup for Python projects: checkout, uv, Python, and dependencies"
+description: "Common setup for Python projects: checkout, mise, Python, and dependencies"
 
 inputs:
   ref:
@@ -28,6 +28,10 @@ inputs:
     description: "Number of commits to fetch (0 for all history)"
     required: false
     default: "1"
+  checkout:
+    description: "Whether to checkout the repository before setting up the environment"
+    required: false
+    default: "true"
 
 outputs:
   merge-base:
@@ -38,6 +42,7 @@ runs:
   using: "composite"
   steps:
     - name: Checkout repository
+      if: inputs.checkout == 'true'
       uses: actions/checkout@v6
       with:
         ref: ${{ inputs.ref || github.ref }}
@@ -45,7 +50,7 @@ runs:
 
     - name: Get the merge base SHA
       id: get_merge_base
-      if: inputs.fetch-depth == '0'
+      if: inputs.checkout == 'true' && inputs.fetch-depth == '0'
       shell: bash
       run: |
         if [ -n "${{ github.base_ref }}" ]; then
@@ -58,12 +63,6 @@ runs:
         echo "Merge Base SHA: $MERGE_BASE_SHA"
         echo "merge_base=$MERGE_BASE_SHA" >> $GITHUB_OUTPUT
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v6
-      with:
-        # version is parsed from pyproject.toml
-        enable-cache: true
-
     - name: Set up Python ${{ inputs.python-version }}
       if: inputs.python-version != ''
       uses: actions/setup-python@v6
@@ -75,3 +74,14 @@ runs:
       uses: actions/setup-python@v6
       with:
         python-version-file: ".python-version"
+
+    - name: Install mise and project tools
+      shell: bash
+      run: |
+        MISE_GPG_KEY=24853EC9F655CE80B48E6C3A8B81C9D17413A06D \
+          bash tools/install-mise.sh
+        export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+        MISE_YES=1 mise trust
+        MISE_YES=1 mise run setup
