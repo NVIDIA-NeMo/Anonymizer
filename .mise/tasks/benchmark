@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#MISE description="Run a benchmark profile: smoke or smoke-traces. Pass runner options after --."
+#USAGE arg "<profile>" help="Benchmark profile: smoke or smoke-traces" {
+#USAGE   choices "smoke" "smoke-traces"
+#USAGE }
+#USAGE arg "[runner_args]" var=#true double_dash="optional" help="Arguments forwarded to the benchmark runner"
+
+set -euo pipefail
+
+profile="${usage_profile?}"
+suite="tools/measurement/examples/repo-data-smoke.yaml"
+output_dir="${BENCHMARK_OUTPUT_DIR:-benchmark-runs/${profile}}"
+runner_args=()
+if [[ -n "${usage_runner_args:-}" ]]; then
+  read -r -a runner_args <<<"$usage_runner_args"
+fi
+
+case "$profile" in
+  smoke)
+    trace_args=()
+    ;;
+  smoke-traces)
+    trace_args=(--dd-trace last_message --dd-task-trace)
+    ;;
+esac
+
+uv run --group dev python tools/measurement/run_benchmarks.py \
+  "$suite" \
+  --output "$output_dir" \
+  "${trace_args[@]}" \
+  "${runner_args[@]}"
