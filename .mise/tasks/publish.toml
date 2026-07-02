@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+["publish:pypi"]
+description = "Build and publish the wheel to PyPI. Requires TWINE_USERNAME and TWINE_PASSWORD."
+alias = "publish-pypi"
+run = [
+  { task = "build-wheel" },
+  "uvx twine upload --username \"$TWINE_USERNAME\" --password \"$TWINE_PASSWORD\" --non-interactive dist/*.whl",
+]

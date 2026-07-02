@@ -15,12 +15,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - uses: ./.github/actions/setup-python-env
         with:
-          version: "0.13.4"
-      - name: Set up Python
-        run: uv python install 3.11
+          checkout: "false"
+          python-version: "3.11"
       - name: Cache pinned GLiNER2 model
         uses: actions/cache@v6
         with:
@@ -29,13 +27,13 @@ jobs:
             ~/.cache/nemo-anonymizer
           key: gliner2-59894c087cb2923b01f337d4ee72f6ff84d5bdd6-${{ hashFiles('uv.lock', 'src/anonymizer/notebooks/_runtime.py') }}
       - name: Build notebook wheel
-        run: uv build --wheel
+        run: mise run build-wheel
       - name: Convert and execute notebooks
         shell: bash
         run: |
           wheel=$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)
           test -n "$wheel"
-          make convert-notebooks ANONYMIZER_NOTEBOOK_PACKAGE="${wheel}[notebooks]"
+          ANONYMIZER_NOTEBOOK_PACKAGE="${wheel}[notebooks]" mise run convert-notebooks
       - name: Upload notebooks as artifacts
         uses: actions/upload-artifact@v7
         with:
