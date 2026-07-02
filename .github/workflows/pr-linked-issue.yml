@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: PR Linked Issue
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  require-linked-issue:
+    name: Require linked issue for external PRs
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          body_file="$(mktemp)"
+          printf '%s' "$PR_BODY" > "$body_file"
+
+          if grep -Eiq '\b(close[sd]?|fix(e[sd])?|resolve[sd]?) +#[0-9]+\b' "$body_file"; then
+            echo "Linked issue found."
+            exit 0
+          fi
+
+          if grep -Eiq '^[[:space:]]*No linked issue required:' "$body_file"; then
+            echo "No-issue rationale found."
+            exit 0
+          fi
+
+          {
+            echo "External pull requests must link an issue with Fixes #NNN, Closes #NNN, or Resolves #NNN."
+            echo "If this change does not need an issue, add: No linked issue required: <reason>"
+          } >&2
+          exit 1
