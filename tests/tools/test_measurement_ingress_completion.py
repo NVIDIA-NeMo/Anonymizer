@@ -8,8 +8,9 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -174,6 +175,29 @@ def test_wandb_staging_rejects_untrusted_writable_output(tmp_path: Path, wandb_s
 
     with pytest.raises(ValueError, match="untrusted directories"):
         wandb_setup_tool.prepare_wandb_staging_dir(output)
+
+
+def test_wandb_staging_allows_repeated_basename_in_foreign_intermediate_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    wandb_setup_tool: ModuleType,
+) -> None:
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    assert temp_root in tmp_path.parents
+    output = tmp_path / temp_root.name
+    output.mkdir()
+    real_fstat = wandb_setup_tool.os.fstat
+
+    def fstat_with_foreign_temp_root(descriptor: int) -> Any:
+        metadata = real_fstat(descriptor)
+        descriptor_path = Path(wandb_setup_tool.os.readlink(f"/proc/self/fd/{descriptor}"))
+        if descriptor_path == temp_root:
+            return SimpleNamespace(st_mode=metadata.st_mode, st_uid=metadata.st_uid + 1)
+        return metadata
+
+    monkeypatch.setattr(wandb_setup_tool.os, "fstat", fstat_with_foreign_temp_root)
+
+    assert wandb_setup_tool.prepare_wandb_staging_dir(output) == output / ".wandb-private"
 
 
 def test_wandb_snapshot_rejects_line_nesting_negative_and_wrong_shape(

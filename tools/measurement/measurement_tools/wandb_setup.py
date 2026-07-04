@@ -451,11 +451,11 @@ def _open_directory_no_follow(path: Path) -> int:
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(absolute.anchor, flags)
-        for part in absolute.parts[1:]:
+        for index, part in enumerate(absolute.parts[1:], start=1):
             child = os.open(part, flags | no_follow, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
-            _validate_directory_metadata(os.fstat(descriptor), final=part == absolute.name)
+            _validate_directory_metadata(os.fstat(descriptor), final=index == len(absolute.parts) - 1)
         return descriptor
     except (OSError, ValueError) as exc:
         if "descriptor" in locals():
