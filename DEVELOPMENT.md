@@ -183,7 +183,8 @@ Install hooks once:
 make install-pre-commit
 ```
 
-Hooks run Ruff format and lint, ty type checking, uv lock verification, DCO signoff checks, and basic file hygiene.
+Hooks run Ruff format and lint, uv lock verification, DCO signoff checks, and basic file hygiene. `ty` is installed
+for `make typecheck` and `make check`, but it is not currently run as a pre-commit hook.
 
 If `pyproject.toml` changes and `uv.lock` is stale, the uv-lock hook may regenerate `uv.lock` and fail the commit. Add the updated `uv.lock` and retry.
 
@@ -238,6 +239,6 @@ Build a wheel locally:
 make build-wheel
 ```
 
-Release tags use `vMAJOR.MINOR.PATCH`, while the Python package version is the unprefixed version.
+Release tags use `vMAJOR.MINOR.PATCH` for stable releases and `vMAJOR.MINOR.PATCHrcN` for release candidates, while the Python package version is the unprefixed version.
 
 Release publishing is handled by `.github/workflows/release.yml`.

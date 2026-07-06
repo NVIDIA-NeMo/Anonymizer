@@ -123,7 +123,7 @@ jobs:
           VERSION: ${{ needs.publish-wheel.outputs.version }}
         run: |
           PRERELEASE_FLAG=""
-          if echo "$VERSION" | grep -qE '(rc|alpha|beta|\.dev)'; then
+          if echo "$VERSION" | grep -qE '(^|[0-9])rc[0-9]+($|\+)'; then
             PRERELEASE_FLAG="--prerelease"
           fi
 

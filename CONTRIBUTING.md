@@ -22,7 +22,7 @@ This document covers contribution policy and pull request expectations. For loca
 1. Search existing issues and pull requests before starting work.
 2. Create or link an issue for the change. Bug fixes, features, and non-trivial development tasks should start from an issue so maintainers can confirm scope.
 3. Create a branch from the latest `main` using the [branch naming](#branch-naming) convention.
-4. For non-trivial changes, submit a plan PR before implementation. See [Agent-Assisted Development](#agent-assisted-development).
+4. For non-trivial changes, write a plan document before implementation. See [Agent-Assisted Development](#agent-assisted-development).
 5. Implement the change following [AGENTS.md](AGENTS.md), [STYLEGUIDE.md](STYLEGUIDE.md), and [DEVELOPMENT.md](DEVELOPMENT.md).
 6. Run the relevant local checks from [DEVELOPMENT.md](DEVELOPMENT.md#validation-before-opening-a-pr).
 7. Open a pull request with a conventional title, a linked issue, and a completed checklist.
@@ -111,13 +111,14 @@ Examples:
 
 ### Release Tags
 
-GitHub release tags use a `v` prefix followed by a semantic version:
+GitHub release tags use a `v` prefix followed by the PEP 440 package version. The supported public release forms are stable releases and release candidates:
 
 ```text
-vMAJOR.MINOR.PATCH[-prerelease][+build]
+vMAJOR.MINOR.PATCH
+vMAJOR.MINOR.PATCHrcN
 ```
 
-The Python package version remains the PEP 440 version without the `v` prefix. Release automation creates GitHub releases from `v${VERSION}` tags and deploys docs using the unprefixed package version.
+The Python package version remains the PEP 440 version without the `v` prefix. Release automation builds the wheel, extracts the unprefixed package `VERSION`, creates GitHub releases as `v${VERSION}`, marks `rcN` versions as prereleases, and deploys docs using the unprefixed package version.
 
 Examples:
 
@@ -125,10 +126,11 @@ Examples:
 | --------------------------- | ------------------ |
 | `v1.0.0`                    | Yes                |
 | `v2.1.3`                    | Yes                |
-| `v1.0.0-alpha`              | Yes                |
-| `v1.0.0-beta.1`             | Yes                |
-| `v1.0.0-rc.1+build.123`     | Yes                |
+| `v1.0.0rc1`                 | Yes                |
+| `v1.0.0rc2`                 | Yes                |
 | `1.0.0`                     | No, missing `v`    |
+| `v1.0.0-rc.1`               | No, use `rc1`      |
+| `v1.0.0-alpha`              | No, unsupported    |
 | `release-1.0`               | No, wrong format   |
 
 ### Branch Protection
@@ -149,7 +151,11 @@ The `main` branch has these protections:
 
 Every PR should include:
 
-- A linked issue using `Fixes #NNN`, `Closes #NNN`, or `Resolves #NNN`, or a clear explanation for why no issue is needed.
+- A linked issue using `Fixes #NNN`, `Closes #NNN`, or `Resolves #NNN`, or, for maintainer-owned
+  changes only, a clear explanation for why no issue is needed. External contributors must link a real
+  issue with the maintainer-applied `triaged` label before the PR can merge. The linked-issue workflow
+  checks the visible PR body, ignores HTML comments, verifies that the issue exists, and rechecks open
+  PRs automatically when `triaged` is added.
 - A conventional PR title.
 - A summary of user-visible behavior, developer-facing behavior, or policy changed by the PR.
 - Relevant tests or a brief explanation for why tests do not apply.
@@ -159,9 +165,13 @@ Every PR should include:
 - A secrets check. Do not commit API keys, service tokens, private keys, credentials, or real endpoint secrets. Use
   environment variables, local `.env` files, or GitHub Actions secrets instead.
 
+PRs with failing checks receive stale reminders after a period of inactivity. External PRs with failing checks may be
+closed automatically after a reminder if there is still no author activity. Collaborator PRs receive reminders only.
+Maintainers can add the `keep-open` label to suppress stale reminders and auto-close behavior.
+
 CODEOWNERS:
 
-- `src` and `tests`: `@NVIDIA-NeMo/anonymizer-reviewers`
+- `src`, `tests`, and `docs`: `@NVIDIA-NeMo/anonymizer-reviewers`
 - All remaining files, including `pyproject.toml`, `uv.lock`, `SECURITY.md`, `LICENSE`, and `.github/`: `@NVIDIA-NeMo/anonymizer-maintainers`
 
 ## Agent-Assisted Development
@@ -176,12 +186,12 @@ For non-trivial changes, draft a plan first. Non-trivial includes:
 - Changes to repository policy, CI, release automation, or documentation publishing.
 - Changes to invariants called out in [AGENTS.md](AGENTS.md) or [STYLEGUIDE.md](STYLEGUIDE.md).
 
-Plan PR expectations:
+Plan document expectations:
 
 - Save the plan at `plans/<issue-number>/<short-name>.md`.
 - Explain the goal, affected subsystems, trade-offs considered, validation strategy, and rollout plan.
-- Get maintainer review before implementation.
-- Link the plan PR from the implementation PR.
+- Get maintainer review before or during implementation, depending on the change scope.
+- Link the plan document from the implementation PR. If maintainers decide a plan is not needed, include `No plan required: <reason>` in the implementation PR.
 
 Implementation expectations:
 

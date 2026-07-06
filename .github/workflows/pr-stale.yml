@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Stale PR Reminder
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale-check:
+    name: Check stale PRs
+    if: github.repository_owner == 'NVIDIA-NeMo'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check stale PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          now=$(date -u +%s)
+
+          remind_days_external=7
+          close_days_external=14
+          remind_days_collaborator=14
+
+          reminder_marker="<!-- stale-pr-reminder -->"
+          close_marker="<!-- stale-pr-closed -->"
+
+          prs=$(gh pr list --repo "$REPO" --state open \
+            --json number,author,labels,createdAt --limit 200)
+
+          pr_count=$(echo "$prs" | jq 'length')
+          echo "Found ${pr_count} open PRs"
+
+          echo "$prs" | jq -c '.[]' | while IFS= read -r pr; do
+            pr_num=$(echo "$pr" | jq -r '.number')
+            author=$(echo "$pr" | jq -r '.author.login')
+            labels=$(echo "$pr" | jq -r '[.labels[].name] | join(",")')
+
+            echo "--- PR #${pr_num} by ${author} ---"
+
+            if echo "$labels" | grep -q "keep-open"; then
+              echo "  Skipping: has keep-open label"
+              continue
+            fi
+
+            if [ "$author" = "dependabot[bot]" ]; then
+              is_external=false
+            else
+              permission=$(gh api "repos/${REPO}/collaborators/${author}/permission" \
+                --jq '.permission' 2>/dev/null || echo "none")
+
+              is_external=true
+              if [ "$permission" = "admin" ] || [ "$permission" = "write" ]; then
+                is_external=false
+              fi
+            fi
+
+            if [ "$is_external" = "true" ]; then
+              remind_days=$remind_days_external
+            else
+              remind_days=$remind_days_collaborator
+            fi
+
+            checks_json=$(gh pr checks "$pr_num" --repo "$REPO" --json name,state 2>/dev/null || echo "[]")
+            failing=$(echo "$checks_json" | jq '[.[] | select(.state == "FAILURE" or .state == "ERROR")] | length')
+
+            if [ "$failing" -eq 0 ]; then
+              echo "  Skipping: no failing checks"
+              continue
+            fi
+
+            failing_names=$(echo "$checks_json" | jq -r '[.[] | select(.state == "FAILURE" or .state == "ERROR") | .name] | join(", ")')
+            echo "  Failing checks (${failing}): ${failing_names}"
+
+            last_push=$(gh api "repos/${REPO}/pulls/${pr_num}/commits" \
+              --jq 'last | .commit.committer.date' 2>/dev/null || echo "")
+            last_comment=$(gh api "repos/${REPO}/issues/${pr_num}/comments" \
+              --jq "[.[] | select(.user.login == \"${author}\") | .created_at] | last" 2>/dev/null || echo "")
+
+            last_push_epoch=0
+            last_comment_epoch=0
+            if [ -n "$last_push" ] && [ "$last_push" != "null" ]; then
+              last_push_epoch=$(date -u -d "$last_push" +%s 2>/dev/null || echo 0)
+            fi
+            if [ -n "$last_comment" ] && [ "$last_comment" != "null" ]; then
+              last_comment_epoch=$(date -u -d "$last_comment" +%s 2>/dev/null || echo 0)
+            fi
+
+            if [ "$last_push_epoch" -gt "$last_comment_epoch" ]; then
+              last_activity_epoch=$last_push_epoch
+            else
+              last_activity_epoch=$last_comment_epoch
+            fi
+
+            if [ "$last_activity_epoch" -eq 0 ]; then
+              created=$(echo "$pr" | jq -r '.createdAt')
+              last_activity_epoch=$(date -u -d "$created" +%s 2>/dev/null || echo "$now")
+            fi
+
+            days_inactive=$(( (now - last_activity_epoch) / 86400 ))
+            echo "  Days inactive: ${days_inactive} (remind=${remind_days}, external=${is_external})"
+
+            reminder_json=$(gh api "repos/${REPO}/issues/${pr_num}/comments" \
+              --jq "[.[] | select(.body | contains(\"${reminder_marker}\"))] | last // empty" 2>/dev/null || echo "")
+
+            has_reminder=0
+            if [ -n "$reminder_json" ]; then
+              has_reminder=1
+              reminder_id=$(echo "$reminder_json" | jq -r '.id')
+              reminder_date=$(echo "$reminder_json" | jq -r '.created_at')
+              reminder_epoch=$(date -u -d "$reminder_date" +%s 2>/dev/null || echo 0)
+
+              if [ "$last_activity_epoch" -gt "$reminder_epoch" ]; then
+                echo "  Activity after reminder - deleting stale reminder, resetting timer"
+                gh api -X DELETE "repos/${REPO}/issues/comments/${reminder_id}" 2>/dev/null || true
+                has_reminder=0
+              fi
+            fi
+
+            if [ "$is_external" = "true" ] && [ "$days_inactive" -ge "$close_days_external" ] && [ "$has_reminder" -gt 0 ]; then
+              echo "  Closing external PR #${pr_num} (inactive ${days_inactive} days, reminder was posted)"
+
+              close_body=$(cat <<MSG
+          ${close_marker}
+          ### Auto-closed: inactive PR
+
+          This external PR has been automatically closed after ${days_inactive} days of inactivity
+          with failing checks.
+
+          Feel free to reopen this PR once you're ready to address the outstanding checks.
+          If you believe this was closed in error, ask a maintainer to add the \`keep-open\` label and reopen.
+          MSG
+          )
+              echo "$close_body" > /tmp/close-body.md
+              gh pr comment "$pr_num" --repo "$REPO" --body-file /tmp/close-body.md
+              gh pr close "$pr_num" --repo "$REPO"
+
+            elif [ "$days_inactive" -ge "$remind_days" ] && [ "$has_reminder" -eq 0 ]; then
+              echo "  Posting reminder on PR #${pr_num} (inactive ${days_inactive} days)"
+
+              if [ "$is_external" = "true" ]; then
+                grace_left=$(( close_days_external - days_inactive ))
+                if [ "$grace_left" -lt 1 ]; then
+                  grace_left=1
+                fi
+
+                remind_body=$(cat <<MSG
+          ${reminder_marker}
+          ### Stale PR reminder
+
+          This PR has had failing checks for **${days_inactive} days** without author activity.
+
+          **Failing checks:** ${failing_names}
+
+          Please push an update or leave a comment if you're still working on this.
+          Otherwise, this external PR will be automatically closed in **${grace_left} days**.
+
+          To prevent auto-close, ask a maintainer to add the \`keep-open\` label.
+          MSG
+          )
+              else
+                remind_body=$(cat <<MSG
+          ${reminder_marker}
+          ### Stale PR reminder
+
+          This PR has had failing checks for **${days_inactive} days** without author activity.
+
+          **Failing checks:** ${failing_names}
+
+          Please push an update or leave a comment if you're still working on this.
+          No automatic close action will be taken for collaborator PRs.
+
+          To stop reminders, add the \`keep-open\` label.
+          MSG
+          )
+              fi
+
+              echo "$remind_body" > /tmp/remind-body.md
+              gh pr comment "$pr_num" --repo "$REPO" --body-file /tmp/remind-body.md
+
+            else
+              echo "  No action needed"
+            fi
+          done
+
+          echo "Stale PR check complete"
