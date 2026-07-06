@@ -35,6 +35,8 @@ Each pipeline stage has a **role** mapped to one of these aliases. See the full 
 
 Pass `model_providers` when you need a non-default endpoint — for example OpenAI, OpenRouter, a local GLiNER server, or an internal inference deployment. Plain `Anonymizer()` already uses bundled [build.nvidia.com](https://build.nvidia.com) settings; override only when your models point at a different provider name or URL.
 
+For a GPU-hosted OpenAI-compatible LLM endpoint, see [Run local vLLM models](local-vllm.md). That guide covers the source-tree helper, optional dependencies, and a `local-vllm` provider configuration.
+
 Set your API keys first:
 
 ```bash
