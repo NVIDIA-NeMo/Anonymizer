@@ -59,6 +59,9 @@ docs = [
     "mkdocs-jupyter",
     "jupytext",
 ]
+local-models = [
+    "vllm==0.20.0; sys_platform == 'linux'",
+]
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
