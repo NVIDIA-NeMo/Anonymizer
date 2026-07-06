@@ -42,6 +42,8 @@ GLiNER2 service, or an internal inference deployment. Plain `Anonymizer()` uses 
 detector and [build.nvidia.com](https://build.nvidia.com) LLM settings; override when your models point
 at different provider names or URLs.
 
+For a GPU-hosted OpenAI-compatible LLM endpoint, see [Run local vLLM models](local-vllm.md). That guide covers the source-tree helper, optional dependencies, and a `local-vllm` provider configuration.
+
 Set your API keys first:
 
 ```bash

@@ -161,6 +161,7 @@ nav:
       - Choosing a Strategy: concepts/choosing-a-strategy.md
       - Evaluation: concepts/evaluation.md
       - Self-hosting GLiNER: concepts/self-hosting-gliner.md
+      - Run Local vLLM Models: concepts/local-vllm.md
   - Troubleshooting: troubleshooting.md
   - Tutorials:
       - Overview: tutorials/index.md
