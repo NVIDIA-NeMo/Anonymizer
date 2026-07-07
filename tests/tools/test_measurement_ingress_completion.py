@@ -187,11 +187,11 @@ def test_wandb_staging_allows_repeated_basename_in_foreign_intermediate_director
     output = tmp_path / temp_root.name
     output.mkdir()
     real_fstat = wandb_setup_tool.os.fstat
+    temp_root_metadata = temp_root.stat()
 
     def fstat_with_foreign_temp_root(descriptor: int) -> Any:
         metadata = real_fstat(descriptor)
-        descriptor_path = Path(wandb_setup_tool.os.readlink(f"/proc/self/fd/{descriptor}"))
-        if descriptor_path == temp_root:
+        if (metadata.st_dev, metadata.st_ino) == (temp_root_metadata.st_dev, temp_root_metadata.st_ino):
             return SimpleNamespace(st_mode=metadata.st_mode, st_uid=metadata.st_uid + 1)
         return metadata
 
