@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
@@ -18,19 +16,37 @@ import yaml
 from pydantic import ValidationError
 
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT
+from tests.tools.measurement_test_support import (
+    _load_measurement_fixture,
+    _minimal_benchmark_case,
+    _minimal_benchmark_spec,
+    _write_text_input,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def load_tool(module_name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    sys.path.insert(0, str(path.parent))
-    spec.loader.exec_module(module)
-    return module
+def _anonymizer_result_from_fixture(result_cls: type[Any], payload: dict[str, Any]) -> Any:
+    return result_cls(
+        dataframe=pd.DataFrame(payload["dataframe"]),
+        trace_dataframe=pd.DataFrame(payload["trace_dataframe"]),
+        resolved_text_column="text",
+        failed_records=[],
+        replace_method=None,
+    )
+
+
+class _FakeEvaluatingAnonymizer:
+    def __init__(self, run_result: Any, evaluated_result: Any) -> None:
+        self.run_result = run_result
+        self.evaluated_result = evaluated_result
+
+    def run(self, *, config: Any, data: Any) -> Any:
+        return self.run_result
+
+    def evaluate(self, result: Any) -> Any:
+        assert result is self.run_result
+        return self.evaluated_result
 
 
 def _minimal_case_contexts(tool: ModuleType, spec: Any, tmp_path: Path) -> dict[str, Any]:
@@ -47,48 +63,6 @@ def _minimal_case_contexts(tool: ModuleType, spec: Any, tmp_path: Path) -> dict[
     }
 
 
-def _minimal_benchmark_spec(
-    tool: ModuleType,
-    *,
-    suite_id: str = "suite",
-    configs: list[Any] | None = None,
-    case_retries: int = 0,
-    case_retry_backoff_sec: float = 0.0,
-    run_tags: dict[str, Any] | None = None,
-) -> Any:
-    return tool.BenchmarkSpec(
-        suite_id=suite_id,
-        case_retries=case_retries,
-        case_retry_backoff_sec=case_retry_backoff_sec,
-        run_tags=run_tags or {},
-        workloads=[tool.WorkloadSpec(id="input", source="input.csv")],
-        configs=configs or [tool.ConfigSpec(id="redact", replace="redact")],
-    )
-
-
-def _minimal_benchmark_case(
-    tool: ModuleType,
-    *,
-    suite_id: str = "suite",
-    workload_id: str = "input",
-    config_id: str = "redact",
-    repetition: int = 0,
-) -> Any:
-    return tool.BenchmarkCase(
-        suite_id=suite_id,
-        workload_id=workload_id,
-        config_id=config_id,
-        repetition=repetition,
-        case_id=f"{workload_id}__{config_id}__r{repetition:03d}",
-    )
-
-
-def _write_text_input(tmp_path: Path, text: str = "Alice works at Acme") -> Path:
-    input_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": [text]}).to_csv(input_path, index=False)
-    return input_path
-
-
 def _copy_biography_data(tmp_path: Path, filename: str = "input.csv") -> Path:
     source = REPO_ROOT / "docs" / "data" / "NVIDIA_synthetic_biographies.csv"
     destination = tmp_path / filename
@@ -96,7 +70,50 @@ def _copy_biography_data(tmp_path: Path, filename: str = "input.csv") -> Path:
     return destination
 
 
-def test_benchmark_spec_rejects_duplicate_matrix_entries() -> None:
+def _assert_evaluation_record_matches_fixture(row: dict[str, Any], fixture: dict[str, Any]) -> None:
+    assert fixture["expected_evaluation_fields"].items() <= row.items()
+    assert set(fixture["forbidden_fields"]).isdisjoint(row)
+
+
+def _assert_raw_fixture_values_absent(serialized: str, fixture: dict[str, Any]) -> None:
+    for raw_value in fixture["dangerous_values"]:
+        assert raw_value not in serialized
+
+
+def _execute_substitute_evaluation_case(tool: ModuleType, tmp_path: Path, anonymizer: Any, input_text: str) -> Path:
+    spec = _minimal_benchmark_spec(
+        tool,
+        suite_id="evaluate-suite",
+        configs=[
+            tool.ConfigSpec(
+                id="substitute",
+                replace=tool.ReplaceSpec(strategy=tool.ReplaceKind.substitute),
+                evaluate=True,
+            )
+        ],
+    )
+    _write_text_input(tmp_path, input_text)
+    case = _minimal_benchmark_case(tool, suite_id="evaluate-suite", config_id="substitute")
+    measurement_path = tmp_path / "raw" / "input__substitute__r000.jsonl"
+
+    tool._execute_case(
+        anonymizer,
+        spec.workloads[0],
+        spec.configs[0],
+        raw_path=measurement_path,
+        trace_path=None,
+        task_trace_path=None,
+        case=case,
+        spec=spec,
+        base_dir=tmp_path,
+        dd_trace=tool.DDTraceMode.none,
+    )
+    return measurement_path
+
+
+def test_benchmark_spec_rejects_duplicate_matrix_entries(
+    load_tool: Callable[..., ModuleType],
+) -> None:
     tool = load_tool("measurement_benchmark_tool_duplicate_matrix", REPO_ROOT / "tools/measurement/run_benchmarks.py")
 
     with pytest.raises(ValidationError, match="duplicate matrix workload/config entry"):
@@ -111,7 +128,9 @@ def test_benchmark_spec_rejects_duplicate_matrix_entries() -> None:
         )
 
 
-def test_benchmark_spec_rejects_reserved_run_tags() -> None:
+def test_benchmark_spec_rejects_reserved_run_tags(
+    load_tool: Callable[..., ModuleType],
+) -> None:
     tool = load_tool("measurement_benchmark_tool_reserved_tags", REPO_ROOT / "tools/measurement/run_benchmarks.py")
 
     with pytest.raises(ValidationError, match="reserved benchmark tag"):
@@ -123,7 +142,9 @@ def test_benchmark_spec_rejects_reserved_run_tags() -> None:
         )
 
 
-def test_benchmark_config_rejects_evaluate_on_rewrite() -> None:
+def test_benchmark_config_rejects_evaluate_on_rewrite(
+    load_tool: Callable[..., ModuleType],
+) -> None:
     tool = load_tool("measurement_benchmark_tool_evaluate_rewrite", REPO_ROOT / "tools/measurement/run_benchmarks.py")
 
     with pytest.raises(ValidationError, match="evaluate is only supported for replace configs"):
@@ -134,7 +155,7 @@ def test_benchmark_config_rejects_evaluate_on_rewrite() -> None:
         )
 
 
-def test_export_measurements_groups_records_by_type(tmp_path: Path) -> None:
+def test_export_measurements_groups_records_by_type(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool("measurement_export_tool", REPO_ROOT / "tools/measurement/export_measurements.py")
     dataframe = pd.DataFrame(
         [
@@ -158,7 +179,7 @@ def test_export_measurements_groups_records_by_type(tmp_path: Path) -> None:
     assert (tmp_path / "tables/manifest.json").exists()
 
 
-def test_benchmark_exports_detection_artifact_analysis(tmp_path: Path) -> None:
+def test_benchmark_exports_detection_artifact_analysis(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool("measurement_benchmark_tool_artifact_analysis", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     artifact_root = tmp_path / "artifacts"
     parquet_dir = artifact_root / "entity-detection" / "parquet-files"
@@ -185,7 +206,9 @@ def test_benchmark_exports_detection_artifact_analysis(tmp_path: Path) -> None:
     assert "Alice" not in output_path.read_text(encoding="utf-8")
 
 
-def test_benchmark_detection_artifact_analysis_ignores_stale_artifacts(tmp_path: Path) -> None:
+def test_benchmark_detection_artifact_analysis_ignores_stale_artifacts(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool("measurement_benchmark_tool_artifact_delta", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     artifact_root = tmp_path / "artifacts"
     stale_dir = artifact_root / "entity-detection-old" / "parquet-files"
@@ -228,7 +251,9 @@ def test_benchmark_detection_artifact_analysis_ignores_stale_artifacts(tmp_path:
     assert rows["final_entity_count"].tolist() == [1]
 
 
-def test_benchmark_case_detection_artifact_analysis_adds_case_metadata(tmp_path: Path) -> None:
+def test_benchmark_case_detection_artifact_analysis_adds_case_metadata(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool("measurement_benchmark_tool_artifact_case", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     artifact_root = tmp_path / "artifacts"
     parquet_dir = artifact_root / "entity-detection" / "parquet-files"
@@ -274,6 +299,7 @@ def test_benchmark_case_detection_artifact_analysis_adds_case_metadata(tmp_path:
 
 
 def test_run_suite_records_detection_artifact_analysis_path(
+    load_tool: Callable[..., ModuleType],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -321,15 +347,21 @@ def test_run_suite_records_detection_artifact_analysis_path(
     )
 
     assert result.detection_artifact_analysis_path == str(analysis_path)
+    assert result.execution["backend"] == "local"
+    assert result.execution["export"] is True
+    assert result.execution["fail_fast"] is False
     assert analysis_path.read_text(encoding="utf-8") == (
         '{"case_id":"input__redact__r000","workflow_name":"entity-detection"}\n'
     )
     summary = (output_dir / "summary.json").read_text(encoding="utf-8")
+    summary_payload = json.loads(summary)
+    assert summary_payload["execution"] == result.execution
     assert "detection_artifact_analysis_path" in summary
     assert "detection_artifact_path" in summary
 
 
 def test_run_suite_skips_detection_artifact_analysis_when_export_disabled(
+    load_tool: Callable[..., ModuleType],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -374,6 +406,7 @@ def test_run_suite_skips_detection_artifact_analysis_when_export_disabled(
 
 
 def test_benchmark_case_retries_transient_errors_and_records_attempts(
+    load_tool: Callable[..., ModuleType],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -408,6 +441,7 @@ def test_benchmark_case_retries_transient_errors_and_records_attempts(
 
 
 def test_benchmark_case_records_persistent_retry_failures(
+    load_tool: Callable[..., ModuleType],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -449,6 +483,7 @@ def test_benchmark_case_records_persistent_retry_failures(
 
 
 def test_benchmark_case_fail_fast_skips_retries(
+    load_tool: Callable[..., ModuleType],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -479,7 +514,9 @@ def test_benchmark_case_fail_fast_skips_retries(
     assert attempts == 1
 
 
-def test_combine_detection_artifact_analysis_separates_jsonl_chunks(tmp_path: Path) -> None:
+def test_combine_detection_artifact_analysis_separates_jsonl_chunks(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_tool_combine_artifact_newlines",
         REPO_ROOT / "tools/measurement/run_benchmarks.py",
@@ -514,7 +551,7 @@ def test_combine_detection_artifact_analysis_separates_jsonl_chunks(tmp_path: Pa
     assert destination.read_text(encoding="utf-8") == '{"case_id":"one"}\n{"case_id":"two"}\n'
 
 
-def test_benchmark_spec_validates_matrix_references(tmp_path: Path) -> None:
+def test_benchmark_spec_validates_matrix_references(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool("measurement_benchmark_tool", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
@@ -537,7 +574,9 @@ matrix:
         tool.load_spec(spec_path)
 
 
-def test_benchmark_partial_rewrite_goal_uses_public_defaults() -> None:
+def test_benchmark_partial_rewrite_goal_uses_public_defaults(
+    load_tool: Callable[..., ModuleType],
+) -> None:
     tool = load_tool("measurement_benchmark_tool_defaults", REPO_ROOT / "tools/measurement/run_benchmarks.py")
 
     rewrite = tool.build_rewrite(tool.RewriteSpec(protect="Direct payroll identifiers"))
@@ -546,7 +585,9 @@ def test_benchmark_partial_rewrite_goal_uses_public_defaults() -> None:
     assert rewrite.privacy_goal.preserve == DEFAULT_PRESERVE_TEXT
 
 
-def test_benchmark_output_dir_requires_overwrite_for_existing_files(tmp_path: Path) -> None:
+def test_benchmark_output_dir_requires_overwrite_for_existing_files(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool("measurement_benchmark_tool_output", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     output_dir = tmp_path / "benchmark-output"
     output_dir.mkdir()
@@ -562,7 +603,7 @@ def test_benchmark_output_dir_requires_overwrite_for_existing_files(tmp_path: Pa
     assert not existing.exists()
 
 
-def test_benchmark_dry_run_expands_cases_without_writing(tmp_path: Path) -> None:
+def test_benchmark_dry_run_expands_cases_without_writing(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool("measurement_benchmark_tool_dry_run", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
@@ -596,11 +637,14 @@ matrix:
 
     assert len(result.cases) == 2
     assert result.table_dir is None
+    assert result.execution["backend"] == "local"
+    assert result.execution["export"] is False
+    assert result.execution["fail_fast"] is False
     assert {case.status for case in result.cases} == {tool.CaseStatus.planned}
     assert not output_dir.exists()
 
 
-def test_benchmark_preflight_rejects_missing_text_column(tmp_path: Path) -> None:
+def test_benchmark_preflight_rejects_missing_text_column(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool("measurement_benchmark_tool_preflight_input", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     input_path = tmp_path / "input.csv"
     pd.DataFrame({"body": ["Alice works at Acme"]}).to_csv(input_path, index=False)
@@ -624,7 +668,7 @@ configs:
         tool.preflight_suite(spec, spec_path=spec_path)
 
 
-def test_build_input_materializes_sliced_csv_workload(tmp_path: Path) -> None:
+def test_build_input_materializes_sliced_csv_workload(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool("measurement_benchmark_tool_sliced_input", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     input_path = tmp_path / "input.csv"
     pd.DataFrame({"id": ["a", "b", "c", "d"], "text": ["row-a", "row-b", "row-c", "row-d"]}).to_csv(
@@ -656,7 +700,9 @@ def test_build_input_materializes_sliced_csv_workload(tmp_path: Path) -> None:
     ]
 
 
-def test_benchmark_preflight_rejects_sliced_remote_workload(tmp_path: Path) -> None:
+def test_benchmark_preflight_rejects_sliced_remote_workload(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool("measurement_benchmark_tool_sliced_remote", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     spec_path = tmp_path / "suite.yaml"
     spec_path.write_text(
@@ -678,7 +724,9 @@ configs:
         tool.preflight_suite(spec, spec_path=spec_path)
 
 
-def test_benchmark_preflight_rejects_bad_model_alias_references(tmp_path: Path) -> None:
+def test_benchmark_preflight_rejects_bad_model_alias_references(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool("measurement_benchmark_tool_preflight_models", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     _copy_biography_data(tmp_path)
     spec_path = tmp_path / "suite.yaml"
@@ -719,7 +767,9 @@ configs:
         tool.preflight_suite(spec, spec_path=spec_path)
 
 
-def test_benchmark_preflight_rejects_missing_evaluate_model_alias(tmp_path: Path) -> None:
+def test_benchmark_preflight_rejects_missing_evaluate_model_alias(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool(
         "measurement_benchmark_tool_preflight_evaluate_models", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
@@ -803,7 +853,9 @@ def test_benchmark_example_suites_are_portable() -> None:
                     )
 
 
-def test_benchmark_ci_dd_trace_options_match_runner_enum() -> None:
+def test_benchmark_ci_dd_trace_options_match_runner_enum(
+    load_tool: Callable[..., ModuleType],
+) -> None:
     tool = load_tool("measurement_benchmark_tool_ci", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/benchmark-ci.yml").read_text(encoding="utf-8"))
     on_section = workflow.get("on", workflow.get(True))
@@ -813,7 +865,7 @@ def test_benchmark_ci_dd_trace_options_match_runner_enum() -> None:
     assert options == [mode.value for mode in tool.DDTraceMode]
 
 
-def test_benchmark_preflight_rejects_bad_provider_config(tmp_path: Path) -> None:
+def test_benchmark_preflight_rejects_bad_provider_config(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool(
         "measurement_benchmark_tool_preflight_providers", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
@@ -841,7 +893,7 @@ configs:
         tool.preflight_suite(spec, spec_path=spec_path)
 
 
-def test_benchmark_preflight_accepts_provider_config_path(tmp_path: Path) -> None:
+def test_benchmark_preflight_accepts_provider_config_path(load_tool: Callable[..., ModuleType], tmp_path: Path) -> None:
     tool = load_tool(
         "measurement_benchmark_tool_preflight_provider_path", REPO_ROOT / "tools/measurement/run_benchmarks.py"
     )
@@ -878,6 +930,7 @@ configs:
 
 
 def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
+    load_tool: Callable[..., ModuleType],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -937,6 +990,7 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
 
 
 def test_benchmark_case_can_run_optional_evaluation(
+    load_tool: Callable[..., ModuleType],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -991,97 +1045,20 @@ def test_benchmark_case_can_run_optional_evaluation(
     assert calls == [("run", tool.Redact(), "text"), ("evaluate", run_result)]
 
 
-def test_benchmark_optional_evaluation_records_sanitized_judge_metrics(tmp_path: Path) -> None:
+def test_benchmark_optional_evaluation_records_sanitized_judge_metrics(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
     tool = load_tool("measurement_benchmark_tool_evaluate_metrics", REPO_ROOT / "tools/measurement/run_benchmarks.py")
     from anonymizer.interface.results import AnonymizerResult
 
-    dangerous_values = [
-        "alice@example.com",
-        "bob@example.com",
-        "sk-secret-123",
-        "replacement-output-secret",
-        "nested-malformed-secret",
-        "raw judge prompt",
-        "raw judge response",
-    ]
-    run_result = AnonymizerResult(
-        dataframe=pd.DataFrame({"text": ["Alice has sk-secret-123"]}),
-        trace_dataframe=pd.DataFrame({"text": ["Alice has sk-secret-123"]}),
-        resolved_text_column="text",
-        failed_records=[],
-        replace_method=None,
-    )
-    evaluated_public_columns = {
-        "text": ["Alice has sk-secret-123"],
-        "text_replaced": ["Avery has replacement-output-secret"],
-        "final_entities": [[{"value": "alice@example.com", "label": "email"}]],
-        "detection_valid": [False],
-        "detection_invalid_entities": [{"invalid_entities": [{"value": "alice@example.com", "label": "email"}]}],
-        "type_fidelity_valid": [False],
-        "type_fidelity_invalid_replacements": [
-            {"invalid_replacements": [{"original": "alice@example.com", "synthetic": "bob@example.com"}]}
-        ],
-        "relational_consistency_valid": [False],
-        "relational_consistency_invalid_relations": [{"invalid_relations": [{"reasoning": "raw judge response"}]}],
-        "attribute_fidelity_valid": [False],
-        "attribute_fidelity_invalid_entities": ['[{"entity": "nested-malformed-secret"}'],
-    }
-    evaluated_result = AnonymizerResult(
-        dataframe=pd.DataFrame(evaluated_public_columns),
-        trace_dataframe=pd.DataFrame(
-            {
-                **evaluated_public_columns,
-                "_detection_judge": [
-                    {
-                        "prompt": "raw judge prompt",
-                        "response": "raw judge response",
-                        "invalid_entities": [{"value": "alice@example.com"}],
-                    }
-                ],
-                "_type_fidelity_judge": [
-                    {"invalid_replacements": [{"original": "alice@example.com", "synthetic": "bob@example.com"}]}
-                ],
-            }
-        ),
-        resolved_text_column="text",
-        failed_records=[],
-        replace_method=None,
-    )
-
-    class FakeAnonymizer:
-        def run(self, *, config: Any, data: Any) -> AnonymizerResult:
-            return run_result
-
-        def evaluate(self, result: AnonymizerResult) -> AnonymizerResult:
-            assert result is run_result
-            return evaluated_result
-
-    spec = _minimal_benchmark_spec(
+    fixture = _load_measurement_fixture("evaluation-sanitization.json")
+    run_result = _anonymizer_result_from_fixture(AnonymizerResult, fixture["run_result"])
+    evaluated_result = _anonymizer_result_from_fixture(AnonymizerResult, fixture["evaluated_result"])
+    measurement_path = _execute_substitute_evaluation_case(
         tool,
-        suite_id="evaluate-suite",
-        configs=[
-            tool.ConfigSpec(
-                id="substitute",
-                replace=tool.ReplaceSpec(strategy=tool.ReplaceKind.substitute),
-                evaluate=True,
-            )
-        ],
-    )
-    _write_text_input(tmp_path, "Alice has sk-secret-123")
-    case = _minimal_benchmark_case(tool, suite_id="evaluate-suite", config_id="substitute")
-    measurement_path = tmp_path / "raw" / "input__substitute__r000.jsonl"
-
-    tool._execute_case(
-        FakeAnonymizer(),
-        spec.workloads[0],
-        spec.configs[0],
-        raw_path=measurement_path,
-        trace_path=None,
-        task_trace_path=None,
-        case=case,
-        spec=spec,
-        base_dir=tmp_path,
-        dd_trace=tool.DDTraceMode.none,
+        tmp_path,
+        _FakeEvaluatingAnonymizer(run_result, evaluated_result),
+        fixture["input_text"],
     )
 
     serialized = measurement_path.read_text(encoding="utf-8")
@@ -1089,43 +1066,13 @@ def test_benchmark_optional_evaluation_records_sanitized_judge_metrics(tmp_path:
     evaluation_rows = [row for row in rows if row["record_type"] == "evaluation_record"]
 
     assert len(evaluation_rows) == 1
-    assert {
-        "record_type": "evaluation_record",
-        "mode": "replace",
-        "strategy": "Substitute",
-        "row_index": 0,
-        "detection_valid": False,
-        "detection_invalid_entity_count": 1,
-        "type_fidelity_valid": False,
-        "type_fidelity_invalid_replacement_count": 1,
-        "relational_consistency_valid": False,
-        "relational_consistency_invalid_relation_count": 1,
-        "attribute_fidelity_valid": False,
-        "attribute_fidelity_invalid_entity_count": 0,
-    }.items() <= evaluation_rows[0].items()
-    forbidden_fields = {
-        "text",
-        "text_replaced",
-        "text_with_spans",
-        "final_entities",
-        "detection_invalid_entities",
-        "type_fidelity_invalid_replacements",
-        "relational_consistency_invalid_relations",
-        "attribute_fidelity_invalid_entities",
-        "_detection_judge",
-        "_type_fidelity_judge",
-        "_relational_consistency_judge",
-        "_attribute_fidelity_judge",
-    }
-    assert forbidden_fields.isdisjoint(evaluation_rows[0])
-    for raw_value in dangerous_values:
-        assert raw_value not in serialized
+    _assert_evaluation_record_matches_fixture(evaluation_rows[0], fixture)
+    _assert_raw_fixture_values_absent(serialized, fixture)
 
     table_dir = tmp_path / "tables"
     tool.export_measurement_tables(measurement_path, table_dir)
     exported = pd.read_parquet(table_dir / "evaluation_record.parquet")
     exported_text = str(exported.to_json(orient="records"))
 
-    assert forbidden_fields.isdisjoint(exported.columns)
-    for raw_value in dangerous_values:
-        assert raw_value not in exported_text
+    assert set(fixture["forbidden_fields"]).isdisjoint(exported.columns)
+    _assert_raw_fixture_values_absent(exported_text, fixture)

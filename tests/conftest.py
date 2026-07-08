@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
-from collections.abc import Generator
+import sys
+from collections.abc import Callable, Generator
+from pathlib import Path
+from types import ModuleType
 
 import pandas as pd
 import pytest
@@ -21,6 +25,29 @@ from anonymizer.config.models import (
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
+
+
+@pytest.fixture
+def load_tool() -> Callable[..., ModuleType]:
+    """Load a Python tool module with isolated module state."""
+
+    def loader(
+        module_name: str,
+        path: Path,
+        *,
+        additional_paths: tuple[Path, ...] = (),
+    ) -> ModuleType:
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        for import_path in (*additional_paths, path.parent):
+            sys.path.insert(0, str(import_path))
+        spec.loader.exec_module(module)
+        return module
+
+    return loader
 
 
 @pytest.fixture(autouse=True)

@@ -63,7 +63,7 @@ raw = pd.read_json("benchmark-runs/suite/measurements.jsonl", lines=True)
 
 ## System overview
 
-The measurement system has three layers:
+The measurement system has four cooperating layers:
 
 - Instrumentation in Anonymizer emits JSONL records for runs, stages,
   DataDesigner workflows, direct model workflows, per-record safety metrics,
@@ -71,11 +71,13 @@ The measurement system has three layers:
 - Benchmark runners create repeatable workloads and write those JSONL records
   plus optional sidecars such as detection artifacts and DataDesigner traces.
 - Analysis tools convert raw run artifacts into case, group, and model tables.
+- Shared benchmark helpers record sanitized execution context and finalize W&B
+  benchmark logging without moving aggregation into execution backends.
 
 External/distributed execution is a separate boundary. Detection export APIs are
 responsible for building DataDesigner configs that an external runtime can
 execute. The tools here should consume the resulting measurement JSONL,
-detection artifacts, and trace sidecars; they should not own SLURM
+detection artifacts, and trace sidecars; they should not own Slurm
 orchestration or distributed DataDesigner execution.
 
 ## Tool map
@@ -86,10 +88,16 @@ orchestration or distributed DataDesigner execution.
 | Run repeatable Anonymizer suites | `run_benchmarks.py` |
 | Inspect detection artifact sidecars | `analyze_detection_artifacts.py` |
 | Analyze benchmark output directories | `analyze_benchmark_output.py` |
+| Write an atomic external-case completion seal | `write_completion_seal.py` |
+| Import one sealed external case into W&B | `import_wandb_run.py` |
+| Create W&B benchmark workspaces or reports | `create_wandb_report.py` |
+| Run benchmark parameter sweeps | `sweep_benchmarks.py` |
 
 Most workflows start with `run_benchmarks.py`, then either export the raw
 measurement log with `export_measurements.py` or summarize the benchmark output
-directory with `analyze_benchmark_output.py`.
+directory with `analyze_benchmark_output.py`. W&B workflows can also create
+project workspaces, reports, or one-run-per-arm sweeps from the benchmark
+artifacts.
 
 ## Implementation shape
 
@@ -98,9 +106,23 @@ boring command and export policy through `measurement_tools/`:
 
 - `measurement_tools.cli`: `LogFormat`, logging setup, and structured
   bad-input errors.
+- `measurement_tools.execution`: sanitized local/Slurm execution metadata for
+  benchmark summaries and W&B config.
 - `measurement_tools.tables`: `ExportFormat`, model-row table specs, manifest
   writing, and CSV/Parquet/JSONL output.
 - `measurement_tools.stats`: small numeric helpers used by analysis groupers.
+- `measurement_tools.wandb_completion`: completion-seal models, atomic writes,
+  and snapshot verification.
+- `measurement_tools.wandb_ingress`: bounded descriptor-based capture and
+  strict measurement record parsing.
+- `measurement_tools.wandb_metric_schema`: shared W&B metric names, path
+  construction, and scalar aggregation policies.
+- `measurement_tools.wandb_models`: resolved settings and outbound payload
+  models with field exposure policies.
+- `measurement_tools.wandb_report_models`: historical v1 and current v2 report
+  views with explicit comparison axes.
+- `measurement_tools.wandb_setup`: guarded W&B environment, staging, and SDK
+  lifecycle ownership.
 
 This is intentionally composition-based. New analysis tools should declare
 their own row models and call the shared helpers rather than inheriting from a
@@ -239,6 +261,263 @@ Use `run_tags` for stable suite-level metadata copied into every measurement
 record, such as source refs, commit SHAs, CI pipeline IDs, topology labels, or
 benchmark-suite revisions. The runner reserves `suite_id`, `workload_id`,
 `config_id`, `repetition`, and `case_id` for its own case identity tags.
+
+## W&B Benchmark Logging
+
+The benchmark runner can log sanitized measurement summaries to Weights &
+Biases. W&B benchmark logging is disabled by default. Only
+`tools/measurement/run_benchmarks.py` starts W&B runs; the Anonymizer SDK and
+product CLI do not.
+
+Install the optional measurement dependency group before enabling W&B benchmark
+logging:
+
+```bash
+uv sync --group measurement
+```
+
+Enable a benchmark run with CLI flags:
+
+```bash
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode offline
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online --wandb-project my-project
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online --wandb-entity my-team --wandb-group nightly --wandb-job-type benchmark --wandb-run-name biography-smoke-main --wandb-tags privacy,nightly
+uv run python tools/measurement/run_benchmarks.py suite.yaml --wandb-mode online --wandb-base-url https://wandb.example.com
+```
+
+The same settings can come from environment variables when the corresponding
+CLI flag is omitted: `ANONYMIZER_MEASUREMENT_WANDB_MODE`,
+`ANONYMIZER_MEASUREMENT_WANDB_ENTITY`,
+`ANONYMIZER_MEASUREMENT_WANDB_PROJECT`,
+`ANONYMIZER_MEASUREMENT_WANDB_BASE_URL`,
+`ANONYMIZER_MEASUREMENT_WANDB_GROUP`,
+`ANONYMIZER_MEASUREMENT_WANDB_JOB_TYPE`,
+`ANONYMIZER_MEASUREMENT_WANDB_RUN_NAME`,
+`ANONYMIZER_MEASUREMENT_WANDB_TAGS`, and
+`ANONYMIZER_MEASUREMENT_WANDB_LOG_TABLES`. Generic W&B routing variables such
+as `WANDB_MODE`, `WANDB_PROJECT`, `WANDB_GROUP`, `WANDB_JOB_TYPE`, `WANDB_NAME`,
+and `WANDB_TAGS` are deliberately ignored. Precedence is an explicit CLI value,
+then the corresponding `ANONYMIZER_MEASUREMENT_WANDB_*` variable, then the
+publisher default. The W&B SDK still receives its audited timeout variables,
+including `WANDB_HTTP_TIMEOUT` and `WANDB_INIT_TIMEOUT`. Authentication comes
+from the SDK's local credential files under the preserved home directory; the
+publisher removes `WANDB_API_KEY` from the SDK process environment. Set a
+self-hosted endpoint through `--wandb-base-url` or
+`ANONYMIZER_MEASUREMENT_WANDB_BASE_URL`; ambient `WANDB_BASE_URL` is ignored.
+Remote endpoints require HTTPS. Plain HTTP is accepted only for loopback
+development endpoints. SDK error reporting is disabled before W&B is imported.
+W&B limits each tag to 64 characters. Configuration rejects unsafe operator
+tags before benchmark execution. The publisher compacts long generated suite or
+branch tags to a readable prefix plus a 12-character SHA-256 suffix.
+
+Each W&B benchmark run config includes sanitized benchmark metadata: suite/case
+counts, retry and execution flags, package/runtime versions, git
+commit/branch/dirty state, model source presence booleans, workload summaries,
+matrix entries, and one sanitized object per benchmark config. Workload
+metadata stores source kind and suffix instead of the raw source.
+Config metadata records settings such as detection thresholds, entity-label
+count/hash, replacement strategy knobs, rewrite risk tolerance, repair settings,
+and booleans for prompt-bearing fields rather than their raw text.
+
+The benchmark suite finishes and closes its artifacts before the native
+publisher starts. The publisher then reads the measurement JSONL as one bounded
+regular-file snapshot. Descriptor-relative traversal pins every path component
+and refuses symlinks. The publisher verifies the file owner, link count,
+identity, size, SHA-256 digest, schema version, record count, run identities,
+and case statuses before importing or initializing the W&B SDK. Hard links,
+special files, source mutation, oversized lines, excessive JSON nesting, trace
+records, unknown fields, coercions, negative counts, and non-finite numbers
+fail validation. Model-workflow extension fields remain under an explicit
+`local_fields` object in the local artifact; W&B ingress validates that shape
+and excludes the object from outbound payloads. Unknown top-level fields still
+fail validation. The default limits are 32 MiB, 100,000 records, 1 MiB per
+line, and 16 JSON levels.
+Publication remains best-effort at the benchmark boundary, so validation or
+W&B failures do not change benchmark case status.
+
+By default the runner logs only aggregate benchmark and measurement scalars.
+Passing `--wandb-log-tables` uploads sanitized measurement tables as W&B tables;
+this remains separate from DataDesigner trace sidecars. Seven strict table-row
+models project run, stage, record, evaluation, model-workflow, NDD-workflow, and
+trace-coverage records directly from the captured snapshot. The native path
+does not parse those records through Pandas. Strict nested models also validate
+all run config, summary, and history payloads. The runner disables W&B console,
+code, Git, machine metadata, system statistics, and requirements capture. Raw
+input text, prompts, model responses, replacement maps, entity payloads, trace
+records, paths, URLs, data summaries, model/provider config payloads, and suite
+`run_tags` are excluded. Use `--wandb-tags` for tags intentionally sent to W&B.
+
+Suite, workload, and config identifiers, Git branch names, and W&B routing
+fields are visible metadata. Keep these values free of customer data and other
+sensitive information.
+
+W&B writes local run state under `<benchmark-output>/.wandb-private`. The runner
+creates this directory with owner-only permissions before calling the W&B SDK.
+The runner rejects symlinks, untrusted writable parent directories, and output
+directories owned by another user. Keep the directory when an offline run must
+be synchronized later.
+
+During SDK use, a process-wide guard replaces the process environment with a
+minimal runtime allowlist, audited W&B timeout settings, and the fully resolved
+publisher settings. Local W&B credential files remain available through the
+preserved home directory. Environment credentials, proxy settings, custom CA
+settings, and ambient `WANDB_*` values are withheld from the SDK. The
+guard restores the exact original environment after the explicit run handle finishes.
+Nested or concurrent native publishers in one process are rejected. Each
+native run receives a fresh opaque 128-bit ID and uses `resume="never"`.
+Successful initialization is paired with exactly one `finish()` call. Strict
+publisher callers receive both publication and finish errors when both fail;
+the native runner logs only the exception type to avoid echoing source values.
+
+### Import a Sealed Slurm Case
+
+Before an external launcher starts benchmark work, verify W&B authentication from
+the same account or container and the same preserved home directory used by the
+publisher. Keep credentials in the local W&B credential files; do not pass a key
+through the launcher environment or command line.
+
+```bash
+# W&B public cloud
+env -u WANDB_API_KEY uv run wandb login --verify --cloud
+
+# Self-hosted or dedicated cloud
+env -u WANDB_API_KEY uv run wandb login --verify \
+  --host https://wandb.example.com
+```
+
+Both commands verify the stored credential against the selected endpoint and
+exit nonzero on failure. Pass the same endpoint to the benchmark or importer
+through `--wandb-base-url`; the publisher ignores ambient `WANDB_BASE_URL`.
+Avoid `wandb status` in launcher logs because it prints active settings that can
+include credential material. The publisher also withholds proxy and custom-CA
+environment variables, so test connectivity without relying on those variables.
+
+External Slurm workflows must write `completion-seal.json` after the
+measurement writer closes and the case reaches its completed terminal stage
+without an errored workflow or stage record. Every measurement record must
+carry the same `case_id`, `workload_id`, `config_id`, and `repetition` tags, and
+the run ID must equal the case ID. The seal binds the measurement SHA-256
+digest, byte and record counts, expected run ID, case identity, Slurm
+provenance, and producer commit. The writer pins each parent directory without
+following symlinks and rejects untrusted writable directories. The companion
+workflow in `anonymizer-experiments` calls the seal writer after its case report:
+
+```bash
+uv run python tools/measurement/write_completion_seal.py \
+  /path/to/case/benchmark/measurements.jsonl \
+  --case-id dataset__config__r000 \
+  --workload-id dataset-split \
+  --config-id config \
+  --repetition 0 \
+  --phase baseline \
+  --case-index 0 \
+  --slurm-job detection=12345 \
+  --slurm-job replacement=12346 \
+  --producer-repository anonymizer-experiments \
+  --producer-commit 0123456789abcdef0123456789abcdef01234567
+```
+
+Import the sealed case with the strict importer:
+
+```bash
+uv run python tools/measurement/import_wandb_run.py \
+  /path/to/case/benchmark/measurements.jsonl \
+  --seal-path /path/to/case/benchmark/completion-seal.json \
+  --wandb-mode online \
+  --wandb-entity my-team \
+  --wandb-project nemo-anonymizer-benchmarks \
+  --json
+```
+
+The importer captures the seal and JSONL once, verifies their content binding,
+builds the complete typed payload, then initializes W&B. It derives a stable
+128-bit run ID from the destination, sealed case identity, seal digest, schema
+namespace, and sanitizer version. Identical imports use `resume="allow"` and
+converge on the same run ID. A completed matching publication is a no-op;
+recovery of an incomplete publication uses deterministic history step zero,
+and conflicting sealed content is rejected. Changed bytes require a new valid
+seal and produce a different run ID. Init, config, log, summary, and finish failures exit
+nonzero; error logs include the exception type without its message.
+
+Strict online imports require `--wandb-entity` (or
+`ANONYMIZER_MEASUREMENT_WANDB_ENTITY`) so the result always identifies the
+destination and includes a W&B run URL. Offline imports may omit the entity.
+
+The goal of W&B support is to get sanitized benchmark data into W&B. Workspaces,
+reports, views, and panels are presentation layers on top of that data. They
+can be edited in W&B, regenerated with the tooling below, or replaced as the
+benchmark questions change.
+
+Create a W&B benchmark workspace or report for uploaded benchmark runs with
+the report utility:
+
+```bash
+uv run python tools/measurement/create_wandb_report.py \
+  entity/project/run-id
+
+uv run python tools/measurement/create_wandb_report.py \
+  entity/project \
+  --workspace
+```
+
+The benchmark report utility can create a manual W&B workspace with focused
+sections for benchmark summary, privacy, utility, cost/throughput, sweep
+comparison, and sanitized tables. The sweep comparison section includes a Run
+Comparer panel plus parameter-tradeoff panels. The same utility can still build
+a draft report from sanitized benchmark run summary/config fields and a panel
+grid filtered to one run. Pass `--publish` when a report should be saved as a
+published report instead of a draft. Workspace/report generation requires the
+measurement dependency group because it uses the `wandb[workspaces]` extra.
+The reader projects remote data into closed v1 and v2 run views. It groups
+native runs by suite identity, sweep runs by arm identity, and imported runs by
+config identity. Mixed run kinds fail before report creation. The Markdown
+renderer escapes link labels, code spans, table cells, headings, and list text,
+and reconstructs run URLs from validated entity, project, and run identifiers.
+
+Generated workspaces and reports are not canonical artifacts. The W&B project
+data is canonical. If a workspace layout, report panel, or project view stops
+answering the benchmark question, update it directly in W&B or rerun the
+workspace/report command.
+
+Reports include panels for case health and latency, DataDesigner row flow,
+request health, token usage, throughput, record privacy counters, replacement
+quality counters, stage throughput, and sanitized measurement tables when table
+logging is enabled.
+
+For parameter sweeps, use one W&B benchmark run per sweep arm:
+
+```yaml
+sweep_id: qwen-threshold-smoke
+base_suite: ./repo-data-smoke-qwen3-coder-next.yaml
+parameters:
+  configs.*.detect.gliner_threshold: [0.2, 0.4]
+  configs.legal-hash-agent-labels.replace.digest_length: [8, 12]
+```
+
+```bash
+uv run python tools/measurement/sweep_benchmarks.py sweep.yaml \
+  --wandb-mode online \
+  --wandb-entity my-team \
+  --wandb-project nemo-anonymizer-benchmarks \
+  --create-workspace
+```
+
+Each arm materializes a generated suite under the sweep output root and runs
+`run_benchmarks.py` once. Sweep metadata is copied into safe run tags and W&B
+benchmark run config fields such as `sweep_id`, `sweep_arm_id`, and
+`sweep_param_*` so W&B benchmark workspaces and reports can compare arms
+directly. A benchmark group workspace or report can also be created later:
+
+```bash
+uv run python tools/measurement/create_wandb_report.py \
+  my-team/nemo-anonymizer-benchmarks \
+  --group qwen-threshold-smoke
+
+uv run python tools/measurement/create_wandb_report.py \
+  my-team/nemo-anonymizer-benchmarks \
+  --workspace \
+  --group qwen-threshold-smoke
+```
 
 Set `evaluate: true` on a replace config when the benchmark should run
 `Anonymizer.evaluate()` after `run()` and capture the LLM-as-judge work in the

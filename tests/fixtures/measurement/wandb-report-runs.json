@@ -1,0 +1,74 @@
+{
+  "v1_native": {
+    "config": {
+      "benchmark": {"metadata_schema_version": 1, "suite_id": "suite-v1"},
+      "configs": [{"id": "redact", "replace": {"strategy": "redact"}}],
+      "workloads": [{"id": "input", "source_kind": "file", "source_suffix": ".csv"}]
+    },
+    "group": "native-group",
+    "id": "v1-native",
+    "job_type": "benchmark",
+    "name": "V1 native",
+    "summary": {"benchmark/case_completed": 1, "benchmark/case_total": 1}
+  },
+  "v1_sweep": {
+    "config": {
+      "benchmark": {"metadata_schema_version": 1, "suite_id": "suite-v1"},
+      "sweep_arm_id": "arm-000",
+      "sweep_id": "sweep-v1",
+      "sweep_param_configs_all_detect_gliner_threshold": 0.3
+    },
+    "group": "sweep-v1",
+    "id": "v1-sweep",
+    "job_type": "benchmark-sweep",
+    "name": "V1 sweep",
+    "summary": {"benchmark/case_completed": 1, "benchmark/case_total": 1}
+  },
+  "v2_native": {
+    "config": {
+      "benchmark": {"metadata_schema_version": 2, "suite_id": "suite-v2"},
+      "run_kind": "native_suite"
+    },
+    "group": "native-group",
+    "id": "v2-native",
+    "job_type": "benchmark",
+    "name": "V2 native",
+    "summary": {"benchmark/case_completed": 1, "benchmark/case_total": 1}
+  },
+  "v2_sweep": {
+    "config": {
+      "benchmark": {"metadata_schema_version": 2, "suite_id": "suite-v2"},
+      "run_kind": "sweep_arm",
+      "sweep": {
+        "arm_id": "arm-001",
+        "id": "sweep-v2",
+        "params": {"configs_all_detect_gliner_threshold": 0.4}
+      }
+    },
+    "group": "sweep-v2",
+    "id": "v2-sweep",
+    "job_type": "benchmark-sweep",
+    "name": "V2 sweep",
+    "summary": {"benchmark/case_completed": 1, "benchmark/case_total": 1}
+  },
+  "v2_import": {
+    "config": {
+      "benchmark": {"case_count": 1, "metadata_schema_version": 2, "suite_id": "case-v2"},
+      "configs": [{"id": "config-v2"}],
+      "imported": {
+        "case_id": "case-v2",
+        "completion_seal_schema_version": 1,
+        "completion_seal_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "phase": "baseline",
+        "producer_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "producer_repository": "anonymizer-experiments"
+      },
+      "run_kind": "imported_case"
+    },
+    "group": "import-group",
+    "id": "v2-import",
+    "job_type": "benchmark-import",
+    "name": "V2 import",
+    "summary": {"benchmark/case_completed": 1, "benchmark/case_total": 1}
+  }
+}
