@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
-from data_designer.config.run_config import RunConfig
 
+from anonymizer import RunConfig
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
