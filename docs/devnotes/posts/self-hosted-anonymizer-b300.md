@@ -156,14 +156,10 @@ Validation used two Anonymizer model aliases, `qwen-detect-1` and `qwen-detect-2
 
 Separately, `validation_max_entities_per_call=12` kept each validation response small. That knob limits the number of candidates in one structured-output request; it does not cap concurrency.
 
-The run config matters for self-hosted throughput because localhost vLLM only stays busy if the client keeps enough model work in flight. `data_designer_run_config` sets those execution limits while `AnonymizerConfig` stays focused on anonymization behavior.
-
 The snippet keeps the provider and model configuration inline so the example is self-contained. In an application, the same YAML can live in files and be passed by path.
 
 ```python
-from data_designer.config.run_config import RunConfig
-
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Detect, Substitute
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Detect, RunConfig, Substitute
 
 model_providers = """
 providers:
