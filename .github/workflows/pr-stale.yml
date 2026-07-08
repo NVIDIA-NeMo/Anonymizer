@@ -35,6 +35,15 @@ jobs:
           reminder_marker="<!-- stale-pr-reminder -->"
           close_marker="<!-- stale-pr-closed -->"
 
+          to_epoch() {
+            timestamp="$1"
+            if [ -n "$timestamp" ] && [ "$timestamp" != "null" ]; then
+              date -u -d "$timestamp" +%s 2>/dev/null || echo 0
+            else
+              echo 0
+            fi
+          }
+
           prs=$(gh pr list --repo "$REPO" --state open \
             --json number,author,labels,createdAt --limit 200)
 
@@ -82,44 +91,56 @@ jobs:
             failing_names=$(echo "$checks_json" | jq -r '[.[] | select(.state == "FAILURE" or .state == "ERROR") | .name] | join(", ")')
             echo "  Failing checks (${failing}): ${failing_names}"
 
-            last_push=$(gh api "repos/${REPO}/pulls/${pr_num}/commits" \
-              --jq 'last | .commit.committer.date' 2>/dev/null || echo "")
-            last_comment=$(gh api "repos/${REPO}/issues/${pr_num}/comments" \
-              --jq "[.[] | select(.user.login == \"${author}\") | .created_at] | last" 2>/dev/null || echo "")
+            commits_json=$(gh api --paginate --slurp \
+              "repos/${REPO}/pulls/${pr_num}/commits?per_page=100" 2>/dev/null || echo "[]")
+            issue_comments_json=$(gh api --paginate --slurp \
+              "repos/${REPO}/issues/${pr_num}/comments?per_page=100" 2>/dev/null || echo "[]")
+            review_comments_json=$(gh api --paginate --slurp \
+              "repos/${REPO}/pulls/${pr_num}/comments?per_page=100" 2>/dev/null || echo "[]")
 
-            last_push_epoch=0
-            last_comment_epoch=0
-            if [ -n "$last_push" ] && [ "$last_push" != "null" ]; then
-              last_push_epoch=$(date -u -d "$last_push" +%s 2>/dev/null || echo 0)
-            fi
-            if [ -n "$last_comment" ] && [ "$last_comment" != "null" ]; then
-              last_comment_epoch=$(date -u -d "$last_comment" +%s 2>/dev/null || echo 0)
-            fi
+            last_push=$(echo "$commits_json" | jq -r 'flatten | [.[] | .commit.committer.date] | sort | last // empty')
+            last_issue_comment=$(echo "$issue_comments_json" | jq -r --arg author "$author" \
+              'flatten | [.[] | select(.user.login == $author) | .created_at] | sort | last // empty')
+            last_review_comment=$(echo "$review_comments_json" | jq -r --arg author "$author" \
+              'flatten | [.[] | select(.user.login == $author) | .created_at] | sort | last // empty')
 
-            if [ "$last_push_epoch" -gt "$last_comment_epoch" ]; then
-              last_activity_epoch=$last_push_epoch
-            else
-              last_activity_epoch=$last_comment_epoch
+            last_push_epoch=$(to_epoch "$last_push")
+            last_issue_comment_epoch=$(to_epoch "$last_issue_comment")
+            last_review_comment_epoch=$(to_epoch "$last_review_comment")
+
+            last_activity_epoch=$last_push_epoch
+            if [ "$last_issue_comment_epoch" -gt "$last_activity_epoch" ]; then
+              last_activity_epoch=$last_issue_comment_epoch
+            fi
+            if [ "$last_review_comment_epoch" -gt "$last_activity_epoch" ]; then
+              last_activity_epoch=$last_review_comment_epoch
             fi
 
             if [ "$last_activity_epoch" -eq 0 ]; then
               created=$(echo "$pr" | jq -r '.createdAt')
-              last_activity_epoch=$(date -u -d "$created" +%s 2>/dev/null || echo "$now")
+              last_activity_epoch=$(to_epoch "$created")
+              if [ "$last_activity_epoch" -eq 0 ]; then
+                last_activity_epoch=$now
+              fi
             fi
 
             days_inactive=$(( (now - last_activity_epoch) / 86400 ))
             echo "  Days inactive: ${days_inactive} (remind=${remind_days}, external=${is_external})"
 
-            reminder_json=$(gh api "repos/${REPO}/issues/${pr_num}/comments" \
-              --jq "[.[] | select(.body | contains(\"${reminder_marker}\"))] | last // empty" 2>/dev/null || echo "")
+            reminder_json=$(echo "$issue_comments_json" | jq -c --arg marker "$reminder_marker" \
+              'flatten | [.[] | select(.body | contains($marker))] | sort_by(.created_at) | last // empty')
 
             has_reminder=0
             if [ -n "$reminder_json" ]; then
               has_reminder=1
               reminder_id=$(echo "$reminder_json" | jq -r '.id')
               reminder_date=$(echo "$reminder_json" | jq -r '.created_at')
-              reminder_epoch=$(date -u -d "$reminder_date" +%s 2>/dev/null || echo 0)
+              reminder_epoch=$(to_epoch "$reminder_date")
 
+              # Validation case: if a stale reminder was posted at T1 and the
+              # PR author leaves an inline review reply at T2 > T1, the review
+              # comment timestamp becomes last_activity_epoch. The reminder is
+              # deleted, has_reminder resets to 0, and auto-close is skipped.
               if [ "$last_activity_epoch" -gt "$reminder_epoch" ]; then
                 echo "  Activity after reminder - deleting stale reminder, resetting timer"
                 gh api -X DELETE "repos/${REPO}/issues/comments/${reminder_id}" 2>/dev/null || true
