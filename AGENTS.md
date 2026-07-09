@@ -73,8 +73,11 @@ input_df
         → evaluate-repair loop (up to max_repair_iterations):
               EvaluateWorkflow                → leakage_mass, utility_score, _needs_repair
               RepairWorkflow                  → _rewritten_text (failing rows only)
-        → FinalJudgeWorkflow (non-critical)   → _judge_evaluation, needs_human_review
   → output: {text_col}_rewritten, utility_score, leakage_mass, needs_human_review, …
+
+Later, `RewriteWorkflow.evaluate()` can run the non-critical judge steps:
+  → DetectionJudgeWorkflow                  → detection_valid, detection_invalid_entities
+  → FinalJudgeWorkflow                      → judge_evaluation
 ```
 
 Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0).

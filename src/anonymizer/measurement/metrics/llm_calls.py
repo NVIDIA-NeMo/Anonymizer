@@ -35,7 +35,7 @@ def estimate_llm_calls_by_stage(
         "rewrite_pipeline": 5 if rewrite_body_calls else 0,
         "rewrite_evaluate": 3 * (1 + repair_iterations) if rewrite_body_calls else 0,
         "rewrite_repair": repair_iterations if rewrite_body_calls else 0,
-        "rewrite_final_judge": 1 if rewrite_body_calls else 0,
+        "rewrite_final_judge": 0,
     }
 
 
