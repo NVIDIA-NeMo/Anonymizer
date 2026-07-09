@@ -10,7 +10,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "skills" / "anonymizer"
-PUBLISHED_DOCS_BASE = "https://nvidia-nemo.github.io/Anonymizer/"
+PUBLISHED_DOCS_BASE = "https://nvidia-nemo.github.io/Anonymizer/dev/"
 
 EXPECTED_EVAL_IDS = {
     "anonymizer-positive-mode-choice",

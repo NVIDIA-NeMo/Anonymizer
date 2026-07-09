@@ -54,11 +54,12 @@ the self-hosting documentation.
 ## Reference(s)
 
 - [Interactive workflow](references/interactive.md)
-- [Choosing a Strategy](https://nvidia-nemo.github.io/Anonymizer/concepts/choosing-a-strategy/)
-- [Detection](https://nvidia-nemo.github.io/Anonymizer/concepts/detection/)
-- [Models](https://nvidia-nemo.github.io/Anonymizer/concepts/models/)
-- [Self-hosting GLiNER](https://nvidia-nemo.github.io/Anonymizer/concepts/self-hosting-gliner/)
-- [Troubleshooting](https://nvidia-nemo.github.io/Anonymizer/troubleshooting/)
+- [Choosing a Strategy](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/)
+- [Detection](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/detection/)
+- [Evaluation](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/)
+- [Models](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/)
+- [Self-hosting GLiNER](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/)
+- [Troubleshooting](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/)
 
 ## Skill Output
 
