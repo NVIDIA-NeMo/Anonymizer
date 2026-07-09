@@ -234,8 +234,9 @@ jobs:
           Issue #${ISSUE_NUM} has not been triaged yet. A maintainer needs to review
           the issue and add the \`triaged\` label before this PR can be merged.
 
-          You can continue working on the PR in the meantime. The check will
-          re-run automatically once the issue is triaged.
+          You can continue working on the PR in the meantime. When the issue is
+          triaged, the workflow will rerun this linked-issue check for open PRs
+          that reference the issue.
           MSG
           else
             status="pass"
@@ -263,12 +264,71 @@ jobs:
 
   retrigger:
     name: Recheck PRs when issue is triaged
+    permissions:
+      contents: read
+      actions: write
+      issues: read
+      pull-requests: read
     if: >-
       github.repository_owner == 'NVIDIA-NeMo'
       && github.event_name == 'issues'
       && github.event.label.name == 'triaged'
     runs-on: ubuntu-latest
     steps:
+      - name: Validate recheck selection cases
+        run: |
+          set -euo pipefail
+
+          body_references_issue() {
+            local body_file="$1"
+            local issue_number="$2"
+            local clean_body_file
+
+            clean_body_file="$(mktemp)"
+            perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
+            grep -iqE "(fixes|closes|resolves)[[:space:]]+#${issue_number}([^0-9]|$)" "$clean_body_file"
+          }
+
+          visible_reference_case="$(mktemp)"
+          cat > "$visible_reference_case" <<'BODY'
+          Fixes #123
+          BODY
+          body_references_issue "$visible_reference_case" "123"
+
+          commented_reference_case="$(mktemp)"
+          cat > "$commented_reference_case" <<'BODY'
+          <!-- Fixes #123 -->
+          BODY
+          if body_references_issue "$commented_reference_case" "123"; then
+            echo "::error::HTML-commented issue reference should not select a PR for recheck."
+            exit 1
+          fi
+
+          runs_case="$(mktemp)"
+          cat > "$runs_case" <<'JSON'
+          [
+            {
+              "workflow_runs": [
+                {"id": 10, "event": "pull_request_target", "head_sha": "abc", "status": "completed", "conclusion": "failure", "created_at": "2026-01-01T00:00:00Z"},
+                {"id": 11, "event": "pull_request_target", "head_sha": "abc", "status": "completed", "conclusion": "failure", "created_at": "2026-01-02T00:00:00Z"},
+                {"id": 12, "event": "issues", "head_sha": "abc", "status": "completed", "conclusion": "success", "created_at": "2026-01-03T00:00:00Z"}
+              ]
+            }
+          ]
+          JSON
+          selected_run=$(
+            jq -r --arg head_sha "abc" '
+              [.[].workflow_runs[]? | select(.event == "pull_request_target" and .head_sha == $head_sha)]
+              | sort_by(.created_at)
+              | last
+              | .id // empty
+            ' "$runs_case"
+          )
+          if [ "$selected_run" != "11" ]; then
+            echo "::error::Triaged-label recheck should select the latest pull_request_target run for the PR head SHA."
+            exit 1
+          fi
+
       - name: Find PRs referencing this issue
         id: find-prs
         env:
@@ -290,7 +350,7 @@ jobs:
             printf '%s' "$body" > "$body_file"
             perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
 
-            if grep -iqE "(fixes|closes|resolves)[[:space:]]+#${ISSUE_NUMBER}\\b" "$clean_body_file"; then
+            if grep -iqE "(fixes|closes|resolves)[[:space:]]+#${ISSUE_NUMBER}([^0-9]|$)" "$clean_body_file"; then
               echo "$pr_num" >> /tmp/prs-to-recheck.txt
             fi
           done
@@ -307,31 +367,51 @@ jobs:
             echo "prs=${pr_numbers}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Re-trigger linked issue check
+      - name: Rerun linked issue checks
         if: steps.find-prs.outputs.prs != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
           PR_NUMBERS: ${{ steps.find-prs.outputs.prs }}
         run: |
           set -euo pipefail
 
-          timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
           for pr_num in $PR_NUMBERS; do
-            echo "Re-triggering check for PR #${pr_num}..."
-            gh pr view "$pr_num" --repo "${{ github.repository }}" --json body -q '.body' > /tmp/current-body.txt
+            echo "Finding latest linked-issue check run for PR #${pr_num}..."
+            head_sha=$(gh pr view "$pr_num" --repo "$REPO" --json headRefOid -q '.headRefOid')
 
-            marker="<!-- triaged-recheck"
-            if grep -q "$marker" /tmp/current-body.txt; then
-              sed "s|<!-- triaged-recheck[^>]*-->|<!-- triaged-recheck: ${timestamp} -->|" \
-                /tmp/current-body.txt > /tmp/pr-body.md
-            else
-              cp /tmp/current-body.txt /tmp/pr-body.md
-              printf '\n<!-- triaged-recheck: %s -->' "$timestamp" >> /tmp/pr-body.md
+            # Triaged-label validation path: rerun the existing PR-head
+            # pull_request_target workflow run directly. Do not edit the PR body
+            # or require the contributor to push another commit.
+            runs_json=$(gh api --paginate --slurp \
+              "repos/${REPO}/actions/workflows/pr-linked-issue.yml/runs?event=pull_request_target&per_page=100")
+            run_json=$(
+              echo "$runs_json" | jq -c --arg head_sha "$head_sha" '
+                [.[].workflow_runs[]? | select(.event == "pull_request_target" and .head_sha == $head_sha)]
+                | sort_by(.created_at)
+                | last // empty
+              '
+            )
+
+            if [ -z "$run_json" ]; then
+              echo "  No linked-issue check run found for PR #${pr_num} at ${head_sha}; skipping."
+              continue
             fi
 
-            gh pr edit "$pr_num" --repo "${{ github.repository }}" --body-file /tmp/pr-body.md
-            gh pr comment "$pr_num" --repo "${{ github.repository }}" --body \
-              "Issue #${ISSUE_NUMBER} has been triaged. The linked issue check is being re-evaluated."
+            run_id=$(echo "$run_json" | jq -r '.id')
+            run_status=$(echo "$run_json" | jq -r '.status')
+            run_conclusion=$(echo "$run_json" | jq -r '.conclusion // ""')
+            echo "  Latest run ${run_id}: status=${run_status}, conclusion=${run_conclusion:-<none>}"
+
+            if [ "$run_status" != "completed" ]; then
+              echo "  Skipping: linked-issue check is already ${run_status}."
+              continue
+            fi
+            if [ "$run_conclusion" = "success" ]; then
+              echo "  Skipping: linked-issue check already passed."
+              continue
+            fi
+
+            gh api -X POST "repos/${REPO}/actions/runs/${run_id}/rerun"
+            echo "  Requested rerun for linked-issue check run ${run_id}."
           done

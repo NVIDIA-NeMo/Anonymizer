@@ -38,11 +38,58 @@ jobs:
           to_epoch() {
             timestamp="$1"
             if [ -n "$timestamp" ] && [ "$timestamp" != "null" ]; then
-              date -u -d "$timestamp" +%s 2>/dev/null || echo 0
+              date -u -d "$timestamp" +%s 2>/dev/null \
+                || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$timestamp" +%s 2>/dev/null \
+                || echo 0
             else
               echo 0
             fi
           }
+
+          validate_stale_cases() {
+            bucket_case='[
+              {"name": "unit", "state": "FAILURE", "bucket": "fail"},
+              {"name": "timeout", "state": "TIMED_OUT", "bucket": "fail"},
+              {"name": "startup", "state": "STARTUP_FAILURE", "bucket": "fail"},
+              {"name": "cancelled", "state": "CANCELLED", "bucket": "cancel"},
+              {"name": "passed", "state": "SUCCESS", "bucket": "pass"},
+              {"name": "pending", "state": "PENDING", "bucket": "pending"},
+              {"name": "skipped", "state": "SKIPPED", "bucket": "skipping"}
+            ]'
+            failing_names=$(echo "$bucket_case" | jq -r '[.[] | select(.bucket == "fail") | .name] | join(",")')
+            if [ "$failing_names" != "unit,timeout,startup" ]; then
+              echo "::error::Only checks in the fail bucket should enter the stale path."
+              exit 1
+            fi
+
+            cancel_count=$(echo "$bucket_case" | jq '[.[] | select(.bucket == "cancel")] | length')
+            cancel_as_fail=$(echo "$bucket_case" | jq '[.[] | select(.bucket == "cancel" and .bucket == "fail")] | length')
+            if [ "$cancel_count" -ne 1 ] || [ "$cancel_as_fail" -ne 0 ]; then
+              echo "::error::Cancelled checks should stay out of the stale-failure list."
+              exit 1
+            fi
+
+            review_activity_case='[[{"user":{"login":"alice"},"created_at":"2026-01-03T00:00:00Z","in_reply_to_id":1}]]'
+            issue_activity_case='[[{"user":{"login":"maintainer"},"created_at":"2026-01-04T00:00:00Z"}]]'
+            reminder_case='[[{"id":1,"body":"<!-- stale-pr-reminder -->","created_at":"2026-01-02T00:00:00Z"}]]'
+            last_author_review=$(echo "$review_activity_case" | jq -r --arg author "alice" \
+              'flatten | [.[] | select(.user.login == $author) | .created_at] | sort | last // empty')
+            last_author_issue=$(echo "$issue_activity_case" | jq -r --arg author "alice" \
+              'flatten | [.[] | select(.user.login == $author) | .created_at] | sort | last // empty')
+            reminder_date=$(echo "$reminder_case" | jq -r \
+              'flatten | [.[] | select(.body | contains("<!-- stale-pr-reminder -->"))] | sort_by(.created_at) | last | .created_at // empty')
+
+            if [ -n "$last_author_issue" ]; then
+              echo "::error::Maintainer comments should not count as author activity."
+              exit 1
+            fi
+            if [ "$(to_epoch "$last_author_review")" -le "$(to_epoch "$reminder_date")" ]; then
+              echo "::error::Inline author replies after a reminder should clear the reminder and prevent auto-close."
+              exit 1
+            fi
+          }
+
+          validate_stale_cases
 
           prs=$(gh pr list --repo "$REPO" --state open \
             --json number,author,labels,createdAt --limit 200)
@@ -80,15 +127,28 @@ jobs:
               remind_days=$remind_days_collaborator
             fi
 
-            checks_json=$(gh pr checks "$pr_num" --repo "$REPO" --json name,state 2>/dev/null || echo "[]")
-            failing=$(echo "$checks_json" | jq '[.[] | select(.state == "FAILURE" or .state == "ERROR")] | length')
+            set +e
+            checks_json=$(gh pr checks "$pr_num" --repo "$REPO" --json name,state,bucket 2>/dev/null)
+            checks_status=$?
+            set -e
+            if [ "$checks_status" -ne 0 ]; then
+              echo "  gh pr checks exited ${checks_status}; continuing with JSON output"
+            fi
+            if [ -z "$checks_json" ] || ! echo "$checks_json" | jq -e 'type == "array"' >/dev/null; then
+              echo "  Skipping: could not read check status"
+              continue
+            fi
+            # Only checks normalized into the fail bucket trigger stale action.
+            # The cancel bucket is ignored because cancelled checks may be
+            # superseded or maintainer-initiated rather than author-fixable.
+            failing=$(echo "$checks_json" | jq '[.[] | select(.bucket == "fail")] | length')
 
             if [ "$failing" -eq 0 ]; then
               echo "  Skipping: no failing checks"
               continue
             fi
 
-            failing_names=$(echo "$checks_json" | jq -r '[.[] | select(.state == "FAILURE" or .state == "ERROR") | .name] | join(", ")')
+            failing_names=$(echo "$checks_json" | jq -r '[.[] | select(.bucket == "fail") | "\(.name) (\(.state))"] | join(", ")')
             echo "  Failing checks (${failing}): ${failing_names}"
 
             commits_json=$(gh api --paginate --slurp \
@@ -181,7 +241,7 @@ jobs:
 
           This PR has had failing checks for **${days_inactive} days** without author activity.
 
-          **Failing checks:** ${failing_names}
+          **Failing checks (\`fail\` bucket):** ${failing_names}
 
           Please push an update or leave a comment if you're still working on this.
           Otherwise, this external PR will be automatically closed in **${grace_left} days**.
@@ -196,7 +256,7 @@ jobs:
 
           This PR has had failing checks for **${days_inactive} days** without author activity.
 
-          **Failing checks:** ${failing_names}
+          **Failing checks (\`fail\` bucket):** ${failing_names}
 
           Please push an update or leave a comment if you're still working on this.
           No automatic close action will be taken for collaborator PRs.
