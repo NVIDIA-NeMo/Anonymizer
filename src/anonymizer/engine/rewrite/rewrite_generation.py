@@ -212,21 +212,19 @@ def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
     ensures all occurrences are replaced without cascade (a synthetic value matching
     another entity's original is never re-substituted).
 
-    On any failure, falls back to the unmodified text so the record is not dropped.
-    The LLM rewrite step will still run; it just won't have pre-applied replacements.
+    Raises on failure rather than falling back to unmodified text: replace entities are
+    excluded from COL_REWRITE_DISPOSITION_BLOCK, so a silent passthrough would send
+    PII-containing text to the LLM with no instructions to protect those entities.
     """
     plain_text = str(row.get(COL_TEXT, ""))
     tagged_text = str(row.get(COL_TAGGED_TEXT, ""))
-    try:
-        pairs = _get_replace_pairs(row)
-        if pairs:
-            sorted_pairs = sorted(pairs, key=lambda p: len(p[0]), reverse=True)
-            pattern = re.compile("|".join(re.escape(original) for original, _ in sorted_pairs))
-            lookup = dict(sorted_pairs)
-            plain_text = pattern.sub(lambda m: lookup[m.group(0)], plain_text)
-            tagged_text = pattern.sub(lambda m: lookup[m.group(0)], tagged_text)
-    except Exception:
-        logger.warning("Direct replacement failed; passing text through unchanged.", exc_info=True)
+    pairs = _get_replace_pairs(row)
+    if pairs:
+        sorted_pairs = sorted(pairs, key=lambda p: len(p[0]), reverse=True)
+        pattern = re.compile("|".join(re.escape(original) for original, _ in sorted_pairs))
+        lookup = dict(sorted_pairs)
+        plain_text = pattern.sub(lambda m: lookup[m.group(0)], plain_text)
+        tagged_text = pattern.sub(lambda m: lookup[m.group(0)], tagged_text)
     row[COL_PREREPLACE_TEXT] = plain_text
     row[COL_PREREPLACE_TAGGED_TEXT] = tagged_text
     return row
