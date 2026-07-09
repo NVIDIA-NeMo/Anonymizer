@@ -1,0 +1,417 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Linked Issue Check
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+    branches: [main]
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  check:
+    name: Check linked issue
+    if: >-
+      github.repository_owner == 'NVIDIA-NeMo'
+      && github.event_name != 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check author permissions
+        id: author
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+
+          if [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "is_collaborator=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          permission=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" \
+            --jq '.permission' 2>/dev/null || echo "none")
+          echo "permission=${permission}"
+
+          if [ "$permission" = "admin" ] || [ "$permission" = "write" ]; then
+            echo "is_collaborator=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_collaborator=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate parser cases
+        run: |
+          set -euo pipefail
+
+          extract_issue_num() {
+            local body_file="$1"
+            local clean_body_file
+
+            clean_body_file="$(mktemp)"
+            perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
+            grep -ioE '(fixes|closes|resolves)[[:space:]]+#[0-9]+' "$clean_body_file" \
+              | grep -oE '[0-9]+' \
+              | head -1 \
+              || true
+          }
+
+          expect_issue() {
+            local body_file="$1"
+            local expected="$2"
+            local case_name="$3"
+            local actual
+
+            actual="$(extract_issue_num "$body_file")"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$case_name should parse issue #$expected, got '${actual:-<none>}'."
+              exit 1
+            fi
+          }
+
+          expect_no_issue() {
+            local body_file="$1"
+            local case_name="$2"
+            local actual
+
+            actual="$(extract_issue_num "$body_file")"
+            if [ -n "$actual" ]; then
+              echo "::error::$case_name should not parse an issue, got #$actual."
+              exit 1
+            fi
+          }
+
+          untouched_template_case="$(mktemp)"
+          cat > "$untouched_template_case" <<'BODY'
+          <!-- Use "Fixes #123", "Closes #123", or "Resolves #123". -->
+          <!-- If no issue is needed, write: "No linked issue required: <reason>". -->
+          BODY
+          expect_no_issue "$untouched_template_case" "Untouched template comments"
+
+          visible_issue_case="$(mktemp)"
+          cat > "$visible_issue_case" <<'BODY'
+          Fixes #123
+          BODY
+          expect_issue "$visible_issue_case" "123" "Visible issue reference"
+
+          empty_exemption_case="$(mktemp)"
+          cat > "$empty_exemption_case" <<'BODY'
+          No linked issue required:
+          BODY
+          expect_no_issue "$empty_exemption_case" "Empty no-issue exemption"
+
+          nonempty_exemption_case="$(mktemp)"
+          cat > "$nonempty_exemption_case" <<'BODY'
+          No linked issue required: Maintainer-requested docs-only cleanup.
+          BODY
+          expect_no_issue "$nonempty_exemption_case" "Nonempty no-issue exemption"
+
+      - name: Parse issue reference from PR body
+        id: parse
+        if: steps.author.outputs.is_collaborator != 'true'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$PR_BODY" ] || [ "$PR_BODY" = "null" ]; then
+            echo "issue_num=" >> "$GITHUB_OUTPUT"
+            echo "No PR body found"
+            exit 0
+          fi
+
+          body_file="$(mktemp)"
+          clean_body_file="$(mktemp)"
+          printf '%s' "$PR_BODY" > "$body_file"
+          perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
+
+          issue_num=$(
+            grep -ioE '(fixes|closes|resolves)[[:space:]]+#[0-9]+' "$clean_body_file" \
+              | grep -oE '[0-9]+' \
+              | head -1 \
+              || true
+          )
+          echo "issue_num=${issue_num}" >> "$GITHUB_OUTPUT"
+          echo "Parsed issue number: ${issue_num:-<none>}"
+
+      - name: Validate issue exists and is triaged
+        id: validate
+        if: steps.author.outputs.is_collaborator != 'true' && steps.parse.outputs.issue_num != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUM: ${{ steps.parse.outputs.issue_num }}
+        run: |
+          set -euo pipefail
+
+          response=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUM}" 2>/dev/null) || {
+            echo "issue_exists=false" >> "$GITHUB_OUTPUT"
+            echo "is_triaged=false" >> "$GITHUB_OUTPUT"
+            echo "Issue #${ISSUE_NUM} not found"
+            exit 0
+          }
+
+          is_pr=$(echo "$response" | jq -r 'has("pull_request")')
+          if [ "$is_pr" = "true" ]; then
+            echo "issue_exists=false" >> "$GITHUB_OUTPUT"
+            echo "is_triaged=false" >> "$GITHUB_OUTPUT"
+            echo "#${ISSUE_NUM} is a pull request, not an issue"
+            exit 0
+          fi
+
+          echo "issue_exists=true" >> "$GITHUB_OUTPUT"
+
+          triaged=$(echo "$response" | jq -r '[.labels[].name] | any(. == "triaged")')
+          echo "is_triaged=${triaged}" >> "$GITHUB_OUTPUT"
+          echo "Issue #${ISSUE_NUM} exists, triaged=${triaged}"
+
+      - name: Build comment body and post result
+        id: comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_COLLABORATOR: ${{ steps.author.outputs.is_collaborator }}
+          ISSUE_NUM: ${{ steps.parse.outputs.issue_num }}
+          ISSUE_EXISTS: ${{ steps.validate.outputs.issue_exists }}
+          IS_TRIAGED: ${{ steps.validate.outputs.is_triaged }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          marker="<!-- linked-issue-check -->"
+          comment_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${marker}\"))] | last | .id // empty" \
+            2>/dev/null || echo "")
+
+          if [ "$IS_COLLABORATOR" = "true" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+            if [ -n "$comment_id" ]; then
+              gh api -X DELETE "repos/${REPO}/issues/comments/${comment_id}" || true
+            fi
+            exit 0
+          fi
+
+          if [ -z "$ISSUE_NUM" ]; then
+            status="fail"
+            cat > /tmp/comment-body.md <<'MSG'
+          <!-- linked-issue-check -->
+          ### Linked Issue Check
+
+          This PR does not reference an issue. External contributions must link to
+          a triaged issue before the PR can be merged.
+
+          Add one of the following to your PR description:
+          - `Fixes #<issue-number>`
+          - `Closes #<issue-number>`
+          - `Resolves #<issue-number>`
+
+          If no issue exists yet, [open one](https://github.com/NVIDIA-NeMo/Anonymizer/issues/new/choose)
+          and a maintainer will triage it.
+
+          See [CONTRIBUTING.md](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/CONTRIBUTING.md)
+          for details.
+          MSG
+          elif [ "$ISSUE_EXISTS" != "true" ]; then
+            status="fail"
+            cat > /tmp/comment-body.md <<MSG
+          <!-- linked-issue-check -->
+          ### Linked Issue Check
+
+          The referenced issue #${ISSUE_NUM} was not found. Please check the issue
+          number in your PR description.
+          MSG
+          elif [ "$IS_TRIAGED" != "true" ]; then
+            status="fail"
+            cat > /tmp/comment-body.md <<MSG
+          <!-- linked-issue-check -->
+          ### Linked Issue Check
+
+          Issue #${ISSUE_NUM} has not been triaged yet. A maintainer needs to review
+          the issue and add the \`triaged\` label before this PR can be merged.
+
+          You can continue working on the PR in the meantime. When the issue is
+          triaged, the workflow will rerun this linked-issue check for open PRs
+          that reference the issue.
+          MSG
+          else
+            status="pass"
+          fi
+
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+          if [ "$status" = "fail" ]; then
+            if [ -n "$comment_id" ]; then
+              gh api -X PATCH "repos/${REPO}/issues/comments/${comment_id}" \
+                -f body="$(cat /tmp/comment-body.md)"
+            else
+              gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                -f body="$(cat /tmp/comment-body.md)"
+            fi
+          elif [ -n "$comment_id" ]; then
+            gh api -X DELETE "repos/${REPO}/issues/comments/${comment_id}" || true
+          fi
+
+      - name: Set check result
+        if: steps.comment.outputs.status == 'fail'
+        run: |
+          echo "::error::Linked issue check failed. See the PR comment for details."
+          exit 1
+
+  retrigger:
+    name: Recheck PRs when issue is triaged
+    permissions:
+      contents: read
+      actions: write
+      issues: read
+      pull-requests: read
+    if: >-
+      github.repository_owner == 'NVIDIA-NeMo'
+      && github.event_name == 'issues'
+      && github.event.label.name == 'triaged'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate recheck selection cases
+        run: |
+          set -euo pipefail
+
+          body_references_issue() {
+            local body_file="$1"
+            local issue_number="$2"
+            local clean_body_file
+
+            clean_body_file="$(mktemp)"
+            perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
+            grep -iqE "(fixes|closes|resolves)[[:space:]]+#${issue_number}([^0-9]|$)" "$clean_body_file"
+          }
+
+          visible_reference_case="$(mktemp)"
+          cat > "$visible_reference_case" <<'BODY'
+          Fixes #123
+          BODY
+          body_references_issue "$visible_reference_case" "123"
+
+          commented_reference_case="$(mktemp)"
+          cat > "$commented_reference_case" <<'BODY'
+          <!-- Fixes #123 -->
+          BODY
+          if body_references_issue "$commented_reference_case" "123"; then
+            echo "::error::HTML-commented issue reference should not select a PR for recheck."
+            exit 1
+          fi
+
+          runs_case="$(mktemp)"
+          cat > "$runs_case" <<'JSON'
+          [
+            {
+              "workflow_runs": [
+                {"id": 10, "event": "pull_request_target", "head_sha": "abc", "status": "completed", "conclusion": "failure", "created_at": "2026-01-01T00:00:00Z"},
+                {"id": 11, "event": "pull_request_target", "head_sha": "abc", "status": "completed", "conclusion": "failure", "created_at": "2026-01-02T00:00:00Z"},
+                {"id": 12, "event": "issues", "head_sha": "abc", "status": "completed", "conclusion": "success", "created_at": "2026-01-03T00:00:00Z"}
+              ]
+            }
+          ]
+          JSON
+          selected_run=$(
+            jq -r --arg head_sha "abc" '
+              [.[].workflow_runs[]? | select(.event == "pull_request_target" and .head_sha == $head_sha)]
+              | sort_by(.created_at)
+              | last
+              | .id // empty
+            ' "$runs_case"
+          )
+          if [ "$selected_run" != "11" ]; then
+            echo "::error::Triaged-label recheck should select the latest pull_request_target run for the PR head SHA."
+            exit 1
+          fi
+
+      - name: Find PRs referencing this issue
+        id: find-prs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          prs_json=$(gh pr list --repo "${{ github.repository }}" --state open --json number,body --limit 200)
+          pr_numbers=""
+          rm -f /tmp/prs-to-recheck.txt
+
+          echo "$prs_json" | jq -c '.[]' | while IFS= read -r pr; do
+            pr_num=$(echo "$pr" | jq -r '.number')
+            body=$(echo "$pr" | jq -r '.body // ""')
+            body_file="$(mktemp)"
+            clean_body_file="$(mktemp)"
+
+            printf '%s' "$body" > "$body_file"
+            perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
+
+            if grep -iqE "(fixes|closes|resolves)[[:space:]]+#${ISSUE_NUMBER}([^0-9]|$)" "$clean_body_file"; then
+              echo "$pr_num" >> /tmp/prs-to-recheck.txt
+            fi
+          done
+
+          if [ -f /tmp/prs-to-recheck.txt ]; then
+            pr_numbers=$(tr '\n' ' ' < /tmp/prs-to-recheck.txt)
+          fi
+
+          if [ -z "$pr_numbers" ]; then
+            echo "No open PRs reference issue #${ISSUE_NUMBER}"
+            echo "prs=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found PRs: ${pr_numbers}"
+            echo "prs=${pr_numbers}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rerun linked issue checks
+        if: steps.find-prs.outputs.prs != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBERS: ${{ steps.find-prs.outputs.prs }}
+        run: |
+          set -euo pipefail
+
+          for pr_num in $PR_NUMBERS; do
+            echo "Finding latest linked-issue check run for PR #${pr_num}..."
+            head_sha=$(gh pr view "$pr_num" --repo "$REPO" --json headRefOid -q '.headRefOid')
+
+            # Triaged-label validation path: rerun the existing PR-head
+            # pull_request_target workflow run directly. Do not edit the PR body
+            # or require the contributor to push another commit.
+            runs_json=$(gh api --paginate --slurp \
+              "repos/${REPO}/actions/workflows/pr-linked-issue.yml/runs?event=pull_request_target&per_page=100")
+            run_json=$(
+              echo "$runs_json" | jq -c --arg head_sha "$head_sha" '
+                [.[].workflow_runs[]? | select(.event == "pull_request_target" and .head_sha == $head_sha)]
+                | sort_by(.created_at)
+                | last // empty
+              '
+            )
+
+            if [ -z "$run_json" ]; then
+              echo "  No linked-issue check run found for PR #${pr_num} at ${head_sha}; skipping."
+              continue
+            fi
+
+            run_id=$(echo "$run_json" | jq -r '.id')
+            run_status=$(echo "$run_json" | jq -r '.status')
+            run_conclusion=$(echo "$run_json" | jq -r '.conclusion // ""')
+            echo "  Latest run ${run_id}: status=${run_status}, conclusion=${run_conclusion:-<none>}"
+
+            if [ "$run_status" != "completed" ]; then
+              echo "  Skipping: linked-issue check is already ${run_status}."
+              continue
+            fi
+            if [ "$run_conclusion" = "success" ]; then
+              echo "  Skipping: linked-issue check already passed."
+              continue
+            fi
+
+            gh api -X POST "repos/${REPO}/actions/runs/${run_id}/rerun"
+            echo "  Requested rerun for linked-issue check run ${run_id}."
+          done

@@ -15,6 +15,7 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: debug-statements
+      - id: detect-private-key
       - id: mixed-line-ending
 
   - repo: local
