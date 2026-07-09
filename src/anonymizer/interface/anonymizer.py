@@ -330,6 +330,9 @@ class Anonymizer:
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
                 entity_labels=config.detect.entity_labels,
+                strict_entity_protection=(
+                    config.rewrite.strict_entity_protection if config.rewrite is not None else False
+                ),
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -409,6 +412,7 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
         entity_labels = getattr(output, "entity_labels", None)
+        strict_entity_protection = getattr(output, "strict_entity_protection", False)
         # trace_dataframe is in user-facing form (e.g., 'biography' instead of
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
         # internal names, so reverse the rename before the DD call and re-apply
@@ -427,6 +431,7 @@ class Anonymizer:
             coverage_wf = EntityCoverageWorkflow(
                 adapter=self._adapter,
                 entity_labels=entity_labels,
+                strict_entity_protection=strict_entity_protection,
             )
             judged_df, coverage_failed = coverage_wf.run_non_critical(
                 rewrite_result.dataframe,
@@ -446,6 +451,7 @@ class Anonymizer:
                 failed_records=all_failed,
                 rewrite_config=rewrite_config,
                 entity_labels=entity_labels,
+                strict_entity_protection=strict_entity_protection,
             )
 
         replace_result = self._replace_runner.evaluate(
@@ -468,6 +474,7 @@ class Anonymizer:
             failed_records=replace_result.failed_records,
             replace_method=replace_method,
             entity_labels=entity_labels,
+            strict_entity_protection=strict_entity_protection,
         )
 
     def validate_config(self, config: AnonymizerConfig) -> None:
@@ -659,6 +666,9 @@ class Anonymizer:
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
+            strict_entity_protection=(
+                config.rewrite.strict_entity_protection if config.rewrite is not None else False
+            ),
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:

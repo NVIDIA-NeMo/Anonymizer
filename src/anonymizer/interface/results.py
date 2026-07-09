@@ -64,6 +64,10 @@ class AnonymizerResult(_DisplayMixin):
             mode was used. Set by ``run()`` / ``preview()``; consumed by
             ``evaluate()`` to dispatch the rewrite judges. Mutually exclusive
             with ``replace_method``.
+        strict_entity_protection: Whether the rewrite ran with strict entity
+            protection. Set by ``run()`` / ``preview()``; consumed by
+            ``evaluate()`` so the entity-coverage judge scores in strict mode
+            (no benefit-of-the-doubt for missed quasi-identifiers).
     """
 
     dataframe: pd.DataFrame
@@ -73,6 +77,7 @@ class AnonymizerResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
+    strict_entity_protection: bool = False
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -106,6 +111,10 @@ class PreviewResult(_DisplayMixin):
         rewrite_config: The privacy goal that produced this preview when rewrite
             mode was used. Set by ``preview()``; consumed by ``evaluate()`` to
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
+        strict_entity_protection: Whether the rewrite ran with strict entity
+            protection. Set by ``preview()``; consumed by ``evaluate()`` so the
+            entity-coverage judge scores in strict mode (no benefit-of-the-doubt
+            for missed quasi-identifiers).
     """
 
     dataframe: pd.DataFrame
@@ -116,6 +125,7 @@ class PreviewResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
+    strict_entity_protection: bool = False
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
