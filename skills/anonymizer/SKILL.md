@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 name: anonymizer
 description: Use when the user wants to anonymize a text dataset, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information. Produces a runnable Python script that calls the NeMo Anonymizer pipeline (detection → replace or rewrite).
-argument-hint: [describe the dataset and how you want it anonymized]
+license: Apache-2.0
+metadata:
+  author: Aaron Gonzales <aagonzales@nvidia.com>
 ---
 
 # Before You Start
@@ -20,12 +22,16 @@ The output is a single runnable Python script that builds an `AnonymizerConfig`,
 
 # Workflow
 
-Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — there is no autopilot mode. Even when the user says "you decide" or "be opinionated", you still ask the minimum questions needed to choose `risk_tolerance` and phrase `privacy_goal`, because those are fundamentally the user's calls based on their regulatory and business context.
+Read `references/interactive.md` and follow it. Anonymization is high-stakes,
+so there is no autopilot mode. Even when the user says "you decide" or "be
+opinionated", ask the minimum questions needed to choose `risk_tolerance` and
+phrase `privacy_goal`. The user must make those choices based on their
+regulatory and business context.
 
 # Rules
 
 - **Always preview before running the full pipeline.** Preview is cheap; a full run can be expensive and slow.
-- **If `result.failed_records` is non-empty after preview, fix that *before* tweaking strategy.** Dropped rows are a model/provider/infra problem (rate limits, auth, etc.), not a config problem. Strategy knobs won't help. See `docs/troubleshooting.md` "Did the run actually complete cleanly?".
+- **If `result.failed_records` is non-empty after preview, fix that *before* tweaking strategy.** Dropped rows are a model/provider/infra problem (rate limits, auth, etc.), not a config problem. Strategy knobs won't help. See `docs/troubleshooting.md` "Did the run actually complete cleanly?" or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/troubleshooting/).
 - **Ask the user which mode.** Briefly describe both: Replace detects entities and replaces each in place (faster, cheaper, keeps shape); Rewrite transforms the full text to also remove inferable identifiers (more expensive, may restructure). Use the data shape as a hint — free-text with implicit identifiers (clinical notes, biographies, depositions) leans Rewrite; structured records / log lines lean Replace — but the user picks.
 - **For cross-record consistency** (same value → same replacement everywhere), use `Hash`, not `Substitute`. `Substitute` is consistent within a row only.
 - **In Replace mode, default to `Substitute`** if the user hasn't specified a strategy. It's the most general-purpose choice and matches the bulk of production usage.
@@ -42,7 +48,7 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
 - **Validator pool is the only model role with built-in load-spreading.** Set `entity_validator: [a, b, c]` in `models.yaml` if rate limits drop rows. Other roles (rewriter, evaluator, etc.) are single-alias.
-- **Self-hosted GLiNER** — when detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run the reference server from a **source checkout** (`python tools/serve_gliner.py`; not installed via `pip install nemo-anonymizer`). Add a provider with `endpoint: http://localhost:8001/v1`, route `entity_detector` via a `gliner-pii-detector` alias with `provider: local-gliner` and `skip_health_check: true`. If you pass `--port` or `--host` to the server, set the provider `endpoint` to the same host/port. `model_configs` is a **complete** model pool, not an overlay — copy `src/anonymizer/config/default_model_configs/models.yaml` and change only the detector entry (keep `gpt-oss-120b` and `nemotron-30b-thinking`). See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
+- **Self-hosted GLiNER:** When detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run the reference server from a **source checkout** with `python tools/serve_gliner.py`. The server is not installed by `pip install nemo-anonymizer`. Add a provider with `endpoint: http://localhost:8001/v1`, then route `entity_detector` through a `gliner-pii-detector` alias with `provider: local-gliner` and `skip_health_check: true`. Match any custom `--port` or `--host` in the provider endpoint. `model_configs` is a **complete** model pool, not an overlay. Copy `src/anonymizer/config/default_model_configs/models.yaml` and change only the detector entry, keeping `gpt-oss-120b` and `nemotron-30b-thinking`. See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) or the [published self-hosting guide](https://nvidia-nemo.github.io/Anonymizer/concepts/self-hosting-gliner/).
 - **The evaluation judges use their own model roles** (`detection_validity_judge`, `replace_type_fidelity_judge`, `replace_relational_consistency_judge`, `replace_attribute_fidelity_judge`, `rewrite_judge`), configured in the `evaluate` section of `models.yaml`. They are **not** consumed by `preview()` / `run()`, so a config that anonymizes fine can still fail validation at `evaluate()` if those roles are unset. Defaults ship in `src/anonymizer/config/default_model_configs/evaluate.yaml`.
 - **Verdict columns are null when the judge was unavailable** — `None` means "unscored", never a pass. Replace verdict columns (`type_fidelity_valid`, etc.) are `True` / `False` / `None`. Rewrite `detection_valid` is a `0–1` float fraction (or `None` if unscored). Inspect verdicts per record with `evaluated.display_record(i)`.
 - **`EvaluateConfig` is an empty placeholder today** — no knobs to set. `anonymizer.evaluate(result)` is the whole API; pass nothing else.
@@ -51,24 +57,28 @@ Read `workflows/interactive.md` and follow it. Anonymization is high-stakes — 
 
 The agent should consult these as it goes — *do not* try to enumerate field reference inline:
 
-- [`docs/concepts/choosing-a-strategy.md`](../../docs/concepts/choosing-a-strategy.md) — decision tree for picking mode (Replace vs Rewrite), strategy (Substitute / Redact / Annotate / Hash), risk tolerance, privacy goal phrasing, and detection knobs.
-- [`docs/troubleshooting.md`](../../docs/troubleshooting.md) — symptom-first guide for diagnosing dropped rows, leakage, low utility, and pipeline failures. Read **section by section as symptoms appear**, not all at once.
-- [`docs/concepts/detection.md`](../../docs/concepts/detection.md) — detection internals (GLiNER threshold semantics, label catalogue, augmenter/validator behavior).
-- [`docs/concepts/models.md`](../../docs/concepts/models.md) — model role configuration, validator pools.
-- [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) — local `entity_detector` server (`tools/serve_gliner.py`), OpenAI-compatible contract, YAML wiring.
+- [`docs/concepts/choosing-a-strategy.md`](../../docs/concepts/choosing-a-strategy.md) or the [published strategy guide](https://nvidia-nemo.github.io/Anonymizer/concepts/choosing-a-strategy/) for choosing a mode, replacement strategy, risk tolerance, privacy goal, and detection settings.
+- [`docs/troubleshooting.md`](../../docs/troubleshooting.md) or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/troubleshooting/) for dropped rows, leakage, low utility, and pipeline failures. Read the relevant section when a symptom appears.
+- [`docs/concepts/detection.md`](../../docs/concepts/detection.md) or the [published detection guide](https://nvidia-nemo.github.io/Anonymizer/concepts/detection/) for GLiNER threshold semantics, entity labels, augmentation, and validation.
+- [`docs/concepts/models.md`](../../docs/concepts/models.md) or the [published models guide](https://nvidia-nemo.github.io/Anonymizer/concepts/models/) for model roles and validator pools.
+- [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) or the [published self-hosting guide](https://nvidia-nemo.github.io/Anonymizer/concepts/self-hosting-gliner/) for the local `entity_detector` server, OpenAI-compatible contract, and YAML configuration.
 
 # Troubleshooting
 
-Environment-level issues only. Quality and pipeline issues are in `docs/troubleshooting.md`.
+This section covers environment-level issues. For quality and pipeline issues,
+read `docs/troubleshooting.md` or the
+[published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/troubleshooting/).
 
 - **`anonymizer` not installed:** Tell the user `nemo-anonymizer` is not in this Python environment (requires Python ≥ 3.11). Ask if they want you to install it (`pip install nemo-anonymizer`) or do it themselves. Do not install without permission.
-- **Model/provider setup:** Plain `Anonymizer()` ships with bundled `models.yaml` and `providers.yaml` (see `src/anonymizer/config/default_model_configs/`). For the default path, confirm `NVIDIA_API_KEY` is set. Pass custom `model_configs` and/or `model_providers` only when targeting non-default endpoints or model pools — see `docs/concepts/models.md`.
-- **LLM calls failing at preview:** Usually an auth issue (missing or invalid API key), a network problem, or a wrong endpoint URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call".
-- **Local / on-prem GLiNER:** Clone or download `tools/serve_gliner.py` from the Anonymizer repo, start the server, add a provider with `endpoint: http://localhost:8001/v1`, and point `gliner-pii-detector` at `provider: local-gliner` with `skip_health_check: true`. Preflight errors about missing aliases usually mean `model_configs` only listed the detector — include the full default pool. Wrong `endpoint` or a down server surfaces as detection failures at preview — see [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md).
+- **Model/provider setup:** Plain `Anonymizer()` ships with bundled `models.yaml` and `providers.yaml` (see `src/anonymizer/config/default_model_configs/`). For the default path, confirm `NVIDIA_API_KEY` is set. Pass custom `model_configs` or `model_providers` only for non-default endpoints or model pools. See `docs/concepts/models.md` or the [published models guide](https://nvidia-nemo.github.io/Anonymizer/concepts/models/).
+- **LLM calls failing at preview:** Check for a missing or invalid API key, a network problem, or a wrong endpoint URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call" or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/troubleshooting/).
+- **Local / on-prem GLiNER:** Clone or download `tools/serve_gliner.py` from the Anonymizer repo, start the server, add a provider with `endpoint: http://localhost:8001/v1`, and point `gliner-pii-detector` at `provider: local-gliner` with `skip_health_check: true`. Preflight errors about missing aliases usually mean `model_configs` lists only the detector. Include the full default pool. A wrong endpoint or stopped server surfaces as a detection failure during preview. See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) or the [published self-hosting guide](https://nvidia-nemo.github.io/Anonymizer/concepts/self-hosting-gliner/).
 
 # Output Template
 
-Write a Python script to the current directory. Name it after the dataset (e.g. `anonymize_clinical_notes.py`, `anonymize_support_logs.py`). Use this template — fill in the TODO markers, drop unused sections.
+Write a Python script to the current directory. Name it after the dataset (for
+example, `anonymize_clinical_notes.py` or `anonymize_support_logs.py`). Fill in
+the TODO markers in this template and remove unused sections.
 
 ```python
 """Anonymize <dataset> using NeMo Anonymizer.
@@ -175,7 +185,7 @@ def main() -> None:
         print(f"\n⚠️  {len(result.failed_records)} record(s) failed:")
         for fr in result.failed_records[:3]:
             print(f"   - record_id={fr.record_id} step={fr.step} reason={fr.reason}")
-        print("\nFix dropped rows before tweaking strategy. See docs/troubleshooting.md.")
+        print("\nFix dropped rows before tweaking strategy. See docs/troubleshooting.md or https://nvidia-nemo.github.io/Anonymizer/troubleshooting/.")
         sys.exit(1)
 
     # Optional LLM-as-judge evaluation (Replace and Rewrite modes). Opt-in, separate
