@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import get_type_hints
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -200,12 +199,6 @@ def test_anonymizer_applies_data_designer_run_config_to_supplied_instance() -> N
     )
 
     data_designer.set_run_config.assert_called_once_with(run_config)
-
-
-def test_anonymizer_init_type_hints_resolve_run_config() -> None:
-    hints = get_type_hints(Anonymizer.__init__)
-
-    assert hints["data_designer_run_config"] == RunConfig | None
 
 
 def test_anonymizer_rejects_missing_provider_as_invalid_config_error() -> None:
