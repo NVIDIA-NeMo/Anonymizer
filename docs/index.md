@@ -7,6 +7,8 @@
 
 NeMo Anonymizer detects and protects PII through context-aware replacement and rewriting. It offers high-quality user-guided entity detection, followed by modification options that maintain context while inducing privacy. You can review what sensitive information was found, adjust your masking strategy, and generate anonymized text.
 
+![NeMo Anonymizer query flow: detect entities, choose a replace or rewrite strategy, then evaluate the anonymized output.](assets/anonymizer_query_flow_clean.png){ loading=lazy }
+
 Pick a strategy:
 > Alice met with Bob and his daughter to review kindergarten application #A9349.
 
