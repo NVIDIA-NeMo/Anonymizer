@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from data_designer.config.models import ModelProvider
+from data_designer.config.run_config import RunConfig
 from data_designer.config.utils.io_helpers import load_config_file
 from data_designer.interface.data_designer import DataDesigner
 
@@ -86,7 +87,6 @@ from anonymizer.telemetry import (
 if TYPE_CHECKING:
     import pandas as pd
     from data_designer.config.config_builder import DataDesignerConfigBuilder
-    from data_designer.config.run_config import RunConfig
 
 logger = logging.getLogger("anonymizer")
 
