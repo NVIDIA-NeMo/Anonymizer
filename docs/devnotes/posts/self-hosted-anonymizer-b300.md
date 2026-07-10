@@ -6,7 +6,7 @@ authors:
   - lipikaramaswamy
 ---
 
-# **Running NeMo Anonymizer Fully Contained on One B300**
+# **Running NeMo Anonymizer Fully Self-Hosted on One B300**
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
@@ -114,6 +114,7 @@ CUDA_HOME="$CUDA_ROOT" \
 PATH="$CUDA_ROOT/bin:$PWD/.venv/bin:$PATH" \
 LD_LIBRARY_PATH="$CUDA_ROOT/lib:$CUDA_ROOT/lib64:${LD_LIBRARY_PATH:-}" \
 VLLM_USE_FLASHINFER_SAMPLER=0 \
+VLLM_DISABLED_KERNELS=FlashInferFP8ScaledMMLinearKernel \
 nohup .venv/bin/vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 \
   --served-model-name qwen-prod \
   --host 127.0.0.1 \
