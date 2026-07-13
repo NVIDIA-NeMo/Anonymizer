@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 # ---
 # jupyter:
 #   jupytext:
@@ -15,6 +12,10 @@
 # ---
 
 # %% [markdown]
+# <!--
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# -->
 # # 🕵️ Choosing a Replacement Strategy
 #
 # Four [replace mode](../../concepts/replace/) strategies compared side-by-side on the same data.
