@@ -23,6 +23,59 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WRITE_COMPLETION_SEAL_PATH = REPO_ROOT / "tools/measurement/write_completion_seal.py"
 
 
+def _rewrite_run_payload(*, include_replace_key: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "record_type": "run",
+        "run_id": "run-a",
+        "run_tags": {
+            "case_id": "run-a",
+            "workload_id": "rat-diff1",
+            "config_id": "rewrite",
+            "repetition": 0,
+        },
+        "timestamp_unix_sec": 1.0,
+        "mode": "rewrite",
+        "strategy": "Rewrite",
+        "input_row_count": 1,
+        "preview_num_records": None,
+        "source_hash": "a" * 64,
+        "input_source": {"kind": "local_file", "scheme": None, "suffix": ".csv"},
+        "input_text_column": "text",
+        "input_has_id_column": False,
+        "input_has_data_summary": False,
+        "detect": {"entity_label_source": "default", "entity_label_count": 2},
+        "rewrite": {
+            "risk_tolerance": "medium",
+            "max_repair_iterations": 2,
+            "strict_entity_protection": True,
+        },
+        "models": [],
+        "runtime": {},
+    }
+    if include_replace_key:
+        payload["replace"] = None
+    return payload
+
+
+def _terminal_stage_payload() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "record_type": "stage",
+        "run_id": "run-a",
+        "run_tags": {
+            "case_id": "run-a",
+            "workload_id": "rat-diff1",
+            "config_id": "rewrite",
+            "repetition": 0,
+        },
+        "timestamp_unix_sec": 2.0,
+        "stage": "Anonymizer._run_internal",
+        "status": "completed",
+        "elapsed_sec": 0.5,
+    }
+
+
 def test_wandb_publisher_validates_before_import(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -42,6 +95,27 @@ def test_wandb_publisher_validates_before_import(
                 cases=[],
             ),
         )
+
+
+@pytest.mark.parametrize("include_replace_key", [True, False])
+def test_wandb_snapshot_accepts_rewrite_run_without_replace_metadata(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    include_replace_key: bool,
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    records = [
+        _rewrite_run_payload(include_replace_key=include_replace_key),
+        _terminal_stage_payload(),
+    ]
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+    snapshot = wandb_ingress_tool.read_measurement_snapshot(path, expected_statuses={"run-a": "completed"})
+
+    assert len(snapshot.records) == 2
+    assert snapshot.records[0].record_type == "run"
+    assert snapshot.records[0].mode == "rewrite"
+    assert snapshot.records[0].replace is None
 
 
 def test_wandb_snapshot_uses_one_descriptor_and_enforces_limits(
