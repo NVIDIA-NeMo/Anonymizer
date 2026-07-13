@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
@@ -39,18 +38,6 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
-from anonymizer.engine.detection.chunked_augmentation import (
-    WindowedAugmentationParams,
-    make_windowed_augmentation_generator,
-)
-from anonymizer.engine.detection.chunked_detection import (
-    WindowedDetectionParams,
-    make_windowed_detection_generator,
-)
-from anonymizer.engine.detection.chunked_latent import (
-    WindowedLatentParams,
-    make_windowed_latent_generator,
-)
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
@@ -63,6 +50,9 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    WindowedAugmentationConfig,
+    WindowedDetectionConfig,
+    WindowedLatentConfig,
 )
 from anonymizer.measurement import stage_timer
 
@@ -199,15 +189,15 @@ class EntityDetectionWorkflow:
             )
 
         columns: list[ColumnConfigT] = [
-            CustomColumnConfig(
+            # Windowed detection: long documents are tiled into overlapping windows
+            # so each detector call stays under the render cap. Serializable plugin
+            # config so the exported workflow stays runnable by external executors.
+            WindowedDetectionConfig(
                 name=COL_RAW_DETECTED,
-                generator_function=make_windowed_detection_generator(detection_alias),
-                generator_params=WindowedDetectionParams(
-                    alias=detection_alias,
-                    max_render_chars=detection_window_max_render_chars,
-                    safety_margin_chars=detection_window_safety_margin_chars,
-                    overlap_chars=detection_window_overlap_chars,
-                ),
+                alias=detection_alias,
+                max_render_chars=detection_window_max_render_chars,
+                safety_margin_chars=detection_window_safety_margin_chars,
+                overlap_chars=detection_window_overlap_chars,
             ),
             DetectionTransformConfig(
                 name=COL_SEED_ENTITIES,
@@ -234,18 +224,15 @@ class EntityDetectionWorkflow:
                 name=COL_SEED_ENTITIES_JSON,
                 operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
             ),
-            CustomColumnConfig(
+            WindowedAugmentationConfig(
                 name=COL_AUGMENTED_ENTITIES,
-                generator_function=make_windowed_augmentation_generator(augmenter_alias),
-                generator_params=WindowedAugmentationParams(
-                    alias=augmenter_alias,
-                    prompt_template=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
-                    ),
-                    max_render_chars=detection_window_max_render_chars,
-                    safety_margin_chars=detection_window_safety_margin_chars,
-                    overlap_chars=detection_window_overlap_chars,
+                alias=augmenter_alias,
+                prompt_template=_get_augment_prompt(
+                    data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
                 ),
+                max_render_chars=detection_window_max_render_chars,
+                safety_margin_chars=detection_window_safety_margin_chars,
+                overlap_chars=detection_window_overlap_chars,
             ),
             DetectionTransformConfig(
                 name=COL_MERGED_ENTITIES,
@@ -367,19 +354,16 @@ class EntityDetectionWorkflow:
             dataframe,
             model_configs=workflow_model_configs,
             columns=[
-                CustomColumnConfig(
+                WindowedLatentConfig(
                     name=COL_LATENT_ENTITIES,
-                    generator_function=make_windowed_latent_generator(latent_alias),
-                    generator_params=WindowedLatentParams(
-                        alias=latent_alias,
-                        prompt_template=_get_latent_prompt(
-                            data_summary=data_summary,
-                            privacy_goal=privacy_goal,
-                        ),
-                        max_render_chars=detection_window_max_render_chars,
-                        safety_margin_chars=detection_window_safety_margin_chars,
-                        overlap_chars=detection_window_overlap_chars,
+                    alias=latent_alias,
+                    prompt_template=_get_latent_prompt(
+                        data_summary=data_summary,
+                        privacy_goal=privacy_goal,
                     ),
+                    max_render_chars=detection_window_max_render_chars,
+                    safety_margin_chars=detection_window_safety_margin_chars,
+                    overlap_chars=detection_window_overlap_chars,
                 )
             ],
             workflow_name="latent-entity-detection",

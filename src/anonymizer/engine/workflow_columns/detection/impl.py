@@ -14,6 +14,18 @@ from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorWithModelRegistry,
 )
 
+from anonymizer.engine.detection.chunked_augmentation import (
+    WindowedAugmentationParams,
+    augment_row,
+)
+from anonymizer.engine.detection.chunked_detection import (
+    WindowedDetectionParams,
+    detect_row,
+)
+from anonymizer.engine.detection.chunked_latent import (
+    WindowedLatentParams,
+    latent_row,
+)
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     chunked_validate_row,
@@ -31,6 +43,9 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    WindowedAugmentationConfig,
+    WindowedDetectionConfig,
+    WindowedLatentConfig,
 )
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
@@ -131,3 +146,59 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
 
 def _derive_max_parallel_chunks(models: dict[str, Any]) -> int:
     return max(1, sum(max(1, int(getattr(model, "max_parallel_requests", 1) or 1)) for model in models.values()))
+
+
+class WindowedDetectionGenerator(ColumnGeneratorWithModelRegistry[WindowedDetectionConfig]):
+    @staticmethod
+    def get_generation_strategy() -> GenerationStrategy:
+        return GenerationStrategy.CELL_BY_CELL
+
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:
+        alias = self.config.alias
+        models = {alias: _AsyncBridgedModelFacade(self.get_model(alias))}
+        params = WindowedDetectionParams(
+            alias=alias,
+            max_render_chars=self.config.max_render_chars,
+            safety_margin_chars=self.config.safety_margin_chars,
+            overlap_chars=self.config.overlap_chars,
+            system_prompt=self.config.system_prompt,
+        )
+        return detect_row(data, params, models)
+
+
+class WindowedAugmentationGenerator(ColumnGeneratorWithModelRegistry[WindowedAugmentationConfig]):
+    @staticmethod
+    def get_generation_strategy() -> GenerationStrategy:
+        return GenerationStrategy.CELL_BY_CELL
+
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:
+        alias = self.config.alias
+        models = {alias: _AsyncBridgedModelFacade(self.get_model(alias))}
+        params = WindowedAugmentationParams(
+            alias=alias,
+            prompt_template=self.config.prompt_template,
+            max_render_chars=self.config.max_render_chars,
+            safety_margin_chars=self.config.safety_margin_chars,
+            overlap_chars=self.config.overlap_chars,
+            system_prompt=self.config.system_prompt,
+        )
+        return augment_row(data, params, models)
+
+
+class WindowedLatentGenerator(ColumnGeneratorWithModelRegistry[WindowedLatentConfig]):
+    @staticmethod
+    def get_generation_strategy() -> GenerationStrategy:
+        return GenerationStrategy.CELL_BY_CELL
+
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:
+        alias = self.config.alias
+        models = {alias: _AsyncBridgedModelFacade(self.get_model(alias))}
+        params = WindowedLatentParams(
+            alias=alias,
+            prompt_template=self.config.prompt_template,
+            max_render_chars=self.config.max_render_chars,
+            safety_margin_chars=self.config.safety_margin_chars,
+            overlap_chars=self.config.overlap_chars,
+            system_prompt=self.config.system_prompt,
+        )
+        return latent_row(data, params, models)
