@@ -256,8 +256,13 @@ def _open_owned_directory_no_follow(path: Path) -> int:
                 raise ValueError("completion seal path must contain only directories")
             if final and metadata.st_uid != os.geteuid():
                 raise ValueError("completion seal directory must be owned by the current user")
-            writable_by_others = metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-            if writable_by_others and not metadata.st_mode & stat.S_ISVTX:
+            sticky = metadata.st_mode & stat.S_ISVTX
+            world_writable = metadata.st_mode & stat.S_IWOTH
+            group_writable = metadata.st_mode & stat.S_IWGRP
+            root_owned = metadata.st_uid == 0
+            if world_writable and not sticky:
+                raise ValueError("completion seal path contains an untrusted writable directory")
+            if group_writable and not sticky and not root_owned:
                 raise ValueError("completion seal path contains an untrusted writable directory")
         return descriptor
     except (OSError, ValueError) as exc:
