@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
 
+from anonymizer import RunConfig
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
@@ -167,6 +168,37 @@ def test_anonymizer_custom_model_providers_override_bundled_defaults() -> None:
         )
     passed_providers = mock_data_designer.call_args.kwargs["model_providers"]
     assert passed_providers is custom_providers
+
+
+def test_anonymizer_applies_data_designer_run_config_to_managed_instance() -> None:
+    run_config = RunConfig(buffer_size=20, max_in_flight_tasks=64)
+
+    with patch("anonymizer.interface.anonymizer.DataDesigner") as mock_data_designer:
+        Anonymizer(
+            data_designer_run_config=run_config,
+            detection_workflow=Mock(),
+            replace_runner=Mock(),
+            rewrite_runner=Mock(),
+        )
+
+    mock_data_designer.return_value.set_run_config.assert_called_once_with(run_config)
+
+
+def test_anonymizer_applies_data_designer_run_config_to_supplied_instance() -> None:
+    from data_designer.interface.data_designer import DataDesigner
+
+    data_designer = Mock(spec=DataDesigner)
+    run_config = RunConfig(buffer_size=20, max_in_flight_tasks=64)
+
+    Anonymizer(
+        data_designer=data_designer,
+        data_designer_run_config=run_config,
+        detection_workflow=Mock(),
+        replace_runner=Mock(),
+        rewrite_runner=Mock(),
+    )
+
+    data_designer.set_run_config.assert_called_once_with(run_config)
 
 
 def test_anonymizer_rejects_missing_provider_as_invalid_config_error() -> None:

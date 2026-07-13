@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 __version__ = version("nemo-anonymizer")
 
 from data_designer.config.models import ModelProvider as ModelProvider
+from data_designer.config.run_config import RunConfig as RunConfig
 
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
@@ -64,6 +65,7 @@ __all__ = [
     "Redact",
     "Rewrite",
     "RiskTolerance",
+    "RunConfig",
     "Substitute",
     "configure_logging",
 ]
