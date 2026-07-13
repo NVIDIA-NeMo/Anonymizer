@@ -2403,8 +2403,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-<p>Can Anonymizer run fully self-hosted and still process a real batch in minutes? A common version of this problem is an internal legal dataset that cannot leave the infrastructure boundary, but still needs realistic anonymized text for testing, review, or downstream model work. In that setting, self-hosting models is not just a deployment preference. It defines where the privacy boundary sits.</p>
-<p>This devnote tackles that problem on one <a href="https://www.nvidia.com/en-us/data-center/dgx-b300/">B300</a> instance on <a href="https://brev.nvidia.com/">Brev</a>: Qwen is served locally with vLLM, GLiNER runs behind Anonymizer's reference OpenAI-compatible GLiNER server, and Anonymizer points at those localhost endpoints.</p>
+<p>Can Anonymizer run fully self-hosted and still process a real batch in minutes? The question comes up whenever sensitive data can't leave your infrastructure — think of an internal legal dataset that still needs realistic anonymized text for testing, review, or downstream model work. In that setting, self-hosting isn't just a deployment preference; it's what decides where the privacy boundary sits.</p>
+<p>This devnote takes on that problem with a single <a href="https://www.nvidia.com/en-us/data-center/dgx-b300/">B300</a> instance on <a href="https://brev.nvidia.com/">Brev</a>. Every model the pipeline touches runs on that one GPU: Qwen behind vLLM and GLiNER behind Anonymizer's reference OpenAI-compatible server, with Anonymizer pointed at localhost. Nothing leaves the box.</p>
 <blockquote>
 <p>The result: one warm Anonymizer call processed 250 compact legal records in under 9 minutes. No managed remote model API was in the loop.</p>
 </blockquote>
