@@ -3171,77 +3171,26 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=9a41b4fb">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
-<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
-
-<span class="c1"># ---</span>
-<span class="c1"># jupyter:</span>
-<span class="c1">#   jupytext:</span>
-<span class="c1">#     text_representation:</span>
-<span class="c1">#       extension: .py</span>
-<span class="c1">#       format_name: percent</span>
-<span class="c1">#       format_version: '1.3'</span>
-<span class="c1">#   kernelspec:</span>
-<span class="c1">#     display_name: Python 3</span>
-<span class="c1">#     language: python</span>
-<span class="c1">#     name: python3</span>
-<span class="c1"># ---</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-1"># SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#   kernelspec:
-#     display_name: Python 3
-#     language: python
-#     name: python3
-# ---</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5898db87">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ce58c920">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 <h1 id="rewriting-biographies">🕵️ Rewriting Biographies<a class="anchor-link" href="#rewriting-biographies">¶</a></h1><p>Instead of replacing entities with tokens, rewrite mode generates a
-privacy-safe transformation of the entire text. The pipeline:</p>
+privacy-safe transformation of the entire text. The <code>run()</code> / <code>preview()</code> pipeline:</p>
 <ol>
 <li>Detects entities (same as replace mode, plus latent entity detection)</li>
 <li>Classifies the domain and assigns sensitivity dispositions</li>
 <li>Generates a rewritten version that obscures sensitive entities</li>
 <li>Evaluates quality (utility) and privacy (leakage) with an automated repair loop</li>
-<li>Runs a final optional LLM judge for informational scores</li>
 </ol>
+<p>Afterward, a separate optional <code>evaluate()</code> call runs LLM judges for
+detection validity and holistic privacy, quality, and style scores.</p>
 <h4 id="what-youll-learn">📚 What you'll learn<a class="anchor-link" href="#what-youll-learn">¶</a></h4><ul>
 <li>Configure rewrite mode with <code>PrivacyGoal</code> to specify what to protect and what to preserve</li>
 <li>Set evaluation criteria and risk tolerance for automated quality checks</li>
@@ -3257,7 +3206,7 @@ privacy-safe transformation of the entire text. The pipeline:</p>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fe1f0a91">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a66c9622">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3277,7 +3226,7 @@ privacy-safe transformation of the entire text. The pipeline:</p>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d9fcda4f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=aee39380">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3285,7 +3234,7 @@ privacy-safe transformation of the entire text. The pipeline:</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3304,7 +3253,7 @@ privacy-safe transformation of the entire text. The pipeline:</p>
         <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY is required to run these notebooks."</span><span class="p">)</span>
     <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">import getpass
+<div class="clipboard-copy-txt" id="cell-1">import getpass
 import os
 
 if not os.getenv("NVIDIA_API_KEY"):
@@ -3318,7 +3267,7 @@ if not os.getenv("NVIDIA_API_KEY"):
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8793a065">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=43165992">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3326,7 +3275,7 @@ if not os.getenv("NVIDIA_API_KEY"):
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3348,7 +3297,7 @@ if not os.getenv("NVIDIA_API_KEY"):
 
 <span class="n">configure_logging</span><span class="p">(</span><span class="n">LoggingConfig</span><span class="o">.</span><span class="n">default</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">from anonymizer import (
+<div class="clipboard-copy-txt" id="cell-2">from anonymizer import (
     Anonymizer,
     AnonymizerConfig,
     AnonymizerInput,
@@ -3365,7 +3314,48 @@ configure_logging(LoggingConfig.default())</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=378f4dd4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e95284b6">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-3">anonymizer = Anonymizer()</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=19da00ef">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="input-data">📦 Input data<a class="anchor-link" href="#input-data">¶</a></h2><ul>
+<li>Same biographies dataset used in earlier notebooks -- familiar data makes it
+easy to compare rewrite output against replace output.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=dac708e6">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3383,30 +3373,41 @@ configure_logging(LoggingConfig.default())</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
+    <span class="n">source</span><span class="o">=</span><span class="s2">"https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
+    <span class="n">text_column</span><span class="o">=</span><span class="s2">"biography"</span><span class="p">,</span>
+    <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Biographical profiles"</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">anonymizer = Anonymizer()</div>
+<div class="clipboard-copy-txt" id="cell-4">input_data = AnonymizerInput(
+    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
+    text_column="biography",
+    data_summary="Biographical profiles",
+)</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d9c1de52">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0e5e749f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="input-data">📦 Input data<a class="anchor-link" href="#input-data">¶</a></h2><ul>
-<li>Same biographies dataset used in earlier notebooks -- familiar data makes it
-easy to compare rewrite output against replace output.</li>
+<h2 id="configure">🎛️ Configure<a class="anchor-link" href="#configure">¶</a></h2><ul>
+<li><code>PrivacyGoal</code> spells out what to <strong>protect</strong> and what to <strong>preserve</strong> --
+this gives the rewriter clear, domain-specific guidance.</li>
+<li><code>risk_tolerance</code> (default <code>"low"</code>) and <code>max_repair_iterations</code> (default <code>3</code>)
+control the automated quality gate --
+see <a href="../../concepts/rewrite/#risk-tolerance">Risk tolerance</a> for presets.</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2c4b16a9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=415bc5e4">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3424,16 +3425,26 @@ easy to compare rewrite output against replace output.</li>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">input_data</span> <span class="o">=</span> <span class="n">AnonymizerInput</span><span class="p">(</span>
-    <span class="n">source</span><span class="o">=</span><span class="s2">"https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"</span><span class="p">,</span>
-    <span class="n">text_column</span><span class="o">=</span><span class="s2">"biography"</span><span class="p">,</span>
-    <span class="n">data_summary</span><span class="o">=</span><span class="s2">"Biographical profiles"</span><span class="p">,</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span>
+    <span class="n">rewrite</span><span class="o">=</span><span class="n">Rewrite</span><span class="p">(</span>
+        <span class="n">privacy_goal</span><span class="o">=</span><span class="n">PrivacyGoal</span><span class="p">(</span>
+            <span class="n">protect</span><span class="o">=</span><span class="s2">"All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)"</span><span class="p">,</span>
+            <span class="n">preserve</span><span class="o">=</span><span class="s2">"Career trajectory, educational background, and professional accomplishments"</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="n">risk_tolerance</span><span class="o">=</span><span class="s2">"low"</span><span class="p">,</span>
+        <span class="n">max_repair_iterations</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="p">),</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">input_data = AnonymizerInput(
-    source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
-    text_column="biography",
-    data_summary="Biographical profiles",
+<div class="clipboard-copy-txt" id="cell-5">config = AnonymizerConfig(
+    rewrite=Rewrite(
+        privacy_goal=PrivacyGoal(
+            protect="All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)",
+            preserve="Career trajectory, educational background, and professional accomplishments",
+        ),
+        risk_tolerance="low",
+        max_repair_iterations=3,
+    ),
 )</div>
 </div>
 </div>
@@ -3441,24 +3452,21 @@ easy to compare rewrite output against replace output.</li>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0154c265">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9bdeaed2">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="configure">🎛️ Configure<a class="anchor-link" href="#configure">¶</a></h2><ul>
-<li><code>PrivacyGoal</code> spells out what to <strong>protect</strong> and what to <strong>preserve</strong> --
-this gives the rewriter clear, domain-specific guidance.</li>
-<li><code>risk_tolerance</code> (default <code>"low"</code>) and <code>max_repair_iterations</code> (default <code>3</code>)
-control the automated quality gate --
-see <a href="../../concepts/rewrite/#risk-tolerance">Risk tolerance</a> for presets.</li>
+<h2 id="preview">👁️ Preview<a class="anchor-link" href="#preview">¶</a></h2><ul>
+<li><code>preview()</code> runs on a small sample so you can iterate on privacy goals
+and evaluation criteria before committing to a full run.</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=80b86692">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3dd26366">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3476,44 +3484,28 @@ see <a href="../../concepts/rewrite/#risk-tolerance">Risk tolerance</a> for pres
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">config</span> <span class="o">=</span> <span class="n">AnonymizerConfig</span><span class="p">(</span>
-    <span class="n">rewrite</span><span class="o">=</span><span class="n">Rewrite</span><span class="p">(</span>
-        <span class="n">privacy_goal</span><span class="o">=</span><span class="n">PrivacyGoal</span><span class="p">(</span>
-            <span class="n">protect</span><span class="o">=</span><span class="s2">"All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)"</span><span class="p">,</span>
-            <span class="n">preserve</span><span class="o">=</span><span class="s2">"Career trajectory, educational background, and professional accomplishments"</span><span class="p">,</span>
-        <span class="p">),</span>
-    <span class="p">),</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">preview</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">preview</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+    <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">,</span>
+    <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
 <span class="p">)</span>
+
+<span class="n">preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">config = AnonymizerConfig(
-    rewrite=Rewrite(
-        privacy_goal=PrivacyGoal(
-            protect="All direct identifiers and quasi-identifier combinations (names, locations, employers, dates)",
-            preserve="Career trajectory, educational background, and professional accomplishments",
-        ),
-    ),
-)</div>
+<div class="clipboard-copy-txt" id="cell-6">preview = anonymizer.preview(
+    config=config,
+    data=input_data,
+    num_records=3,
+)
+
+preview.display_record(0)</div>
 </div>
 </div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5faa0cb3">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="preview">👁️ Preview<a class="anchor-link" href="#preview">¶</a></h2><ul>
-<li><code>preview()</code> runs on a small sample so you can iterate on privacy goals
-and evaluation criteria before committing to a full run.</li>
-</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4416e401">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2dfdcfa6">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3531,28 +3523,36 @@ and evaluation criteria before committing to a full run.</li>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">preview</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">preview</span><span class="p">(</span>
-    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
-    <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">,</span>
-    <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">preview = anonymizer.preview(
-    config=config,
-    data=input_data,
-    num_records=3,
-)
-
-preview.display_record(0)</div>
+<div class="clipboard-copy-txt" id="cell-7">preview.display_record(1)</div>
 </div>
 </div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c8545fb5">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<blockquote>
+<p><strong>How to interpret leakage:</strong> Leakage is measured against the sensitivity
+disposition. Details marked <code>leave_as_is</code> may remain without increasing
+<code>leakage_mass</code>. If an output retains something you expected the privacy goal
+to protect, inspect the Entity Disposition table.</p>
+</blockquote>
+<h2 id="full-run">🚀 Full run<a class="anchor-link" href="#full-run">¶</a></h2><ul>
+<li><code>result.dataframe</code> has user-facing columns: rewritten text, scores, and the review flag.</li>
+<li><code>result.trace_dataframe</code> has every intermediate column for debugging.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b8850fc9">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4b055d2e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3570,30 +3570,20 @@ preview.display_record(0)</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">preview</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">)</span>
+
+<span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">preview.display_record(1)</div>
+<div class="clipboard-copy-txt" id="cell-8">result = anonymizer.run(config=config, data=input_data)
+
+result.dataframe.head()</div>
 </div>
 </div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d521d308">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="full-run">🚀 Full run<a class="anchor-link" href="#full-run">¶</a></h2><ul>
-<li><code>result.dataframe</code> has user-facing columns: rewritten text, scores, and the review flag.</li>
-<li><code>result.trace_dataframe</code> has every intermediate column for debugging.</li>
-</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=eec54658">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=57d2c3db">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3611,20 +3601,16 @@ preview.display_record(0)</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">input_data</span><span class="p">)</span>
-
-<span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="p">[[</span><span class="s2">"biography_rewritten"</span><span class="p">,</span> <span class="s2">"utility_score"</span><span class="p">,</span> <span class="s2">"leakage_mass"</span><span class="p">,</span> <span class="s2">"needs_human_review"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">result = anonymizer.run(config=config, data=input_data)
-
-result.dataframe.head()</div>
+<div class="clipboard-copy-txt" id="cell-9">result.dataframe[["biography_rewritten", "utility_score", "leakage_mass", "needs_human_review"]].head()</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e8981e84">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f1cc1b7f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3642,16 +3628,34 @@ result.dataframe.head()</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="p">[[</span><span class="s2">"biography_rewritten"</span><span class="p">,</span> <span class="s2">"utility_score"</span><span class="p">,</span> <span class="s2">"leakage_mass"</span><span class="p">,</span> <span class="s2">"needs_human_review"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">trace_dataframe</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">result.dataframe[["biography_rewritten", "utility_score", "leakage_mass", "needs_human_review"]].head()</div>
+<div class="clipboard-copy-txt" id="cell-10">result.trace_dataframe.columns.tolist()</div>
 </div>
 </div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=566043dc">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="filter-by-review-flag">🚩 Filter by review flag<a class="anchor-link" href="#filter-by-review-flag">¶</a></h2><ul>
+<li>Records where automated metrics exceed thresholds are flagged for manual review.</li>
+<li><code>needs_human_review</code> is threshold-based, so a record can have small nonzero
+leakage without being flagged.</li>
+<li>Use this to prioritize human attention on the records that need it most.</li>
+<li>See <a href="../../concepts/rewrite/#working-with-flagged-records">Working with flagged records</a>
+for guidance on diagnosing and resolving flagged records.</li>
+</ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3391c3a4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f01cae75">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3669,32 +3673,37 @@ result.dataframe.head()</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">trace_dataframe</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">dataframe</span>
+<span class="n">flagged</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s2">"needs_human_review"</span><span class="p">]</span> <span class="o">==</span> <span class="kc">True</span><span class="p">]</span>  <span class="c1"># noqa: E712</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">flagged</span><span class="p">)</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2"> records flagged for human review"</span><span class="p">)</span>
+<span class="n">flagged</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">result.trace_dataframe.columns.tolist()</div>
+<div class="clipboard-copy-txt" id="cell-11">df = result.dataframe
+flagged = df[df["needs_human_review"] == True]  # noqa: E712
+print(f"{len(flagged)} of {len(df)} records flagged for human review")
+flagged.head()</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=265faa5d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d59d5c0c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="filter-by-review-flag">🚩 Filter by review flag<a class="anchor-link" href="#filter-by-review-flag">¶</a></h2><ul>
-<li>Records where automated metrics exceed thresholds are flagged for manual review.</li>
-<li>Use this to prioritize human attention on the records that need it most.</li>
-<li>See <a href="../../concepts/rewrite/#working-with-flagged-records">Working with flagged records</a>
-for guidance on diagnosing and resolving flagged records.</li>
-</ul>
+<h2 id="evaluate-optional">🔬 Evaluate (optional)<a class="anchor-link" href="#evaluate-optional">¶</a></h2><p>Call <code>evaluate()</code> to run LLM-as-judge scoring on the rewrite result — detection validity and three quality rubrics (privacy, quality, style).
+Evaluation makes additional LLM calls per record. For larger datasets, evaluate
+a preview first; this tutorial evaluates all 25 rows to demonstrate the complete workflow.
+This holistic judge is independent of pipeline leakage scoring, so their assessments may differ.
+See <a href="../../concepts/evaluation/#rewrite-evaluation">Evaluation</a> for details.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3e33e28c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cbb272a0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3712,34 +3721,16 @@ for guidance on diagnosing and resolving flagged records.</li>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">dataframe</span>
-<span class="n">flagged</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s2">"needs_human_review"</span><span class="p">]</span> <span class="o">==</span> <span class="kc">True</span><span class="p">]</span>  <span class="c1"># noqa: E712</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">flagged</span><span class="p">)</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2"> records flagged for human review"</span><span class="p">)</span>
-<span class="n">flagged</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">evaluated</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">df = result.dataframe
-flagged = df[df["needs_human_review"] == True]  # noqa: E712
-print(f"{len(flagged)} of {len(df)} records flagged for human review")
-flagged.head()</div>
+<div class="clipboard-copy-txt" id="cell-12">evaluated = anonymizer.evaluate(result)</div>
 </div>
 </div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5037f2e7">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="evaluate-optional">🔬 Evaluate (optional)<a class="anchor-link" href="#evaluate-optional">¶</a></h2><p>Call <code>evaluate()</code> to run LLM-as-judge scoring on the rewrite result — detection validity and three quality rubrics (privacy, quality, style).
-See <a href="../../concepts/evaluation/#rewrite-evaluation">Evaluation</a> for details.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=386a542f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=86019301">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3757,43 +3748,16 @@ See <a href="../../concepts/evaluation/#rewrite-evaluation">Evaluation</a> for d
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">evaluated</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-13">evaluated = anonymizer.evaluate(result)</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f9929b7c">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">evaluated</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-14">evaluated.display_record(0)</div>
+<div class="clipboard-copy-txt" id="cell-13">evaluated.display_record(0)</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=944bf2cd">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b9119c1a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>

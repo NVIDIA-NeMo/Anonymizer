@@ -3204,74 +3204,27 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b262c8d8">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
-<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
-
-<span class="c1"># ---</span>
-<span class="c1"># jupyter:</span>
-<span class="c1">#   jupytext:</span>
-<span class="c1">#     text_representation:</span>
-<span class="c1">#       extension: .py</span>
-<span class="c1">#       format_name: percent</span>
-<span class="c1">#       format_version: '1.3'</span>
-<span class="c1">#   kernelspec:</span>
-<span class="c1">#     display_name: Python 3</span>
-<span class="c1">#     language: python</span>
-<span class="c1">#     name: python3</span>
-<span class="c1"># ---</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-1"># SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#   kernelspec:
-#     display_name: Python 3
-#     language: python
-#     name: python3
-# ---</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0e683e25">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a753fa1c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 <h1 id="inspecting-detected-entities">🕵️ Inspecting Detected Entities<a class="anchor-link" href="#inspecting-detected-entities">¶</a></h1><p>Dig into the entity detection pipeline output -- what was detected,
 what the LLM validator kept or dropped, and where entities appear in the text.</p>
 <p>This notebook is for users who need to debug detection quality,
 tune labels and/or thresholds, or investigate downstream replacement or rewriting results.</p>
 <p>We use <strong>Annotate</strong> mode because it preserves the original text while tagging each entity
 with its label, making it ideal for reviewing detection quality.</p>
+<blockquote>
+<p><strong>Privacy warning:</strong> <code>Annotate</code> does not anonymize the text. Sensitive values
+remain in the output, so use it only for inspection -- not as a privacy-safe
+production strategy.</p>
+</blockquote>
 <h4 id="what-youll-learn">📚 What you'll learn<a class="anchor-link" href="#what-youll-learn">¶</a></h4><ul>
 <li>Run the detection pipeline and inspect its output using Annotate mode</li>
 <li>View tagged text with entities marked inline</li>
@@ -3286,7 +3239,7 @@ with its label, making it ideal for reviewing detection quality.</p>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6089054d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e756645e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3306,7 +3259,7 @@ with its label, making it ideal for reviewing detection quality.</p>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=64e77260">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=32b983ac">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3314,7 +3267,7 @@ with its label, making it ideal for reviewing detection quality.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-1">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3336,7 +3289,7 @@ with its label, making it ideal for reviewing detection quality.</p>
         <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"NVIDIA_API_KEY is required to run these notebooks."</span><span class="p">)</span>
     <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"NVIDIA_API_KEY"</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">import getpass
+<div class="clipboard-copy-txt" id="cell-1">import getpass
 import os
 from collections import Counter
 
@@ -3353,7 +3306,38 @@ if not os.getenv("NVIDIA_API_KEY"):
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c6cae8d3">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=143b5997">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-2">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">LoggingConfig</span><span class="p">,</span> <span class="n">configure_logging</span>
+
+<span class="n">configure_logging</span><span class="p">(</span><span class="n">LoggingConfig</span><span class="o">.</span><span class="n">default</span><span class="p">())</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-2">from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, configure_logging
+
+configure_logging(LoggingConfig.default())</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5b9bb16c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3371,47 +3355,16 @@ if not os.getenv("NVIDIA_API_KEY"):
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">anonymizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotate</span><span class="p">,</span> <span class="n">Anonymizer</span><span class="p">,</span> <span class="n">AnonymizerConfig</span><span class="p">,</span> <span class="n">AnonymizerInput</span><span class="p">,</span> <span class="n">LoggingConfig</span><span class="p">,</span> <span class="n">configure_logging</span>
-
-<span class="n">configure_logging</span><span class="p">(</span><span class="n">LoggingConfig</span><span class="o">.</span><span class="n">default</span><span class="p">())</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-3">from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, configure_logging
-
-configure_logging(LoggingConfig.default())</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=aaad5463">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">anonymizer</span> <span class="o">=</span> <span class="n">Anonymizer</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">anonymizer = Anonymizer()</div>
+<div class="clipboard-copy-txt" id="cell-3">anonymizer = Anonymizer()</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=42dce3d2">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4388cfa0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3426,7 +3379,7 @@ alongside entity labels -- ideal for debugging.</li>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5540bea7">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b419383e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3434,7 +3387,7 @@ alongside entity labels -- ideal for debugging.</li>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3458,7 +3411,7 @@ alongside entity labels -- ideal for debugging.</li>
     <span class="n">num_records</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">config = AnonymizerConfig(replace=Annotate())
+<div class="clipboard-copy-txt" id="cell-4">config = AnonymizerConfig(replace=Annotate())
 
 input_data = AnonymizerInput(
     source="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv",
@@ -3477,7 +3430,7 @@ result = anonymizer.preview(
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=57135c99">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5db3cad3">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3490,7 +3443,49 @@ result = anonymizer.preview(
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cb0159bb">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8bba0fd1">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-5">result.display_record(0)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=77ce5c07">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="columns">📋 Columns<a class="anchor-link" href="#columns">¶</a></h2><ul>
+<li><code>result.dataframe["final_entities"]</code> is the stable, public entity output.</li>
+<li><code>trace_dataframe</code> contains internal pipeline columns for deeper debugging;
+those underscore-prefixed columns may change between releases.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=132ff32b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3508,30 +3503,36 @@ result = anonymizer.preview(
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">result</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trace_df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">trace_dataframe</span>
+<span class="n">final_entities</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">dataframe</span><span class="p">[</span><span class="s2">"final_entities"</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Records: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">trace_df</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Columns: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">trace_df</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">result.display_record(0)</div>
+<div class="clipboard-copy-txt" id="cell-6">trace_df = result.trace_dataframe
+final_entities = result.dataframe["final_entities"]
+print(f"Records: {len(trace_df)}")
+print(f"Columns: {list(trace_df.columns)}")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8e56b31a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=53e18f5a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="columns">📋 Columns<a class="anchor-link" href="#columns">¶</a></h2><ul>
-<li><code>trace_dataframe</code> contains all internal columns from the pipeline
-(detection, validation, replacement, etc.).</li>
+<h2 id="detected-entities">🎯 Detected entities<a class="anchor-link" href="#detected-entities">¶</a></h2><ul>
+<li>Final entity list after validation. Each entity has <code>value</code>, <code>label</code>,
+positions, <code>score</code>, and <code>source</code> (detector / augmenter / name_split / propagation).</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=57ee8217">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ce1b4a7a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3549,34 +3550,45 @@ result = anonymizer.preview(
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">trace_dataframe</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Records: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Columns: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">row_idx</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">raw</span> <span class="o">=</span> <span class="n">final_entities</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">row_idx</span><span class="p">]</span>
+<span class="n">entities</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"entities"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Record </span><span class="si">{</span><span class="n">row_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">entities</span><span class="p">)</span><span class="si">}</span><span class="s2"> entities detected</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="n">entity_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">entities</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">entity_df</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+    <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"value"</span><span class="p">,</span> <span class="s2">"label"</span><span class="p">,</span> <span class="s2">"start_position"</span><span class="p">,</span> <span class="s2">"end_position"</span><span class="p">,</span> <span class="s2">"source"</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">entity_df</span><span class="o">.</span><span class="n">columns</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">entity_df</span><span class="p">[</span><span class="n">cols</span><span class="p">]</span><span class="o">.</span><span class="n">to_string</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">df = result.trace_dataframe
-print(f"Records: {len(df)}")
-print(f"Columns: {list(df.columns)}")</div>
+<div class="clipboard-copy-txt" id="cell-7">row_idx = 0
+raw = final_entities.iloc[row_idx]
+entities = raw["entities"] if isinstance(raw, dict) else raw
+print(f"Record {row_idx}: {len(entities)} entities detected\n")
+
+entity_df = pd.DataFrame(entities)
+if not entity_df.empty:
+    cols = [c for c in ["value", "label", "start_position", "end_position", "source"] if c in entity_df.columns]
+    print(entity_df[cols].to_string())</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8745f495">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3a3887aa">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="detected-entities">🎯 Detected entities<a class="anchor-link" href="#detected-entities">¶</a></h2><ul>
-<li>Final entity list after validation. Each entity has <code>value</code>, <code>label</code>,
-positions, <code>score</code>, and <code>source</code> (detector / augmenter / name_split / propagation).</li>
+<h2 id="labels">🏷️ Labels<a class="anchor-link" href="#labels">¶</a></h2><ul>
+<li>Entity label distribution across all records -- which types are most common.</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ec49c2ab">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c9e5b5e0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3594,64 +3606,8 @@ positions, <code>score</code>, and <code>source</code> (detector / augmenter / n
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">row_idx</span> <span class="o">=</span> <span class="mi">0</span>
-<span class="n">raw</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">row_idx</span><span class="p">,</span> <span class="s2">"_detected_entities"</span><span class="p">]</span>
-<span class="n">entities</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"entities"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Record </span><span class="si">{</span><span class="n">row_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">entities</span><span class="p">)</span><span class="si">}</span><span class="s2"> entities detected</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
-
-<span class="n">entity_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">entities</span><span class="p">)</span>
-<span class="k">if</span> <span class="ow">not</span> <span class="n">entity_df</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
-    <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"value"</span><span class="p">,</span> <span class="s2">"label"</span><span class="p">,</span> <span class="s2">"start_position"</span><span class="p">,</span> <span class="s2">"end_position"</span><span class="p">,</span> <span class="s2">"source"</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">entity_df</span><span class="o">.</span><span class="n">columns</span><span class="p">]</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">entity_df</span><span class="p">[</span><span class="n">cols</span><span class="p">]</span><span class="o">.</span><span class="n">to_string</span><span class="p">())</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-8">row_idx = 0
-raw = df.loc[row_idx, "_detected_entities"]
-entities = raw["entities"] if isinstance(raw, dict) else raw
-print(f"Record {row_idx}: {len(entities)} entities detected\n")
-
-entity_df = pd.DataFrame(entities)
-if not entity_df.empty:
-    cols = [c for c in ["value", "label", "start_position", "end_position", "source"] if c in entity_df.columns]
-    print(entity_df[cols].to_string())</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=82855d35">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="labels">🏷️ Labels<a class="anchor-link" href="#labels">¶</a></h2><ul>
-<li>Entity label distribution across all records -- which types are most common.</li>
-</ul>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c5ddf1f2">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">label_counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">()</span>
-<span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">df</span><span class="p">[</span><span class="s2">"_detected_entities"</span><span class="p">]:</span>
+<span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">final_entities</span><span class="p">:</span>
     <span class="n">entity_list</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"entities"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw</span>
     <span class="k">for</span> <span class="n">entity</span> <span class="ow">in</span> <span class="n">entity_list</span><span class="p">:</span>
         <span class="n">label_counts</span><span class="p">[</span><span class="n">entity</span><span class="p">[</span><span class="s2">"label"</span><span class="p">]]</span> <span class="o">+=</span> <span class="mi">1</span>
@@ -3659,8 +3615,8 @@ if not entity_df.empty:
 <span class="k">for</span> <span class="n">label</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">label_counts</span><span class="o">.</span><span class="n">most_common</span><span class="p">():</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">label_counts = Counter()
-for raw in df["_detected_entities"]:
+<div class="clipboard-copy-txt" id="cell-8">label_counts = Counter()
+for raw in final_entities:
     entity_list = raw["entities"] if isinstance(raw, dict) else raw
     for entity in entity_list:
         label_counts[entity["label"]] += 1
@@ -3673,7 +3629,7 @@ for label, count in label_counts.most_common():
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e4bfb8b0">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d19bb3fa">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3693,7 +3649,62 @@ for label, count in label_counts.most_common():
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2a24da2c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d022e75f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">source_counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">final_entities</span><span class="p">:</span>
+    <span class="n">entity_list</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"entities"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw</span>
+    <span class="k">for</span> <span class="n">entity</span> <span class="ow">in</span> <span class="n">entity_list</span><span class="p">:</span>
+        <span class="n">source_counts</span><span class="p">[</span><span class="n">entity</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"source"</span><span class="p">,</span> <span class="s2">"unknown"</span><span class="p">)]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+<span class="k">for</span> <span class="n">source</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">source_counts</span><span class="o">.</span><span class="n">most_common</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">source</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-9">source_counts = Counter()
+for raw in final_entities:
+    entity_list = raw["entities"] if isinstance(raw, dict) else raw
+    for entity in entity_list:
+        source_counts[entity.get("source", "unknown")] += 1
+
+for source, count in source_counts.most_common():
+    print(f"  {source}: {count}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e8955402">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="by-value">📊 By value<a class="anchor-link" href="#by-value">¶</a></h2><ul>
+<li>Entities grouped by unique value -- this is what drives consistent replacement
+downstream (same name always maps to the same substitute).</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=35caf9c5">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3711,44 +3722,42 @@ for label, count in label_counts.most_common():
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">source_counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">()</span>
-<span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">df</span><span class="p">[</span><span class="s2">"_detected_entities"</span><span class="p">]:</span>
-    <span class="n">entity_list</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"entities"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw</span>
-    <span class="k">for</span> <span class="n">entity</span> <span class="ow">in</span> <span class="n">entity_list</span><span class="p">:</span>
-        <span class="n">source_counts</span><span class="p">[</span><span class="n">entity</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"source"</span><span class="p">,</span> <span class="s2">"unknown"</span><span class="p">)]</span> <span class="o">+=</span> <span class="mi">1</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">row_idx</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">raw_bv</span> <span class="o">=</span> <span class="n">trace_df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">row_idx</span><span class="p">,</span> <span class="s2">"_entities_by_value"</span><span class="p">]</span>
+<span class="n">by_value</span> <span class="o">=</span> <span class="n">raw_bv</span><span class="p">[</span><span class="s2">"entities_by_value"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw_bv</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw_bv</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Record </span><span class="si">{</span><span class="n">row_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">by_value</span><span class="p">)</span><span class="si">}</span><span class="s2"> unique entity values</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
 
-<span class="k">for</span> <span class="n">source</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">source_counts</span><span class="o">.</span><span class="n">most_common</span><span class="p">():</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">source</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">by_value</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="si">!r}</span><span class="s2"> -&gt; labels: </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'labels'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">source_counts = Counter()
-for raw in df["_detected_entities"]:
-    entity_list = raw["entities"] if isinstance(raw, dict) else raw
-    for entity in entity_list:
-        source_counts[entity.get("source", "unknown")] += 1
+<div class="clipboard-copy-txt" id="cell-10">row_idx = 0
+raw_bv = trace_df.loc[row_idx, "_entities_by_value"]
+by_value = raw_bv["entities_by_value"] if isinstance(raw_bv, dict) else raw_bv
+print(f"Record {row_idx}: {len(by_value)} unique entity values\n")
 
-for source, count in source_counts.most_common():
-    print(f"  {source}: {count}")</div>
+for entry in by_value:
+    print(f"  {entry['value']!r} -&gt; labels: {entry['labels']}")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=66616291">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=65c5655f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="by-value">📊 By value<a class="anchor-link" href="#by-value">¶</a></h2><ul>
-<li>Entities grouped by unique value -- this is what drives consistent replacement
-downstream (same name always maps to the same substitute).</li>
+<h2 id="failures">❌ Failures<a class="anchor-link" href="#failures">¶</a></h2><ul>
+<li>Records dropped during detection (LLM timeout, parse error, etc.).</li>
+<li>Check this to understand data loss in your pipeline.</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b344bc1a">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b003ae53">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3766,42 +3775,38 @@ downstream (same name always maps to the same substitute).</li>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">row_idx</span> <span class="o">=</span> <span class="mi">0</span>
-<span class="n">raw_bv</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">row_idx</span><span class="p">,</span> <span class="s2">"_entities_by_value"</span><span class="p">]</span>
-<span class="n">by_value</span> <span class="o">=</span> <span class="n">raw_bv</span><span class="p">[</span><span class="s2">"entities_by_value"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw_bv</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw_bv</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Record </span><span class="si">{</span><span class="n">row_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">by_value</span><span class="p">)</span><span class="si">}</span><span class="s2"> unique entity values</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
-
-<span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">by_value</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="si">!r}</span><span class="s2"> -&gt; labels: </span><span class="si">{</span><span class="n">entry</span><span class="p">[</span><span class="s1">'labels'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">failed_records</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">fr</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">failed_records</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  record_id=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">record_id</span><span class="si">}</span><span class="s2">, step=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">step</span><span class="si">}</span><span class="s2">, reason=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">reason</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"No failed records."</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">row_idx = 0
-raw_bv = df.loc[row_idx, "_entities_by_value"]
-by_value = raw_bv["entities_by_value"] if isinstance(raw_bv, dict) else raw_bv
-print(f"Record {row_idx}: {len(by_value)} unique entity values\n")
-
-for entry in by_value:
-    print(f"  {entry['value']!r} -&gt; labels: {entry['labels']}")</div>
+<div class="clipboard-copy-txt" id="cell-11">if result.failed_records:
+    for fr in result.failed_records:
+        print(f"  record_id={fr.record_id}, step={fr.step}, reason={fr.reason}")
+else:
+    print("No failed records.")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0d4fd921">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=286d20d5">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="failures">❌ Failures<a class="anchor-link" href="#failures">¶</a></h2><ul>
-<li>Records dropped during detection (LLM timeout, parse error, etc.).</li>
-<li>Check this to understand data loss in your pipeline.</li>
+<h2 id="optional-score-the-detections-with-an-llm-judge">📊 (Optional) Score the detections with an LLM judge<a class="anchor-link" href="#optional-score-the-detections-with-an-llm-judge">¶</a></h2><ul>
+<li><code>evaluate()</code> is a separate, opt-in step that runs LLM-as-judge metrics on the output.</li>
+<li>This notebook uses Annotate, so only <strong>Detection Validity</strong> runs — it flags entities the detector got wrong (false positives, mislabels, boundary errors). Substitute would also enable Type Fidelity, Relational Consistency, and Attribute Fidelity.</li>
 </ul>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3155ff16">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5a16dc64">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3819,59 +3824,10 @@ for entry in by_value:
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">failed_records</span><span class="p">:</span>
-    <span class="k">for</span> <span class="n">fr</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">failed_records</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  record_id=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">record_id</span><span class="si">}</span><span class="s2">, step=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">step</span><span class="si">}</span><span class="s2">, reason=</span><span class="si">{</span><span class="n">fr</span><span class="o">.</span><span class="n">reason</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="k">else</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">"No failed records."</span><span class="p">)</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-12">if result.failed_records:
-    for fr in result.failed_records:
-        print(f"  record_id={fr.record_id}, step={fr.step}, reason={fr.reason}")
-else:
-    print("No failed records.")</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ef8f4ec0">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="optional-score-the-detections-with-an-llm-judge">📊 (Optional) Score the detections with an LLM judge<a class="anchor-link" href="#optional-score-the-detections-with-an-llm-judge">¶</a></h2><ul>
-<li><code>evaluate()</code> is a separate, opt-in step that runs LLM-as-judge metrics on the output.</li>
-<li>This notebook uses Annotate, so only <strong>Detection Validity</strong> runs — it flags entities the detector got wrong (false positives, mislabels, boundary errors). Substitute would also enable Type Fidelity, Relational Consistency, and Attribute Fidelity.</li>
-</ul>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b2c17b98">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">evaluated</span> <span class="o">=</span> <span class="n">anonymizer</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
 <span class="n">evaluated</span><span class="o">.</span><span class="n">display_record</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-13">evaluated = anonymizer.evaluate(result)
+<div class="clipboard-copy-txt" id="cell-12">evaluated = anonymizer.evaluate(result)
 evaluated.display_record(0)</div>
 </div>
 </div>
@@ -3879,7 +3835,7 @@ evaluated.display_record(0)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2621859f">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8daafbba">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
