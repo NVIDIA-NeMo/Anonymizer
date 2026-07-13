@@ -25,6 +25,7 @@
 # | **Redact** | Label-based markers (`[REDACTED_FIRST_NAME]`) |
 # | **Annotate** | Tags entities but keeps original text |
 # | **Hash** | Deterministic hash digest |
+#
 # #### 📚 What you'll learn
 #
 # - Compare **Redact**, **Annotate**, **Hash**, and **Substitute** on the same input
