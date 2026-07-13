@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 # ---
 # jupyter:
 #   jupytext:
@@ -15,6 +12,10 @@
 # ---
 
 # %% [markdown]
+# <!--
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# -->
 # # 🕵️ Rewriting Legal Documents
 #
 # Rewriting legal text (TAB dataset) with a domain-specific privacy goal
@@ -115,6 +116,8 @@ input_data = AnonymizerInput(
 # ## 🎛️ Configure
 #
 # - `Detect(entity_labels=...)` overrides the default entity set with legal-specific labels.
+#   The explicit list is a strict allowlist for both detection and LLM augmentation:
+#   labels not included here are filtered out, so include every entity type you need.
 # - `PrivacyGoal` tells the rewriter what to **protect** (identifiers, case numbers,
 #   institutional references) and what to **preserve** (legal reasoning, statutory references,
 #   ruling structure).
@@ -153,9 +156,16 @@ preview.display_record(0)
 preview.display_record(1)
 
 # %% [markdown]
+# > **How to interpret leakage:** Leakage is measured against the sensitivity
+# > disposition. Details marked `leave_as_is` may remain without increasing
+# > `leakage_mass`. If an output retains something you expected the privacy goal
+# > to protect, inspect the Entity Disposition table.
+#
 # ## 🚀 Full run
 #
 # - `result.dataframe` has user-facing columns: rewritten text, scores, and the review flag.
+# - This notebook uses `risk_tolerance="minimal"`, which applies stricter repair
+#   and review thresholds than notebook 04.
 
 # %%
 result = anonymizer.run(config=config, data=input_data)
@@ -169,6 +179,8 @@ result.dataframe[["text_rewritten", "utility_score", "leakage_mass", "needs_huma
 # ## 🚩 Filter by review flag
 #
 # - Records where automated metrics exceed thresholds are flagged for manual review.
+# - The repair loop stops after `max_repair_iterations`; records that still need
+#   repair remain flagged for human review but are not pipeline failures.
 # - Use this to prioritize human attention on the records that need it most.
 # - See [Working with flagged records](../../concepts/rewrite/#working-with-flagged-records)
 #   for guidance on diagnosing and resolving flagged records.
@@ -183,6 +195,9 @@ flagged.head()
 # ## 🔬 Evaluate (optional)
 #
 # Call `evaluate()` to run LLM-as-judge scoring on the rewrite result — detection validity and three quality rubrics (privacy, quality, style).
+# Evaluation makes additional LLM calls per record. For larger datasets, evaluate
+# a preview first; this tutorial evaluates all 25 rows to demonstrate the complete workflow.
+# This holistic judge is independent of pipeline leakage scoring, so their assessments may differ.
 # See [Evaluation](../../concepts/evaluation/#rewrite-evaluation) for details.
 
 # %%

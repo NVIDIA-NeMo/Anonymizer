@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 # ---
 # jupyter:
 #   jupytext:
@@ -15,6 +12,10 @@
 # ---
 
 # %% [markdown]
+# <!--
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# -->
 # # 🕵️ Inspecting Detected Entities
 #
 # Dig into the entity detection pipeline output -- what was detected,
@@ -25,6 +26,10 @@
 
 # We use **Annotate** mode because it preserves the original text while tagging each entity
 # with its label, making it ideal for reviewing detection quality.
+#
+# > **Privacy warning:** `Annotate` does not anonymize the text. Sensitive values
+# > remain in the output, so use it only for inspection -- not as a privacy-safe
+# > production strategy.
 #
 # #### 📚 What you'll learn
 #
@@ -100,13 +105,15 @@ result.display_record(0)
 # %% [markdown]
 # ## 📋 Columns
 #
-# - `trace_dataframe` contains all internal columns from the pipeline
-#   (detection, validation, replacement, etc.).
+# - `result.dataframe["final_entities"]` is the stable, public entity output.
+# - `trace_dataframe` contains internal pipeline columns for deeper debugging;
+#   those underscore-prefixed columns may change between releases.
 
 # %%
-df = result.trace_dataframe
-print(f"Records: {len(df)}")
-print(f"Columns: {list(df.columns)}")
+trace_df = result.trace_dataframe
+final_entities = result.dataframe["final_entities"]
+print(f"Records: {len(trace_df)}")
+print(f"Columns: {list(trace_df.columns)}")
 
 # %% [markdown]
 # ## 🎯 Detected entities
@@ -116,7 +123,7 @@ print(f"Columns: {list(df.columns)}")
 
 # %%
 row_idx = 0
-raw = df.loc[row_idx, "_detected_entities"]
+raw = final_entities.iloc[row_idx]
 entities = raw["entities"] if isinstance(raw, dict) else raw
 print(f"Record {row_idx}: {len(entities)} entities detected\n")
 
@@ -132,7 +139,7 @@ if not entity_df.empty:
 
 # %%
 label_counts = Counter()
-for raw in df["_detected_entities"]:
+for raw in final_entities:
     entity_list = raw["entities"] if isinstance(raw, dict) else raw
     for entity in entity_list:
         label_counts[entity["label"]] += 1
@@ -152,7 +159,7 @@ for label, count in label_counts.most_common():
 
 # %%
 source_counts = Counter()
-for raw in df["_detected_entities"]:
+for raw in final_entities:
     entity_list = raw["entities"] if isinstance(raw, dict) else raw
     for entity in entity_list:
         source_counts[entity.get("source", "unknown")] += 1
@@ -168,7 +175,7 @@ for source, count in source_counts.most_common():
 
 # %%
 row_idx = 0
-raw_bv = df.loc[row_idx, "_entities_by_value"]
+raw_bv = trace_df.loc[row_idx, "_entities_by_value"]
 by_value = raw_bv["entities_by_value"] if isinstance(raw_bv, dict) else raw_bv
 print(f"Record {row_idx}: {len(by_value)} unique entity values\n")
 
