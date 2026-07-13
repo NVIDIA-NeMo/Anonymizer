@@ -11,9 +11,9 @@ authors:
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-Can Anonymizer run fully self-hosted and still process a real batch in minutes? A common version of this problem is an internal legal dataset that cannot leave the infrastructure boundary, but still needs realistic anonymized text for testing, review, or downstream model work. In that setting, self-hosting models is not just a deployment preference. It defines where the privacy boundary sits.
+Can Anonymizer run fully self-hosted and still process a real batch in minutes? The question comes up whenever sensitive data can't leave your infrastructure — think of an internal legal dataset that still needs realistic anonymized text for testing, review, or downstream model work. In that setting, self-hosting isn't just a deployment preference; it's what decides where the privacy boundary sits.
 
-This devnote tackles that problem on one [B300](https://www.nvidia.com/en-us/data-center/dgx-b300/) instance on [Brev](https://brev.nvidia.com/): Qwen is served locally with vLLM, GLiNER runs behind Anonymizer's reference OpenAI-compatible GLiNER server, and Anonymizer points at those localhost endpoints.
+This devnote takes on that problem with a single [B300](https://www.nvidia.com/en-us/data-center/dgx-b300/) instance on [Brev](https://brev.nvidia.com/). Every model the pipeline touches runs on that one GPU: Qwen behind vLLM and GLiNER behind Anonymizer's reference OpenAI-compatible server, with Anonymizer pointed at localhost. Nothing leaves the box.
 
 > The result: one warm Anonymizer call processed 250 compact legal records in under 9 minutes. No managed remote model API was in the loop.
 
@@ -96,7 +96,7 @@ df.head(250).to_parquet("tab_train_compact_250.parquet", index=False)
 
 ## The Local Stack
 
-The run used one Brev B300 SXM6 instance: one GPU, 275,040 MiB visible VRAM, and an hourly price of **$9.49**. Everything Anonymizer called was on localhost.
+The run used one Brev B300 SXM6 instance: one GPU, 275,040 MiB visible VRAM, and an hourly price of **\$9.49**. Everything Anonymizer called was on localhost.
 
 There were two local services:
 
@@ -274,8 +274,8 @@ For the **warm-batch** runs, the stopwatch started after provisioning and endpoi
 
 | Run | Output rows | Wall time | Throughput | Failed records | Warm cost |
 |---|---:|---:|---:|---:|---:|
-| Compact 100 | 100 / 100 | 2.54 min | 39.33 records/min | 0 | $0.40 |
-| Compact 250 | 250 / 250 | 8.86 min | 28.23 records/min | 0 | $1.40 |
+| Compact 100 | 100 / 100 | 2.54 min | 39.33 records/min | 0 | \$0.40 |
+| Compact 250 | 250 / 250 | 8.86 min | 28.23 records/min | 0 | \$1.40 |
 
 ### Entity Density
 
@@ -311,20 +311,22 @@ The token counts come from the local Qwen endpoint request usage captured by Ano
 
 ### Cost Estimate
 
-At $9.49/hr, the warm cost was about **$0.40 for 100 records** and **$1.40 for 250 records**.
+At \$9.49/hr, the warm cost was about **\$0.40 for 100 records** and **\$1.40 for 250 records**.
 
-For first-batch planning, add startup separately. On this instance, the Brev listing advertised roughly 2.5 minutes to ready, which is about $0.40 at the same hourly rate. With the model already cached, the Qwen endpoint reached readiness in about 80-85 seconds, or about another $0.21-$0.22. First-time model download is environment-dependent, so that cost is instance and deployment specific.
+For first-batch planning, add startup separately. On this instance, the Brev listing advertised roughly 2.5 minutes to ready, which is about \$0.40 at the same hourly rate. With the model already cached, the Qwen endpoint reached readiness in about 80-85 seconds, or about another \$0.21-\$0.22. First-time model download is environment-dependent, so that cost is instance and deployment specific.
 
 Once the endpoints are warm, the economics become straightforward: keep the server busy and amortize startup across batches.
 
-## What It Means
+## The Bottom Line
 
-In this run, GLiNER detection, LLM validation, LLM augmentation, and substitute-map generation all stayed on localhost; the 250-record warm batch finished in under 9 minutes with no failed records.
+The full Anonymizer pipeline ran end to end on a single box. GLiNER detection, LLM validation, LLM augmentation, and substitute-map generation all stayed on localhost, and the 250-record warm batch finished in under 9 minutes with zero failed records.
 
-vLLM owned the Qwen process, and Anonymizer controlled how much work each model role sent to it. The two validation aliases gave the validation role enough client-side lanes to keep the same local vLLM process busy.
+What made that work was a clean split of responsibilities: vLLM owned the Qwen process, and Anonymizer decided how much work each model role sent it. Pointing two validation aliases at the same endpoint gave the validation role enough client-side lanes to keep that single vLLM process saturated.
 
-Startup belongs in deployment planning, not throughput. Provisioning, first-time model download, and model loading are real costs; once endpoints are warm, batch cost is just wall time at the instance rate. A full `.evaluate()` run is self-hostable too, but it invokes judge workflows and should be budgeted as a separate quality pass.
+The one caveat is startup. As the cost estimate showed, provisioning, first-time model download, and model loading are real costs — but you pay them once, then batch cost is just wall time at the instance rate. A full `.evaluate()` pass is self-hostable on the same box too, though it adds judge workflows and is best budgeted as a separate quality run.
 
-> Self-hosting Anonymizer is not a separate mode. It is the same Anonymizer pipeline pointed at model endpoints you own.
+Nothing here is tied to the specific models we chose, either. Anonymizer's aliases point at endpoints, so model size is a hardware question, not a pipeline one: given more GPUs, you can serve larger detectors and generators, or add replicas for throughput, without changing the configuration.
 
-On this B300 run, that self-hosted path processed 250 legal records in under 9 minutes.
+> Self-hosting Anonymizer isn't a separate mode. It's the same pipeline, running against model endpoints you own.
+
+And because those endpoints are yours, the privacy boundary stays exactly where you drew it.
