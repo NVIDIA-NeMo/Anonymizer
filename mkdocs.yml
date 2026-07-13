@@ -175,3 +175,4 @@ nav:
   - Developer Notes:
       - devnotes/index.md
       - "Introducing NeMo Anonymizer": devnotes/posts/anonymizer-intro.md
+      - "Running NeMo Anonymizer Fully Self-Hosted on One B300": devnotes/posts/self-hosted-anonymizer-b300.md
