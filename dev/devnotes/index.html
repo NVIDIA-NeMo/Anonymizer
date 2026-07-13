@@ -2099,6 +2099,8 @@
       
         
       
+        
+      
     
     
     
@@ -2182,6 +2184,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running NeMo Anonymizer Fully Self-Hosted on One B300
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -2195,10 +2225,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_4" >
         
           
-          <label class="md-nav__link" for="__nav_7_3" id="__nav_7_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7_4" id="__nav_7_4_label" tabindex="0">
             
   
   
@@ -2216,8 +2246,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_7_3">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2299,6 +2329,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#running-nemo-anonymizer-fully-self-hosted-on-one-b300" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running NeMo Anonymizer Fully Self-Hosted on One B300
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2327,6 +2368,57 @@
 <h1 id="developer-notes">Developer Notes<a class="headerlink" href="#developer-notes" title="Permanent link">&para;</a></h1>
 <p>Updates and notes from the NeMo Anonymizer team.</p>
       </header>
+      
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://avatars.githubusercontent.com/u/31832945?v=4" alt="Lipika Ramaswamy">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-07-07 00:00:00+00:00">July 7, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              11 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="running-nemo-anonymizer-fully-self-hosted-on-one-b300"><a class="toclink" href="running-nemo-anonymizer-fully-self-hosted-on-one-b300/"><strong>Running NeMo Anonymizer Fully Self-Hosted on One B300</strong></a></h2>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<p>Can Anonymizer run fully self-hosted and still process a real batch in minutes? A common version of this problem is an internal legal dataset that cannot leave the infrastructure boundary, but still needs realistic anonymized text for testing, review, or downstream model work. In that setting, self-hosting models is not just a deployment preference. It defines where the privacy boundary sits.</p>
+<p>This devnote tackles that problem on one <a href="https://www.nvidia.com/en-us/data-center/dgx-b300/">B300</a> instance on <a href="https://brev.nvidia.com/">Brev</a>: Qwen is served locally with vLLM, GLiNER runs behind Anonymizer's reference OpenAI-compatible GLiNER server, and Anonymizer points at those localhost endpoints.</p>
+<blockquote>
+<p>The result: one warm Anonymizer call processed 250 compact legal records in under 9 minutes. No managed remote model API was in the loop.</p>
+</blockquote>
+
+    
+      <nav class="md-post__action">
+        <a href="running-nemo-anonymizer-fully-self-hosted-on-one-b300/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
       
         <article class="md-post md-post--excerpt">
   <header class="md-post__header">

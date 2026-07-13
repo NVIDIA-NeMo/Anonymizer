@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/concepts/rewrite/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/running-nemo-anonymizer-fully-self-hosted-on-one-b300/">
       
       
-        <link rel="prev" href="../replace/">
+        <link rel="prev" href="../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/">
       
       
-        <link rel="next" href="../choosing-a-strategy/">
+        <link rel="next" href="../archive/2026/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Rewrite - NeMo Anonymizer</title>
+        <title>Running NeMo Anonymizer Fully Self-Hosted on One B300 - NeMo Anonymizer</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rewrite" class="md-skip">
+        <a href="#running-nemo-anonymizer-fully-self-hosted-on-one-b300" class="md-skip">
           Skip to content
         </a>
       
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Rewrite
+              Running NeMo Anonymizer Fully Self-Hosted on One B300
             
           </span>
         </div>
@@ -233,7 +233,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -296,10 +298,8 @@
       
   
   
-    
   
   
-  
     
     
       
@@ -321,11 +321,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -346,7 +346,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -364,7 +364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../models/" class="md-nav__link">
+      <a href="../../concepts/models/" class="md-nav__link">
         
   
   
@@ -392,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../detection/" class="md-nav__link">
+      <a href="../../concepts/detection/" class="md-nav__link">
         
   
   
@@ -420,7 +420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../replace/" class="md-nav__link">
+      <a href="../../concepts/replace/" class="md-nav__link">
         
   
   
@@ -445,37 +445,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Rewrite
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../concepts/rewrite/" class="md-nav__link">
         
   
   
@@ -491,164 +464,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How it works
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#key-concepts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Key concepts
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Configuration">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#privacy-goal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Privacy goal
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#risk-tolerance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Risk tolerance
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#strict-entity-protection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Strict entity protection
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#output-columns" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Output columns
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#working-with-flagged-records" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Working with flagged records
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#model-roles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Model roles
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#evaluating-rewrite-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Evaluating rewrite output
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -661,7 +476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../choosing-a-strategy/" class="md-nav__link">
+      <a href="../../concepts/choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -689,7 +504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../evaluation/" class="md-nav__link">
+      <a href="../../concepts/evaluation/" class="md-nav__link">
         
   
   
@@ -717,7 +532,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../self-hosting-gliner/" class="md-nav__link">
+      <a href="../../concepts/self-hosting-gliner/" class="md-nav__link">
         
   
   
@@ -2271,6 +2086,8 @@
       
   
   
+    
+  
   
   
     
@@ -2290,15 +2107,15 @@
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../devnotes/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2322,7 +2139,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2342,7 +2159,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
         
   
   
@@ -2367,10 +2184,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../devnotes/running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running NeMo Anonymizer Fully Self-Hosted on One B300
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2386,6 +2230,142 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Setup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-local-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Local Stack
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-anonymizer-against-localhost" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Anonymizer Against Localhost
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#warm-batch-throughput" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warm-Batch Throughput
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entity-density" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Density
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-breakdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage Breakdown
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Tokens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-estimate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost Estimate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Means
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2451,7 +2431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../devnotes/archive/2026/" class="md-nav__link">
+      <a href="../archive/2026/" class="md-nav__link">
         
   
   
@@ -2495,6 +2475,8 @@
             
             
               
+                
+              
               <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
@@ -2514,10 +2496,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
+  <a href="#the-setup" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How it works
+        The Setup
       
     </span>
   </a>
@@ -2525,10 +2507,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review" class="md-nav__link">
+  <a href="#the-local-stack" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
+        The Local Stack
       
     </span>
   </a>
@@ -2536,10 +2518,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#key-concepts" class="md-nav__link">
+  <a href="#run-anonymizer-against-localhost" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Key concepts
+        Run Anonymizer Against Localhost
       
     </span>
   </a>
@@ -2547,33 +2529,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
+  <a href="#results" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Basic usage
+        Results
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Configuration">
+    <nav class="md-nav" aria-label="Results">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#privacy-goal" class="md-nav__link">
+  <a href="#warm-batch-throughput" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Privacy goal
+        Warm-Batch Throughput
       
     </span>
   </a>
@@ -2581,10 +2552,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#risk-tolerance" class="md-nav__link">
+  <a href="#entity-density" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Risk tolerance
+        Entity Density
       
     </span>
   </a>
@@ -2592,10 +2563,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#strict-entity-protection" class="md-nav__link">
+  <a href="#stage-breakdown" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Strict entity protection
+        Stage Breakdown
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Tokens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-estimate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost Estimate
       
     </span>
   </a>
@@ -2608,43 +2601,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#output-columns" class="md-nav__link">
+  <a href="#what-it-means" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output columns
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#working-with-flagged-records" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Working with flagged records
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#model-roles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Model roles
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#evaluating-rewrite-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Evaluating rewrite output
+        What It Means
       
     </span>
   </a>
@@ -2660,402 +2620,439 @@
             
           
           
-            <div class="md-content" data-md-component="content">
-              
+  <div class="md-content md-content--post" data-md-component="content">
+    <div class="md-sidebar md-sidebar--post" data-md-component="sidebar" data-md-type="navigation">
+      <div class="md-sidebar__scrollwrap">
+        <div class="md-sidebar__inner md-post">
+          <nav class="md-nav md-nav--primary">
+            <div class="md-post__back">
+              <div class="md-nav__title md-nav__container">
+                <a href="../" class="md-nav__link">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+                  <span class="md-ellipsis">
+                    Back to index
+                  </span>
+                </a>
+              </div>
+            </div>
+            
+              <div class="md-post__authors md-typeset">
                 
-
-
-
-  
-
-
-  <nav class="md-path" aria-label="Navigation" >
-    <ol class="md-path__list">
-      
-        
-  
-  
-    <li class="md-path__item">
-      <a href="../.." class="md-path__link">
-        
-  <span class="md-ellipsis">
-    Home
-  </span>
-
-      </a>
-    </li>
-  
-
-      
-      
-        
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../models/" class="md-path__link">
+                  <div class="md-profile md-post__profile">
+                    <span class="md-author md-author--long">
+                      <img src="https://avatars.githubusercontent.com/u/31832945?v=4" alt="Lipika Ramaswamy">
+                    </span>
+                    <span class="md-profile__description">
+                      <strong>
+                        
+                          <a href="https://github.com/lipikaramaswamy">Lipika Ramaswamy</a>
+                        
+                      </strong>
+                      <br>
+                      Researcher at NVIDIA
+                    </span>
+                  </div>
+                
+              </div>
+            
+            <ul class="md-post__meta md-nav__list">
+              <li class="md-nav__item md-nav__item--section">
+                <div class="md-post__title">
+                  <span class="md-ellipsis">
+                    Metadata
+                  </span>
+                </div>
+                <nav class="md-nav">
+                  <ul class="md-nav__list">
+                    <li class="md-nav__item">
+                      <div class="md-nav__link">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 19H5V8h14m-3-7v2H8V1H6v2H5c-1.11 0-2 .89-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-1V1m-1 11h-5v5h5z"/></svg>
+                        <time datetime="2026-07-07 00:00:00+00:00" class="md-ellipsis">July 7, 2026</time>
+                      </div>
+                    </li>
+                    
+                    
+                    
+                      
+                      <li class="md-nav__item">
+                        <div class="md-nav__link">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 20a8 8 0 0 0 8-8 8 8 0 0 0-8-8 8 8 0 0 0-8 8 8 8 0 0 0 8 8m0-18a10 10 0 0 1 10 10 10 10 0 0 1-10 10C6.47 22 2 17.5 2 12A10 10 0 0 1 12 2m.5 5v5.25l4.5 2.67-.75 1.23L11 13V7z"/></svg>
+                          <span class="md-ellipsis">
+                            
+                              11 min read
+                            
+                          </span>
+                        </div>
+                      </li>
+                    
+                  </ul>
+                </nav>
+              </li>
+            </ul>
+            
+          </nav>
           
-  <span class="md-ellipsis">
-    Concepts
-  </span>
-
-        </a>
-      </li>
-    
-  
-
+        </div>
+      </div>
+    </div>
+    <article class="md-content__inner md-typeset">
       
-    </ol>
-  </nav>
+        
+  
 
-              
-              <article class="md-content__inner md-typeset">
-                
-                  
 
 
   
   
 
 
+<h1 id="running-nemo-anonymizer-fully-self-hosted-on-one-b300"><strong>Running NeMo Anonymizer Fully Self-Hosted on One B300</strong><a class="headerlink" href="#running-nemo-anonymizer-fully-self-hosted-on-one-b300" title="Permanent link">&para;</a></h1>
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-<h1 id="rewrite">Rewrite<a class="headerlink" href="#rewrite" title="Permanent link">&para;</a></h1>
-<p>Instead of replacing individual entities, rewrite mode transforms the entire text to produce a privacy-safe version that reduces both explicit identifiers and implicit, inferable signals that could lead to re-identification. While overall meaning is preserved where possible, rewrite mode intentionally modifies or removes details when needed to eliminate latent entities and break inference pathways.</p>
+<p>Can Anonymizer run fully self-hosted and still process a real batch in minutes? A common version of this problem is an internal legal dataset that cannot leave the infrastructure boundary, but still needs realistic anonymized text for testing, review, or downstream model work. In that setting, self-hosting models is not just a deployment preference. It defines where the privacy boundary sits.</p>
+<p>This devnote tackles that problem on one <a href="https://www.nvidia.com/en-us/data-center/dgx-b300/">B300</a> instance on <a href="https://brev.nvidia.com/">Brev</a>: Qwen is served locally with vLLM, GLiNER runs behind Anonymizer's reference OpenAI-compatible GLiNER server, and Anonymizer points at those localhost endpoints.</p>
+<blockquote>
+<p>The result: one warm Anonymizer call processed 250 compact legal records in under 9 minutes. No managed remote model API was in the loop.</p>
+</blockquote>
+<!-- more -->
+
+<div style="text-align: center;">
+<p><img alt="A B300 server inside a green privacy boundary transforms long highlighted legal scrolls into cleaner anonymized scrolls, with the Anonymizer mascot inspecting the output." loading="lazy" src="../assets/self-hosted-anonymizer-b300-hero.png" /></p>
+</div>
 <hr />
-<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p><a href="../detection/">Detection</a> runs first (same as <a href="../replace/">Replace mode</a>, plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. </p>
-<h2 id="the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review">The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.<a class="headerlink" href="#the-text-is-then-rewritten-to-reduce-identifiability-applying-targeted-transformations-that-disrupt-inference-eg-weakening-or-removing-linking-details-rather-than-simply-rewording-content-the-rewritten-output-is-evaluated-for-both-quality-and-privacy-leakage-using-adversarial-testing-if-thresholds-are-exceeded-the-system-automatically-refines-the-rewrite-any-records-that-failed-to-meet-standards-are-tagged-for-human-review" title="Permanent link">&para;</a></h2>
-<h2 id="key-concepts">Key concepts<a class="headerlink" href="#key-concepts" title="Permanent link">&para;</a></h2>
-<p><strong>Sensitivity</strong> measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.</p>
+<h2 id="the-setup">The Setup<a class="headerlink" href="#the-setup" title="Permanent link">&para;</a></h2>
+<p>The run uses Anonymizer's <a href="../../concepts/replace/"><strong>Replace</strong> mode</a> with <code>Substitute</code>: Anonymizer detects sensitive spans, asks an LLM to validate and augment the detections, then generates realistic replacements for the final entity set. This is not the more comprehensive Rewrite pipeline nor does it include a <code>.evaluate()</code> quality run. The goal here was narrower:</p>
+<blockquote>
+<p>Can Anonymizer run end-to-end with self-hosted models, keep the local GPU endpoint busy, and measure the actual warm-batch cost?</p>
+</blockquote>
+<p>The dataset was a compact legal-record slice from <a href="https://huggingface.co/datasets/mattmdjaga/text-anonymization-benchmark-train"><code>mattmdjaga/text-anonymization-benchmark-train</code></a>. The records are legal-style documents, dense with dates, court names, application IDs, names, locations, organizations, occupations, nationalities, monetary amounts, and other sensitive spans. For repeatability, the slice was built by sorting the train split by text length and taking the first 100 and 250 records.</p>
 <table>
 <thead>
 <tr>
-<th>Level</th>
-<th>Meaning</th>
-<th>Examples</th>
-<th>Leakage weight</th>
+<th>Slice</th>
+<th style="text-align: right;">Records</th>
+<th style="text-align: right;">Total chars</th>
+<th style="text-align: right;">Longest record chars</th>
+<th style="text-align: right;">Dataset reference spans</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>high</code></td>
-<td>Exposure alone can identify a person</td>
-<td>Names, ID numbers, contact details</td>
-<td>1.0</td>
+<td>Compact 100</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">239,764</td>
+<td style="text-align: right;">2,773</td>
+<td style="text-align: right;">3,374</td>
 </tr>
 <tr>
-<td><code>medium</code></td>
-<td>Meaningfully narrows the identity space</td>
-<td>Location, occupation, age</td>
-<td>0.6</td>
-</tr>
-<tr>
-<td><code>low</code></td>
-<td>Minimal standalone identifying power</td>
-<td>Generic attributes, widely shared traits</td>
-<td>0.3</td>
+<td>Compact 250</td>
+<td style="text-align: right;">250</td>
+<td style="text-align: right;">730,787</td>
+<td style="text-align: right;">3,729</td>
+<td style="text-align: right;">9,525</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Protection method</strong> describes how a sensitive entity is transformed. The choice reflects a holistic view of the document — what other entities are being protected and how, then shapes what each individual entity needs.</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>What it does</th>
-<th>Typical use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>replace</code></td>
-<td>Substitutes the entity with a plausible synthetic alternative</td>
-<td>Direct identifiers (names, IDs, contact details)</td>
-</tr>
-<tr>
-<td><code>generalize</code></td>
-<td>Replaces the entity with a broader form</td>
-<td>Quasi-identifiers (exact date → quarter, city → region)</td>
-</tr>
-<tr>
-<td><code>suppress_inference</code></td>
-<td>Rewrites the surrounding text to remove cues that enable the inference</td>
-<td>Latent entities that are implied rather than stated</td>
-</tr>
-<tr>
-<td><code>remove</code></td>
-<td>Deletes the entity entirely</td>
-<td>Cases where neither replacement nor generalization can preserve meaning without retaining the identifying detail</td>
-</tr>
-<tr>
-<td><code>leave_as_is</code></td>
-<td>Leaves the entity unchanged</td>
-<td>Entities judged not to require protection in context</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="basic-usage">Basic usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
-<pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
+<p><code>Dataset reference spans</code> are the entity annotations shipped with the dataset. They are useful for describing how entity-dense the slice is and for a rough recall check, but they are not Anonymizer's policy: Anonymizer may find additional sensitive spans and may disregard generic references that the dataset annotates.</p>
+<p>The prepared slice used by the run had a <code>doc_id</code> column and a <code>text</code> column. The benchmark annotations were preserved for reporting dataset density, but Anonymizer only consumed the text. The dataset revision pin makes the input stable; <code>idx</code> is the original dataset order and acts as a deterministic tie-breaker after sorting by text length.</p>
+<pre class="highlight"><code class="language-python">import json
 
-anonymizer = Anonymizer()
+import pandas as pd
+from datasets import load_dataset
 
-config = AnonymizerConfig(rewrite=Rewrite())
-data = AnonymizerInput(source="data.csv", text_column="text")
 
-preview = anonymizer.preview(config=config, data=data, num_records=3)
-preview.display_record()</code></pre>
-<hr />
-<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Default</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>privacy_goal</code></td>
-<td>Auto-populated</td>
-<td>What to protect and what to preserve.</td>
-</tr>
-<tr>
-<td><code>instructions</code></td>
-<td><code>None</code></td>
-<td>Additional instructions for the rewrite LLM.</td>
-</tr>
-<tr>
-<td><code>risk_tolerance</code></td>
-<td><code>low</code></td>
-<td>Preset controlling repair and review thresholds: <code>minimal</code>, <code>low</code>, <code>moderate</code>, <code>high</code>.</td>
-</tr>
-<tr>
-<td><code>max_repair_iterations</code></td>
-<td><code>3</code></td>
-<td>Maximum repair rounds. Set to 0 to disable repair.</td>
-</tr>
-<tr>
-<td><code>strict_entity_protection</code></td>
-<td><code>False</code></td>
-<td>If <code>True</code>, forces every detected entity to be protected regardless of risk. No entity can be left unchanged.</td>
-</tr>
-</tbody>
-</table>
-<h3 id="privacy-goal">Privacy goal<a class="headerlink" href="#privacy-goal" title="Permanent link">&para;</a></h3>
-<p><code>PrivacyGoal</code> tells the rewriter what matters. Defaults work for general-purpose data. Override for domain-specific needs:</p>
-<pre class="highlight"><code class="language-python">from anonymizer.config.rewrite import PrivacyGoal
+TAB_REVISION = "f0b7eeb6e53e8b23f88ee4279b8c7154f110e25e"
+
+
+def annotation_union(annotations: dict) -&gt; list[dict]:
+    spans = {}
+    for annotator, payload in (annotations or {}).items():
+        for entity in (payload or {}).get("entity_mentions") or []:
+            key = (
+                int(entity.get("start_offset") or 0),
+                int(entity.get("end_offset") or 0),
+                entity.get("span_text") or "",
+                entity.get("entity_type") or "",
+            )
+            spans.setdefault(key, {**entity, "annotators": []})
+            spans[key]["annotators"].append(annotator)
+    return list(spans.values())
+
+
+rows = []
+for idx, row in enumerate(
+    load_dataset(
+        "mattmdjaga/text-anonymization-benchmark-train",
+        revision=TAB_REVISION,
+        split="train",
+    )
+):
+    reference_spans = annotation_union(row["annotations"])
+    rows.append(
+        {
+            "idx": idx,
+            "doc_id": row["doc_id"],
+            "text": row["text"],
+            "char_len": len(row["text"]),
+            "reference_span_count": len(reference_spans),
+            "reference_spans_json": json.dumps(reference_spans, ensure_ascii=False),
+        }
+    )
+
+df = pd.DataFrame(rows).sort_values(["char_len", "idx"]).reset_index(drop=True)
+df.head(100).to_parquet("tab_train_compact_100.parquet", index=False)
+df.head(250).to_parquet("tab_train_compact_250.parquet", index=False)</code></pre>
+<h2 id="the-local-stack">The Local Stack<a class="headerlink" href="#the-local-stack" title="Permanent link">&para;</a></h2>
+<p>The run used one Brev B300 SXM6 instance: one GPU, 275,040 MiB visible VRAM, and an hourly price of <strong>$9.49</strong>. Everything Anonymizer called was on localhost.</p>
+<p>There were two local services:</p>
+<ul>
+<li><code>qwen-prod</code> on <code>127.0.0.1:8001</code> for LLM validation, augmentation, and substitute generation. This served <code>nvidia/Qwen3.6-35B-A3B-NVFP4</code> with vLLM 0.23.0.</li>
+<li><code>gliner-pii-detector</code> on <code>127.0.0.1:9000</code> for first-pass entity detection. This used the bundled GLiNER OpenAI-compatible server with <code>nvidia/gliner-pii</code>.</li>
+</ul>
+<p>The Qwen endpoint was the only LLM endpoint in the run:</p>
+<pre class="highlight"><code class="language-bash">mkdir -p logs
+
+CUDA_ROOT="$PWD/.venv/lib/python3.12/site-packages/nvidia/cu13"
+
+CUDA_HOME="$CUDA_ROOT" \
+PATH="$CUDA_ROOT/bin:$PWD/.venv/bin:$PATH" \
+LD_LIBRARY_PATH="$CUDA_ROOT/lib:$CUDA_ROOT/lib64:${LD_LIBRARY_PATH:-}" \
+VLLM_USE_FLASHINFER_SAMPLER=0 \
+VLLM_DISABLED_KERNELS=FlashInferFP8ScaledMMLinearKernel \
+nohup .venv/bin/vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 \
+  --served-model-name qwen-prod \
+  --host 127.0.0.1 \
+  --port 8001 \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.45 \
+  --max-num-seqs 32 \
+  --attention-backend FLASH_ATTN \
+  --trust-remote-code \
+  &gt; logs/qwen-vllm.log 2&gt;&amp;1 &amp;</code></pre>
+<p>The <code>CUDA_ROOT</code> path above is specific to the Brev B300 SXM6 environment used for this run: a Python 3.12 virtualenv with NVIDIA cu13 wheels installed under <code>.venv</code>. If CUDA is installed differently, point <code>CUDA_ROOT</code> at that runtime instead, or drop the override if system CUDA is already visible.</p>
+<p><code>--max-model-len 8192</code> is also a real sizing knob. The Qwen role below allows up to <code>max_tokens: 4096</code> for augmentation and substitute generation, leaving the remaining context for prompt, schema, source text, and entity lists. That was enough for this compact TAB slice, but denser records may need a larger context window, smaller validation chunks, or shorter generation limits.</p>
+<p><code>--gpu-memory-utilization 0.45</code> was a conservative co-location setting, not a compute throttle. In vLLM it controls the GPU memory budget for model weights and KV cache. Qwen could use more memory if the run needed a larger KV cache, but this setting left headroom for the GLiNER server on the same GPU and still completed the measured batches with zero failures.</p>
+<p>GLiNER ran on the same machine. The command uses <code>tools/serve_gliner.py</code>, the reference GLiNER server from an Anonymizer source checkout; see <a href="../../concepts/self-hosting-gliner/">Self-hosting GLiNER</a> for the server contract and setup details.</p>
+<pre class="highlight"><code class="language-bash">mkdir -p logs
+
+DEVICE=cuda \
+GLINER_MAX_BATCH_REQUESTS=64 \
+GLINER_BATCH_WAIT_MS=10 \
+nohup .venv/bin/python tools/serve_gliner.py --port 9000 \
+  &gt; logs/gliner.log 2&gt;&amp;1 &amp;</code></pre>
+<p>For archival reruns, pin the GLiNER model as well. The server default used here is <code>nvidia/gliner-pii</code>, which Hugging Face resolved as <code>nvidia/gliner-PII</code> revision <code>bd23e8ef4425fd04e34c5204ab49ffaa706eae79</code> as of this write-up; serving a newer detector snapshot can change entity counts.</p>
+<p><strong>Blackwell serving note.</strong> vLLM accepted <code>--attention-backend FLASH_ATTN</code>, then logged that FlashAttention 4 did not support this model's <code>head_size=256</code> path and used FlashAttention 2 for the main attention path. In this B300/vLLM 0.23.0/NVFP4 environment, the run also set <code>VLLM_DISABLED_KERNELS=FlashInferFP8ScaledMMLinearKernel</code> to avoid the FlashInfer FP8 scaled-MM path; the successful run selected <code>CutlassFP8ScaledMMLinearKernel</code> instead. Treat that as a vLLM environment workaround, not an Anonymizer requirement.</p>
+<h2 id="run-anonymizer-against-localhost">Run Anonymizer Against Localhost<a class="headerlink" href="#run-anonymizer-against-localhost" title="Permanent link">&para;</a></h2>
+<p>Once the local GLiNER and Qwen endpoints were live, Anonymizer was configured for <a href="../../concepts/replace/">Replace</a> mode. Self-hosting changes where the model requests go, not which Replace pipeline runs. The provider and model configuration below is complete: the only external services it references are the two localhost endpoints started above.</p>
+<p>Validation used two Anonymizer model aliases, <code>qwen-detect-1</code> and <code>qwen-detect-2</code>, both pointed at the same local <code>qwen-prod</code> endpoint, so one vLLM process could receive up to 64 validation requests in flight.</p>
+<p>Separately, <code>validation_max_entities_per_call=12</code> kept each validation response small. That knob limits the number of candidates in one structured-output request; it does not cap concurrency.</p>
+<p>The snippet keeps the provider and model configuration inline so the example is self-contained. In an application, the same YAML can live in files and be passed by path.</p>
+<pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Detect, RunConfig, Substitute
+
+model_providers = """
+providers:
+  - name: local-gliner
+    endpoint: http://127.0.0.1:9000/v1
+    provider_type: openai
+    api_key: EMPTY
+
+  - name: local-qwen
+    endpoint: http://127.0.0.1:8001/v1
+    provider_type: openai
+    api_key: EMPTY
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+"""
+
+model_configs = """
+selected_models:
+  detection:
+    entity_detector: gliner-pii-detector
+    entity_validator:
+      - qwen-detect-1
+      - qwen-detect-2
+    entity_augmenter: qwen-prod
+  replace:
+    replacement_generator: qwen-prod
+
+model_configs:
+  - alias: gliner-pii-detector
+    model: nvidia/gliner-pii
+    provider: local-gliner
+    skip_health_check: true
+    inference_parameters:
+      max_parallel_requests: 64
+      timeout: 120
+
+  - alias: qwen-detect-1
+    model: qwen-prod
+    provider: local-qwen
+    inference_parameters:
+      max_parallel_requests: 32  # validator pool lane 1 of 2
+      max_tokens: 1024
+      temperature: 0.0
+      top_p: 1.0
+      timeout: 600
+
+  - alias: qwen-detect-2
+    model: qwen-prod
+    provider: local-qwen
+    inference_parameters:
+      max_parallel_requests: 32  # validator pool lane 2 of 2
+      max_tokens: 1024
+      temperature: 0.0
+      top_p: 1.0
+      timeout: 600
+
+  - alias: qwen-prod
+    model: qwen-prod
+    provider: local-qwen
+    inference_parameters:
+      max_parallel_requests: 64  # entity augmentation and substitute generation are single roles
+      max_tokens: 4096
+      temperature: 0.3
+      top_p: 0.95
+      timeout: 600
+"""
+
+anonymizer = Anonymizer(
+    model_configs=model_configs,
+    model_providers=model_providers,
+    data_designer_run_config=RunConfig(buffer_size=100, max_in_flight_tasks=128),
+)
 
 config = AnonymizerConfig(
-    rewrite=Rewrite(
-        privacy_goal=PrivacyGoal(
-            protect="All patient identifiers and clinical facility names",
-            preserve="Clinical findings, treatment plans, and medical terminology",
+    detect=Detect(
+        gliner_threshold=0.3,
+        validation_max_entities_per_call=12,
+        validation_excerpt_window_chars=200,
+    ),
+    replace=Substitute(
+        instructions=(
+            "Replace each sensitive entity with a realistic but fictitious value "
+            "of the same type. Keep the surrounding wording, legal structure, "
+            "and relationships coherent."
         )
-    )
-)</code></pre>
-<div class="admonition tip">
-<p class="admonition-title">Be specific</p>
-<p>The more precise the <code>protect</code> and <code>preserve</code> fields, the better the rewriter targets sensitive content while retaining what matters.</p>
-</div>
-<h3 id="risk-tolerance">Risk tolerance<a class="headerlink" href="#risk-tolerance" title="Permanent link">&para;</a></h3>
-<p>Controls the automated repair loop and human review flagging. Each preset bundles a coherent set of behaviors:</p>
+    ),
+    emit_telemetry=False,
+)
+
+data = AnonymizerInput(
+    source="tab_train_compact_250.parquet",
+    text_column="text",
+    id_column="doc_id",
+    data_summary=(
+        "Short legal-style records from the Text Anonymization Benchmark. "
+        "The text may contain names, dates, organizations, locations, "
+        "demographic attributes, case identifiers, quantities, and other "
+        "sensitive spans."
+    ),
+)
+
+result = anonymizer.run(config=config, data=data)</code></pre>
+<h2 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h2>
+<h3 id="warm-batch-throughput">Warm-Batch Throughput<a class="headerlink" href="#warm-batch-throughput" title="Permanent link">&para;</a></h3>
+<p>For the <strong>warm-batch</strong> runs, the stopwatch started after provisioning and endpoint startup, with GLiNER and Qwen already loaded. The measured path is the Anonymizer call itself: detection, LLM validation, LLM augmentation, and substitute-map generation.</p>
 <table>
 <thead>
 <tr>
-<th>Preset</th>
-<th>Repair threshold</th>
-<th>Repair on any high leak</th>
-<th>Flag utility below</th>
-<th>Flag leakage above</th>
+<th>Run</th>
+<th style="text-align: right;">Output rows</th>
+<th style="text-align: right;">Wall time</th>
+<th style="text-align: right;">Throughput</th>
+<th style="text-align: right;">Failed records</th>
+<th style="text-align: right;">Warm cost</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>minimal</code></td>
-<td>0.6</td>
-<td>Yes</td>
-<td>0.6</td>
-<td>1.0</td>
+<td>Compact 100</td>
+<td style="text-align: right;">100 / 100</td>
+<td style="text-align: right;">2.54 min</td>
+<td style="text-align: right;">39.33 records/min</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">$0.40</td>
 </tr>
 <tr>
-<td><code>low</code></td>
-<td>1.0</td>
-<td>Yes</td>
-<td>0.5</td>
-<td>2.0</td>
-</tr>
-<tr>
-<td><code>moderate</code></td>
-<td>1.5</td>
-<td>Yes</td>
-<td>0.4</td>
-<td>2.5</td>
-</tr>
-<tr>
-<td><code>high</code></td>
-<td>2.0</td>
-<td>No</td>
-<td>0.3</td>
-<td>3.0</td>
+<td>Compact 250</td>
+<td style="text-align: right;">250 / 250</td>
+<td style="text-align: right;">8.86 min</td>
+<td style="text-align: right;">28.23 records/min</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">$1.40</td>
 </tr>
 </tbody>
 </table>
-<p>The <strong>repair threshold</strong> is the leakage mass above which a record is sent for repair.</p>
+<h3 id="entity-density">Entity Density<a class="headerlink" href="#entity-density" title="Permanent link">&para;</a></h3>
+<p>The entity density is also per-record, not just a total count. These are Anonymizer's final detected entities after GLiNER detection, LLM validation, LLM augmentation, and merge/finalization.</p>
+<p>The Compact 100 input is a strict subset of Compact 250, but the distributions below come from separate Anonymizer runs; LLM augmentation can change final entity counts slightly between runs.</p>
+<div style="text-align: center;">
+<p><img alt="Distribution chart showing final detected entities per record. Compact 100 has min 19, mean 39.5, p50 40, p95 53, and max 61. Compact 250 has min 22, mean 46.3, p50 46, p95 66, and max 114." loading="lazy" src="../assets/self-hosted-anonymizer-b300-entity-density.png" /></p>
+</div>
+<h3 id="stage-breakdown">Stage Breakdown<a class="headerlink" href="#stage-breakdown" title="Permanent link">&para;</a></h3>
+<p>The stage split also shows where time went:</p>
+<table>
+<thead>
+<tr>
+<th>Run</th>
+<th style="text-align: right;">Detection workflow</th>
+<th style="text-align: right;">Substitute-map workflow</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compact 100</td>
+<td style="text-align: right;">116.6 sec</td>
+<td style="text-align: right;">35.8 sec</td>
+</tr>
+<tr>
+<td>Compact 250</td>
+<td style="text-align: right;">413.7 sec</td>
+<td style="text-align: right;">117.5 sec</td>
+</tr>
+</tbody>
+</table>
+<p>Detection dominates because it includes GLiNER, candidate preparation, LLM validation, LLM augmentation, and merge/finalization. Replacement is still LLM-backed in Substitute mode, but it is a smaller request pattern: one replacement-map generation per record after the final entity set is known.</p>
+<h3 id="request-tokens">Request Tokens<a class="headerlink" href="#request-tokens" title="Permanent link">&para;</a></h3>
+<p>The token counts come from the local Qwen endpoint request usage captured by Anonymizer. They include prompts, schema instructions, validation chunks, augmentation requests, and substitute-map generation, not just the raw source text.</p>
+<table>
+<thead>
+<tr>
+<th>Run</th>
+<th style="text-align: right;">Qwen input tokens</th>
+<th style="text-align: right;">Qwen output tokens</th>
+<th style="text-align: right;">Qwen total tokens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compact 100</td>
+<td style="text-align: right;">2,600,446</td>
+<td style="text-align: right;">460,152</td>
+<td style="text-align: right;">3,060,598</td>
+</tr>
+<tr>
+<td>Compact 250</td>
+<td style="text-align: right;">7,460,423</td>
+<td style="text-align: right;">1,360,092</td>
+<td style="text-align: right;">8,820,515</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cost-estimate">Cost Estimate<a class="headerlink" href="#cost-estimate" title="Permanent link">&para;</a></h3>
+<p>At <span class="arithmatex">\(9.49/hr, the warm cost was about **\)</span>0.40 for 100 records** and <strong>$1.40 for 250 records</strong>.</p>
+<p>For first-batch planning, add startup separately. On this instance, the Brev listing advertised roughly 2.5 minutes to ready, which is about $0.40 at the same hourly rate. With the model already cached, the Qwen endpoint reached readiness in about 80-85 seconds, or about another <span class="arithmatex">\(0.21-\)</span>0.22. First-time model download is environment-dependent, so that cost is instance and deployment specific.</p>
+<p>Once the endpoints are warm, the economics become straightforward: keep the server busy and amortize startup across batches.</p>
+<h2 id="what-it-means">What It Means<a class="headerlink" href="#what-it-means" title="Permanent link">&para;</a></h2>
+<p>In this run, GLiNER detection, LLM validation, LLM augmentation, and substitute-map generation all stayed on localhost; the 250-record warm batch finished in under 9 minutes with no failed records.</p>
+<p>vLLM owned the Qwen process, and Anonymizer controlled how much work each model role sent to it. The two validation aliases gave the validation role enough client-side lanes to keep the same local vLLM process busy.</p>
+<p>Startup belongs in deployment planning, not throughput. Provisioning, first-time model download, and model loading are real costs; once endpoints are warm, batch cost is just wall time at the instance rate. A full <code>.evaluate()</code> run is self-hostable too, but it invokes judge workflows and should be budgeted as a separate quality pass.</p>
 <blockquote>
-<p>Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
-A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.</p>
+<p>Self-hosting Anonymizer is not a separate mode. It is the same Anonymizer pipeline pointed at model endpoints you own.</p>
 </blockquote>
-<pre class="highlight"><code class="language-python">config = AnonymizerConfig(
-    rewrite=Rewrite(
-        risk_tolerance="minimal",
-        max_repair_iterations=3,
-    )
-)</code></pre>
-<h3 id="strict-entity-protection">Strict entity protection<a class="headerlink" href="#strict-entity-protection" title="Permanent link">&para;</a></h3>
-<p>By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting <code>strict_entity_protection=True</code> overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is.</p>
-<pre class="highlight"><code class="language-python">config = AnonymizerConfig(
-    rewrite=Rewrite(
-        strict_entity_protection=True,
-    )
-)</code></pre>
-<div class="admonition tip">
-<p class="admonition-title">When to use this</p>
-<p>Use <code>strict_entity_protection</code> when you need a blanket policy that protects all entities regardless of contextual risk — for example, in medical, legal, or financial data where even seemingly benign attributes (gender, marital status, occupation) must be modified. For finer control over which entity types are always protected, combine this with a specific <a href="#privacy-goal"><code>privacy_goal</code></a>.</p>
-</div>
-<hr />
-<h2 id="output-columns">Output columns<a class="headerlink" href="#output-columns" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Column</th>
-<th>When available</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>{text_col}_rewritten</code></td>
-<td>Always</td>
-<td>The privacy-safe rewritten text.</td>
-</tr>
-<tr>
-<td><code>utility_score</code></td>
-<td>Always</td>
-<td>Quality preservation (0.0--1.0). Higher is better.</td>
-</tr>
-<tr>
-<td><code>leakage_mass</code></td>
-<td>Always</td>
-<td>Weighted privacy leakage. Lower is better.</td>
-</tr>
-<tr>
-<td><code>weighted_leakage_rate</code></td>
-<td>Always</td>
-<td>Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass.</td>
-</tr>
-<tr>
-<td><code>any_high_leaked</code></td>
-<td>Always</td>
-<td>Whether any high-sensitivity entity leaked through.</td>
-</tr>
-<tr>
-<td><code>needs_human_review</code></td>
-<td>Always</td>
-<td>Flag for records that may need manual review.</td>
-</tr>
-<tr>
-<td><code>detection_valid</code></td>
-<td>After <code>evaluate()</code></td>
-<td>Fraction of detected entities that passed the detection judge (0.0--1.0); <code>None</code> if judge unavailable.</td>
-</tr>
-<tr>
-<td><code>detection_invalid_entities</code></td>
-<td>After <code>evaluate()</code></td>
-<td>Flagged detections with value, label, and one-sentence reasoning.</td>
-</tr>
-<tr>
-<td><code>judge_evaluation</code></td>
-<td>After <code>evaluate()</code></td>
-<td>Dict with <code>privacy</code>, <code>quality</code>, and <code>style</code> rubric scores and reasoning.</td>
-</tr>
-</tbody>
-</table>
-<p>Use <code>preview.trace_dataframe</code> for the full pipeline trace (domain, disposition, QA pairs, repair iterations).</p>
-<div class="admonition note">
-<p class="admonition-title">No entities? No rewrite.</p>
-<p>Records with no detected entities pass through unchanged with <code>utility_score=1.0</code> and <code>leakage_mass=0.0</code>.</p>
-</div>
-<hr />
-<h2 id="working-with-flagged-records">Working with flagged records<a class="headerlink" href="#working-with-flagged-records" title="Permanent link">&para;</a></h2>
-<p>Records with <code>needs_human_review=True</code> exceeded automated thresholds for leakage or utility. To investigate and resolve:</p>
-<p><strong>Diagnose:</strong> Use <code>trace_dataframe</code> to inspect the flagged record's intermediate columns — disposition, leakage breakdown, repair iterations, and judge evaluation.</p>
-<pre class="highlight"><code class="language-python">flagged = result.trace_dataframe[result.trace_dataframe["needs_human_review"] == True]
-flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre>
-<p><strong>Tune and re-run:</strong> Adjust settings and re-run on flagged records:</p>
-<ul>
-<li>Increase <code>max_repair_iterations</code> to give the rewriter more attempts.</li>
-<li>Refine <code>privacy_goal</code> with more specific <code>protect</code> / <code>preserve</code> instructions for the domain.</li>
-<li>Lower <code>risk_tolerance</code> (e.g. <code>minimal</code>) to trigger more aggressive repair.</li>
-<li>Enable <code>strict_entity_protection=True</code> to ensure no detected entity is left unchanged in the output regardless of risk.</li>
-</ul>
-<p><strong>Last resort:</strong> Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. </p>
-<hr />
-<h2 id="model-roles">Model roles<a class="headerlink" href="#model-roles" title="Permanent link">&para;</a></h2>
-<p>Rewrite uses multiple LLM roles. All default to models in the <a href="../models/">default config</a>:</p>
-<table>
-<thead>
-<tr>
-<th>Role</th>
-<th>Default</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>domain_classifier</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Classifies text domain.</td>
-</tr>
-<tr>
-<td><code>disposition_analyzer</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Assigns sensitivity levels.</td>
-</tr>
-<tr>
-<td><code>meaning_extractor</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Extracts meaning units.</td>
-</tr>
-<tr>
-<td><code>qa_generator</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Generates QA pairs for evaluation.</td>
-</tr>
-<tr>
-<td><code>rewriter</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Generates the rewritten text.</td>
-</tr>
-<tr>
-<td><code>evaluator</code></td>
-<td><code>nemotron-30b-thinking</code></td>
-<td>Evaluates quality and leakage.</td>
-</tr>
-<tr>
-<td><code>repairer</code></td>
-<td><code>gpt-oss-120b</code></td>
-<td>Repairs high-leakage rewrites.</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="evaluating-rewrite-output">Evaluating rewrite output<a class="headerlink" href="#evaluating-rewrite-output" title="Permanent link">&para;</a></h2>
-<p>After running rewrite, you can score detection quality and the holistic rewrite quality using LLM-as-judge evaluation. See <a href="../evaluation/">Evaluation</a> for details on the detection judge and the three rewrite quality rubrics (privacy, quality, style), and how to call <code>Anonymizer.evaluate()</code>.</p>
+<p>On this B300 run, that self-hosted path processed 250 legal records in under 9 minutes.</p>
 
 
 
@@ -3063,15 +3060,20 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
 
 
 
+  
+  
 
 
 
 
+  
 
-                
-              </article>
-            </div>
-          
+
+
+      
+    </article>
+  </div>
+
           
   <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
 
@@ -3090,10 +3092,12 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
   
     
       
+        
+      
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../replace/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Replace">
+          <a href="../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -3103,20 +3107,20 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
                 Previous
               </span>
               <div class="md-ellipsis">
-                Replace
+                Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
               </div>
             </div>
           </a>
         
         
           
-          <a href="../choosing-a-strategy/" class="md-footer__link md-footer__link--next" aria-label="Next: Choosing a Strategy">
+          <a href="../archive/2026/" class="md-footer__link md-footer__link--next" aria-label="Next: 2026">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Choosing a Strategy
+                2026
               </div>
             </div>
             <div class="md-footer__button md-icon">

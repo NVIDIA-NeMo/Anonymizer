@@ -2244,6 +2244,8 @@
       
         
       
+        
+      
     
     
     
@@ -2327,6 +2329,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../../../devnotes/running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running NeMo Anonymizer Fully Self-Hosted on One B300
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -2340,10 +2370,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_4" >
         
           
-          <label class="md-nav__link" for="__nav_7_3" id="__nav_7_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7_4" id="__nav_7_4_label" tabindex="0">
             
   
   
@@ -2361,8 +2391,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_7_3">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2668,7 +2698,7 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, detection_workflow=None, replace_runner=None, rewrite_runner=None) (anonymizer.interface.anonymizer.Anonymizer)" href="#anonymizer.interface.anonymizer.Anonymizer">Anonymizer</a></code></td>
+            <td><code><a class="autorefs autorefs-internal" title="              Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, data_designer_run_config=None, detection_workflow=None, replace_runner=None, rewrite_runner=None) (anonymizer.interface.anonymizer.Anonymizer)" href="#anonymizer.interface.anonymizer.Anonymizer">Anonymizer</a></code></td>
             <td>
               <div class="doc-md-description">
                 <p>Public facade for anonymization workflows.</p>
@@ -2699,7 +2729,7 @@
 
 
 <h3 id="anonymizer.interface.anonymizer.Anonymizer" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, detection_workflow=None, replace_runner=None, rewrite_runner=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, data_designer_run_config=None, detection_workflow=None, replace_runner=None, rewrite_runner=None)</code>
 
 <a href="#anonymizer.interface.anonymizer.Anonymizer" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -2787,6 +2817,25 @@ bundled defaults from <code>default_model_configs/providers.yaml</code>.</p>
             <td>
               <div class="doc-md-description">
                 <p>Pre-configured DataDesigner instance (advanced usage).</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>data_designer_run_config</code>
+            </td>
+            <td>
+                  <code><span title="data_designer.config.run_config.RunConfig">RunConfig</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional DataDesigner run configuration
+applied to the Anonymizer-managed or caller-supplied DataDesigner
+instance. Use this for DataDesigner execution knobs such as
+<code>buffer_size</code> and <code>max_in_flight_tasks</code>.</p>
               </div>
             </td>
             <td>
@@ -2926,6 +2975,7 @@ bundled defaults from <code>default_model_configs/providers.yaml</code>.</p>
     model_providers: list[ModelProvider] | str | Path | None = None,
     artifact_path: str | Path | None = None,
     data_designer: DataDesigner | None = None,
+    data_designer_run_config: RunConfig | None = None,
     detection_workflow: EntityDetectionWorkflow | None = None,
     replace_runner: ReplacementWorkflow | None = None,
     rewrite_runner: RewriteWorkflow | None = None,
@@ -2942,6 +2992,10 @@ bundled defaults from <code>default_model_configs/providers.yaml</code>.</p>
         artifact_path: Directory for intermediate artifacts. Defaults to
             ``.anonymizer-artifacts``.
         data_designer: Pre-configured DataDesigner instance (advanced usage).
+        data_designer_run_config: Optional DataDesigner run configuration
+            applied to the Anonymizer-managed or caller-supplied DataDesigner
+            instance. Use this for DataDesigner execution knobs such as
+            ``buffer_size`` and ``max_in_flight_tasks``.
         detection_workflow: Custom detection workflow (advanced/testing).
         replace_runner: Custom replacement workflow (advanced/testing).
         rewrite_runner: Custom rewrite workflow (advanced/testing).
@@ -2981,6 +3035,8 @@ bundled defaults from <code>default_model_configs/providers.yaml</code>.</p>
             model_providers=self._resolved_providers,
         )
         reapply_log_levels()
+    if data_designer_run_config is not None:
+        self._data_designer.set_run_config(data_designer_run_config)
     self._adapter = NddAdapter(data_designer=self._data_designer)
     self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
     self._replace_runner = replace_runner or ReplacementWorkflow(
