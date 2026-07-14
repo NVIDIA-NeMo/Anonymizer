@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -25,7 +26,7 @@ def _write_input(
     df: pd.DataFrame,
     tmp_path: Path,
     suffix: str = ".csv",
-    **input_kwargs: object,
+    **input_kwargs: Any,
 ) -> AnonymizerInput:
     """Write *df* to a temp file and return a ready-to-use ``AnonymizerInput``."""
     file_path = tmp_path / f"data{suffix}"
@@ -59,7 +60,7 @@ def test_write_output_unsupported_format_raises(stub_dataframe: pd.DataFrame, tm
         (".parquet", lambda df, p: df.to_parquet(p, index=False)),
     ],
 )
-def test_read_input_from_file(suffix: str, writer: object, tmp_path: Path) -> None:
+def test_read_input_from_file(suffix: str, writer: Any, tmp_path: Path) -> None:
     input_df = pd.DataFrame({"text": ["Alice works at Acme"]})
     file_path = tmp_path / f"data{suffix}"
     writer(input_df, file_path)
@@ -437,7 +438,7 @@ def test_read_input_nrows_remote_csv(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _read_csv(url: str, *args: object, **kwargs: object) -> pd.DataFrame:
         nrows = kwargs.get("nrows")
-        if nrows is not None:
+        if isinstance(nrows, int):
             return full_df.head(nrows)
         return full_df
 
