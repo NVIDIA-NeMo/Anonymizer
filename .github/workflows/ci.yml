@@ -41,8 +41,8 @@ jobs:
       - name: Run tests with coverage
         run: make coverage
 
-  lint:
-    name: Lint and Format Check
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       # Required to use the reusable action
@@ -59,32 +59,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      - name: Run formatting check
+      - name: Check format and lint
         run: make format-check
 
-      - name: Check copyright headers
-        run: make copyright-check
+      - name: Run type checks
+        run: make typecheck
 
       - name: Check uv.lock is up to date
         run: make lock-check
 
-  typecheck:
-    name: Type Check
-    runs-on: ubuntu-latest
-    steps:
-      # Required to use the reusable action
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: "0"
-
-      - uses: ./.github/actions/setup-python-env
-        with:
-          fetch-depth: "0"
-          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: uv sync --group dev
-
-      - name: Run type checks
-        run: make typecheck
+      - name: Check copyright headers
+        run: make copyright-check
