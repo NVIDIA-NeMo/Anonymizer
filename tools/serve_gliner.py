@@ -32,10 +32,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
-import torch
+import torch  # ty: ignore[unresolved-import] -- optional server dependency
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from gliner import GLiNER
+from fastapi import FastAPI, HTTPException, Request  # ty: ignore[unresolved-import] -- optional server dependency
+from gliner import GLiNER  # ty: ignore[unresolved-import] -- optional server dependency
 
 MODEL_NAME = "nvidia/gliner-pii"
 DEFAULT_HOST = "127.0.0.1"

@@ -19,7 +19,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, cast
+from typing import ClassVar, Protocol, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -43,6 +43,14 @@ class JudgeResult:
     failed_records: list[FailedRecord]
 
 
+class _JudgeRunResult(Protocol):
+    @property
+    def dataframe(self) -> pd.DataFrame: ...
+
+    @property
+    def failed_records(self) -> list[FailedRecord]: ...
+
+
 class _JudgeAdapter(Protocol):
     def run_workflow(
         self,
@@ -53,7 +61,7 @@ class _JudgeAdapter(Protocol):
         columns: list[ColumnConfigT],
         workflow_name: str,
         preview_num_records: int | None = None,
-    ) -> Any: ...
+    ) -> _JudgeRunResult: ...
 
 
 class _BaseJudgeWorkflow(ABC):
