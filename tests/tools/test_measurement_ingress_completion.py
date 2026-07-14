@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -46,7 +47,7 @@ def _rewrite_run_payload(*, include_replace_key: bool) -> dict[str, Any]:
         "input_has_data_summary": False,
         "detect": {"entity_label_source": "default", "entity_label_count": 2},
         "rewrite": {
-            "risk_tolerance": "medium",
+            "risk_tolerance": "low",
             "max_repair_iterations": 2,
             "strict_entity_protection": True,
         },
@@ -116,6 +117,33 @@ def test_wandb_snapshot_accepts_rewrite_run_without_replace_metadata(
     assert snapshot.records[0].record_type == "run"
     assert snapshot.records[0].mode == "rewrite"
     assert snapshot.records[0].replace is None
+
+
+@pytest.mark.parametrize(
+    ("mode", "missing_key"),
+    [
+        ("replace", "replace"),
+        ("rewrite", "rewrite"),
+    ],
+)
+def test_wandb_snapshot_requires_active_mode_metadata(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    mode: str,
+    missing_key: str,
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    run = _rewrite_run_payload(include_replace_key=False)
+    run["mode"] = mode
+    run["strategy"] = "Substitute" if mode == "replace" else "Rewrite"
+    run.pop(missing_key, None)
+    if mode == "replace":
+        run.pop("rewrite", None)
+    records = [run, _terminal_stage_payload()]
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema violation at run"):
+        wandb_ingress_tool.read_measurement_snapshot(path, expected_statuses={"run-a": "completed"})
 
 
 def test_wandb_snapshot_uses_one_descriptor_and_enforces_limits(
@@ -441,6 +469,42 @@ def test_wandb_snapshot_requires_exactly_one_terminal_stage(tmp_path: Path, wand
 
     with pytest.raises(ValueError, match="exactly one terminal stage"):
         wandb_ingress_tool.read_measurement_snapshot(path, expected_statuses={"run-a": "completed"})
+
+
+def test_completion_seal_allows_root_owned_group_writable_intermediate_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    wandb_completion_tool: ModuleType,
+) -> None:
+    descriptor_paths: dict[int, str] = {}
+
+    def fake_open(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        descriptor = 100 + len(descriptor_paths)
+        descriptor_paths[descriptor] = str(path)
+        return descriptor
+
+    def fake_close(descriptor: int) -> None:
+        pass
+
+    def fake_fstat(descriptor: int) -> Any:
+        name = descriptor_paths[descriptor]
+        directory_mode = stat.S_IFDIR | 0o755
+        uid = 0
+        if name == "shared-project":
+            directory_mode = stat.S_IFDIR | 0o2770
+        if name == "case":
+            uid = wandb_completion_tool.os.geteuid()
+        return SimpleNamespace(st_mode=directory_mode, st_uid=uid)
+
+    monkeypatch.setattr(wandb_completion_tool.os, "open", fake_open)
+    monkeypatch.setattr(wandb_completion_tool.os, "close", fake_close)
+    monkeypatch.setattr(wandb_completion_tool.os, "fstat", fake_fstat)
+
+    descriptor = wandb_completion_tool._open_owned_directory_no_follow(
+        Path("/shared/projects/shared-project/users/test-user/case")
+    )
+
+    assert descriptor_paths[descriptor] == "case"
+    assert any(path == "shared-project" for path in descriptor_paths.values())
 
 
 def test_completion_seal_round_trip_and_digest_verification(
