@@ -160,7 +160,7 @@ Run the blocking type checker:
 make typecheck
 ```
 
-`ty` checks `src`, `tests`, `tests_e2e`, `docs`, and `scripts`. Errors and warnings fail locally and in CI.
+`ty` checks `src`, `tests`, `tests_e2e`, `docs`, `scripts`, and `tools`. Errors and warnings fail locally and in CI.
 
 Check lockfile freshness:
 

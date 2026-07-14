@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeGuard
 
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
@@ -774,13 +774,23 @@ class Anonymizer:
         )
 
 
+class _ListConvertible(Protocol):
+    def tolist(self) -> object: ...
+
+
+def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
+    return callable(getattr(value, "tolist", None))
+
+
 def _unwrap_entities(raw: object) -> list:
     if isinstance(raw, dict):
         entities = raw.get("entities", [])
-        return entities if isinstance(entities, list) else []
-    if isinstance(raw, list):
-        return raw
-    entities = getattr(raw, "entities", [])
+    elif isinstance(raw, list):
+        entities = raw
+    else:
+        entities = getattr(raw, "entities", [])
+    if _is_list_convertible(entities):
+        entities = entities.tolist()
     return entities if isinstance(entities, list) else []
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -41,7 +42,7 @@ def stub_input(tmp_path: Path) -> AnonymizerInput:
 
 def _make_logging_anonymizer(
     *,
-    detection_entities: list[list[dict]] | None = None,
+    detection_entities: list[object] | None = None,
     detection_failures: list[FailedRecord] | None = None,
     replace_failures: list[FailedRecord] | None = None,
 ) -> Anonymizer:
@@ -112,6 +113,26 @@ def test_run_logs_pipeline_stages(stub_input: AnonymizerInput, caplog: pytest.Lo
     assert re.search(r"Replacement complete.*\[\d+\.\ds\]", messages), "Replacement timing not found"
     assert "🎉 Pipeline complete" in messages
     assert "2 records processed" in messages
+
+
+def test_run_logs_numpy_wrapped_entity_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
+    detection_entities: list[object] = [
+        {
+            "entities": np.array(
+                [{"value": "Alice", "label": "first_name"}, {"value": "Acme", "label": "organization"}],
+                dtype=object,
+            )
+        },
+        {"entities": np.array([{"value": "Bob", "label": "first_name"}], dtype=object)},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        anonymizer = _make_logging_anonymizer(detection_entities=detection_entities)
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+    assert "3 entities" in caplog.text
+    assert "first_name=2" in caplog.text
+    assert "organization=1" in caplog.text
 
 
 def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
