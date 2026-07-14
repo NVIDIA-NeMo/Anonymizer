@@ -115,7 +115,7 @@ make test          # run all tests
 make bootstrap     # install dev dependencies
 make format        # ruff format + sort imports
 make format-check  # read-only lint check (used in CI)
-make typecheck     # ty type check (advisory)
+make typecheck     # blocking ty type check (warnings fail too)
 make docs-serve    # local MkDocs server at http://127.0.0.1:8000
 ```
 

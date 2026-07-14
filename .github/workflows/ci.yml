@@ -69,9 +69,8 @@ jobs:
         run: make lock-check
 
   typecheck:
-    name: Type Check (advisory)
+    name: Type Check
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       # Required to use the reusable action
       - name: Checkout repository
@@ -88,4 +87,4 @@ jobs:
         run: uv sync --group dev
 
       - name: Run type checks
-        run: uv run tools/codestyle/typecheck.sh || true
+        run: make typecheck

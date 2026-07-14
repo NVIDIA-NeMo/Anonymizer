@@ -1034,7 +1034,7 @@ def _custom_column_with_trace_context(column: CustomColumnConfig) -> ColumnConfi
         finally:
             _MODEL_TRACE_COLUMN.reset(token)
 
-    traced_generator.custom_column_metadata = getattr(generator, "custom_column_metadata", {})  # type: ignore[attr-defined]
+    setattr(traced_generator, "custom_column_metadata", getattr(generator, "custom_column_metadata", {}))
     return cast(ColumnConfigT, column.model_copy(update={"generator_function": traced_generator}))
 
 

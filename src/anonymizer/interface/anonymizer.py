@@ -21,6 +21,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
     EvaluateConfig,
+    Rewrite,
 )
 from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import (
@@ -593,12 +594,14 @@ class Anonymizer:
         elif config.rewrite is not None:
             logger.info("✏️ Running rewrite pipeline")
             t0 = time.perf_counter()
+            privacy_goal = config.rewrite.privacy_goal
+            assert privacy_goal is not None  # populated by Rewrite's model validator
             rewrite_result = self._rewrite_runner.run(
                 detection_result.dataframe,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.rewrite,
                 replace_model_selection=self._selected_models.replace,
-                privacy_goal=config.rewrite.privacy_goal,
+                privacy_goal=privacy_goal,
                 evaluation=config.rewrite.evaluation,
                 data_summary=data.data_summary,
                 preview_num_records=preview_num_records,
@@ -730,57 +733,63 @@ class Anonymizer:
         failure_counts = _collect_failure_counts(failed)
         hosts = _resolve_model_hosts(self._resolved_providers)
 
-        return AnonymizerEvent(
-            task=task,
-            task_status=status,
-            job_duration_sec=duration_sec,
-            num_input_records=total_records,
-            num_success_records=success_count,
-            num_failure_records=failure_count,
-            avg_tokens_per_record=avg_tokens,
-            transformation_type=transformation_type,
-            custom_data_summary_provided=bool(data.data_summary),
-            custom_privacy_goal_provided=_custom_privacy_goal_provided(rewrite),
-            custom_substitute_instructions_provided=bool(substitute is not None and substitute.instructions),
-            max_repair_iterations=(rewrite.max_repair_iterations if rewrite is not None else -1),
-            strict_entity_protection=(rewrite.strict_entity_protection if rewrite is not None else False),
-            repair_iterations_triggered=_repair_iterations_triggered(failed, rewrite is not None),
-            entity_detector_model=models["entity_detector"],
-            entity_validator_model=models["entity_validator"],
-            entity_augmenter_model=models["entity_augmenter"],
-            latent_detector_model=models["latent_detector"],
-            replacement_generator_model=models["replacement_generator"],
-            domain_classifier_model=models["domain_classifier"],
-            disposition_analyzer_model=models["disposition_analyzer"],
-            meaning_extractor_model=models["meaning_extractor"],
-            qa_generator_model=models["qa_generator"],
-            rewriter_model=models["rewriter"],
-            evaluator_model=models["evaluator"],
-            repairer_model=models["repairer"],
-            model_hosts=hosts,
-            entity_detection_failure_count=failure_counts["entity_detection"],
-            latent_detection_failure_count=failure_counts["latent_detection"],
-            replace_map_generation_failure_count=failure_counts["replace_map_generation"],
-            rewrite_pipeline_failure_count=failure_counts["rewrite_pipeline"],
-            rewrite_evaluate_failure_count=failure_counts["rewrite_evaluate"],
-            rewrite_repair_failure_count=failure_counts["rewrite_repair"],
-            rewrite_final_judge_failure_count=failure_counts["rewrite_final_judge"],
-            unknown_step_failure_count=failure_counts["unknown"],
+        return AnonymizerEvent.model_validate(
+            {
+                "task": task,
+                "task_status": status,
+                "job_duration_sec": duration_sec,
+                "num_input_records": total_records,
+                "num_success_records": success_count,
+                "num_failure_records": failure_count,
+                "avg_tokens_per_record": avg_tokens,
+                "transformation_type": transformation_type,
+                "custom_data_summary_provided": bool(data.data_summary),
+                "custom_privacy_goal_provided": _custom_privacy_goal_provided(rewrite),
+                "custom_substitute_instructions_provided": bool(substitute is not None and substitute.instructions),
+                "max_repair_iterations": rewrite.max_repair_iterations if rewrite is not None else -1,
+                "strict_entity_protection": rewrite.strict_entity_protection if rewrite is not None else False,
+                "repair_iterations_triggered": _repair_iterations_triggered(failed, rewrite is not None),
+                "entity_detector_model": models["entity_detector"],
+                "entity_validator_model": models["entity_validator"],
+                "entity_augmenter_model": models["entity_augmenter"],
+                "latent_detector_model": models["latent_detector"],
+                "replacement_generator_model": models["replacement_generator"],
+                "domain_classifier_model": models["domain_classifier"],
+                "disposition_analyzer_model": models["disposition_analyzer"],
+                "meaning_extractor_model": models["meaning_extractor"],
+                "qa_generator_model": models["qa_generator"],
+                "rewriter_model": models["rewriter"],
+                "evaluator_model": models["evaluator"],
+                "repairer_model": models["repairer"],
+                "model_hosts": hosts,
+                "entity_detection_failure_count": failure_counts["entity_detection"],
+                "latent_detection_failure_count": failure_counts["latent_detection"],
+                "replace_map_generation_failure_count": failure_counts["replace_map_generation"],
+                "rewrite_pipeline_failure_count": failure_counts["rewrite_pipeline"],
+                "rewrite_evaluate_failure_count": failure_counts["rewrite_evaluate"],
+                "rewrite_repair_failure_count": failure_counts["rewrite_repair"],
+                "rewrite_final_judge_failure_count": failure_counts["rewrite_final_judge"],
+                "unknown_step_failure_count": failure_counts["unknown"],
+            }
         )
 
 
 def _unwrap_entities(raw: object) -> list:
     if isinstance(raw, dict):
-        return raw.get("entities", [])
+        entities = raw.get("entities", [])
+        return entities if isinstance(entities, list) else []
     if isinstance(raw, list):
         return raw
-    return getattr(raw, "entities", [])
+    entities = getattr(raw, "entities", [])
+    return entities if isinstance(entities, list) else []
 
 
 def _entity_label(entity: object) -> str | None:
     if isinstance(entity, dict):
-        return entity.get("label")
-    return getattr(entity, "label", None)
+        label = entity.get("label")
+    else:
+        label = getattr(entity, "label", None)
+    return label if isinstance(label, str) else None
 
 
 def _count_labels_for_row(raw: object) -> Counter[str]:
@@ -820,7 +829,7 @@ def _resolve_model_providers(
             if not candidate.is_file():
                 raise FileNotFoundError(f"Providers config file not found: {candidate}")
             model_providers = candidate
-    config_dict = load_config_file(model_providers)
+    config_dict = load_config_file(model_providers)  # ty: ignore[invalid-argument-type]
     raw_providers = config_dict.get("providers")
     if not isinstance(raw_providers, list):
         raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
@@ -940,17 +949,17 @@ def _transformation_type_string(config: AnonymizerConfig) -> str:
     return type(config.replace).__name__.lower()
 
 
-def _custom_privacy_goal_provided(rewrite: object | None) -> bool:
+def _custom_privacy_goal_provided(rewrite: Rewrite | None) -> bool:
     """Detect whether the user supplied a non-default privacy_goal.
 
     ``Rewrite.populate_default_privacy_goal`` always populates a default if the
     user passed None, so we treat the default protect/preserve text as "not custom".
     """
-    if rewrite is None or rewrite.privacy_goal is None:  # type: ignore[union-attr]
+    if rewrite is None or rewrite.privacy_goal is None:
         return False
     from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT
 
-    goal = rewrite.privacy_goal  # type: ignore[union-attr]
+    goal = rewrite.privacy_goal
     return goal.protect != DEFAULT_PROTECT_TEXT or goal.preserve != DEFAULT_PRESERVE_TEXT
 
 

@@ -210,7 +210,7 @@ class TestAnonymizerEvent:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError):
-            AnonymizerEvent(
+            AnonymizerEvent(  # ty: ignore[missing-argument]
                 task=TaskEnum.BATCH,
                 task_status=TaskStatusEnum.COMPLETED,
                 entity_detector_model="x",
@@ -223,7 +223,7 @@ class TestAnonymizerEvent:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError):
-            AnonymizerEvent(
+            AnonymizerEvent(  # ty: ignore[missing-argument]
                 task=TaskEnum.BATCH,
                 task_status=TaskStatusEnum.COMPLETED,
                 transformation_type="redact",
@@ -315,7 +315,7 @@ class TestTelemetryHandlerOptOut:
     def test_enqueue_noop_for_non_event(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NEMO_TELEMETRY_ENABLED", "true")
         handler = TelemetryHandler()
-        handler.enqueue("not an event")  # type: ignore[arg-type]
+        handler.enqueue("not an event")  # ty: ignore[invalid-argument-type]
         assert handler._events == []
 
     def test_enqueue_when_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:

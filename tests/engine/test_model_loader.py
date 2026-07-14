@@ -565,7 +565,7 @@ class TestEntityValidatorNormalization:
         with pytest.raises((ValueError, TypeError)):
             DetectionModelSelection(
                 entity_detector="d",
-                entity_validator=42,  # type: ignore[arg-type]
+                entity_validator=42,  # ty: ignore[invalid-argument-type]
                 entity_augmenter="a",
                 latent_detector="l",
             )

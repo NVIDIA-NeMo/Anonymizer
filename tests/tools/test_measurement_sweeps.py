@@ -59,7 +59,7 @@ def _patch_sweep_runner(
     status: Any,
 ) -> None:
     class FakeCase:
-        pass
+        status: Any
 
     FakeCase.status = status
     result = SimpleNamespace(suite_id="base-suite", cases=[FakeCase()])

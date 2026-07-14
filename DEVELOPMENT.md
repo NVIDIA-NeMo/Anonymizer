@@ -154,13 +154,13 @@ Run all read-only checks:
 make check
 ```
 
-Run the advisory type checker:
+Run the blocking type checker:
 
 ```bash
 make typecheck
 ```
 
-`ty` is currently advisory. Treat new type-check findings in touched code as review-worthy even when CI does not block on them.
+`ty` checks `src`, `tests`, `tests_e2e`, `docs`, and `scripts`. Errors and warnings fail locally and in CI.
 
 Check lockfile freshness:
 
@@ -184,7 +184,7 @@ make install-pre-commit
 ```
 
 Hooks run Ruff format and lint, uv lock verification, DCO signoff checks, and basic file hygiene. `ty` is installed
-for `make typecheck` and `make check`, but it is not currently run as a pre-commit hook.
+for the blocking `make typecheck` and `make check` targets, but it is not currently run as a pre-commit hook.
 
 If `pyproject.toml` changes and `uv.lock` is stale, the uv-lock hook may regenerate `uv.lock` and fail the commit. Add the updated `uv.lock` and retry.
 

@@ -119,12 +119,12 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
             system_prompt=self.config.system_prompt,
         )
 
-    def generate(self, data: dict[str, Any]) -> dict[str, Any]:
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
         models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
         return chunked_validate_row(data, self._params(raw_models), models)
 
-    async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:
+    async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
         return await chunked_validate_row_async(data, self._params(models), models)
 

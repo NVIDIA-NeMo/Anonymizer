@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pandas as pd
@@ -25,6 +26,10 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
+
+
+def _call_kwargs(method: object) -> dict[str, Any]:
+    return dict(cast(Mock, method).call_args.kwargs)
 
 
 @pytest.fixture
@@ -162,10 +167,10 @@ def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> 
     # stub_input has 2 rows; num_records=5 is clamped to min(5, 2) = 2
     anonymizer.preview(config=config, data=stub_input, num_records=5)
 
-    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 2
 
-    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
     assert rep_call_kwargs["preview_num_records"] == 2
 
 
@@ -177,10 +182,10 @@ def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput)
     # stub_input has 2 rows; num_records=1 fits, so no clamping
     anonymizer.preview(config=config, data=stub_input, num_records=1)
 
-    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 1
 
-    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
     assert rep_call_kwargs["preview_num_records"] == 1
 
 
@@ -191,10 +196,10 @@ def test_run_set_preview_num_records(stub_input: AnonymizerInput) -> None:
 
     anonymizer.run(config=config, data=stub_input)
 
-    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] is None
 
-    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
     assert rep_call_kwargs["preview_num_records"] is None
 
 

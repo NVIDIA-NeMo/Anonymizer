@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
+from pydantic import BaseModel
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import (
@@ -146,7 +147,7 @@ def _filter_replacement_map_to_input_entities(
     record_id: str = "",
 ) -> dict[str, list[dict[str, str]]]:
     """Keep only replacement entries that correspond to actual requested entities."""
-    if hasattr(raw_map, "model_dump"):
+    if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
     if not isinstance(raw_map, dict):
         logger.warning(
