@@ -670,6 +670,24 @@ Other information:
 
 <<EXAMPLE_BLOCK>>
 
+Additional extraction requirements:
+- The "value" field must be the EXACT verbatim span from the input text.
+  Copy the text character-for-character exactly as it appears.
+  Do NOT normalize, correct spelling, expand abbreviations, decode encodings,
+  infer hidden values, translate text, reformat numbers, or otherwise modify
+  the extracted span.
+- Extract only text that is explicitly present in the input.
+  Never reconstruct, guess, or generate a value that does not appear verbatim.
+- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,
+  spaced out, mixed with punctuation, or written in words instead of digits.
+  Detect the identifier and extract the exact text as written.
+  Examples of disguised identifiers to detect:
+  - Phone numbers, SSNs, and credit card numbers spoken as digit words,
+    including "o" or "oh" used in place of zero:
+    "nine o two, five five five, one two three four"
+  - Names spelled out letter by letter with hyphens or commas:
+    "J-O-H-N", "M, A, R, Y"
+
 ---
 Input text: <<TAGGED_TEXT>>
 Already-detected entities: <<SEED_ENTITIES>>
