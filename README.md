@@ -129,9 +129,9 @@ AnonymizerConfig(replace=Hash(algorithm="sha256", digest_length=8))
 
 ---
 
-## Using with Claude Code
+## Using the Agent Skill
 
-This repo ships a Claude Code skill at [`skills/anonymizer/`](skills/anonymizer/SKILL.md) that elicits your dataset's privacy requirements, recommends Rewrite or Replace with a strategy, and drafts a runnable script for you to iterate on. While the skill should work with other coding agents that support skills, development and testing has focused on Claude Code at this stage.
+This repo ships an Agent Skill at [`skills/anonymizer/`](skills/anonymizer/SKILL.md) that elicits your dataset's privacy requirements, helps choose Rewrite or Replace with an appropriate strategy, and drafts a runnable script for you to iterate on.
 
 Install via [skills.sh](https://skills.sh):
 
@@ -139,7 +139,7 @@ Install via [skills.sh](https://skills.sh):
 npx skills add NVIDIA-NeMo/Anonymizer
 ```
 
-After installation, invoke it with `/anonymizer` from within Claude Code, or describe what you want to anonymize and let it auto-trigger.
+After installation, invoke it with `/anonymizer` in an agent that supports slash-style skill calls, or describe what you want to anonymize and let it auto-trigger.
 
 ---
 

@@ -1,0 +1,93 @@
+[
+  {
+    "id": "anonymizer-positive-mode-choice",
+    "question": "I have a CSV of clinical note paragraphs and short audit-log messages. Help me choose whether NeMo Anonymizer should use Replace or Rewrite, and tell me what you need from me before drafting the script.",
+    "expected_skill": "anonymizer",
+    "should_trigger": true,
+    "expected_script": null,
+    "ground_truth": "The agent loads the anonymizer skill, follows references/interactive.md, explains that Replace detects and replaces entities in place while Rewrite rewrites free text to suppress inferable identifiers, uses data shape as a hint, and still asks the user to choose the mode plus the privacy goal/risk tolerance details needed for Rewrite.",
+    "expected_behavior": [
+      "The agent read skills/anonymizer/SKILL.md before answering",
+      "The agent routed the workflow to references/interactive.md",
+      "The answer distinguishes Replace from Rewrite using Anonymizer semantics",
+      "The answer uses clinical note prose as a Rewrite-leaning signal and audit-log shape as a Replace-leaning signal",
+      "The answer asks the user to choose the mode rather than silently deciding",
+      "The answer asks for the minimum privacy-goal and risk-tolerance details needed before drafting a script"
+    ]
+  },
+  {
+    "id": "anonymizer-positive-hash-cross-record-consistency",
+    "question": "I need to anonymize a support-ticket CSV but preserve the ability to join all rows for the same customer later. The same email or account ID must become the same replacement everywhere. Which NeMo Anonymizer strategy should my script use?",
+    "expected_skill": "anonymizer",
+    "should_trigger": true,
+    "expected_script": null,
+    "ground_truth": "The agent loads the anonymizer skill and recommends Replace mode with Hash for stable cross-record replacement. It must not promise cross-record stability from Substitute, which is only consistent within a row. It should mention previewing before a full run and that Hash is deterministic rather than realistic-looking.",
+    "expected_behavior": [
+      "The agent read skills/anonymizer/SKILL.md before answering",
+      "The answer recommends Hash for stable cross-record consistency",
+      "The answer does not recommend Substitute for cross-record consistency",
+      "The answer states that Substitute is only row-local for consistency",
+      "The answer frames Hash as deterministic and useful for joins",
+      "The answer keeps the standard preview-before-full-run workflow"
+    ]
+  },
+  {
+    "id": "anonymizer-positive-failed-records-first",
+    "question": "My Anonymizer preview produced 18 failed_records and the few successful rewrite rows still have leakage_mass above the threshold. Should I lower the risk_tolerance or change the privacy_goal first?",
+    "expected_skill": "anonymizer",
+    "should_trigger": true,
+    "expected_script": null,
+    "ground_truth": "The agent loads the anonymizer skill and diagnoses failed_records before any strategy tuning. It explains that dropped rows are model/provider/infrastructure failures such as auth, rate limits, network, or endpoint issues. It should send the user to troubleshooting guidance and only discuss leakage/risk tuning after the failed records are clean.",
+    "expected_behavior": [
+      "The agent read skills/anonymizer/SKILL.md before answering",
+      "The answer tells the user to fix failed_records before changing risk_tolerance or privacy_goal",
+      "The answer classifies dropped rows as infra/provider/model execution problems rather than strategy problems",
+      "The answer asks for or uses failed record step and reason details",
+      "The answer cites troubleshooting guidance with the published Anonymizer docs fallback",
+      "The answer postpones leakage strategy tuning until preview completes cleanly"
+    ]
+  },
+  {
+    "id": "anonymizer-positive-self-hosted-gliner",
+    "question": "We cannot send PHI detection calls to build.nvidia.com. How do I configure NeMo Anonymizer to use a self-hosted GLiNER detector on localhost instead?",
+    "expected_skill": "anonymizer",
+    "should_trigger": true,
+    "expected_script": null,
+    "ground_truth": "The agent loads the anonymizer skill and explains the self-hosted GLiNER path: run tools/serve_gliner.py from a source checkout, add an OpenAI-compatible provider at http://localhost:8001/v1, point the gliner-pii-detector/entity_detector alias at provider local-gliner with skip_health_check true, and keep model_configs as a complete model pool copied from defaults rather than a partial overlay.",
+    "expected_behavior": [
+      "The agent read skills/anonymizer/SKILL.md before answering",
+      "The answer says the reference GLiNER server comes from a source checkout, not pip-installed package files",
+      "The answer includes the localhost OpenAI-compatible endpoint",
+      "The answer routes entity_detector through the gliner-pii-detector alias using a local provider",
+      "The answer sets or mentions skip_health_check for the local GLiNER provider",
+      "The answer warns that model_configs must include the full default model pool",
+      "The answer cites the self-hosting GLiNER docs with the published Anonymizer docs fallback"
+    ]
+  },
+  {
+    "id": "anonymizer-negative-general-privacy-explainer",
+    "question": "Explain data anonymization, pseudonymization, and de-identification at a high level for a privacy training deck. Do not include product-specific commands or libraries.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "expected_script": null,
+    "ground_truth": "The agent should not activate the anonymizer skill for a general privacy explainer that explicitly excludes product-specific commands or libraries.",
+    "expected_behavior": [
+      "The agent did not answer as a NeMo Anonymizer usage workflow",
+      "The answer focuses on general privacy concepts",
+      "The answer avoids NeMo Anonymizer script, config, preview, model-provider, or troubleshooting guidance"
+    ]
+  },
+  {
+    "id": "anonymizer-negative-repository-source-development",
+    "question": "I am editing the NeMo Anonymizer repository and want to add a new public config field to Detect. Where should I put the code and tests?",
+    "expected_skill": null,
+    "should_trigger": false,
+    "expected_script": null,
+    "ground_truth": "The agent should not activate the user-facing anonymizer skill for repository source development. It should follow repository development instructions, especially AGENTS.md and STYLEGUIDE.md, and discuss config, engine, interface, and tests as codebase changes rather than user dataset anonymization.",
+    "expected_behavior": [
+      "The agent did not route to skills/anonymizer/SKILL.md as a user anonymization workflow",
+      "The answer treats the request as repository source development",
+      "The answer references repository development boundaries such as anonymizer.config and tests rather than producing a runnable anonymization script"
+    ]
+  }
+]
