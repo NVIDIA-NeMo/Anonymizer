@@ -504,6 +504,42 @@ def test_wandb_environment_isolates_routing_and_restores_exactly(
     assert dict(os.environ) == before
 
 
+def test_wandb_output_allows_root_owned_group_writable_intermediate_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    wandb_setup_tool: ModuleType,
+) -> None:
+    descriptor_paths: dict[int, str] = {}
+
+    def fake_open(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        descriptor = 100 + len(descriptor_paths)
+        descriptor_paths[descriptor] = str(path)
+        return descriptor
+
+    def fake_close(descriptor: int) -> None:
+        pass
+
+    def fake_fstat(descriptor: int) -> Any:
+        name = descriptor_paths[descriptor]
+        directory_mode = wandb_setup_tool.stat.S_IFDIR | 0o755
+        uid = 0
+        if name == "shared-project":
+            directory_mode = wandb_setup_tool.stat.S_IFDIR | 0o2770
+        if name == "wandb-output":
+            uid = wandb_setup_tool.os.geteuid()
+        return SimpleNamespace(st_mode=directory_mode, st_uid=uid)
+
+    monkeypatch.setattr(wandb_setup_tool.os, "open", fake_open)
+    monkeypatch.setattr(wandb_setup_tool.os, "close", fake_close)
+    monkeypatch.setattr(wandb_setup_tool.os, "fstat", fake_fstat)
+
+    descriptor = wandb_setup_tool._open_directory_no_follow(
+        Path("/shared/projects/shared-project/users/test-user/wandb-output")
+    )
+
+    assert descriptor_paths[descriptor] == "wandb-output"
+    assert any(path == "shared-project" for path in descriptor_paths.values())
+
+
 def test_wandb_environment_uses_namespaced_base_url(
     monkeypatch: pytest.MonkeyPatch,
     wandb_setup_tool: ModuleType,

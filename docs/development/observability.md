@@ -133,8 +133,10 @@ information in these values.
 
 The runner stages W&B files under `<benchmark-output>/.wandb-private` with
 owner-only permissions. Descriptor-relative traversal rejects symlinks and
-untrusted writable directories. Offline runs retain this directory for later
-sync.
+untrusted writable directories. Root-owned, group-writable project directories
+are trusted shared-storage ancestors, but the final benchmark output and W&B
+staging directories must be owned by the current user. Offline runs retain this
+directory for later sync.
 
 The main goal is benchmark data in W&B. Workspaces, reports, project views, and
 panels are presentation layers. They can be edited in W&B, regenerated with the
@@ -171,9 +173,11 @@ provenance, and producer commit. Seal creation and import share the same
 completed-run invariant and require every record's reserved case tags to match
 the seal identity. `write_completion_seal.py` owns the producer contract;
 `import_wandb_run.py` captures and verifies the sealed JSONL before a strict W&B
-publication. Identical completed imports reuse a destination-scoped run ID with
-`resume="allow"` and become no-ops. Changed sealed content receives a different
-run ID.
+publication. Root-owned, group-writable project directories are trusted
+shared-storage ancestors for seal writes, but the final case directory must be
+owned by the current user. Identical completed imports reuse a
+destination-scoped run ID with `resume="allow"` and become no-ops. Changed
+sealed content receives a different run ID.
 
 ## Local and Slurm Benchmark Execution
 

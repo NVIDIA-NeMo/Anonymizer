@@ -20,6 +20,7 @@ from pydantic import (
     StrictStr,
     TypeAdapter,
     ValidationError,
+    model_validator,
 )
 
 from measurement_tools.validation import (
@@ -58,10 +59,18 @@ class RunMeasurement(_MeasurementEnvelope):
     input_has_id_column: StrictBool
     input_has_data_summary: StrictBool
     detect: dict[StrictStr, JsonValue]
-    replace: dict[StrictStr, JsonValue]
-    rewrite: dict[StrictStr, JsonValue]
+    replace: dict[StrictStr, JsonValue] | None = None
+    rewrite: dict[StrictStr, JsonValue] | None = None
     models: list[dict[StrictStr, JsonValue]]
     runtime: dict[StrictStr, JsonValue]
+
+    @model_validator(mode="after")
+    def validate_active_mode_metadata(self) -> RunMeasurement:
+        if self.mode == "replace" and self.replace is None:
+            raise ValueError("replace metadata is required for replace mode")
+        if self.mode == "rewrite" and self.rewrite is None:
+            raise ValueError("rewrite metadata is required for rewrite mode")
+        return self
 
 
 class StageMeasurement(_MeasurementEnvelope):
