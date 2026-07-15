@@ -154,6 +154,21 @@ anonymizer --help         # CLI usage
 make install-pre-commit   # Install pre-commit hooks
 ```
 
+### Local vLLM debugging
+
+On a Linux GPU host, install the optional local-model dependency group and use
+`tools/vllm_debug.py` to start or probe an OpenAI-compatible vLLM server:
+
+```bash
+uv sync --group dev --group local-models
+uv run python tools/vllm_debug.py models --cached --json
+uv run python tools/vllm_debug.py serve /path/to/cached/snapshot --served-model-name anonymizer-local
+uv run python tools/vllm_debug.py models --endpoint http://127.0.0.1:8000/v1
+```
+
+The helper does not prefetch model weights. Use `--vllm-python /path/to/python`
+when vLLM is installed in another virtual environment. The [local vLLM guide](docs/concepts/local-vllm.md) covers GPU-host requirements, Anonymizer configuration, verification, and internal-network access.
+
 ---
 
 ## Requirements
