@@ -238,10 +238,6 @@ Signed-off-by: Your Name <your.email@example.com>
 
 By signing off, you certify the [Developer Certificate of Origin](DCO). See the full [DCO](DCO) file for details.
 
-The DCO GitHub App verifies the signoff on every non-bot, non-merge commit in a pull request. The email address in
-each `Signed-off-by` line must match that commit's author email. If the check is stale after an outage, request a
-fresh check by submitting a pull request review whose summary contains `@dcoapp recheck` on its own line.
-
 ## Issues and Discussions
 
 We provide structured issue templates for bug reports, feature requests, and development tasks.
