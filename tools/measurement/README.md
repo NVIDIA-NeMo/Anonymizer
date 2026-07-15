@@ -354,8 +354,10 @@ sensitive information.
 W&B writes local run state under `<benchmark-output>/.wandb-private`. The runner
 creates this directory with owner-only permissions before calling the W&B SDK.
 The runner rejects symlinks, untrusted writable parent directories, and output
-directories owned by another user. Keep the directory when an offline run must
-be synchronized later.
+directories owned by another user. Root-owned, group-writable project
+directories are trusted shared-storage ancestors, but the final benchmark output
+directory and `.wandb-private` staging directory must still be owned by the
+current user. Keep the directory when an offline run must be synchronized later.
 
 During SDK use, a process-wide guard replaces the process environment with a
 minimal runtime allowlist, audited W&B timeout settings, and the fully resolved
@@ -399,8 +401,11 @@ carry the same `case_id`, `workload_id`, `config_id`, and `repetition` tags, and
 the run ID must equal the case ID. The seal binds the measurement SHA-256
 digest, byte and record counts, expected run ID, case identity, Slurm
 provenance, and producer commit. The writer pins each parent directory without
-following symlinks and rejects untrusted writable directories. The companion
-workflow in `anonymizer-experiments` calls the seal writer after its case report:
+following symlinks and rejects untrusted writable directories. Root-owned,
+group-writable project directories are trusted shared-storage ancestors, but the
+final case directory that receives `completion-seal.json` must still be owned by
+the current user. The companion workflow in `anonymizer-experiments` calls the
+seal writer after its case report:
 
 ```bash
 uv run python tools/measurement/write_completion_seal.py \
