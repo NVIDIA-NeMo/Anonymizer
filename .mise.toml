@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Tool versions managed by mise (https://mise.jdx.dev/).
+# Run `mise install` to install all tools.
+min_version = "2026.5.15"
+
+[tools]
+uv = "0.9.30"
+ruff = "0.15.0"
+ty = "0.0.44"
+
+[env]
+# Use the uv-managed environment in the project root unless a caller selects a
+# different environment, for example when working in an isolated worktree.
+VIRTUAL_ENV = "{{ env.UV_PROJECT_ENVIRONMENT | default(value=config_root ~ '/.venv') }}"
+_.file = [".env", { path = ".env.local", redact = true }]
+
+[task_config]
+includes = [".mise/tasks", ".mise/tasks/*.toml"]
+
+[settings]
+lockfile = true
+install_before = "7d"
+lockfile_platforms = ["macos-arm64", "linux-x64", "linux-arm64"]
+idiomatic_version_file_enable_tools = []

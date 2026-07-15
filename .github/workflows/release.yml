@@ -51,20 +51,14 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - uses: ./.github/actions/setup-python-env
         with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: ".python-version"
+          checkout: "false"
 
       - name: Build wheel
         id: build
         run: |
-          make build-wheel
+          mise run build-wheel
           WHEEL=$(ls dist/*.whl)
           VERSION=$(echo "$WHEEL" | sed -n 's/.*-\([0-9][^-]*\)-.*/\1/p')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -149,11 +143,12 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           ref: ${{ inputs.release-ref }}
           fetch-depth: "0"
 
       - name: Install docs dependencies
-        run: uv sync --group dev --group docs
+        run: mise run install-dev-docs
 
       - name: Configure git for mike
         run: |
@@ -161,7 +156,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Build docs
-        run: make docs-build
+        run: mise run docs:build
 
       - name: Deploy release docs with mike
         env:

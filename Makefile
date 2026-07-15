@@ -1,150 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Compatibility entry points for contributors and scripts that still invoke
+# make. New commands belong in .mise/tasks/ and should run via `mise run`.
+
+SHELL := /bin/bash
+export PATH := $(HOME)/.local/share/mise/shims:$(HOME)/.local/bin:$(PATH)
+
+MISE_GPG_KEY := 24853EC9F655CE80B48E6C3A8B81C9D17413A06D
+
+.PHONY: help
 help:
-	@echo ""
-	@echo "Anonymizer Makefile"
-	@echo "==================="
-	@echo ""
-	@echo "  bootstrap              - Install Python dependencies (dev group)"
-	@echo "  install                - Install project dependencies with uv"
-	@echo "  install-dev            - Install project with dev dependencies"
-	@echo "  install-dev-notebooks  - Install dev + notebook dependencies"
-	@echo "  install-pre-commit     - Install pre-commit hooks (run once after cloning)"
-	@echo ""
-	@echo "  format                 - Format and fix code"
-	@echo "  format-check           - Check format and lint (read-only)"
-	@echo "  typecheck              - Run type checks (advisory, non-blocking)"
-	@echo "  copyright              - Add missing SPDX headers to source files"
-	@echo "  copyright-check        - Check all source files have SPDX headers (read-only)"
-	@echo "  check                  - Run all read-only checks"
-	@echo "  lock-check             - Check uv.lock is up to date"
-	@echo ""
-	@echo "  test                   - Run all unit tests"
-	@echo "  test-e2e               - Run end-to-end tests"
-	@echo "  coverage               - Run tests with coverage report"
-	@echo ""
-	@echo "  build-wheel            - Build wheel (version from git tag)"
-	@echo "  publish-pypi           - Publish wheel to PyPI"
-	@echo ""
-	@echo "  install-dev-docs       - Install dev + docs dependencies"
-	@echo "  docs-serve             - Start docs dev server (live-reload)"
-	@echo "  docs-build             - Build docs site (strict mode)"
-	@echo "  convert-notebooks      - Convert .py tutorials to .ipynb with outputs"
-	@echo ""
-	@echo "  clean                  - Remove coverage reports and cache files"
-	@echo "  clean-merged-branches  - Checkout main, fetch --prune, delete local branches merged into main"
-	@echo ""
+	@mise tasks
 
-bootstrap:
-	@echo "Installing Python dependencies (dev group)..."
-	uv sync --group dev
+.PHONY: install-mise
+install-mise:
+	@MISE_GPG_KEY=$(MISE_GPG_KEY) bash tools/install-mise.sh
 
-install:
-	@echo "Installing project dependencies..."
-	uv sync
-	@echo "Done!"
+.PHONY: setup
+setup: install-mise
+	@MISE_YES=1 mise trust
+	@MISE_YES=1 mise run setup
 
-install-dev:
-	@echo "Installing project with dev dependencies..."
-	uv sync --group dev
-	@echo "Done!"
+.PHONY: run
+run:
+	@if [ -z "$(TASK)" ]; then \
+		echo "Error: missing TASK. Usage: make run TASK=test [ARGS='...']" >&2; \
+		exit 1; \
+	fi
+	@mise run "$(TASK)" $(ARGS)
 
-install-dev-notebooks:
-	@echo "Installing project with dev + notebook dependencies..."
-	uv sync --group dev --group notebooks
-	@echo "Done!"
+define deprecated_target
+.PHONY: $(1)
+$(1):
+	@printf '%s\n' 'deprecated; forwarding to `mise run $(2)`' >&2
+	@mise run $(2)
+endef
 
-install-pre-commit:
-	@echo "Installing pre-commit hooks..."
-	uv run pre-commit install
-	@echo "Done! Hooks will run on git commit."
-
-format:
-	@echo "Formatting and fixing code..."
-	uv run tools/codestyle/format.sh
-
-format-check:
-	@echo "Checking format and lint (read-only)..."
-	uv run tools/codestyle/format.sh --check
-	uv run tools/codestyle/ruff_check.sh
-
-typecheck:
-	@echo "Running type checks (advisory -- see issue tracking full compliance)..."
-	-uv run tools/codestyle/typecheck.sh
-
-copyright:
-	@echo "Adding missing SPDX headers..."
-	uv run tools/codestyle/copyright_fixer.py .
-
-copyright-check:
-	@echo "Checking SPDX headers (read-only)..."
-	uv run tools/codestyle/copyright_fixer.py --check .
-
-check:
-	@echo "Running all read-only checks..."
-	$(MAKE) format-check typecheck lock-check copyright-check
-
-lock-check:
-	@echo "Checking uv.lock is up to date..."
-	uv lock --check
-
-test:
-	@echo "Running unit tests..."
-	uv run --group dev pytest
-
-test-e2e:
-	@echo "Running end-to-end tests..."
-	uv run --group dev pytest -m e2e tests_e2e/test_e2e.py
-
-coverage:
-	@echo "Running tests with coverage analysis..."
-	uv run --group dev pytest --cov=anonymizer --cov-report=term-missing --cov-report=html
-	@echo "Coverage report generated in htmlcov/index.html"
-
-build-wheel:
-	@echo "Building wheel (version from git tag via uv-dynamic-versioning)..."
-	rm -rf dist/
-	uv build --wheel
-
-publish-pypi: build-wheel
-	@echo "Publishing wheel to PyPI..."
-	uvx twine upload \
-	  --username "$$TWINE_USERNAME" \
-	  --password "$$TWINE_PASSWORD" \
-	  --non-interactive \
-	  dist/*.whl
-	@echo "published: $$(ls dist/*.whl)"
-
-install-dev-docs:
-	@echo "Installing dev + docs dependencies..."
-	uv sync --group dev --group docs
-
-docs-serve:
-	@echo "Starting docs dev server (live-reload)..."
-	uv run --group docs mkdocs serve
-
-docs-build:
-	@echo "Building docs site..."
-	uv run --group docs mkdocs build --strict
-
-convert-notebooks:
-	@echo "Converting Python tutorials to notebooks and executing..."
-	@mkdir -p docs/notebooks
-	uv run --group notebooks python -m ipykernel install --user --name anonymizer-venv
-	uv run --group notebooks --group docs jupytext --to ipynb --set-kernel anonymizer-venv --execute docs/notebook_source/*.py
-	mv docs/notebook_source/*.ipynb docs/notebooks/
-	@echo "Notebooks created in docs/notebooks/"
-
-clean-pycache:
-	@echo "Cleaning Python cache files..."
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete 2>/dev/null || true
-
-clean: clean-pycache
-	@echo "Cleaning coverage reports and test cache..."
-	rm -rf htmlcov .coverage .coverage.* .pytest_cache
-
-clean-merged-branches:
-	@echo "Cleaning merged local branches..."
-	git checkout main && git fetch --prune && git branch --merged | grep -v '^\*\|main' | xargs -n 1 git branch -d || true
-	@echo "Done!"
-
-.PHONY: help bootstrap install install-dev install-dev-notebooks install-pre-commit format format-check typecheck copyright copyright-check check lock-check test test-e2e coverage build-wheel publish-pypi install-dev-docs docs-serve docs-build clean clean-pycache clean-merged-branches convert-notebooks
+$(eval $(call deprecated_target,bootstrap,bootstrap))
+$(eval $(call deprecated_target,install,install))
+$(eval $(call deprecated_target,install-dev,install-dev))
+$(eval $(call deprecated_target,install-dev-notebooks,install-dev-notebooks))
+$(eval $(call deprecated_target,install-pre-commit,install-pre-commit))
+$(eval $(call deprecated_target,format,format))
+$(eval $(call deprecated_target,format-check,format-check))
+$(eval $(call deprecated_target,typecheck,typecheck))
+$(eval $(call deprecated_target,copyright,copyright))
+$(eval $(call deprecated_target,copyright-check,copyright-check))
+$(eval $(call deprecated_target,check,check))
+$(eval $(call deprecated_target,lock-check,lock-check))
+$(eval $(call deprecated_target,test,test))
+$(eval $(call deprecated_target,test-e2e,test:e2e))
+$(eval $(call deprecated_target,coverage,coverage))
+$(eval $(call deprecated_target,build-wheel,build-wheel))
+$(eval $(call deprecated_target,publish-pypi,publish:pypi))
+$(eval $(call deprecated_target,install-dev-docs,install-dev-docs))
+$(eval $(call deprecated_target,docs-serve,docs:serve))
+$(eval $(call deprecated_target,docs-build,docs:build))
+$(eval $(call deprecated_target,convert-notebooks,convert-notebooks))
+$(eval $(call deprecated_target,clean-pycache,clean-pycache))
+$(eval $(call deprecated_target,clean,clean))
+$(eval $(call deprecated_target,clean-merged-branches,clean-merged-branches))

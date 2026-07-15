@@ -135,15 +135,12 @@ measurement JSONL format, one raw file per benchmark case plus a combined
 `measurements.jsonl`.
 
 ```bash
-uv run python tools/measurement/run_benchmarks.py suite.yaml --output benchmark-runs/suite
-uv run python tools/measurement/run_benchmarks.py suite.yaml --dry-run --json
-uv run python tools/measurement/run_benchmarks.py suite.yaml \
-  --output benchmark-runs/suite \
-  --dd-trace last_message
-uv run python tools/measurement/run_benchmarks.py suite.yaml \
-  --output benchmark-runs/suite \
-  --dd-task-trace
+mise run benchmark smoke
+mise run benchmark smoke -- --dry-run --json
+mise run benchmark smoke-traces
 ```
+
+`smoke` runs `repo-data-smoke.yaml`. `smoke-traces` adds `--dd-trace last_message` and `--dd-task-trace`. Both profiles load `.env.local`, so endpoint credentials stay out of suite files. Set `BENCHMARK_OUTPUT_DIR` in `.env.local` to override the profile's default output directory.
 
 The repo-data smoke suite can be run with DataDesigner traces enabled:
 

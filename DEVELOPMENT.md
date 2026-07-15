@@ -6,6 +6,7 @@ This guide covers local setup, common development commands, testing, documentati
 
 - Python 3.11+
 - Git
+- [mise](https://mise.jdx.dev/) for pinned development tools and task execution
 - [uv](https://docs.astral.sh/uv/) for dependency management
 - [gh](https://cli.github.com/) for optional GitHub CLI workflows
 
@@ -18,20 +19,21 @@ Clone the repository and install development dependencies:
 ```bash
 git clone https://github.com/<your-username>/Anonymizer.git
 cd Anonymizer
-make bootstrap
+make setup
+mise run bootstrap
 ```
 
 Install docs or notebook dependencies when needed:
 
 ```bash
-make install-dev-docs
-make install-dev-notebooks
+mise run install-dev-docs
+mise run install-dev-notebooks
 ```
 
 Install pre-commit hooks once after cloning:
 
 ```bash
-make install-pre-commit
+mise run install-pre-commit
 ```
 
 If you work from a fork, add the upstream remote:
@@ -50,20 +52,22 @@ git pull --ff-only origin main  # use upstream main when origin is your fork
 git checkout -b <username>/<type>/<issue-number>-<short-description>
 ```
 
-Common Makefile targets:
+Common mise tasks:
 
 ```bash
-make bootstrap              # install dev dependencies
-make install-dev-docs       # install dev + docs dependencies
-make install-dev-notebooks  # install dev + notebook dependencies
-make install-pre-commit     # install pre-commit hooks
-make check                  # read-only format, lint, typecheck, lock, SPDX checks
-make test                   # unit tests
-make coverage               # unit tests with coverage report
-make docs-build             # strict docs build
-make docs-serve             # local docs server
-make convert-notebooks      # regenerate tutorial notebooks
+mise run bootstrap              # install dev dependencies
+mise run install-dev-docs       # install dev + docs dependencies
+mise run install-dev-notebooks  # install dev + notebook dependencies
+mise run install-pre-commit     # install pre-commit hooks
+mise run check                  # read-only format, lint, typecheck, lock, SPDX checks
+mise run test                   # unit tests
+mise run coverage               # unit tests with coverage report
+mise run docs:build             # strict docs build
+mise run docs:serve             # local docs server
+mise run convert-notebooks      # regenerate tutorial notebooks
 ```
+
+The Makefile retains compatibility targets for existing scripts. New development commands belong in `.mise/tasks/`.
 
 ## Validation Before Opening a PR
 
@@ -72,45 +76,45 @@ Run the smallest useful check while iterating, then run the full relevant set be
 For most code changes:
 
 ```bash
-make check
-make test
+mise run check
+mise run test
 ```
 
 For changes that affect coverage-sensitive code:
 
 ```bash
-make coverage
+mise run coverage
 ```
 
 For end-to-end behavior:
 
 ```bash
-make test-e2e
+mise run test:e2e
 ```
 
 For docs changes:
 
 ```bash
-make install-dev-docs
-make docs-build
+mise run install-dev-docs
+mise run docs:build
 ```
 
 For tutorial source changes:
 
 ```bash
-make install-dev-notebooks
-make convert-notebooks
-make docs-build
+mise run install-dev-notebooks
+mise run convert-notebooks
+mise run docs:build
 ```
 
-`make convert-notebooks` executes `docs/notebook_source/*.py` and writes generated notebooks to `docs/notebooks/`. Review the generated notebook diffs before committing them.
+`mise run convert-notebooks` executes `docs/notebook_source/*.py` and writes generated notebooks to `docs/notebooks/`. Review the generated notebook diffs before committing them.
 
 ## Testing
 
 Run all unit tests:
 
 ```bash
-make test
+mise run test
 ```
 
 Run a specific test file:
@@ -128,7 +132,7 @@ uv run --group dev pytest tests/engine/test_detection_workflow.py::test_name
 Run coverage:
 
 ```bash
-make coverage
+mise run coverage
 ```
 
 Testing expectations:
@@ -144,20 +148,20 @@ Testing expectations:
 Format and lint:
 
 ```bash
-make format
-make format-check
+mise run format
+mise run format-check
 ```
 
 Run all read-only checks:
 
 ```bash
-make check
+mise run check
 ```
 
 Run the advisory type checker:
 
 ```bash
-make typecheck
+mise run typecheck
 ```
 
 `ty` is currently advisory. Treat new type-check findings in touched code as review-worthy even when CI does not block on them.
@@ -165,14 +169,14 @@ make typecheck
 Check lockfile freshness:
 
 ```bash
-make lock-check
+mise run lock-check
 ```
 
 Check or repair SPDX headers:
 
 ```bash
-make copyright-check
-make copyright
+mise run copyright-check
+mise run copyright
 ```
 
 ## Pre-Commit Hooks
@@ -180,11 +184,11 @@ make copyright
 Install hooks once:
 
 ```bash
-make install-pre-commit
+mise run install-pre-commit
 ```
 
 Hooks run Ruff format and lint, uv lock verification, DCO signoff checks, and basic file hygiene. `ty` is installed
-for `make typecheck` and `make check`, but it is not currently run as a pre-commit hook.
+for `mise run typecheck` and `mise run check`, but it is not currently run as a pre-commit hook.
 
 If `pyproject.toml` changes and `uv.lock` is stale, the uv-lock hook may regenerate `uv.lock` and fail the commit. Add the updated `uv.lock` and retry.
 
@@ -203,13 +207,13 @@ repository history before sharing the branch further.
 Serve docs locally:
 
 ```bash
-make docs-serve
+mise run docs:serve
 ```
 
 Build docs in strict mode:
 
 ```bash
-make docs-build
+mise run docs:build
 ```
 
 Update docs when a change affects public API behavior, CLI behavior, examples, notebooks, configuration, contributor workflow, or release process.
@@ -224,7 +228,7 @@ Tutorial notebooks are generated from Python sources:
 When editing tutorial sources, regenerate notebooks with:
 
 ```bash
-make convert-notebooks
+mise run convert-notebooks
 ```
 
 Notebook execution can require configured model provider credentials. If notebooks cannot be regenerated locally, state
@@ -236,7 +240,7 @@ generated notebooks.
 Build a wheel locally:
 
 ```bash
-make build-wheel
+mise run build-wheel
 ```
 
 Release tags use `vMAJOR.MINOR.PATCH` for stable releases and `vMAJOR.MINOR.PATCHrcN` for release candidates, while the Python package version is the unprefixed version.
