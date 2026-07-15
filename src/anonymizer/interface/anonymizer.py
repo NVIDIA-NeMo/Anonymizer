@@ -273,12 +273,14 @@ class Anonymizer:
     ) -> DataDesignerConfigBuilder:
         """Build the detection workflow reading an EXISTING seed parquet (no write).
 
-        Like :meth:`export_detection_config`, but for a distributed executor that builds
-        the workflow *in-process on each worker* (so the custom-column callables stay
-        live — they cannot survive JSON serialization) and received the seed dataset from
-        the orchestrator. The seed is read from ``seed_path`` (not rewritten), and
-        ``num_jobs > 1`` selects this worker's ordered partition (``job_index`` of
-        ``num_jobs``). See ``anonymizer.distributed`` for the worker factory entrypoint.
+        Like :meth:`export_detection_config`, but points at a seed dataset that the
+        submitting side has already materialized. ``num_jobs > 1`` selects one ordered
+        partition (``job_index`` of ``num_jobs``). Serialize the returned builder with
+        ``builder.get_builder_config().to_json()`` and reconstruct it on a worker with
+        ``DataDesignerConfigBuilder.from_config()``. The worker must have
+        ``nemo-anonymizer`` installed so Data Designer can discover the detection plugins,
+        and ``seed_path`` must resolve to an existing file when the worker reconstructs
+        the config. Runtime model providers remain external to the serialized config.
         """
         self._validate_preflight_config(config)
         return self._detection_workflow.build_detection_builder_for_seed(

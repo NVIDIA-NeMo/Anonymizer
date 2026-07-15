@@ -476,10 +476,9 @@ class NddAdapter:
 
         Like :meth:`build_config` but the seed dataset points at an already-written
         ``seed_path`` (record ids assumed already attached) instead of materializing a
-        DataFrame. Use this on a distributed worker that received the seed from an
-        orchestrator and must NOT rewrite the shared file. ``num_jobs > 1`` selects this
-        worker's ordered partition (``job_index`` of ``num_jobs``), matching how the
-        orchestrator shards the seed.
+        DataFrame. Use this on the submitting side to build a serializable config for an
+        existing shared seed. ``num_jobs > 1`` selects one worker's ordered partition
+        (``job_index`` of ``num_jobs``), matching how the orchestrator shards the seed.
         """
         from data_designer.config.seed import PartitionBlock  # noqa: PLC0415
 
