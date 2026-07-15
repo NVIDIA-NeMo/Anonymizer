@@ -370,7 +370,7 @@ def test_run_ignores_workflow_output_attrs_for_text_column_resolution(
             COL_FINAL_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
         }
     )
-    detection_df.attrs = {"resolved_text_column": "WRONG_COL", "requested_text_column": "WRONG_COL"}
+    detection_df.attrs.update({"resolved_text_column": "WRONG_COL", "requested_text_column": "WRONG_COL"})
     replace_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice bio text"],
@@ -384,7 +384,7 @@ def test_run_ignores_workflow_output_attrs_for_text_column_resolution(
             ],
         }
     )
-    replace_df.attrs = {"resolved_text_column": "WRONG_COL", "extra": "noise"}
+    replace_df.attrs.update({"resolved_text_column": "WRONG_COL", "extra": "noise"})
 
     anonymizer, _, _, _ = _make_anonymizer(
         detection_return=EntityDetectionResult(dataframe=detection_df, failed_records=[]),
@@ -715,6 +715,7 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
 
     rewrite_runner.run.assert_called_once()
     call_kwargs = rewrite_runner.run.call_args.kwargs
+    assert config.rewrite is not None
     assert call_kwargs["privacy_goal"] == config.rewrite.privacy_goal
     assert call_kwargs["evaluation"] == config.rewrite.evaluation
 
@@ -833,7 +834,7 @@ def test_evaluate_raises_value_error_on_legacy_result_without_replace_method() -
     )
 
     with pytest.raises(ValueError, match="replace_method"):
-        anonymizer.evaluate(legacy_result)  # type: ignore[arg-type]
+        anonymizer.evaluate(legacy_result)  # ty: ignore[invalid-argument-type]
 
 
 # ---------------------------------------------------------------------------
@@ -916,7 +917,7 @@ def test_evaluate_rewrite_raises_without_rewrite_config() -> None:
     )
 
     with pytest.raises(ValueError):
-        anonymizer.evaluate(bare_result)  # type: ignore[arg-type]
+        anonymizer.evaluate(bare_result)  # ty: ignore[invalid-argument-type]
 
 
 def test_evaluate_rewrite_raises_on_bad_rewrite_judge_alias(

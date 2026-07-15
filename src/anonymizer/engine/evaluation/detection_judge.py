@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -227,4 +227,5 @@ class DetectionJudgeWorkflow(_BaseJudgeWorkflow):
 
     @classmethod
     def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
+        parsed = cast(DetectionJudgmentSchema, parsed)
         return [entry.model_dump() for entry in parsed.invalid_entities]

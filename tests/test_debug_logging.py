@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from unittest.mock import Mock
 
 import pandas as pd
@@ -60,7 +61,7 @@ def _stub_anonymizer() -> Anonymizer:
 
 @pytest.fixture
 def debug_messages(
-    tmp_path: pytest.TempPathFactory,
+    tmp_path: Path,
     _stub_anonymizer: Anonymizer,
     caplog: pytest.LogCaptureFixture,
 ) -> list[str]:

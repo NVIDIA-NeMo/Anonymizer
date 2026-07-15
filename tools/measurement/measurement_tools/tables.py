@@ -76,7 +76,7 @@ def rows_to_table(rows: Sequence[BaseModel], row_model: type[BaseModel] | None =
         return pd.json_normalize([row.model_dump() for row in rows], sep=".")
     if row_model is None:
         return pd.DataFrame()
-    return pd.DataFrame(columns=list(row_model.model_fields))
+    return pd.DataFrame(columns=pd.Index(list(row_model.model_fields)))
 
 
 def write_table(table: pd.DataFrame, path: Path, export_format: ExportFormat) -> None:

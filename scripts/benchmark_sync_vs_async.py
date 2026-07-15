@@ -268,7 +268,7 @@ def _build_pipeline(num_records: int, latency_ms: float, *, real: bool = False) 
             artifact_storage=artifact_storage,
             model_configs=builder.model_configs,
             secret_resolver=CompositeResolver([EnvironmentResolver(), PlaintextResolver()]),
-            model_provider_registry=resolve_model_provider_registry([provider], default_provider_name=provider.name),
+            model_provider_registry=resolve_model_provider_registry([provider]),
             seed_reader_registry=SeedReaderRegistry(readers=[]),
             seed_dataset_source=None,
             run_config=run_config,

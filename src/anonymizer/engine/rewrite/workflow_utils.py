@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
@@ -12,7 +13,7 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
 
 
 def derive_seed_columns(
-    columns: list[ColumnConfigT],
+    columns: Sequence[ColumnConfigT],
     df: pd.DataFrame,
 ) -> list[str]:
     """Compute the minimal seed column set from column config dependencies.

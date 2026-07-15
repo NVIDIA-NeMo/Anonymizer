@@ -102,6 +102,8 @@ AGENTS.local.md
 CLAUDE.local.md
 .claude/settings.local.json
 .sandbox/
+.astnav/
+.worktrees/
 ai/tmp/
 
 # Claude worktrees

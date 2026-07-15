@@ -27,14 +27,6 @@ repos:
         types: [python]
         pass_filenames: true
 
-#      - id: typecheck
-#        name: Typecheck (advisory)
-#        language: system
-#        entry: bash -c 'uv run tools/codestyle/typecheck.sh || true'
-#        types: [python]
-#        pass_filenames: false
-#        verbose: true
-
       - id: copyright-fix
         name: Copyright Fix
         language: system
@@ -49,6 +41,13 @@ repos:
         files: pyproject.toml
         stages: [pre-commit]
         pass_filenames: false
+
+      - id: check
+        name: Check
+        language: system
+        entry: make check
+        pass_filenames: false
+        stages: [pre-commit]
 
       - id: check-signoff
         name: Check commit is signed off (DCO)

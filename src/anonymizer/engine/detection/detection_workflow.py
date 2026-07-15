@@ -7,6 +7,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
@@ -174,54 +175,57 @@ class EntityDetectionWorkflow:
                 validator_aliases,
             )
 
-        columns: list[ColumnConfigT] = [
-            LLMTextColumnConfig(
-                name=COL_RAW_DETECTED,
-                prompt=_jinja(COL_TEXT),
-                model_alias=detection_alias,
-            ),
-            DetectionTransformConfig(
-                name=COL_SEED_ENTITIES,
-                operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
-            ),
-            DetectionTransformConfig(
-                name=COL_SEED_VALIDATION_CANDIDATES,
-                operation=DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
-            ),
-            ChunkedValidationConfig(
-                name=COL_VALIDATION_DECISIONS,
-                pool=list(validator_aliases),
-                max_entities_per_call=validation_max_entities_per_call,
-                excerpt_window_chars=validation_excerpt_window_chars,
-                single_chunk_full_text=validation_single_chunk_full_text,
-                prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
-                drop=True,
-            ),
-            DetectionTransformConfig(
-                name=COL_VALIDATED_ENTITIES,
-                operation=DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
-            ),
-            DetectionTransformConfig(
-                name=COL_SEED_ENTITIES_JSON,
-                operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
-            ),
-            LLMStructuredColumnConfig(
-                name=COL_AUGMENTED_ENTITIES,
-                prompt=_get_augment_prompt(
-                    data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+        columns = cast(
+            list[ColumnConfigT],
+            [
+                LLMTextColumnConfig(
+                    name=COL_RAW_DETECTED,
+                    prompt=_jinja(COL_TEXT),
+                    model_alias=detection_alias,
                 ),
-                model_alias=augmenter_alias,
-                output_format=AugmentedEntitiesSchema,
-            ),
-            DetectionTransformConfig(
-                name=COL_MERGED_ENTITIES,
-                operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
-            ),
-            DetectionTransformConfig(
-                name=COL_DETECTED_ENTITIES,
-                operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
-            ),
-        ]
+                DetectionTransformConfig(
+                    name=COL_SEED_ENTITIES,
+                    operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
+                ),
+                DetectionTransformConfig(
+                    name=COL_SEED_VALIDATION_CANDIDATES,
+                    operation=DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
+                ),
+                ChunkedValidationConfig(
+                    name=COL_VALIDATION_DECISIONS,
+                    pool=list(validator_aliases),
+                    max_entities_per_call=validation_max_entities_per_call,
+                    excerpt_window_chars=validation_excerpt_window_chars,
+                    single_chunk_full_text=validation_single_chunk_full_text,
+                    prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
+                    drop=True,
+                ),
+                DetectionTransformConfig(
+                    name=COL_VALIDATED_ENTITIES,
+                    operation=DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
+                ),
+                DetectionTransformConfig(
+                    name=COL_SEED_ENTITIES_JSON,
+                    operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
+                ),
+                LLMStructuredColumnConfig(
+                    name=COL_AUGMENTED_ENTITIES,
+                    prompt=_get_augment_prompt(
+                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                    ),
+                    model_alias=augmenter_alias,
+                    output_format=AugmentedEntitiesSchema,
+                ),
+                DetectionTransformConfig(
+                    name=COL_MERGED_ENTITIES,
+                    operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+                ),
+                DetectionTransformConfig(
+                    name=COL_DETECTED_ENTITIES,
+                    operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+                ),
+            ],
+        )
         return workflow_model_configs, columns
 
     def build_detection_config(

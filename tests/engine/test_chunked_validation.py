@@ -59,8 +59,8 @@ from anonymizer.engine.workflow_columns.detection.impl import ChunkedValidationG
 class FakeFacade:
     """Test double for ``ModelFacade`` recording invocations and replaying canned responses.
 
-    Exposes both ``generate()`` and ``agenerate()`` so the sync custom-column
-    wrapper and async plugin path can share assertions.
+    Exposes both ``generate()`` and ``agenerate()`` so the plugin's synchronous
+    and asynchronous paths can share assertions.
 
     A canned response can be a ``dict`` (auto-wrapped in a ```json fence), a
     raw string, or a callable that receives the prompt and returns either.
@@ -100,7 +100,7 @@ class FakeFacade:
             raise RuntimeError(f"forced failure from {self.alias}")
         response = self._response
         if callable(response):
-            response = response(prompt)
+            response = response(prompt)  # ty: ignore[call-top-callable]
         raw = response if isinstance(response, str) else f"```json\n{json.dumps(response)}\n```"
         return parser(raw), []
 
@@ -209,7 +209,7 @@ class TestOrderCandidatesByPosition:
 class TestChunkCandidates:
     def test_splits_into_chunks_of_at_most_n(self) -> None:
         ordered = [(i, None) for i in range(5)]  # type: ignore[misc]
-        chunks = chunk_candidates(ordered, max_entities_per_call=2)
+        chunks = chunk_candidates(ordered, max_entities_per_call=2)  # ty: ignore[invalid-argument-type]
         assert [len(c) for c in chunks] == [2, 2, 1]
 
     def test_empty_input_yields_no_chunks(self) -> None:
@@ -220,7 +220,7 @@ class TestChunkCandidates:
         # the declared ``list[list[...]]`` return contract must hold even
         # when the caller hands in a tuple.
         ordered: tuple[tuple[int, None], ...] = tuple((i, None) for i in range(3))  # type: ignore[misc]
-        chunks = chunk_candidates(ordered, max_entities_per_call=2)
+        chunks = chunk_candidates(ordered, max_entities_per_call=2)  # ty: ignore[invalid-argument-type]
         assert chunks == [[(0, None), (1, None)], [(2, None)]]
         assert all(isinstance(c, list) for c in chunks)
 
@@ -711,7 +711,9 @@ class TestChunkedValidationGenerator:
                 excerpt_window_chars=50,
                 prompt_template=_MINIMAL_TEMPLATE,
             ),
-            resource_provider=SimpleNamespace(model_registry=FakeModelRegistry({"v0": facade})),
+            resource_provider=SimpleNamespace(  # ty: ignore[invalid-argument-type]
+                model_registry=FakeModelRegistry({"v0": facade})
+            ),
         )
 
         out = generator.generate(row)
@@ -1041,7 +1043,7 @@ class TestChunkedValidationRegression:
     """Partitioning must not change outcomes when the LLM is deterministic per candidate.
 
     Guards the most important property we promised when we switched from a
-    single ``LLMStructuredColumnConfig`` to chunked ``CustomColumnConfig``
+    single ``LLMStructuredColumnConfig`` to the chunked validation plugin
     dispatch: given the same set of per-id decisions, chunk sizing is an
     implementation detail of *how* we talk to the validator, not *what*
     entities survive validation.

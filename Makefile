@@ -11,7 +11,7 @@ help:
 	@echo ""
 	@echo "  format                 - Format and fix code"
 	@echo "  format-check           - Check format and lint (read-only)"
-	@echo "  typecheck              - Run type checks (advisory, non-blocking)"
+	@echo "  typecheck              - Run blocking type checks"
 	@echo "  copyright              - Add missing SPDX headers to source files"
 	@echo "  copyright-check        - Check all source files have SPDX headers (read-only)"
 	@echo "  check                  - Run all read-only checks"
@@ -67,8 +67,8 @@ format-check:
 	uv run tools/codestyle/ruff_check.sh
 
 typecheck:
-	@echo "Running type checks (advisory -- see issue tracking full compliance)..."
-	-uv run tools/codestyle/typecheck.sh
+	@echo "Running type checks..."
+	uv run --group docs tools/codestyle/typecheck.sh
 
 copyright:
 	@echo "Adding missing SPDX headers..."

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import cast
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -22,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
@@ -173,7 +175,7 @@ class ReplacementWorkflow:
         + apply passthrough defaults). The adapter sees one workflow with N
         columns and lets DD schedule them in parallel.
         """
-        active = [j for j in [self._detection_judge] if j is not None]
+        active: list[_BaseJudgeWorkflow] = [j for j in [self._detection_judge] if j is not None]
         if is_substitute:
             active.extend(
                 j
@@ -195,10 +197,11 @@ class ReplacementWorkflow:
         # these itself; doing it here lets us treat evaluation as non-critical:
         # rows the LLM drops still appear in the result with "Unavailable"
         # verdicts instead of disappearing from a previously successful run.
-        prepared = self._adapter._attach_record_ids(prepared)  # type: ignore[union-attr]
+        adapter = cast(NddAdapter, self._adapter)
+        prepared = adapter._attach_record_ids(prepared)
 
         try:
-            run_result = self._adapter.run_workflow(  # type: ignore[union-attr]
+            run_result = adapter.run_workflow(
                 prepared,
                 model_configs=model_configs,
                 columns=[judge.column_config(selected_models) for judge in active],

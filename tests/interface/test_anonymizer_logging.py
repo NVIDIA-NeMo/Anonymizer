@@ -6,8 +6,10 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import Mock
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -27,6 +29,10 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWor
 from anonymizer.interface.anonymizer import Anonymizer
 
 
+def _call_kwargs(method: object) -> dict[str, Any]:
+    return dict(cast(Mock, method).call_args.kwargs)
+
+
 @pytest.fixture
 def stub_input(tmp_path: Path) -> AnonymizerInput:
     csv_path = tmp_path / "input.csv"
@@ -36,7 +42,7 @@ def stub_input(tmp_path: Path) -> AnonymizerInput:
 
 def _make_logging_anonymizer(
     *,
-    detection_entities: list[list[dict]] | None = None,
+    detection_entities: list[object] | None = None,
     detection_failures: list[FailedRecord] | None = None,
     replace_failures: list[FailedRecord] | None = None,
 ) -> Anonymizer:
@@ -109,6 +115,26 @@ def test_run_logs_pipeline_stages(stub_input: AnonymizerInput, caplog: pytest.Lo
     assert "2 records processed" in messages
 
 
+def test_run_logs_numpy_wrapped_entity_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
+    detection_entities: list[object] = [
+        {
+            "entities": np.array(
+                [{"value": "Alice", "label": "first_name"}, {"value": "Acme", "label": "organization"}],
+                dtype=object,
+            )
+        },
+        {"entities": np.array([{"value": "Bob", "label": "first_name"}], dtype=object)},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        anonymizer = _make_logging_anonymizer(detection_entities=detection_entities)
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+    assert "3 entities" in caplog.text
+    assert "first_name=2" in caplog.text
+    assert "organization=1" in caplog.text
+
+
 def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
     anonymizer = _make_logging_anonymizer(
         detection_failures=[FailedRecord(record_id="r1", step="detection", reason="timeout")],
@@ -162,10 +188,10 @@ def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> 
     # stub_input has 2 rows; num_records=5 is clamped to min(5, 2) = 2
     anonymizer.preview(config=config, data=stub_input, num_records=5)
 
-    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 2
 
-    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
     assert rep_call_kwargs["preview_num_records"] == 2
 
 
@@ -177,10 +203,10 @@ def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput)
     # stub_input has 2 rows; num_records=1 fits, so no clamping
     anonymizer.preview(config=config, data=stub_input, num_records=1)
 
-    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 1
 
-    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
     assert rep_call_kwargs["preview_num_records"] == 1
 
 
@@ -191,10 +217,10 @@ def test_run_set_preview_num_records(stub_input: AnonymizerInput) -> None:
 
     anonymizer.run(config=config, data=stub_input)
 
-    det_call_kwargs = anonymizer._detection_workflow.run.call_args.kwargs
+    det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] is None
 
-    rep_call_kwargs = anonymizer._replace_runner.run.call_args.kwargs
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
     assert rep_call_kwargs["preview_num_records"] is None
 
 

@@ -12,6 +12,7 @@ This document covers contribution policy and pull request expectations. For loca
   - [Conventional Commits](#conventional-commits)
   - [Release Tags](#release-tags)
   - [Branch Protection](#branch-protection)
+  - [Local Commit Safety](#local-commit-safety)
 - [Pull Request Expectations](#pull-request-expectations)
 - [Agent-Assisted Development](#agent-assisted-development)
 - [Developer Certificate of Origin](#developer-certificate-of-origin)
@@ -24,9 +25,11 @@ This document covers contribution policy and pull request expectations. For loca
 3. Create a branch from the latest `main` using the [branch naming](#branch-naming) convention.
 4. For non-trivial changes, write a plan document before implementation. See [Agent-Assisted Development](#agent-assisted-development).
 5. Implement the change following [AGENTS.md](AGENTS.md), [STYLEGUIDE.md](STYLEGUIDE.md), and [DEVELOPMENT.md](DEVELOPMENT.md).
-6. Run the relevant local checks from [DEVELOPMENT.md](DEVELOPMENT.md#validation-before-opening-a-pr).
-7. Open a pull request with a conventional title, a linked issue, and a completed checklist.
-8. Address review feedback. CODEOWNERS are assigned automatically.
+6. Install the repository hooks once per clone with `make install-pre-commit`.
+7. Run the relevant tests from [DEVELOPMENT.md](DEVELOPMENT.md#validation-before-opening-a-pr).
+8. Commit with DCO signoff. The pre-commit hooks run the repository checks before accepting the commit.
+9. Open a pull request with a conventional title, a linked issue, and a completed checklist.
+10. Address review feedback. CODEOWNERS are assigned automatically.
 
 ## Repository Rules
 
@@ -146,6 +149,25 @@ The `main` branch has these protections:
 | Force pushes                    | Blocked     |
 | Deletions                       | Blocked     |
 | Merge strategy                  | Squash only |
+
+### Local Commit Safety
+
+Install the repository hooks once per clone:
+
+```bash
+make install-pre-commit
+```
+
+Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers,
+verify `uv.lock` when `pyproject.toml` changes, and run `make check`. The aggregate check covers four read-only stages:
+
+- `make format-check`
+- `make typecheck`
+- `make lock-check`
+- `make copyright-check`
+
+The commit-message hook rejects commits without a `Signed-off-by` line. If a hook changes a file, review the change,
+stage it again, and retry the commit. Do not bypass repository hooks with `git commit --no-verify`.
 
 ## Pull Request Expectations
 

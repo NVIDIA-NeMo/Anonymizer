@@ -476,10 +476,9 @@ class NddAdapter:
 
         Like :meth:`build_config` but the seed dataset points at an already-written
         ``seed_path`` (record ids assumed already attached) instead of materializing a
-        DataFrame. Use this on a distributed worker that received the seed from an
-        orchestrator and must NOT rewrite the shared file. ``num_jobs > 1`` selects this
-        worker's ordered partition (``job_index`` of ``num_jobs``), matching how the
-        orchestrator shards the seed.
+        DataFrame. Use this on the submitting side to build a serializable config for an
+        existing shared seed. ``num_jobs > 1`` selects one worker's ordered partition
+        (``job_index`` of ``num_jobs``), matching how the orchestrator shards the seed.
         """
         from data_designer.config.seed import PartitionBlock  # noqa: PLC0415
 
@@ -1034,7 +1033,7 @@ def _custom_column_with_trace_context(column: CustomColumnConfig) -> ColumnConfi
         finally:
             _MODEL_TRACE_COLUMN.reset(token)
 
-    traced_generator.custom_column_metadata = getattr(generator, "custom_column_metadata", {})  # type: ignore[attr-defined]
+    setattr(traced_generator, "custom_column_metadata", getattr(generator, "custom_column_metadata", {}))
     return cast(ColumnConfigT, column.model_copy(update={"generator_function": traced_generator}))
 
 

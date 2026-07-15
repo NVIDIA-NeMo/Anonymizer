@@ -4,11 +4,19 @@
 from __future__ import annotations
 
 import json
-from typing import TypeVar
+from typing import Protocol, TypeGuard, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
+
+
+class _ListConvertible(Protocol):
+    def tolist(self) -> object: ...
+
+
+def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
+    return callable(getattr(value, "tolist", None))
 
 
 def _parse_raw_wrapper(
@@ -47,9 +55,9 @@ def _parse_raw_wrapper(
         if isinstance(candidate, BaseModel):
             candidate = candidate.model_dump(mode="python")
         if isinstance(candidate, list):
-            return _safe_validate(candidate)
-        if hasattr(candidate, "tolist"):
+            return _safe_validate(cast(list[object], candidate))
+        if _is_list_convertible(candidate):
             as_list = candidate.tolist()
             if isinstance(as_list, list):
-                return _safe_validate(as_list)
+                return _safe_validate(cast(list[object], as_list))
     return model_cls()
