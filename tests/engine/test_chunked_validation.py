@@ -59,8 +59,8 @@ from anonymizer.engine.workflow_columns.detection.impl import ChunkedValidationG
 class FakeFacade:
     """Test double for ``ModelFacade`` recording invocations and replaying canned responses.
 
-    Exposes both ``generate()`` and ``agenerate()`` so the sync custom-column
-    wrapper and async plugin path can share assertions.
+    Exposes both ``generate()`` and ``agenerate()`` so the plugin's synchronous
+    and asynchronous paths can share assertions.
 
     A canned response can be a ``dict`` (auto-wrapped in a ```json fence), a
     raw string, or a callable that receives the prompt and returns either.
@@ -1043,7 +1043,7 @@ class TestChunkedValidationRegression:
     """Partitioning must not change outcomes when the LLM is deterministic per candidate.
 
     Guards the most important property we promised when we switched from a
-    single ``LLMStructuredColumnConfig`` to chunked ``CustomColumnConfig``
+    single ``LLMStructuredColumnConfig`` to the chunked validation plugin
     dispatch: given the same set of per-id decisions, chunk sizing is an
     implementation detail of *how* we talk to the validator, not *what*
     entities survive validation.
