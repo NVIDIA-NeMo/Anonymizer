@@ -17,7 +17,9 @@ from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
+    COL_ENTITY_COVERAGE_CANDIDATE_TOTAL,
     COL_ENTITY_COVERAGE_JUDGE,
+    COL_ENTITY_COVERAGE_TOTAL,
     COL_LEAKED_ENTITIES,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
@@ -33,7 +35,6 @@ from anonymizer.engine.schemas import EntitiesByValueSchema
 logger = logging.getLogger("anonymizer.evaluation.entity_coverage_judge")
 
 _FINAL_ENTITIES_FOR_COVERAGE_COL = "_final_entities_for_coverage_judge"
-_N_FINAL_ENTITIES_FOR_COVERAGE_COL = "_n_final_entities_for_coverage"
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 # Grammatical stopwords only — function words that carry no PII and just absorb
 # article/preposition noise in a value (e.g. "the Nawabganj" matches "Nawabganj").
@@ -138,6 +139,91 @@ def _coverage_prompt(
 identify any direct or quasi-identifiers in the original text that are NOT covered by the \
 anonymizer final entities.
 
+<task>
+Identify every direct or quasi-identifier present in the original text that is NOT covered \
+by the anonymizer final entities. These are the "leaked" entities — identifiers that would \
+survive anonymization because they are absent from the final entity set.
+
+Report every literal candidate whose in-scope semantic type is supported by the original-text context.
+Do not require a value to identify someone on its own; direct and quasi-identifiers are both reportable.
+
+Return structured JSON:
+- `leaked_entities`: list every missed identifier with its `value`, `label`, and a short `reasoning`.
+- Return an empty list if the anonymizer covered all identifiers.
+</task>
+
+<identifier_taxonomy>
+These entity types are sensitive and should be flagged when a value of that type is present but \
+not covered by the anonymizer final entities: {labels_str}.
+Check each type and report missed values, including ones that are easy to overlook — but report \
+only a concrete identifying value (an actual name, code, date, or attribute value), not a pronoun \
+or a generic reference that merely implies a type.
+Quasi-identifiers: combinations of values that together re-identify someone \
+(e.g. job title + employer + city appearing together). Time values (specific timestamps, \
+times of day, schedules) can act as quasi-identifiers when combined with other attributes \
+in the same text — flag them if they appear alongside other identifying information.
+</identifier_taxonomy>
+
+{entity_scope_block}
+
+<label_interpretation>
+Treat each configured label as a semantic entity category. Labels may use compact, compound, \
+or abbreviated names; interpret their intended meaning from the label and the original-text \
+context. Return labels exactly as they appear in the entity_type_scope.
+</label_interpretation>
+
+<coverage_definition>
+An identifier is "covered" (already protected) if:
+- Its exact value appears in the anonymizer final entities list, OR
+- Its complete tokens are contained within one final entity value, OR
+- Its value is composed entirely of complete final entity values.
+Partial character matches, similar meanings, or shared context alone do not establish coverage.
+</coverage_definition>
+
+<reportability_check>
+Before reporting an entity, verify ALL of the following:
+1. Its value is a literal, non-empty span in the original text.
+2. It is an actual data value, not syntax or metadata such as a field name, heading, \
+form instruction, blank placeholder, document title, or category label.
+3. Its semantic type matches one of the entity types in scope.
+4. It is not already covered by an anonymizer final entity.
+5. Report the complete contiguous span that represents one sensitive value. Preserve all \
+tokens belonging to that value, including multi-token values, while excluding surrounding \
+labels, punctuation, instructions, or boilerplate.
+6. Evaluate the value using its original-text context rather than its form or how identifying \
+it appears in isolation.
+
+In structured or semi-structured text, distinguish:
+- Syntax and metadata: field names, headings, instructions, placeholders, category labels, \
+formatting, and other structural text.
+- Data: assigned values, cell contents, literals, and user-provided content.
+Report only the smallest sensitive data value. Do not report surrounding syntax or metadata \
+unless it independently contains a literal sensitive value in scope.
+</reportability_check>
+
+<guidance>
+Do NOT flag:
+- Items that satisfy the coverage_definition.
+- Text whose in-scope semantic type is not supported by its original-text context.
+- Information that is inferable but not literally present in the text.
+
+Do flag:
+- The `value` MUST be a literal substring found in the original text.
+- `reasoning` MUST be one sentence explaining why this value is not covered by the anonymizer final entities.
+- If `anonymizer_final_entities` is empty, scan the full text for any direct or quasi-identifiers.
+- A value that fills the role of a listed sensitive type in context, even when it is
+  short, a single token, an unfamiliar or foreign-looking word, or resembles an ordinary
+  word or number. Decide by the value's role in the surrounding text, not by its length,
+  rarity, or familiarity. (This still excludes pronouns and generic references that only
+  imply a type — those are not concrete values.)
+  
+{entity_scope_guidance}
+{strict_guidance}
+</guidance>
+
+{strict_block}
+
+<inputs>
 <original_text>
 <<COL_TEXT>>
 </original_text>
@@ -151,57 +237,72 @@ anonymizer final entities.
 (none)
 {{%- endif %}}
 </anonymizer_final_entities>
-
-{entity_scope_block}
-
-{strict_block}
-
-<coverage_definition>
-An identifier is "covered" (already protected) if:
-- Its exact value appears in the anonymizer final entities list, OR
-- Its value is a substring of any entity value in the list (e.g. a bare username is \
-covered if a full file path containing that username is listed as an entity).
-</coverage_definition>
-
-<identifier_taxonomy>
-The following entity types are considered sensitive and must be flagged if missed: {labels_str}.
-Quasi-identifiers: combinations of values that together re-identify someone \
-(e.g. job title + employer + city appearing together). Time values (specific timestamps, \
-times of day, schedules) can act as quasi-identifiers when combined with other attributes \
-in the same text — flag them if they appear alongside other identifying information.
-</identifier_taxonomy>
-
-<task>
-Identify every direct or quasi-identifier present in the original text that is NOT covered \
-by the anonymizer final entities. These are the "leaked" entities — identifiers that would \
-survive anonymization because they are absent from the final entity set.
-
-Only report findings you are HIGH CONFIDENCE about.
-
-Return structured JSON:
-- `leaked_entities`: list every missed identifier with its `value`, `label`, and a short `reasoning`.
-- Return an empty list if the anonymizer covered all identifiers.
-</task>
-
-<guidance>
-Do NOT flag:
-- Items that are substrings of, or closely matched by, a listed entity value.
-- Generic technical terms, common words, or place names that cannot re-identify a specific individual on their own.
-- Information that is inferable but not literally present in the text.
-
-Do flag:
-- The `value` MUST be a literal substring found in the original text.
-- `reasoning` MUST be one sentence explaining why this value is not covered by the anonymizer final entities.
-- If `anonymizer_final_entities` is empty, scan the full text for any direct or quasi-identifiers.
-{entity_scope_guidance}
-{strict_guidance}
-</guidance>
+</inputs>
 
 <output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT include any commentary, \
-reasoning, preamble, or text outside the JSON object.
+Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
+``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
+outside the JSON object. Your entire response must be a single valid JSON object.
 </output_format>
 """
+
+
+# prompt = f"""<task>
+# You are a privacy auditor. Given ORIGINAL text and a list of ANONYMIZER FINAL ENTITIES, \
+# identify every direct or quasi-identifier in the original text that is NOT covered by the \
+# anonymizer final entities. These are the "leaked" entities.
+
+# Return structured JSON:
+# - `leaked_entities`: list every missed identifier with its `value`, `label`, and a short `reasoning`.
+# - Return an empty list if the anonymizer covered all identifiers.
+# </task>
+
+# <identifier_taxonomy>
+# These entity types are sensitive and should be flagged when a value of that type is present but \
+# not covered by the anonymizer final entities: {labels_str}.
+# Quasi-identifiers: combinations of values that together re-identify someone \
+# (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
+# times of day, schedules) can act as quasi-identifiers when combined with other attributes \
+# in the same text — flag them if they appear alongside other identifying information.
+# </identifier_taxonomy>
+
+# {entity_scope_block}
+
+# <label_interpretation>
+# Treat each configured label as a semantic entity category. Labels may use compact, compound, \
+# or abbreviated names; interpret their intended meaning from the label and the original-text \
+# context. Return labels exactly as they appear in the entity_type_scope.
+# </label_interpretation>
+
+# <coverage_definition>
+# An identifier is "covered" (already protected) if:
+# - Its exact value appears in the anonymizer final entities list, OR
+# - Its value is covered by a listed entity value or by a combination of listed entity values.
+# </coverage_definition>
+
+# {strict_block}
+
+# <output_format>
+# Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
+# ``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
+# outside the JSON object. Your entire response must be a single valid JSON object.
+# </output_format>
+
+# ---
+# <original_text>
+# <<COL_TEXT>>
+# </original_text>
+
+# <anonymizer_final_entities>
+# {{%- if <<ENTITIES_COLUMN>> %}}
+# {{%- for entity in <<ENTITIES_COLUMN>> %}}
+# - value="{{{{ entity.value }}}}" | label={{{{ entity.label }}}}
+# {{%- endfor %}}
+# {{%- else %}}
+# (none)
+# {{%- endif %}}
+# </anonymizer_final_entities>
+# """
     return substitute_placeholders(
         prompt,
         {
@@ -222,7 +323,7 @@ def _final_entities_for_coverage(parsed: EntitiesByValueSchema) -> list[dict[str
 
 
 def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
-    """Parse raw LLM output into the leaked entities list.
+    """Parse raw LLM output into the leaked entity list.
 
     Returns the list (possibly empty) on success, or None when the payload is
     malformed or missing so downstream display renders "judge unavailable".
@@ -232,9 +333,8 @@ def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
     if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
     if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        raw = _parse_json_object(raw)
+        if raw is None:
             return None
     if not isinstance(raw, dict):
         return None
@@ -243,6 +343,28 @@ def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
     except Exception:
         return None
     return [e.model_dump() for e in parsed.leaked_entities]
+
+
+def _parse_judge_entities(raw: object) -> list[dict[str, object]] | None:
+    """Compatibility alias for experiment notebooks parsing raw judge output."""
+    return _parse_leaked_entities(raw)
+
+
+def _parse_json_object(raw: str) -> dict[str, object] | None:
+    """Parse a JSON object, tolerating fences or brief surrounding model text."""
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", raw):
+            try:
+                parsed, _ = decoder.raw_decode(raw[match.start() :])
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _coverage_token_list(value: object) -> list[str]:
@@ -333,9 +455,50 @@ def _filter_covered_leaked_entities(
     ]
 
 
-def _compute_coverage(n_final: int, n_leaked: int) -> float:
-    total = n_final + n_leaked
-    return 1.0 if total == 0 else n_final / total
+def _normalize_literal_text(value: object) -> str:
+    """Normalize case and whitespace while preserving the literal token sequence."""
+    return " ".join(str(value).casefold().split())
+
+
+def _filter_nonliteral_entities(
+    entities: list[dict[str, object]],
+    original_text: object,
+) -> list[dict[str, object]]:
+    """Drop judge-reported values that are not literal spans in the original text."""
+    normalized_original = _normalize_literal_text(original_text)
+    return [
+        entity
+        for entity in entities
+        if (value := _normalize_literal_text(entity.get("value", ""))) and value in normalized_original
+    ]
+
+
+def _deduplicate_judge_entities(entities: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Keep one judge entity per normalized (value, label) pair."""
+    deduplicated: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for entity in entities:
+        key = (
+            _normalize_literal_text(entity.get("value", "")),
+            _normalize_literal_text(entity.get("label", "")),
+        )
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(entity)
+    return deduplicated
+
+
+def _compare_judge_to_final(
+    judge_entities: list[dict[str, object]],
+    final_entities: object,
+) -> tuple[float, list[dict[str, object]], int]:
+    """Return independent-judge recall, missed entities, and judge total."""
+    deduplicated = _deduplicate_judge_entities(judge_entities)
+    leaked = _filter_covered_leaked_entities(deduplicated, final_entities)
+    total = len(deduplicated)
+    coverage = 1.0 if total == 0 else (total - len(leaked)) / total
+    return coverage, leaked, total
 
 
 # ---------------------------------------------------------------------------
@@ -344,10 +507,10 @@ def _compute_coverage(n_final: int, n_leaked: int) -> float:
 
 
 class EntityCoverageWorkflow(_BaseJudgeWorkflow):
-    """LLM-as-judge that measures recall: what fraction of PII did the anonymizer catch?
+    """LLM judge that reports entities not covered by Anonymizer final entities.
 
-    Runs on the **original text** and compares all PII present against what the
-    anonymizer already detected.  The delta gives the leaked (missed) entities.
+    The judge sees the original text, entity-type scope, and final entities.
+    Deterministic postprocessing removes nonliteral and already-covered findings.
 
     Output columns:
       ``COL_ENTITY_COVERAGE`` (float|None) — n_final / (n_final + n_leaked)
@@ -380,11 +543,11 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         working_df = dataframe.copy()
         parsed = working_df[COL_ENTITIES_BY_VALUE].apply(EntitiesByValueSchema.from_raw)
         working_df[_FINAL_ENTITIES_FOR_COVERAGE_COL] = parsed.apply(_final_entities_for_coverage)
-        working_df[_N_FINAL_ENTITIES_FOR_COVERAGE_COL] = working_df[_FINAL_ENTITIES_FOR_COVERAGE_COL].apply(len)
         return working_df
 
     def _passthrough_mask(self, dataframe: pd.DataFrame) -> pd.Series:
-        return dataframe[_FINAL_ENTITIES_FOR_COVERAGE_COL].apply(lambda items: items is None or len(items) == 0)
+        # Independent extraction must run even when Anonymizer found no entities.
+        return pd.Series(False, index=dataframe.index, dtype=bool)
 
     @classmethod
     def _build_prompt(cls) -> str:
@@ -408,37 +571,39 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         )
 
     def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        """Override to write float coverage instead of bool verdict."""
+        """Validate judge-reported leaks and calculate coverage."""
         out = dataframe.copy()
-        passthrough_mask = self._passthrough_mask(out)
 
         coverage_vals: list[float | None] = []
         leaked_lists: list[list[dict]] = []
+        total_vals: list[int | None] = []
+        candidate_total_vals: list[int | None] = []
 
         for idx in out.index:
-            if passthrough_mask.loc[idx]:
-                coverage_vals.append(1.0)
+            raw = out[self.RAW_COL].loc[idx] if self.RAW_COL in out.columns else None
+            leaked = _parse_leaked_entities(raw)
+            if leaked is None:
+                coverage_vals.append(None)
                 leaked_lists.append([])
+                total_vals.append(None)
+                candidate_total_vals.append(None)
             else:
-                raw = out[self.RAW_COL].loc[idx] if self.RAW_COL in out.columns else None
-                leaked = _parse_leaked_entities(raw)
-                n_final = (
-                    int(out[_N_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx])
-                    if _N_FINAL_ENTITIES_FOR_COVERAGE_COL in out.columns
-                    else 0
-                )
-                if leaked is None:
-                    coverage_vals.append(None)
-                    leaked_lists.append([])
-                else:
-                    leaked = _filter_covered_leaked_entities(leaked, out[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx])
-                    coverage_vals.append(_compute_coverage(n_final, len(leaked)))
-                    leaked_lists.append(leaked)
+                leaked = _filter_nonliteral_entities(leaked, out[COL_TEXT].loc[idx])
+                leaked = _deduplicate_judge_entities(leaked)
+                candidate_total_vals.append(len(leaked))
+                final_entities = out[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx]
+                leaked = _filter_covered_leaked_entities(leaked, final_entities)
+                n_final = len(final_entities) if isinstance(final_entities, list) else 0
+                total = n_final + len(leaked)
+                coverage = 1.0 if total == 0 else n_final / total
+                coverage_vals.append(coverage)
+                leaked_lists.append(leaked)
+                total_vals.append(total)
 
         out[self.VALID_COL] = coverage_vals
         out[self.INVALID_COL] = leaked_lists
-        if self.RAW_COL in out.columns:
-            out.loc[passthrough_mask, self.RAW_COL] = [self.DEFAULT_PAYLOAD] * int(passthrough_mask.sum())
+        out[COL_ENTITY_COVERAGE_TOTAL] = total_vals
+        out[COL_ENTITY_COVERAGE_CANDIDATE_TOTAL] = candidate_total_vals
         return out
 
     def run_non_critical(
@@ -463,7 +628,13 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 preview_num_records=preview_num_records,
             )
             out = dataframe.copy()
-            for col in (self.VALID_COL, self.INVALID_COL):
+            for col in (
+                self.RAW_COL,
+                self.VALID_COL,
+                self.INVALID_COL,
+                COL_ENTITY_COVERAGE_TOTAL,
+                COL_ENTITY_COVERAGE_CANDIDATE_TOTAL,
+            ):
                 if col in result.dataframe.columns:
                     out[col] = result.dataframe[col].values
             return out, result.failed_records
@@ -472,6 +643,8 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]
+            out[COL_ENTITY_COVERAGE_TOTAL] = None
+            out[COL_ENTITY_COVERAGE_CANDIDATE_TOTAL] = None
             return out, []
 
     def evaluate(
@@ -482,52 +655,18 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> JudgeResult:
-        """Standalone entry point. Overrides base to write float coverage instead of bool."""
+        """Run leak detection against the supplied final entities."""
         working_df = self.prepare(dataframe)
         working_df[ROW_ORDER_COL] = range(len(working_df))
-        passthrough_mask = self._passthrough_mask(working_df)
-        passthrough_rows = working_df[passthrough_mask].copy()
-        with_content = working_df[~passthrough_mask].copy()
-
-        passthrough_rows[self.RAW_COL] = [self.DEFAULT_PAYLOAD for _ in range(len(passthrough_rows))]
-        passthrough_rows[self.VALID_COL] = 1.0
-        passthrough_rows[self.INVALID_COL] = [[] for _ in range(len(passthrough_rows))]
-
-        if with_content.empty:
-            combined = merge_and_reorder(passthrough_rows)
-            return JudgeResult(dataframe=combined, failed_records=[])
-
-        effective_preview = min(preview_num_records, len(with_content)) if preview_num_records is not None else None
+        effective_preview = min(preview_num_records, len(working_df)) if preview_num_records is not None else None
         run_result = self._adapter.run_workflow(
-            with_content,
+            working_df,
             model_configs=model_configs,
             columns=[self.column_config(selected_models)],
             workflow_name=self.WORKFLOW_NAME,
             preview_num_records=effective_preview,
         )
 
-        judged_df = run_result.dataframe.copy()
-        coverage_vals: list[float | None] = []
-        leaked_lists: list[list[dict]] = []
-        for idx in judged_df.index:
-            raw = judged_df[self.RAW_COL].loc[idx] if self.RAW_COL in judged_df.columns else None
-            leaked = _parse_leaked_entities(raw)
-            n_final = (
-                int(judged_df[_N_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx])
-                if _N_FINAL_ENTITIES_FOR_COVERAGE_COL in judged_df.columns
-                else 0
-            )
-            if leaked is None:
-                coverage_vals.append(None)
-                leaked_lists.append([])
-            else:
-                leaked = _filter_covered_leaked_entities(
-                    leaked, judged_df[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx]
-                )
-                coverage_vals.append(_compute_coverage(n_final, len(leaked)))
-                leaked_lists.append(leaked)
-        judged_df[self.VALID_COL] = coverage_vals
-        judged_df[self.INVALID_COL] = leaked_lists
-
-        combined = merge_and_reorder(judged_df, passthrough_rows)
+        judged_df = self.postprocess(run_result.dataframe)
+        combined = merge_and_reorder(judged_df)
         return JudgeResult(dataframe=combined, failed_records=run_result.failed_records)
