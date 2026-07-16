@@ -666,9 +666,7 @@ class Anonymizer:
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
-            strict_entity_protection=(
-                config.rewrite.strict_entity_protection if config.rewrite is not None else False
-            ),
+            strict_entity_protection=(config.rewrite.strict_entity_protection if config.rewrite is not None else False),
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:

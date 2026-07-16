@@ -216,7 +216,7 @@ Do flag:
   word or number. Decide by the value's role in the surrounding text, not by its length,
   rarity, or familiarity. (This still excludes pronouns and generic references that only
   imply a type — those are not concrete values.)
-  
+
 {entity_scope_guidance}
 {strict_guidance}
 </guidance>
@@ -246,63 +246,62 @@ outside the JSON object. Your entire response must be a single valid JSON object
 </output_format>
 """
 
+    # prompt = f"""<task>
+    # You are a privacy auditor. Given ORIGINAL text and a list of ANONYMIZER FINAL ENTITIES, \
+    # identify every direct or quasi-identifier in the original text that is NOT covered by the \
+    # anonymizer final entities. These are the "leaked" entities.
 
-# prompt = f"""<task>
-# You are a privacy auditor. Given ORIGINAL text and a list of ANONYMIZER FINAL ENTITIES, \
-# identify every direct or quasi-identifier in the original text that is NOT covered by the \
-# anonymizer final entities. These are the "leaked" entities.
+    # Return structured JSON:
+    # - `leaked_entities`: list every missed identifier with its `value`, `label`, and a short `reasoning`.
+    # - Return an empty list if the anonymizer covered all identifiers.
+    # </task>
 
-# Return structured JSON:
-# - `leaked_entities`: list every missed identifier with its `value`, `label`, and a short `reasoning`.
-# - Return an empty list if the anonymizer covered all identifiers.
-# </task>
+    # <identifier_taxonomy>
+    # These entity types are sensitive and should be flagged when a value of that type is present but \
+    # not covered by the anonymizer final entities: {labels_str}.
+    # Quasi-identifiers: combinations of values that together re-identify someone \
+    # (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
+    # times of day, schedules) can act as quasi-identifiers when combined with other attributes \
+    # in the same text — flag them if they appear alongside other identifying information.
+    # </identifier_taxonomy>
 
-# <identifier_taxonomy>
-# These entity types are sensitive and should be flagged when a value of that type is present but \
-# not covered by the anonymizer final entities: {labels_str}.
-# Quasi-identifiers: combinations of values that together re-identify someone \
-# (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
-# times of day, schedules) can act as quasi-identifiers when combined with other attributes \
-# in the same text — flag them if they appear alongside other identifying information.
-# </identifier_taxonomy>
+    # {entity_scope_block}
 
-# {entity_scope_block}
+    # <label_interpretation>
+    # Treat each configured label as a semantic entity category. Labels may use compact, compound, \
+    # or abbreviated names; interpret their intended meaning from the label and the original-text \
+    # context. Return labels exactly as they appear in the entity_type_scope.
+    # </label_interpretation>
 
-# <label_interpretation>
-# Treat each configured label as a semantic entity category. Labels may use compact, compound, \
-# or abbreviated names; interpret their intended meaning from the label and the original-text \
-# context. Return labels exactly as they appear in the entity_type_scope.
-# </label_interpretation>
+    # <coverage_definition>
+    # An identifier is "covered" (already protected) if:
+    # - Its exact value appears in the anonymizer final entities list, OR
+    # - Its value is covered by a listed entity value or by a combination of listed entity values.
+    # </coverage_definition>
 
-# <coverage_definition>
-# An identifier is "covered" (already protected) if:
-# - Its exact value appears in the anonymizer final entities list, OR
-# - Its value is covered by a listed entity value or by a combination of listed entity values.
-# </coverage_definition>
+    # {strict_block}
 
-# {strict_block}
+    # <output_format>
+    # Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
+    # ``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
+    # outside the JSON object. Your entire response must be a single valid JSON object.
+    # </output_format>
 
-# <output_format>
-# Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-# ``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-# outside the JSON object. Your entire response must be a single valid JSON object.
-# </output_format>
+    # ---
+    # <original_text>
+    # <<COL_TEXT>>
+    # </original_text>
 
-# ---
-# <original_text>
-# <<COL_TEXT>>
-# </original_text>
-
-# <anonymizer_final_entities>
-# {{%- if <<ENTITIES_COLUMN>> %}}
-# {{%- for entity in <<ENTITIES_COLUMN>> %}}
-# - value="{{{{ entity.value }}}}" | label={{{{ entity.label }}}}
-# {{%- endfor %}}
-# {{%- else %}}
-# (none)
-# {{%- endif %}}
-# </anonymizer_final_entities>
-# """
+    # <anonymizer_final_entities>
+    # {{%- if <<ENTITIES_COLUMN>> %}}
+    # {{%- for entity in <<ENTITIES_COLUMN>> %}}
+    # - value="{{{{ entity.value }}}}" | label={{{{ entity.label }}}}
+    # {{%- endfor %}}
+    # {{%- else %}}
+    # (none)
+    # {{%- endif %}}
+    # </anonymizer_final_entities>
+    # """
     return substitute_placeholders(
         prompt,
         {
@@ -448,11 +447,7 @@ def _filter_covered_leaked_entities(
     if not final_values:
         return leaked_entities
 
-    return [
-        entity
-        for entity in leaked_entities
-        if not _is_leaked_value_covered(entity.get("value", ""), final_values)
-    ]
+    return [entity for entity in leaked_entities if not _is_leaked_value_covered(entity.get("value", ""), final_values)]
 
 
 def _normalize_literal_text(value: object) -> str:
