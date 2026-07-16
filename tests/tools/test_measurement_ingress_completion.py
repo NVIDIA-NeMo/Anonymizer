@@ -864,3 +864,47 @@ def test_wandb_ingress_accepts_collector_ndd_workflow(tmp_path: Path, wandb_ingr
     assert snapshot.records[0].record_type == "ndd_workflow"
     source_record = json.loads(path.read_text(encoding="utf-8"))
     assert "local_fields" not in source_record
+
+
+def test_wandb_ingress_accepts_rat_bench_reidentification_summary(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "record_type": "rat_bench_reidentification",
+                "run_id": "run-a",
+                "run_tags": {},
+                "timestamp_unix_sec": 1.0,
+                "rows_processed": 10,
+                "rows_failed": 1,
+                "reidentified_rows": 2,
+                "direct_reidentified_rows": 1,
+                "correctmatch_reidentified_rows": 1,
+                "reid_error_rows": 0,
+                "reidentification_rate_pct": 20.0,
+                "coverage_pct": 55.0,
+                "correct_guess_count": 11,
+                "incorrect_guess_count": 9,
+                "total_guess_count": 20,
+                "mean_reid_score": 0.12,
+                "reid_threshold": 0.2,
+                "missing_output_rows": 0,
+                "elapsed_sec": 3.5,
+                "attacker_model": "openai/gpt-oss-120b",
+                "attacker_endpoint_kind": "bigiron",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = wandb_ingress_tool.read_measurement_snapshot(path)
+
+    assert len(snapshot.records) == 1
+    assert snapshot.records[0].record_type == "rat_bench_reidentification"
+    source_record = json.loads(path.read_text(encoding="utf-8"))
+    assert "local_fields" not in source_record

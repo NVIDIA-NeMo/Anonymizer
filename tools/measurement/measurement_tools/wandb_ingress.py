@@ -221,6 +221,27 @@ class TraceCoverageMeasurement(_MeasurementEnvelope):
     unsupported_column_types: list[StrictStr]
 
 
+class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
+    record_type: Literal["rat_bench_reidentification"]
+    rows_processed: NonNegativeInt
+    rows_failed: NonNegativeInt
+    reidentified_rows: NonNegativeInt
+    direct_reidentified_rows: NonNegativeInt
+    correctmatch_reidentified_rows: NonNegativeInt
+    reid_error_rows: NonNegativeInt
+    reidentification_rate_pct: NonNegativeFloat
+    coverage_pct: NonNegativeFloat
+    correct_guess_count: NonNegativeInt
+    incorrect_guess_count: NonNegativeInt
+    total_guess_count: NonNegativeInt
+    mean_reid_score: NonNegativeFloat
+    reid_threshold: NonNegativeFloat
+    missing_output_rows: NonNegativeInt | None = None
+    elapsed_sec: NonNegativeFloat | None = None
+    attacker_model: StrictStr | None = None
+    attacker_endpoint_kind: StrictStr | None = None
+
+
 MeasurementRecord = Annotated[
     RunMeasurement
     | StageMeasurement
@@ -228,7 +249,8 @@ MeasurementRecord = Annotated[
     | EvaluationMeasurement
     | NddWorkflowMeasurement
     | ModelWorkflowMeasurement
-    | TraceCoverageMeasurement,
+    | TraceCoverageMeasurement
+    | RatBenchReidentificationMeasurement,
     Field(discriminator="record_type"),
 ]
 _RECORD_ADAPTER = TypeAdapter(MeasurementRecord)
