@@ -135,29 +135,23 @@ def _coverage_prompt(
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
     labels_str = ", ".join(active_labels)
 
-    prompt = f"""You are a privacy auditor. Given ORIGINAL text and a list of ANONYMIZER FINAL ENTITIES, \
-identify any direct or quasi-identifiers in the original text that are NOT covered by the \
-anonymizer final entities.
+    prompt = f"""You are an exhaustive privacy-entity span extractor. Extract every literal value \
+in the ORIGINAL TEXT whose semantic type is in scope.
 
 <task>
-Identify every direct or quasi-identifier present in the original text that is NOT covered \
-by the anonymizer final entities. These are the "leaked" entities — identifiers that would \
-survive anonymization because they are absent from the final entity set.
-
-Report every literal candidate whose in-scope semantic type is supported by the original-text context.
-Do not require a value to identify someone on its own; direct and quasi-identifiers are both reportable.
+Work independently from the anonymizer: identify all in-scope direct and quasi-identifiers \
+without deciding whether another system already found or protected them. A deterministic \
+postprocessing step will compare your candidates with the anonymizer final entities.
 
 Return structured JSON:
-- `leaked_entities`: list every missed identifier with its `value`, `label`, and a short `reasoning`.
-- Return an empty list if the anonymizer covered all identifiers.
+- `leaked_entities`: every in-scope candidate with its `value`, `label`, and a short `reasoning`.
+- Return an empty list only when the original text contains no in-scope entity values.
 </task>
 
 <identifier_taxonomy>
-These entity types are sensitive and should be flagged when a value of that type is present but \
-not covered by the anonymizer final entities: {labels_str}.
-Check each type and report missed values, including ones that are easy to overlook — but report \
-only a concrete identifying value (an actual name, code, date, or attribute value), not a pronoun \
-or a generic reference that merely implies a type.
+These entity types are in scope: {labels_str}.
+Check every configured type systematically. Report only concrete values that literally appear \
+in the text, not information that is merely implied.
 Quasi-identifiers: combinations of values that together re-identify someone \
 (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
 times of day, schedules) can act as quasi-identifiers when combined with other attributes \
@@ -172,45 +166,40 @@ or abbreviated names; interpret their intended meaning from the label and the or
 context. Return labels exactly as they appear in the entity_type_scope.
 </label_interpretation>
 
-<coverage_definition>
-An identifier is "covered" (already protected) if:
-- Its exact value appears in the anonymizer final entities list, OR
-- Its complete tokens are contained within one final entity value, OR
-- Its value is composed entirely of complete final entity values.
-Partial character matches, similar meanings, or shared context alone do not establish coverage.
-</coverage_definition>
+<systematic_scan>
+Before returning, scan the entire text label by label and inspect:
+- Prose, salutations, signatures, addresses, and contact blocks.
+- Tables, bullets, forms, and other key/value or semi-structured content.
+- Short or single-token values whose nearby wording or syntax establishes their type.
+- Honorifics attached to person names, compact date formats used as dates, and categorical \
+or coded values whose context establishes an in-scope type.
+</systematic_scan>
 
 <reportability_check>
-Before reporting an entity, verify ALL of the following:
+For each candidate, verify ALL of the following:
 1. Its value is a literal, non-empty span in the original text.
-2. It is an actual data value, not syntax or metadata such as a field name, heading, \
-form instruction, blank placeholder, document title, or category label.
+2. It is an actual assigned or stated value, not a generic field name, heading, instruction, \
+blank placeholder, or category name.
 3. Its semantic type matches one of the entity types in scope.
-4. It is not already covered by an anonymizer final entity.
-5. Report the complete contiguous span that represents one sensitive value. Preserve all \
+4. Report the complete contiguous span that represents one sensitive value. Preserve all \
 tokens belonging to that value, including multi-token values, while excluding surrounding \
 labels, punctuation, instructions, or boilerplate.
-6. Evaluate the value using its original-text context rather than its form or how identifying \
+5. Evaluate the value using its original-text context rather than its form or how identifying \
 it appears in isolation.
 
-In structured or semi-structured text, distinguish:
-- Syntax and metadata: field names, headings, instructions, placeholders, category labels, \
-formatting, and other structural text.
-- Data: assigned values, cell contents, literals, and user-provided content.
-Report only the smallest sensitive data value. Do not report surrounding syntax or metadata \
-unless it independently contains a literal sensitive value in scope.
+In structured text, distinguish a generic category name from a literal category value. A short \
+literal that itself instantiates an in-scope type remains a candidate when it appears in a form \
+row, list item, or signature. Do not merge tokens from unrelated people or fields into one value.
 </reportability_check>
 
 <guidance>
 Do NOT flag:
-- Items that satisfy the coverage_definition.
 - Text whose in-scope semantic type is not supported by its original-text context.
 - Information that is inferable but not literally present in the text.
 
 Do flag:
 - The `value` MUST be a literal substring found in the original text.
-- `reasoning` MUST be one sentence explaining why this value is not covered by the anonymizer final entities.
-- If `anonymizer_final_entities` is empty, scan the full text for any direct or quasi-identifiers.
+- `reasoning` MUST be one sentence explaining which in-scope semantic type the value represents.
 - A value that fills the role of a listed sensitive type in context, even when it is
   short, a single token, an unfamiliar or foreign-looking word, or resembles an ordinary
   word or number. Decide by the value's role in the surrounding text, not by its length,
@@ -227,16 +216,6 @@ Do flag:
 <original_text>
 <<COL_TEXT>>
 </original_text>
-
-<anonymizer_final_entities>
-{{%- if <<ENTITIES_COLUMN>> %}}
-{{%- for entity in <<ENTITIES_COLUMN>> %}}
-- value="{{{{ entity.value }}}}" | label={{{{ entity.label }}}}
-{{%- endfor %}}
-{{%- else %}}
-(none)
-{{%- endif %}}
-</anonymizer_final_entities>
 </inputs>
 
 <output_format>
@@ -245,68 +224,10 @@ Return ONLY the JSON object that matches the required schema. Do NOT wrap your o
 outside the JSON object. Your entire response must be a single valid JSON object.
 </output_format>
 """
-
-    # prompt = f"""<task>
-    # You are a privacy auditor. Given ORIGINAL text and a list of ANONYMIZER FINAL ENTITIES, \
-    # identify every direct or quasi-identifier in the original text that is NOT covered by the \
-    # anonymizer final entities. These are the "leaked" entities.
-
-    # Return structured JSON:
-    # - `leaked_entities`: list every missed identifier with its `value`, `label`, and a short `reasoning`.
-    # - Return an empty list if the anonymizer covered all identifiers.
-    # </task>
-
-    # <identifier_taxonomy>
-    # These entity types are sensitive and should be flagged when a value of that type is present but \
-    # not covered by the anonymizer final entities: {labels_str}.
-    # Quasi-identifiers: combinations of values that together re-identify someone \
-    # (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
-    # times of day, schedules) can act as quasi-identifiers when combined with other attributes \
-    # in the same text — flag them if they appear alongside other identifying information.
-    # </identifier_taxonomy>
-
-    # {entity_scope_block}
-
-    # <label_interpretation>
-    # Treat each configured label as a semantic entity category. Labels may use compact, compound, \
-    # or abbreviated names; interpret their intended meaning from the label and the original-text \
-    # context. Return labels exactly as they appear in the entity_type_scope.
-    # </label_interpretation>
-
-    # <coverage_definition>
-    # An identifier is "covered" (already protected) if:
-    # - Its exact value appears in the anonymizer final entities list, OR
-    # - Its value is covered by a listed entity value or by a combination of listed entity values.
-    # </coverage_definition>
-
-    # {strict_block}
-
-    # <output_format>
-    # Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-    # ``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-    # outside the JSON object. Your entire response must be a single valid JSON object.
-    # </output_format>
-
-    # ---
-    # <original_text>
-    # <<COL_TEXT>>
-    # </original_text>
-
-    # <anonymizer_final_entities>
-    # {{%- if <<ENTITIES_COLUMN>> %}}
-    # {{%- for entity in <<ENTITIES_COLUMN>> %}}
-    # - value="{{{{ entity.value }}}}" | label={{{{ entity.label }}}}
-    # {{%- endfor %}}
-    # {{%- else %}}
-    # (none)
-    # {{%- endif %}}
-    # </anonymizer_final_entities>
-    # """
     return substitute_placeholders(
         prompt,
         {
             "<<COL_TEXT>>": _jinja(COL_TEXT),
-            "<<ENTITIES_COLUMN>>": _FINAL_ENTITIES_FOR_COVERAGE_COL,
         },
     )
 
@@ -504,8 +425,8 @@ def _compare_judge_to_final(
 class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     """LLM judge that reports entities not covered by Anonymizer final entities.
 
-    The judge sees the original text, entity-type scope, and final entities.
-    Deterministic postprocessing removes nonliteral and already-covered findings.
+    The judge independently extracts candidates from the original text and entity-type
+    scope. Deterministic postprocessing removes nonliteral and already-covered findings.
 
     Output columns:
       ``COL_ENTITY_COVERAGE`` (float|None) — n_final / (n_final + n_leaked)

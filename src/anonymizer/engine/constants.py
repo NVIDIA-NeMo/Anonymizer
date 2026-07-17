@@ -68,6 +68,8 @@ COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"  # user-facing lis
 # Replace / rewrite evaluation: entity coverage judge (customer-facing recall metric)
 COL_ENTITY_COVERAGE_JUDGE = "_entity_coverage_judge"  # raw judge output, internal
 COL_ENTITY_COVERAGE = "entity_coverage"  # user-facing float | None (0.0–1.0)
+COL_ENTITY_COVERAGE_TOTAL = "entity_coverage_total"  # final entities + leaked entities
+COL_ENTITY_COVERAGE_CANDIDATE_TOTAL = "_entity_coverage_candidate_total"  # validated judge candidates
 COL_LEAKED_ENTITIES = "leaked_entities"  # user-facing list of {value, label, reasoning}
 
 # Replace evaluation: type-fidelity judge (Substitute only)

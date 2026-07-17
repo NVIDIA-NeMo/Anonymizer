@@ -6,8 +6,10 @@ from __future__ import annotations
 import pytest
 
 from anonymizer.engine.evaluation.entity_coverage_judge import (
+    _coverage_prompt,
     _filter_covered_leaked_entities,
     _is_leaked_value_covered,
+    _parse_leaked_entities,
 )
 
 
@@ -96,3 +98,44 @@ def test_filter_covered_leaked_entities_passthrough_on_no_final_entities() -> No
 
     assert _filter_covered_leaked_entities(leaked, []) == leaked
     assert _filter_covered_leaked_entities(leaked, None) == leaked
+
+
+def test_parse_leaked_entities_accepts_gemma_thought_prefixed_json_fence() -> None:
+    raw = """thought
+```json
+{
+  "leaked_entities": [
+    {
+      "value": "Alice",
+      "label": "givenname",
+      "reasoning": "The given name was not detected."
+    }
+  ]
+}
+```"""
+
+    assert _parse_leaked_entities(raw) == [
+        {
+            "value": "Alice",
+            "label": "givenname",
+            "reasoning": "The given name was not detected.",
+        }
+    ]
+
+
+def test_coverage_prompt_extracts_independently_before_deterministic_filtering() -> None:
+    prompt = _coverage_prompt(entity_labels=["sex", "title"], strict_entity_protection=False)
+
+    assert "Work independently from the anonymizer" in prompt
+    assert "deterministic postprocessing step" in prompt
+    assert "<anonymizer_final_entities>" not in prompt
+    assert "_final_entities_for_coverage_judge" not in prompt
+
+
+def test_coverage_prompt_requires_systematic_structured_text_scan() -> None:
+    prompt = _coverage_prompt(entity_labels=["sex", "title"], strict_entity_protection=False)
+
+    assert "salutations, signatures" in prompt
+    assert "Tables, bullets, forms" in prompt
+    assert "Short or single-token values" in prompt
+    assert "Honorifics attached to person names" in prompt
