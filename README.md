@@ -189,6 +189,12 @@ Aggregate usage data (such as which models are most popular) will be shared back
 
 ---
 
+## PyPI Downloads
+
+[![Cumulative PyPI downloads](docs/assets/pypi-downloads.svg)](https://pypistats.org/packages/nemo-anonymizer)
+
+---
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.
