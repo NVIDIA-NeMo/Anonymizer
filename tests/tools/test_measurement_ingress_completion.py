@@ -908,3 +908,36 @@ def test_wandb_ingress_accepts_rat_bench_reidentification_summary(
     assert snapshot.records[0].record_type == "rat_bench_reidentification"
     source_record = json.loads(path.read_text(encoding="utf-8"))
     assert "local_fields" not in source_record
+
+
+def test_wandb_ingress_rejects_rat_bench_percentages_above_100(
+    wandb_ingress_tool: ModuleType,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "record_type": "rat_bench_reidentification",
+        "run_id": "run-a",
+        "run_tags": {},
+        "timestamp_unix_sec": 1.0,
+        "rows_processed": 10,
+        "rows_failed": 0,
+        "reidentified_rows": 2,
+        "direct_reidentified_rows": 1,
+        "correctmatch_reidentified_rows": 1,
+        "reid_error_rows": 0,
+        "reidentification_rate_pct": 100.1,
+        "coverage_pct": 55.0,
+        "correct_guess_count": 11,
+        "incorrect_guess_count": 9,
+        "total_guess_count": 20,
+        "mean_reid_score": 0.12,
+        "reid_threshold": 0.2,
+    }
+
+    with pytest.raises(wandb_ingress_tool.ValidationError):
+        wandb_ingress_tool.RatBenchReidentificationMeasurement.model_validate(payload, strict=True)
+
+    payload["reidentification_rate_pct"] = 20.0
+    payload["coverage_pct"] = 100.1
+    with pytest.raises(wandb_ingress_tool.ValidationError):
+        wandb_ingress_tool.RatBenchReidentificationMeasurement.model_validate(payload, strict=True)

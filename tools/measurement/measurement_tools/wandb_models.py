@@ -31,6 +31,7 @@ from measurement_tools.validation import (
     MeasurementStrategy,
     NonNegativeFloat,
     NonNegativeInt,
+    Percentage,
     Probability,
     RedactedStrictFrozenModel,
     StrictFrozenModel,
@@ -746,8 +747,8 @@ class RatBenchReidentificationTableRow(_MetricTableRow):
     direct_reidentified_rows: NonNegativeInt
     correctmatch_reidentified_rows: NonNegativeInt
     reid_error_rows: NonNegativeInt
-    reidentification_rate_pct: NonNegativeFloat
-    coverage_pct: NonNegativeFloat
+    reidentification_rate_pct: Percentage
+    coverage_pct: Percentage
     correct_guess_count: NonNegativeInt
     incorrect_guess_count: NonNegativeInt
     total_guess_count: NonNegativeInt

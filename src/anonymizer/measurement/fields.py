@@ -4,7 +4,15 @@
 
 from __future__ import annotations
 
-SCALAR_LAST_VALUE_FIELDS = ("mode", "stage", "status", "strategy", "attacker_model", "attacker_endpoint_kind")
+SCALAR_LAST_VALUE_FIELDS = (
+    "mode",
+    "stage",
+    "status",
+    "strategy",
+    "attacker_model",
+    "attacker_endpoint_kind",
+    "reid_threshold",
+)
 SCALAR_ADDITIVE_FIELDS = (
     "elapsed_sec",
     "input_row_count",
@@ -77,5 +85,4 @@ SCALAR_AVERAGED_FIELDS = (
     "reidentification_rate_pct",
     "coverage_pct",
     "mean_reid_score",
-    "reid_threshold",
 )
