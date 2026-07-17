@@ -368,7 +368,8 @@ def test_wandb_aggregates_rat_bench_reidentification_record(
     assert aggregated["measurement/rat_bench_reidentification/mean_reid_score_mean"] == pytest.approx(0.12)
     assert aggregated["measurement/rat_bench_reidentification/reid_threshold"] == 0.2
     assert "measurement/rat_bench_reidentification/reid_threshold_mean" not in aggregated
-    assert aggregated["measurement/rat_bench_reidentification/attacker_model"] == "openai/gpt-oss-120b"
+    assert aggregated["measurement/rat_bench_reidentification/attacker_endpoint_kind"] == "bigiron"
+    assert "measurement/rat_bench_reidentification/attacker_model" not in aggregated
 
 
 def test_wandb_report_metric_names_match_aggregated_names(

@@ -9,7 +9,6 @@ SCALAR_LAST_VALUE_FIELDS = (
     "stage",
     "status",
     "strategy",
-    "attacker_model",
     "attacker_endpoint_kind",
     "reid_threshold",
 )

@@ -33,6 +33,7 @@ from measurement_tools.validation import (
     NonNegativeInt,
     Percentage,
     Probability,
+    RatBenchAttackerEndpointKind,
     RedactedStrictFrozenModel,
     StrictFrozenModel,
     VisibleIdentifier,
@@ -756,7 +757,7 @@ class RatBenchReidentificationTableRow(_MetricTableRow):
     reid_threshold: NonNegativeFloat
     missing_output_rows: NonNegativeInt | None = None
     attacker_model: StrictStr | None = None
-    attacker_endpoint_kind: StrictStr | None = None
+    attacker_endpoint_kind: RatBenchAttackerEndpointKind | None = None
 
 
 WandbTableRow = Annotated[

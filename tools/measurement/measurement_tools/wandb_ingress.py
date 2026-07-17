@@ -29,6 +29,7 @@ from measurement_tools.validation import (
     NonNegativeInt,
     Percentage,
     Probability,
+    RatBenchAttackerEndpointKind,
     StrictFrozenModel,
 )
 
@@ -240,7 +241,7 @@ class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
     missing_output_rows: NonNegativeInt | None = None
     elapsed_sec: NonNegativeFloat | None = None
     attacker_model: StrictStr | None = None
-    attacker_endpoint_kind: StrictStr | None = None
+    attacker_endpoint_kind: RatBenchAttackerEndpointKind | None = None
 
 
 MeasurementRecord = Annotated[
