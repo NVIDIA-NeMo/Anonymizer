@@ -113,13 +113,28 @@ def _strict_protection_block(strict_entity_protection: bool) -> str:
     )
 
 
+def _data_summary_block(data_summary: str | None) -> str:
+    """Return optional dataset context without changing prompts when absent."""
+    if not data_summary or not data_summary.strip():
+        return ""
+    return (
+        "<data_summary_context>\n"
+        f"{data_summary.strip()}\n"
+        "Use this context only to interpret literal values and their semantic types. "
+        "Do not infer or invent entities that are absent from the original text.\n"
+        "</data_summary_context>"
+    )
+
+
 def _coverage_prompt(
     *,
     entity_labels: list[str] | None,
     strict_entity_protection: bool,
+    data_summary: str | None = None,
 ) -> str:
     entity_scope_block = _entity_type_scope_block(entity_labels)
     strict_block = _strict_protection_block(strict_entity_protection)
+    data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
 
     entity_scope_guidance = (
         "- Respect the entity_type_scope: do not flag PII types outside the configured scope as leaked."
@@ -156,7 +171,7 @@ Quasi-identifiers: combinations of values that together re-identify someone \
 (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
 times of day, schedules) can act as quasi-identifiers when combined with other attributes \
 in the same text — flag them if they appear alongside other identifying information.
-</identifier_taxonomy>
+</identifier_taxonomy>{data_context_section}
 
 {entity_scope_block}
 
@@ -448,10 +463,12 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         *,
         entity_labels: list[str] | None = None,
         strict_entity_protection: bool = False,
+        data_summary: str | None = None,
     ) -> None:
         super().__init__(adapter)
         self._entity_labels = entity_labels
         self._strict_entity_protection = strict_entity_protection
+        self._data_summary = data_summary
 
     # ------------------------------------------------------------------ hooks
 
@@ -482,6 +499,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             prompt=_coverage_prompt(
                 entity_labels=self._entity_labels,
                 strict_entity_protection=self._strict_entity_protection,
+                data_summary=self._data_summary,
             ),
             model_alias=resolve_model_alias(self.MODEL_ROLE, selected_models),
         )

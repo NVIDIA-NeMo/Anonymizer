@@ -118,6 +118,7 @@ class ReplacementWorkflow:
         preview_num_records: int | None = None,
         entity_labels: list[str] | None = None,
         compute_detection_validity: bool = False,
+        data_summary: str | None = None,
     ) -> ReplacementResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.
 
@@ -147,6 +148,7 @@ class ReplacementWorkflow:
         entity_coverage_judge = EntityCoverageWorkflow(
             adapter=self._adapter,  # type: ignore[arg-type]
             entity_labels=entity_labels,
+            data_summary=data_summary,
         )
         failed_records: list[FailedRecord] = []
         judged_df = self._run_merged_judges(

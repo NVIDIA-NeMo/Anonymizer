@@ -13,6 +13,30 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
 )
 
 
+def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> None:
+    without_summary = _coverage_prompt(entity_labels=None, strict_entity_protection=False)
+    with_blank_summary = _coverage_prompt(
+        entity_labels=None,
+        strict_entity_protection=False,
+        data_summary="   ",
+    )
+
+    assert without_summary == with_blank_summary
+    assert "<data_summary_context>" not in without_summary
+
+
+def test_coverage_prompt_includes_data_summary_as_interpretive_context() -> None:
+    prompt = _coverage_prompt(
+        entity_labels=["first_name"],
+        strict_entity_protection=False,
+        data_summary="Customer support transcripts.",
+    )
+
+    assert "<data_summary_context>\nCustomer support transcripts.\n" in prompt
+    assert "Use this context only to interpret literal values and their semantic types." in prompt
+    assert "Do not infer or invent entities that are absent from the original text." in prompt
+
+
 def test_filter_covered_leaked_entities_removes_subspans_and_composites() -> None:
     detected = [
         {"value": "Mstr Marzella", "label": "givenname"},
