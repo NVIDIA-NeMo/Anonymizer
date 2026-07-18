@@ -235,7 +235,7 @@ class ReplacementWorkflow:
             else:
                 judged_df = prepared
         except Exception:
-            logger.warning("Replace judges workflow failed; populating defaults for all judges", exc_info=True)
+            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.", exc_info=True)
             judged_df = prepared
 
         for judge in active:

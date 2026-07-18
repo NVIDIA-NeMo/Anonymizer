@@ -127,10 +127,7 @@ def _data_summary_block(data_summary: str | None) -> str:
 
 
 def _coverage_prompt(
-    *,
-    entity_labels: list[str] | None,
-    strict_entity_protection: bool,
-    data_summary: str | None = None,
+    *, entity_labels: list[str] | None, strict_entity_protection: bool, data_summary: str | None = None, gi
 ) -> str:
     entity_scope_block = _entity_type_scope_block(entity_labels)
     strict_block = _strict_protection_block(strict_entity_protection)
@@ -573,7 +570,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                     out[col] = result.dataframe[col].values
             return out, result.failed_records
         except Exception:
-            logger.warning("Entity coverage step failed; populating defaults", exc_info=True)
+            logger.debug("Entity coverage workflow failed; scores may be unavailable.", exc_info=True)
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]

@@ -30,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
+    COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
@@ -66,6 +67,7 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
@@ -92,6 +94,43 @@ if TYPE_CHECKING:
     from data_designer.config.config_builder import DataDesignerConfigBuilder
 
 logger = logging.getLogger("anonymizer")
+
+
+def _has_entities_for_evaluation(raw: object) -> bool:
+    """Return whether a row should receive entity-dependent evaluation scores."""
+    try:
+        return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
+    except Exception:
+        # Malformed entity metadata should not hide a missing score.
+        return True
+
+
+def _log_unavailable_scores(
+    dataframe: pd.DataFrame,
+    checks: list[tuple[str, str, pd.Series | None]],
+    *,
+    group_label: str,
+) -> None:
+    """Warn for unavailable active-judge scores."""
+    unavailable_scores: list[tuple[str, int, int]] = []
+    for label, column, expected_mask in checks:
+        applicable = dataframe if expected_mask is None else dataframe.loc[expected_mask]
+        applicable_count = len(applicable)
+        if applicable_count == 0:
+            continue
+        unavailable = applicable_count if column not in applicable.columns else int(applicable[column].isna().sum())
+        if unavailable:
+            unavailable_scores.append((label, unavailable, applicable_count))
+        else:
+            logger.debug("%s score available for all %d applicable records.", label.capitalize(), applicable_count)
+    if len(unavailable_scores) == 1:
+        label, unavailable, applicable_count = unavailable_scores[0]
+        logger.warning("%s score unavailable for %d/%d records.", label.capitalize(), unavailable, applicable_count)
+    elif unavailable_scores:
+        details = "; ".join(
+            f"{label}: {unavailable}/{applicable_count}" for label, unavailable, applicable_count in unavailable_scores
+        )
+        logger.warning("%s scores unavailable — %s.", group_label, details)
 
 
 def _initialize_logging() -> None:
@@ -415,19 +454,64 @@ class Anonymizer:
         entity_labels = getattr(output, "entity_labels", None)
         strict_entity_protection = getattr(output, "strict_entity_protection", False)
         data_summary = getattr(output, "data_summary", None)
+        num_records = len(output.trace_dataframe)
+        mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
+        active_judges = ["rewrite_judge", "entity_coverage_judge"] if is_rewrite else ["entity_coverage_judge"]
+        if evaluate_config.compute_detection_validity:
+            active_judges.append("detection_validity_judge")
+        if isinstance(replace_method, Substitute):
+            active_judges.extend(
+                [
+                    "replace_type_fidelity_judge",
+                    "replace_relational_consistency_judge",
+                    "replace_attribute_fidelity_judge",
+                ]
+            )
+        logger.info("🧪 Running %s evaluation on %d records", mode_name, num_records)
+        logger.debug(
+            "evaluation config: mode=%s, text_column=%s, detection_validity=%s, "
+            "strict_entity_protection=%s, entity_labels=%s, data_summary_provided=%s",
+            mode_name,
+            text_column,
+            evaluate_config.compute_detection_validity,
+            strict_entity_protection,
+            len(entity_labels) if entity_labels is not None else "default",
+            bool(data_summary),
+        )
+        logger.debug("active evaluation judges: %s", ", ".join(active_judges))
+        logger.debug("evaluation models: %s", self._selected_models.evaluate)
+        evaluation_start = time.perf_counter()
         # trace_dataframe is in user-facing form (e.g., 'biography' instead of
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
         # internal names, so reverse the rename before the DD call and re-apply
         # it on the result.
         internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
-
         if is_rewrite:
+            logger.info(LOG_INDENT + "Running rewrite judges")
+            stage_start = time.perf_counter()
             rewrite_result = self._rewrite_runner.evaluate(
                 internal_df,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.evaluate,
                 privacy_goal=rewrite_config,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
+            )
+            entity_mask = (
+                rewrite_result.dataframe[COL_ENTITIES_BY_VALUE].apply(_has_entities_for_evaluation)
+                if COL_ENTITIES_BY_VALUE in rewrite_result.dataframe.columns
+                else None
+            )
+            rewrite_checks = [("rewrite judge", COL_JUDGE_EVALUATION, entity_mask)]
+            if evaluate_config.compute_detection_validity:
+                rewrite_checks.append(("detection validity", COL_DETECTION_VALID, None))
+            _log_unavailable_scores(
+                rewrite_result.dataframe,
+                rewrite_checks,
+                group_label="Rewrite evaluation",
+            )
+            logger.info(
+                LOG_INDENT + "📋 Rewrite judges complete [%.1fs]",
+                time.perf_counter() - stage_start,
             )
             all_failed: list[FailedRecord] = list(rewrite_result.failed_records)
             coverage_wf = EntityCoverageWorkflow(
@@ -436,14 +520,25 @@ class Anonymizer:
                 strict_entity_protection=strict_entity_protection,
                 data_summary=data_summary,
             )
+            logger.info(LOG_INDENT + "Running entity coverage")
+            stage_start = time.perf_counter()
             judged_df, coverage_failed = coverage_wf.run_non_critical(
                 rewrite_result.dataframe,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.evaluate,
             )
+            _log_unavailable_scores(
+                judged_df,
+                [("entity coverage", COL_ENTITY_COVERAGE, None)],
+                group_label="Entity coverage",
+            )
+            logger.info(
+                LOG_INDENT + "📋 Entity coverage complete [%.1fs]",
+                time.perf_counter() - stage_start,
+            )
             all_failed.extend(coverage_failed)
             renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
-            return AnonymizerResult(
+            result = AnonymizerResult(
                 dataframe=_build_user_dataframe(
                     renamed_trace,
                     resolved_text_column=text_column,
@@ -457,31 +552,64 @@ class Anonymizer:
                 strict_entity_protection=strict_entity_protection,
                 data_summary=data_summary,
             )
-
-        replace_result = self._replace_runner.evaluate(
-            internal_df,
-            replace_method=replace_method,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.evaluate,
-            entity_labels=entity_labels,
-            compute_detection_validity=evaluate_config.compute_detection_validity,
-            data_summary=data_summary,
-        )
-        renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
-        return AnonymizerResult(
-            dataframe=_build_user_dataframe(
-                renamed_trace,
-                resolved_text_column=text_column,
+        else:
+            logger.info(LOG_INDENT + "Running replace judges")
+            stage_start = time.perf_counter()
+            replace_result = self._replace_runner.evaluate(
+                internal_df,
+                replace_method=replace_method,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.evaluate,
+                entity_labels=entity_labels,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
-            ),
-            trace_dataframe=renamed_trace,
-            resolved_text_column=text_column,
-            failed_records=replace_result.failed_records,
-            replace_method=replace_method,
-            entity_labels=entity_labels,
-            strict_entity_protection=strict_entity_protection,
-            data_summary=data_summary,
+                data_summary=data_summary,
+            )
+            replace_checks = [("entity coverage", COL_ENTITY_COVERAGE, None)]
+            if evaluate_config.compute_detection_validity:
+                replace_checks.append(("detection validity", COL_DETECTION_VALID, None))
+            if isinstance(replace_method, Substitute):
+                replace_checks.extend(
+                    [
+                        ("type fidelity", COL_TYPE_FIDELITY_VALID, None),
+                        ("relational consistency", COL_RELATIONAL_CONSISTENCY_VALID, None),
+                        ("attribute fidelity", COL_ATTRIBUTE_FIDELITY_VALID, None),
+                    ]
+                )
+            _log_unavailable_scores(
+                replace_result.dataframe,
+                replace_checks,
+                group_label="Replace evaluation",
+            )
+            logger.info(
+                LOG_INDENT + "📋 Replace judges complete [%.1fs]",
+                time.perf_counter() - stage_start,
+            )
+            renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
+            result = AnonymizerResult(
+                dataframe=_build_user_dataframe(
+                    renamed_trace,
+                    resolved_text_column=text_column,
+                    compute_detection_validity=evaluate_config.compute_detection_validity,
+                ),
+                trace_dataframe=renamed_trace,
+                resolved_text_column=text_column,
+                failed_records=replace_result.failed_records,
+                replace_method=replace_method,
+                entity_labels=entity_labels,
+                strict_entity_protection=strict_entity_protection,
+                data_summary=data_summary,
+            )
+
+        if result.failed_records:
+            logger.debug("%d evaluation failed record(s).", len(result.failed_records))
+            for failure in result.failed_records:
+                logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
+        logger.info(
+            "🎉 Evaluation complete — %d records processed [%.1fs]",
+            num_records,
+            time.perf_counter() - evaluation_start,
         )
+        return result
 
     def validate_config(self, config: AnonymizerConfig) -> None:
         """Validate that the active workflow config is compatible with model selections."""

@@ -462,7 +462,7 @@ class RewriteWorkflow:
             df = _join_judge_columns(df, judge_result.dataframe)
             return df, judge_result.failed_records
         except Exception:
-            logger.warning("Final judge step failed; defaulting to judge_evaluation=None", exc_info=True)
+            logger.debug("Rewrite judge workflow failed; scores may be unavailable.", exc_info=True)
             df[COL_JUDGE_EVALUATION] = None
             return df, []
 
@@ -526,7 +526,7 @@ class RewriteWorkflow:
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
                 entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
             except Exception:
-                logger.warning("Detection judge step failed; defaulting to detection_valid=None.", exc_info=True)
+                logger.debug("Detection validity judge failed; scores may be unavailable.", exc_info=True)
                 entity_rows[COL_DETECTION_VALID] = None
                 entity_rows[COL_DETECTION_INVALID_ENTITIES] = None
 
