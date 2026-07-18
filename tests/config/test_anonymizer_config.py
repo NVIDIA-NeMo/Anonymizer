@@ -123,6 +123,7 @@ def test_detect_chunked_validation_defaults() -> None:
     config = AnonymizerConfig(replace=Redact())
     assert config.detect.validation_max_entities_per_call == 100
     assert config.detect.validation_excerpt_window_chars == 500
+    assert config.detect.deterministic_detection is False
 
 
 def test_detect_chunked_validation_accepts_overrides() -> None:
@@ -130,11 +131,13 @@ def test_detect_chunked_validation_accepts_overrides() -> None:
         detect={
             "validation_max_entities_per_call": 25,
             "validation_excerpt_window_chars": 1000,
+            "deterministic_detection": True,
         },
         replace=Redact(),
     )
     assert config.detect.validation_max_entities_per_call == 25
     assert config.detect.validation_excerpt_window_chars == 1000
+    assert config.detect.deterministic_detection is True
 
 
 def test_detect_validation_max_entities_per_call_must_be_positive() -> None:

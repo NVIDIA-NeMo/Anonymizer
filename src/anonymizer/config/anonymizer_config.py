@@ -100,6 +100,14 @@ class Detect(BaseModel):
             "validator sees per chunk; it is NOT the LLM's context window limit."
         ),
     )
+    deterministic_detection: bool = Field(
+        default=False,
+        description=(
+            "Experimental: when True, run a local deterministic pole for high-confidence "
+            "structured labels (email, url, ipv4, ipv6, mac_address, credit_debit_card, ssn) "
+            "and send the remaining labels to GLiNER."
+        ),
+    )
 
     @field_validator("entity_labels")
     @classmethod

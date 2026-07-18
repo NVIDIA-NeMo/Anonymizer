@@ -20,6 +20,7 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETERMINISTIC_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
@@ -40,6 +41,7 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
+from anonymizer.engine.detection.deterministic import DETERMINISTIC_ENTITY_LABELS
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
@@ -92,6 +94,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        deterministic_detection: bool = False,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
@@ -111,6 +114,7 @@ class EntityDetectionWorkflow:
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
+            deterministic_detection=deterministic_detection,
             entity_labels=entity_labels,
             data_summary=data_summary,
         )
@@ -133,6 +137,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        deterministic_detection: bool = False,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
@@ -143,11 +148,17 @@ class EntityDetectionWorkflow:
         so both paths run exactly the same workflow.
         """
         labels = _resolve_detection_labels(entity_labels)
-        workflow_model_configs = self._inject_detector_params(
-            model_configs=model_configs,
-            selected_models=selected_models,
-            labels=labels,
-            gliner_detection_threshold=gliner_detection_threshold,
+        deterministic_labels = _resolve_deterministic_labels(labels, enabled=deterministic_detection)
+        model_labels = _resolve_model_detection_labels(labels, deterministic_labels=deterministic_labels)
+        workflow_model_configs = (
+            self._inject_detector_params(
+                model_configs=model_configs,
+                selected_models=selected_models,
+                labels=model_labels,
+                gliner_detection_threshold=gliner_detection_threshold,
+            )
+            if model_labels
+            else list(model_configs)
         )
 
         detection_alias = resolve_model_alias("entity_detector", selected_models)
@@ -164,7 +175,7 @@ class EntityDetectionWorkflow:
         # in-flight validator calls can reach sum(per-alias caps). Operators
         # provisioning rate budgets for downstream providers should size each
         # alias's cap accordingly.
-        if len(validator_aliases) > 1:
+        if model_labels and len(validator_aliases) > 1:
             logger.warning(
                 "entity validation runs across a pool of %d aliases (%s). "
                 "max_parallel_requests is enforced per alias, so the pool "
@@ -174,54 +185,77 @@ class EntityDetectionWorkflow:
                 validator_aliases,
             )
 
-        columns: list[ColumnConfigT] = [
-            LLMTextColumnConfig(
-                name=COL_RAW_DETECTED,
-                prompt=_jinja(COL_TEXT),
-                model_alias=detection_alias,
-            ),
-            DetectionTransformConfig(
-                name=COL_SEED_ENTITIES,
-                operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
-            ),
-            DetectionTransformConfig(
-                name=COL_SEED_VALIDATION_CANDIDATES,
-                operation=DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
-            ),
-            ChunkedValidationConfig(
-                name=COL_VALIDATION_DECISIONS,
-                pool=list(validator_aliases),
-                max_entities_per_call=validation_max_entities_per_call,
-                excerpt_window_chars=validation_excerpt_window_chars,
-                single_chunk_full_text=validation_single_chunk_full_text,
-                prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
-                drop=True,
-            ),
-            DetectionTransformConfig(
-                name=COL_VALIDATED_ENTITIES,
-                operation=DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
-            ),
-            DetectionTransformConfig(
-                name=COL_SEED_ENTITIES_JSON,
-                operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
-            ),
-            LLMStructuredColumnConfig(
-                name=COL_AUGMENTED_ENTITIES,
-                prompt=_get_augment_prompt(
-                    data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+        columns: list[ColumnConfigT] = []
+        if deterministic_labels:
+            columns.append(
+                DetectionTransformConfig(
+                    name=COL_DETERMINISTIC_ENTITIES,
+                    operation=DetectionTransformOperation.DETECT_DETERMINISTIC_ENTITIES,
+                    deterministic_labels=deterministic_labels,
+                )
+            )
+        if not model_labels:
+            if deterministic_labels:
+                columns.append(
+                    DetectionTransformConfig(
+                        name=COL_DETECTED_ENTITIES,
+                        operation=DetectionTransformOperation.FINALIZE_DETERMINISTIC_ENTITIES,
+                    )
+                )
+                return workflow_model_configs, columns
+            raise ValueError("No entity labels remain for detection.")
+
+        columns.extend(
+            [
+                LLMTextColumnConfig(
+                    name=COL_RAW_DETECTED,
+                    prompt=_jinja(COL_TEXT),
+                    model_alias=detection_alias,
                 ),
-                model_alias=augmenter_alias,
-                output_format=AugmentedEntitiesSchema,
-            ),
-            DetectionTransformConfig(
-                name=COL_MERGED_ENTITIES,
-                operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
-            ),
-            DetectionTransformConfig(
-                name=COL_DETECTED_ENTITIES,
-                operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
-            ),
-        ]
+                DetectionTransformConfig(
+                    name=COL_SEED_ENTITIES,
+                    operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
+                ),
+                DetectionTransformConfig(
+                    name=COL_SEED_VALIDATION_CANDIDATES,
+                    operation=DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
+                ),
+                ChunkedValidationConfig(
+                    name=COL_VALIDATION_DECISIONS,
+                    pool=list(validator_aliases),
+                    max_entities_per_call=validation_max_entities_per_call,
+                    excerpt_window_chars=validation_excerpt_window_chars,
+                    single_chunk_full_text=validation_single_chunk_full_text,
+                    prompt_template=_get_validation_prompt(data_summary=data_summary, labels=model_labels),
+                    drop=True,
+                ),
+                DetectionTransformConfig(
+                    name=COL_VALIDATED_ENTITIES,
+                    operation=DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
+                ),
+                DetectionTransformConfig(
+                    name=COL_SEED_ENTITIES_JSON,
+                    operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
+                    include_deterministic_entities=bool(deterministic_labels),
+                ),
+                LLMStructuredColumnConfig(
+                    name=COL_AUGMENTED_ENTITIES,
+                    prompt=_get_augment_prompt(
+                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                    ),
+                    model_alias=augmenter_alias,
+                    output_format=AugmentedEntitiesSchema,
+                ),
+                DetectionTransformConfig(
+                    name=COL_MERGED_ENTITIES,
+                    operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+                ),
+                DetectionTransformConfig(
+                    name=COL_DETECTED_ENTITIES,
+                    operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+                ),
+            ]
+        )
         return workflow_model_configs, columns
 
     def build_detection_config(
@@ -235,6 +269,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        deterministic_detection: bool = False,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
@@ -250,6 +285,7 @@ class EntityDetectionWorkflow:
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
+            deterministic_detection=deterministic_detection,
             entity_labels=entity_labels,
             data_summary=data_summary,
         )
@@ -270,6 +306,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        deterministic_detection: bool = False,
         entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
@@ -290,6 +327,7 @@ class EntityDetectionWorkflow:
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
+            deterministic_detection=deterministic_detection,
             entity_labels=entity_labels,
             data_summary=data_summary,
         )
@@ -355,6 +393,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        deterministic_detection: bool = False,
         entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
@@ -385,6 +424,7 @@ class EntityDetectionWorkflow:
                 validation_max_entities_per_call=validation_max_entities_per_call,
                 validation_excerpt_window_chars=validation_excerpt_window_chars,
                 validation_single_chunk_full_text=validation_single_chunk_full_text,
+                deterministic_detection=deterministic_detection,
                 entity_labels=entity_labels,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
@@ -455,6 +495,19 @@ def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
     if entity_labels is None:
         return list(DEFAULT_ENTITY_LABELS)
     return list(entity_labels)
+
+
+def _resolve_deterministic_labels(labels: list[str], *, enabled: bool) -> list[str]:
+    if not enabled:
+        return []
+    return [label for label in labels if label in DETERMINISTIC_ENTITY_LABELS]
+
+
+def _resolve_model_detection_labels(labels: list[str], *, deterministic_labels: list[str]) -> list[str]:
+    if not deterministic_labels:
+        return list(labels)
+    excluded = set(deterministic_labels)
+    return [label for label in labels if label not in excluded]
 
 
 def _materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:

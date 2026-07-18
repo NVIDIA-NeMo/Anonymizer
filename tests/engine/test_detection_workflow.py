@@ -17,6 +17,7 @@ from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
+    COL_DETERMINISTIC_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
@@ -474,6 +475,13 @@ def _find_column(columns: list, name: str):
     raise AssertionError(f"Column {name!r} not found in workflow columns: {[getattr(c, 'name', c) for c in columns]}")
 
 
+def _find_model_config(model_configs: list[ModelConfig], alias: str) -> ModelConfig:
+    for config in model_configs:
+        if config.alias == alias:
+            return config
+    raise AssertionError(f"Model config {alias!r} not found")
+
+
 def test_detection_workflow_plugins_are_discoverable() -> None:
     PluginRegistry.reset()
     try:
@@ -523,6 +531,94 @@ def test_detection_workflow_uses_plugin_transform_columns(
         assert isinstance(column, DetectionTransformConfig)
         assert DetectionTransformOperation(column.operation) == operation
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
+
+
+def test_deterministic_detection_routes_remaining_labels_to_gliner(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice emailed alice@example.com"],
+                COL_DETECTED_ENTITIES: [{"entities": []}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice emailed alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        deterministic_detection=True,
+        entity_labels=["email", "first_name", "url"],
+        tag_latent_entities=False,
+    )
+
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    deterministic_col = _find_column(columns, COL_DETERMINISTIC_ENTITIES)
+    assert isinstance(deterministic_col, DetectionTransformConfig)
+    assert DetectionTransformOperation(deterministic_col.operation) == (
+        DetectionTransformOperation.DETECT_DETERMINISTIC_ENTITIES
+    )
+    assert deterministic_col.deterministic_labels == ["email", "url"]
+
+    detector_config = _find_model_config(
+        adapter.run_workflow.call_args.kwargs["model_configs"],
+        stub_detection_model_selection.entity_detector,
+    )
+    assert detector_config.inference_parameters.extra_body is not None
+    assert detector_config.inference_parameters.extra_body["labels"] == ["first_name"]
+
+    validation_col = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert isinstance(validation_col, ChunkedValidationConfig)
+    assert "- first_name:" in validation_col.prompt_template
+    assert "- email:" not in validation_col.prompt_template
+    assert "- url:" not in validation_col.prompt_template
+
+    apply_col = _find_column(columns, COL_SEED_ENTITIES_JSON)
+    assert isinstance(apply_col, DetectionTransformConfig)
+    assert apply_col.include_deterministic_entities is True
+    assert COL_DETERMINISTIC_ENTITIES in apply_col.required_columns
+
+
+def test_deterministic_only_detection_skips_gliner_columns(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Email alice@example.com"],
+                COL_DETECTED_ENTITIES: [{"entities": []}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Email alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        deterministic_detection=True,
+        entity_labels=["email"],
+        tag_latent_entities=False,
+    )
+
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    assert [column.name for column in columns] == [COL_DETERMINISTIC_ENTITIES, COL_DETECTED_ENTITIES]
+    assert [DetectionTransformOperation(column.operation) for column in columns] == [
+        DetectionTransformOperation.DETECT_DETERMINISTIC_ENTITIES,
+        DetectionTransformOperation.FINALIZE_DETERMINISTIC_ENTITIES,
+    ]
+    assert adapter.run_workflow.call_args.kwargs["model_configs"] == stub_detector_model_configs
 
 
 def test_detection_workflow_columns_are_json_serializable(

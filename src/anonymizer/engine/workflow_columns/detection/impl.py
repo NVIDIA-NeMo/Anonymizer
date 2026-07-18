@@ -22,7 +22,9 @@ from anonymizer.engine.detection.chunked_validation import (
 from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
+    detect_deterministic_entities_with_labels,
     enrich_validation_decisions,
+    finalize_deterministic_entities,
     merge_and_build_candidates,
     parse_detected_entities,
     prepare_validation_inputs,
@@ -33,13 +35,26 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformOperation,
 )
 
-_TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
-    DetectionTransformOperation.PARSE_DETECTED_ENTITIES: parse_detected_entities,
-    DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
-    DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
-    DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
-    DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: merge_and_build_candidates,
-    DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: apply_validation_and_finalize,
+_TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any], DetectionTransformConfig], dict[str, Any]]] = {
+    DetectionTransformOperation.DETECT_DETERMINISTIC_ENTITIES: (
+        lambda data, config: detect_deterministic_entities_with_labels(
+            data,
+            labels=config.deterministic_labels,
+        )
+    ),
+    DetectionTransformOperation.PARSE_DETECTED_ENTITIES: lambda data, _config: parse_detected_entities(data),
+    DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: lambda data, _config: prepare_validation_inputs(data),
+    DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: lambda data, _config: enrich_validation_decisions(data),
+    DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: lambda data, _config: (
+        apply_validation_to_seed_entities(data)
+    ),
+    DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: lambda data, _config: merge_and_build_candidates(data),
+    DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: lambda data, _config: apply_validation_and_finalize(
+        data
+    ),
+    DetectionTransformOperation.FINALIZE_DETERMINISTIC_ENTITIES: lambda data, _config: finalize_deterministic_entities(
+        data
+    ),
 }
 
 
@@ -100,7 +115,7 @@ class _AsyncBridgedModelFacade:
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
-        return _TRANSFORMS[operation](data)
+        return _TRANSFORMS[operation](data, self.config)
 
 
 class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidationConfig]):

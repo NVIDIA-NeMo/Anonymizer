@@ -14,6 +14,7 @@ COL_TEXT = "__nemo_anonymizer_text_input__"
 
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"
+COL_DETERMINISTIC_ENTITIES = "_deterministic_entities"
 
 # Step 2: parse_detected_entities
 COL_SEED_ENTITIES = "_seed_entities"

@@ -133,6 +133,15 @@ def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: Anony
     assert detection_wf.run.call_args.kwargs["entity_labels"] == ["server_name"]
 
 
+def test_run_passes_deterministic_detection_to_detection_workflow(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(detect={"deterministic_detection": True}, replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+
+    anonymizer.run(config=config, data=stub_input)
+
+    assert detection_wf.run.call_args.kwargs["deterministic_detection"] is True
+
+
 def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
     yaml_path = tmp_path / "bad.yaml"
     yaml_path.write_text("not_providers: []")

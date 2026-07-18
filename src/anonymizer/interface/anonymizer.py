@@ -257,6 +257,7 @@ class Anonymizer:
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+            deterministic_detection=config.detect.deterministic_detection,
             entity_labels=config.detect.entity_labels,
             data_summary=data.data_summary,
         )
@@ -287,6 +288,7 @@ class Anonymizer:
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+            deterministic_detection=config.detect.deterministic_detection,
             entity_labels=config.detect.entity_labels,
             data_summary=data_summary,
             job_index=job_index,
@@ -549,6 +551,7 @@ class Anonymizer:
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+            deterministic_detection=config.detect.deterministic_detection,
             entity_labels=config.detect.entity_labels,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,

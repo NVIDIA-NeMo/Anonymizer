@@ -19,6 +19,7 @@ from data_designer.config import custom_column_generator
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETERMINISTIC_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
@@ -35,6 +36,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
 )
+from anonymizer.engine.detection.deterministic import DETERMINISTIC_ENTITY_LABELS, detect_deterministic_entities
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
@@ -44,6 +46,7 @@ from anonymizer.engine.detection.postprocess import (
     expand_entity_occurrences,
     get_tag_notation,
     parse_raw_entities,
+    resolve_overlaps,
 )
 from anonymizer.engine.schemas import (
     EntitiesSchema,
@@ -52,6 +55,24 @@ from anonymizer.engine.schemas import (
     ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
 )
+
+
+@custom_column_generator(required_columns=[COL_TEXT])
+def detect_deterministic_entities_column(row: dict[str, Any]) -> dict[str, Any]:
+    """Detect local high-confidence structured entities."""
+    return detect_deterministic_entities_with_labels(row, labels=DETERMINISTIC_ENTITY_LABELS)
+
+
+def detect_deterministic_entities_with_labels(
+    row: dict[str, Any], *, labels: list[str] | set[str] | frozenset[str]
+) -> dict[str, Any]:
+    """Detect deterministic spans into ``COL_DETERMINISTIC_ENTITIES``."""
+    text = str(row.get(COL_TEXT, ""))
+    spans = detect_deterministic_entities(text, labels=labels)
+    row[COL_DETERMINISTIC_ENTITIES] = EntitiesSchema(entities=[span.as_dict() for span in spans]).model_dump(
+        mode="json"
+    )
+    return row
 
 
 @custom_column_generator(
@@ -110,6 +131,8 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
         entities=seed_spans,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
+    deterministic_spans = _parse_entity_spans(row.get(COL_DETERMINISTIC_ENTITIES, {}))
+    validated_seed = resolve_overlaps([*validated_seed, *deterministic_spans])
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
@@ -177,6 +200,18 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
         mode="json"
     )
     row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=expanded)
+    return row
+
+
+@custom_column_generator(required_columns=[COL_TEXT, COL_DETERMINISTIC_ENTITIES], side_effect_columns=[COL_TAGGED_TEXT])
+def finalize_deterministic_entities(row: dict[str, Any]) -> dict[str, Any]:
+    """Produce final detection outputs when the local pole covers all labels."""
+    text = str(row.get(COL_TEXT, ""))
+    entities = resolve_overlaps(_parse_entity_spans(row.get(COL_DETERMINISTIC_ENTITIES, {})))
+    row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in entities]).model_dump(
+        mode="json"
+    )
+    row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=entities)
     return row
 
 

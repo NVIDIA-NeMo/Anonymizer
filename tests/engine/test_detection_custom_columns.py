@@ -16,11 +16,13 @@ from typing import Any
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETERMINISTIC_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
+    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATED_SEED_ENTITIES,
@@ -30,7 +32,9 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.custom_columns import (
     _parse_entity_spans,
     apply_validation_and_finalize,
+    apply_validation_to_seed_entities,
     enrich_validation_decisions,
+    finalize_deterministic_entities,
     merge_and_build_candidates,
     parse_detected_entities,
 )
@@ -151,3 +155,79 @@ def test_apply_validation_and_finalize_handles_malformed_merged_entities() -> No
 
     result = apply_validation_and_finalize(row)
     assert result[COL_DETECTED_ENTITIES] == {"entities": []}
+
+
+def test_apply_validation_to_seed_entities_merges_deterministic_spans() -> None:
+    row = {
+        COL_TEXT: "Alice emailed alice@example.com",
+        COL_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 0.9,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "decision": "keep",
+                    "proposed_label": "",
+                    "reason": "name",
+                }
+            ]
+        },
+        COL_DETERMINISTIC_ENTITIES: {
+            "entities": [
+                {
+                    "id": "email_14_31",
+                    "value": "alice@example.com",
+                    "label": "email",
+                    "start_position": 14,
+                    "end_position": 31,
+                    "score": 1.0,
+                    "source": "deterministic",
+                }
+            ]
+        },
+    }
+
+    result = apply_validation_to_seed_entities(row)
+
+    entities = result[COL_VALIDATED_SEED_ENTITIES]["entities"]
+    assert [(entity["label"], entity["value"], entity["source"]) for entity in entities] == [
+        ("first_name", "Alice", "detector"),
+        ("email", "alice@example.com", "deterministic"),
+    ]
+
+
+def test_finalize_deterministic_entities_writes_detection_outputs() -> None:
+    row = {
+        COL_TEXT: "Email alice@example.com",
+        COL_DETERMINISTIC_ENTITIES: {
+            "entities": [
+                {
+                    "id": "email_6_23",
+                    "value": "alice@example.com",
+                    "label": "email",
+                    "start_position": 6,
+                    "end_position": 23,
+                    "score": 1.0,
+                    "source": "deterministic",
+                }
+            ]
+        },
+    }
+
+    result = finalize_deterministic_entities(row)
+
+    assert result[COL_DETECTED_ENTITIES]["entities"][0]["label"] == "email"
+    assert "<email>alice@example.com</email>" in result[COL_TAGGED_TEXT]

@@ -55,8 +55,8 @@ def build_detection_builder(
                 model names the runtime provisions, so its provider wiring can map them.
             ``provider_names`` (list[str]): provider names referenced by the YAML; placeholder
                 ``ModelProvider``s are created for them (the runtime supplies the real ones).
-            ``detect`` (dict): ``gliner_threshold`` (float) and optional ``entity_labels``
-                (list[str] | None).
+            ``detect`` (dict): ``gliner_threshold`` (float), optional ``entity_labels``
+                (list[str] | None), and optional ``deterministic_detection`` (bool).
             ``data_summary`` (str | None): optional dataset description for prompts.
         job_index: index of this worker's ordered partition of the seed.
         num_jobs: total number of partitions the seed is split across.
@@ -76,6 +76,8 @@ def build_detection_builder(
     detect_kwargs: dict[str, Any] = {"gliner_threshold": detect["gliner_threshold"]}
     if detect.get("entity_labels") is not None:
         detect_kwargs["entity_labels"] = detect["entity_labels"]
+    if "deterministic_detection" in detect:
+        detect_kwargs["deterministic_detection"] = detect["deterministic_detection"]
     config = AnonymizerConfig(detect=Detect(**detect_kwargs), replace=Redact())
 
     return anonymizer.export_detection_builder_for_seed(

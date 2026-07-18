@@ -11,6 +11,7 @@ from pydantic import Field
 
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
+    COL_DETERMINISTIC_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
@@ -30,19 +31,24 @@ from anonymizer.engine.constants import (
 
 
 class DetectionTransformOperation(str, Enum):
+    DETECT_DETERMINISTIC_ENTITIES = "detect_deterministic_entities"
     PARSE_DETECTED_ENTITIES = "parse_detected_entities"
     PREPARE_VALIDATION_INPUTS = "prepare_validation_inputs"
     ENRICH_VALIDATION_DECISIONS = "enrich_validation_decisions"
     APPLY_VALIDATION_TO_SEED_ENTITIES = "apply_validation_to_seed_entities"
     MERGE_AND_BUILD_CANDIDATES = "merge_and_build_candidates"
     APPLY_VALIDATION_AND_FINALIZE = "apply_validation_and_finalize"
+    FINALIZE_DETERMINISTIC_ENTITIES = "finalize_deterministic_entities"
 
 
 class DetectionTransformConfig(SingleColumnConfig):
     column_type: Literal["anonymizer-detection-transform"] = "anonymizer-detection-transform"
     operation: DetectionTransformOperation
+    deterministic_labels: list[str] = Field(default_factory=list)
+    include_deterministic_entities: bool = False
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
+        DetectionTransformOperation.DETECT_DETERMINISTIC_ENTITIES: [COL_TEXT],
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TEXT, COL_RAW_DETECTED],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [
@@ -64,8 +70,10 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_MERGED_ENTITIES,
             COL_VALIDATED_ENTITIES,
         ],
+        DetectionTransformOperation.FINALIZE_DETERMINISTIC_ENTITIES: [COL_TEXT, COL_DETERMINISTIC_ENTITIES],
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
+        DetectionTransformOperation.DETECT_DETERMINISTIC_ENTITIES: [],
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TAG_NOTATION],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_SEED_TAGGED_TEXT],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [],
@@ -79,6 +87,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_VALIDATION_CANDIDATES,
         ],
         DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: [COL_TAGGED_TEXT],
+        DetectionTransformOperation.FINALIZE_DETERMINISTIC_ENTITIES: [COL_TAGGED_TEXT],
     }
 
     @staticmethod
@@ -87,7 +96,13 @@ class DetectionTransformConfig(SingleColumnConfig):
 
     @property
     def required_columns(self) -> list[str]:
-        return self._REQUIRED_COLUMNS[DetectionTransformOperation(self.operation)]
+        columns = list(self._REQUIRED_COLUMNS[DetectionTransformOperation(self.operation)])
+        if (
+            DetectionTransformOperation(self.operation) == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES
+            and self.include_deterministic_entities
+        ):
+            columns.append(COL_DETERMINISTIC_ENTITIES)
+        return columns
 
     @property
     def side_effect_columns(self) -> list[str]:
