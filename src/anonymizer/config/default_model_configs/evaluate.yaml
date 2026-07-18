@@ -7,7 +7,7 @@
 
 selected_models:
   # --- Shared ---
-  entity_coverage_judge: nemotron-ultra
+  entity_coverage_judge: nemotron-super
   detection_validity_judge: gpt-oss-120b
 
   # --- Replace evaluation ---
