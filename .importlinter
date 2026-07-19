@@ -1,0 +1,37 @@
+[importlinter]
+root_package = anonymizer
+
+# The NDD adapter layer is a leaf boundary: it must never import the engine
+# sub-workflows that call it.
+[importlinter:contract:ndd-adapter-is-a-leaf]
+name = engine.ndd must not import engine sub-workflows
+type = forbidden
+source_modules =
+    anonymizer.engine.ndd
+forbidden_modules =
+    anonymizer.engine.detection
+    anonymizer.engine.replace
+    anonymizer.engine.rewrite
+    anonymizer.engine.evaluation
+    anonymizer.interface.anonymizer
+
+# User-facing config must stay import-free of the engine and interface.
+[importlinter:contract:config-is-lowest-layer]
+name = config imports neither engine nor interface
+type = forbidden
+source_modules =
+    anonymizer.config
+forbidden_modules =
+    anonymizer.engine
+    anonymizer.interface
+
+# Display package layering (active after Group A): the layout module may use
+# the coercion/span modules, never the reverse.
+[importlinter:contract:display-layering]
+name = display internals do not import the layout module
+type = forbidden
+source_modules =
+    anonymizer.interface.display.payload_coercion
+    anonymizer.interface.display.replaced_spans
+forbidden_modules =
+    anonymizer.interface.display.record_html
