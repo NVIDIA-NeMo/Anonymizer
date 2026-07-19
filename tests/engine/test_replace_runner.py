@@ -224,6 +224,55 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         assert bool(result.dataframe[col].iloc[0]) is True
 
 
+def test_evaluate_threads_entity_labels_and_data_summary_into_coverage_prompt(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection: EvaluateModelSelection,
+) -> None:
+    """Replace-mode ``evaluate()`` must forward ``entity_labels`` and ``data_summary``
+    all the way into the coverage judge's prompt (the same context the rewrite path
+    supplies), so the judge scopes and interprets leaks against the run's taxonomy.
+    """
+    saved_trace = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_FINAL_ENTITIES: [{"entities": []}],
+            COL_REPLACED_TEXT: ["Maya works at NovaCorp"],
+            COL_REPLACEMENT_MAP: [{"replacements": []}],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}],
+        }
+    )
+
+    def fake_run_workflow(df: pd.DataFrame, *, columns, **_: object) -> WorkflowRunResult:
+        out = df.copy()
+        for column in columns:
+            out[column.name] = [{"leaked_entities": []}] * len(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[])
+
+    def fake_attach_ids(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        out[RECORD_ID_COLUMN] = [f"id-{i}" for i in range(len(out))]
+        return out
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = fake_run_workflow
+    adapter._attach_record_ids.side_effect = fake_attach_ids
+
+    runner = ReplacementWorkflow(adapter=adapter)
+    runner.evaluate(
+        saved_trace,
+        replace_method=Redact(),
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        entity_labels=["first_name", "organization"],
+        data_summary="Employee HR records.",
+    )
+
+    call_columns = adapter.run_workflow.call_args.kwargs["columns"]
+    coverage_col = next(c for c in call_columns if c.name == COL_ENTITY_COVERAGE_JUDGE)
+    assert "first_name, organization" in coverage_col.prompt
+    assert "Employee HR records." in coverage_col.prompt
+
+
 def test_evaluate_preserves_all_rows_when_llm_drops_some(
     stub_model_configs: list[ModelConfig],
     stub_evaluate_model_selection: EvaluateModelSelection,

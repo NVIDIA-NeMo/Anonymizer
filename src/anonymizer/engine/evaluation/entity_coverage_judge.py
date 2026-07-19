@@ -17,9 +17,7 @@ from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
-    COL_ENTITY_COVERAGE_CANDIDATE_TOTAL,
     COL_ENTITY_COVERAGE_JUDGE,
-    COL_ENTITY_COVERAGE_TOTAL,
     COL_LEAKED_ENTITIES,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
@@ -127,7 +125,7 @@ def _data_summary_block(data_summary: str | None) -> str:
 
 
 def _coverage_prompt(
-    *, entity_labels: list[str] | None, strict_entity_protection: bool, data_summary: str | None = None, gi
+    *, entity_labels: list[str] | None, strict_entity_protection: bool, data_summary: str | None = None
 ) -> str:
     entity_scope_block = _entity_type_scope_block(entity_labels)
     strict_block = _strict_protection_block(strict_entity_protection)
@@ -277,11 +275,6 @@ def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
     return [e.model_dump() for e in parsed.leaked_entities]
 
 
-def _parse_judge_entities(raw: object) -> list[dict[str, object]] | None:
-    """Compatibility alias for experiment notebooks parsing raw judge output."""
-    return _parse_leaked_entities(raw)
-
-
 def _parse_json_object(raw: str) -> dict[str, object] | None:
     """Parse a JSON object, tolerating fences or brief surrounding model text."""
     try:
@@ -329,6 +322,18 @@ def _is_concatenation_of_whole_values(leaked_tokens: list[str], final_token_list
     return consume(0)
 
 
+def _core_token_sequence(tokens: list[str]) -> list[str]:
+    """Tokens in original order with grammatical stopwords (``_COVERAGE_IGNORE_TOKENS``) removed."""
+    return [token for token in tokens if token not in _COVERAGE_IGNORE_TOKENS]
+
+
+def _is_contiguous_sublist(needle: list[str], haystack: list[str]) -> bool:
+    """True when ``needle`` appears as a contiguous, in-order run within ``haystack``."""
+    if not needle or len(needle) > len(haystack):
+        return False
+    return any(haystack[i : i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1))
+
+
 def _is_leaked_value_covered(leaked_value: object, final_values: list[str]) -> bool:
     """Return True when a judge-reported leak is already covered by final entities.
 
@@ -337,15 +342,21 @@ def _is_leaked_value_covered(leaked_value: object, final_values: list[str]) -> b
     not wrongly suppressed (e.g. ``"John Smith"`` is NOT covered by ``"John Doe"`` +
     ``"Jane Smith"``). A leak is covered when either:
 
-    - **subspan** — its (core) tokens are a subset of a *single* final entity's tokens
-      (``"Mstr"`` ⊂ ``"Mstr Marzella"``, ``"44"`` ⊂ ``"44 Dunsfold Drive"``), or
+    - **subspan** — its (stopword-stripped) tokens appear as a *contiguous, in-order run*
+      within a single final entity's tokens (``"Mstr"`` in ``"Mstr Marzella"``,
+      ``"White House"`` in ``"White House Road"``). Contiguity and order are required —
+      shared tokens alone do not qualify — so ``"Ann Lee"`` is NOT covered by
+      ``"Lee Ann Boulevard"``.
     - **composite** — its tokens are a concatenation of *whole* final-entity values
       (``"Nawabganj - 382210"`` == ``"Nawabganj"`` + ``"382210"``).
 
-    Matching is on whole tokens, so a leak only matches a final token it equals
-    (``"m"`` is not covered by ``"Mstr Marzella"``: ``"m"`` != ``"mstr"``). Grammatical
-    stopwords (see ``_COVERAGE_IGNORE_TOKENS``) are dropped from the leak's core so
-    article/preposition noise does not block a subspan match.
+    Matching is whole-token (``"m"`` != ``"mstr"``) and **value-only** — labels are not
+    compared. Known limitation: a single-token leak is covered whenever that token equals
+    a whole token in ANY final entity, regardless of type — e.g. a surname ``"Green"`` is
+    treated as covered by a detected street ``"Bowling Green Road"``. This mirrors the
+    intended "bare username covered by a file path that contains it" behavior; fixing it
+    would require label-aware matching, which is deliberately avoided (judge labels are
+    free-form), so it is accepted as a tradeoff.
     """
     leaked_tokens = _coverage_token_list(leaked_value)
     if not leaked_tokens:
@@ -359,9 +370,12 @@ def _is_leaked_value_covered(leaked_value: object, final_values: list[str]) -> b
     if any(leaked_tokens == final_tokens for final_tokens in final_token_lists):
         return True
 
-    # Subspan of a single final entity.
-    leaked_core = set(leaked_tokens) - _COVERAGE_IGNORE_TOKENS
-    if leaked_core and any(leaked_core <= set(final_tokens) for final_tokens in final_token_lists):
+    # Subspan: the leak's core tokens appear as a contiguous, in-order run within a single
+    # final entity (adjacency + order required, not merely a shared set of tokens).
+    leaked_core = _core_token_sequence(leaked_tokens)
+    if leaked_core and any(
+        _is_contiguous_sublist(leaked_core, _core_token_sequence(final_tokens)) for final_tokens in final_token_lists
+    ):
         return True
 
     # Composite: concatenation of whole final-entity values.
@@ -415,18 +429,6 @@ def _deduplicate_judge_entities(entities: list[dict[str, object]]) -> list[dict[
         seen.add(key)
         deduplicated.append(entity)
     return deduplicated
-
-
-def _compare_judge_to_final(
-    judge_entities: list[dict[str, object]],
-    final_entities: object,
-) -> tuple[float, list[dict[str, object]], int]:
-    """Return independent-judge recall, missed entities, and judge total."""
-    deduplicated = _deduplicate_judge_entities(judge_entities)
-    leaked = _filter_covered_leaked_entities(deduplicated, final_entities)
-    total = len(deduplicated)
-    coverage = 1.0 if total == 0 else (total - len(leaked)) / total
-    return coverage, leaked, total
 
 
 # ---------------------------------------------------------------------------
@@ -507,8 +509,6 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
         coverage_vals: list[float | None] = []
         leaked_lists: list[list[dict]] = []
-        total_vals: list[int | None] = []
-        candidate_total_vals: list[int | None] = []
 
         for idx in out.index:
             raw = out[self.RAW_COL].loc[idx] if self.RAW_COL in out.columns else None
@@ -516,12 +516,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             if leaked is None:
                 coverage_vals.append(None)
                 leaked_lists.append([])
-                total_vals.append(None)
-                candidate_total_vals.append(None)
             else:
                 leaked = _filter_nonliteral_entities(leaked, out[COL_TEXT].loc[idx])
                 leaked = _deduplicate_judge_entities(leaked)
-                candidate_total_vals.append(len(leaked))
                 final_entities = out[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx]
                 leaked = _filter_covered_leaked_entities(leaked, final_entities)
                 n_final = len(final_entities) if isinstance(final_entities, list) else 0
@@ -529,12 +526,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 coverage = 1.0 if total == 0 else n_final / total
                 coverage_vals.append(coverage)
                 leaked_lists.append(leaked)
-                total_vals.append(total)
 
         out[self.VALID_COL] = coverage_vals
         out[self.INVALID_COL] = leaked_lists
-        out[COL_ENTITY_COVERAGE_TOTAL] = total_vals
-        out[COL_ENTITY_COVERAGE_CANDIDATE_TOTAL] = candidate_total_vals
         return out
 
     def run_non_critical(
@@ -559,13 +553,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 preview_num_records=preview_num_records,
             )
             out = dataframe.copy()
-            for col in (
-                self.RAW_COL,
-                self.VALID_COL,
-                self.INVALID_COL,
-                COL_ENTITY_COVERAGE_TOTAL,
-                COL_ENTITY_COVERAGE_CANDIDATE_TOTAL,
-            ):
+            for col in (self.RAW_COL, self.VALID_COL, self.INVALID_COL):
                 if col in result.dataframe.columns:
                     out[col] = result.dataframe[col].values
             return out, result.failed_records
@@ -574,8 +562,6 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]
-            out[COL_ENTITY_COVERAGE_TOTAL] = None
-            out[COL_ENTITY_COVERAGE_CANDIDATE_TOTAL] = None
             return out, []
 
     def evaluate(

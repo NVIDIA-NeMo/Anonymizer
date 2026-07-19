@@ -487,7 +487,7 @@ class Anonymizer:
         # it on the result.
         internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
         if is_rewrite:
-            logger.info(LOG_INDENT + "Running rewrite judges")
+            logger.info(LOG_INDENT + "⚖️ Running rewrite judges")
             stage_start = time.perf_counter()
             rewrite_result = self._rewrite_runner.evaluate(
                 internal_df,
@@ -520,7 +520,7 @@ class Anonymizer:
                 strict_entity_protection=strict_entity_protection,
                 data_summary=data_summary,
             )
-            logger.info(LOG_INDENT + "Running entity coverage")
+            logger.info(LOG_INDENT + "🔎 Running entity coverage")
             stage_start = time.perf_counter()
             judged_df, coverage_failed = coverage_wf.run_non_critical(
                 rewrite_result.dataframe,
@@ -553,7 +553,7 @@ class Anonymizer:
                 data_summary=data_summary,
             )
         else:
-            logger.info(LOG_INDENT + "Running replace judges")
+            logger.info(LOG_INDENT + "⚖️ Running replace judges")
             stage_start = time.perf_counter()
             replace_result = self._replace_runner.evaluate(
                 internal_df,

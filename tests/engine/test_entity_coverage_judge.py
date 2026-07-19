@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
+from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.evaluation.entity_coverage_judge import (
+    EntityCoverageWorkflow,
     _coverage_prompt,
     _filter_covered_leaked_entities,
     _is_leaked_value_covered,
@@ -72,6 +76,7 @@ def test_filter_covered_leaked_entities_removes_subspans_and_composites() -> Non
         ("Mstr", ["Mstr Marzella"]),  # subspan of a single final entity
         ("the Nawabganj", ["Nawabganj"]),  # grammatical stopword ignored
         ("44", ["44 Dunsfold Drive"]),  # short numeric subspan
+        ("White House", ["White House Road"]),  # contiguous, in-order multi-token subspan
         ("Nawabganj - 382210", ["Nawabganj", "382210"]),  # composite of whole finals
         ("Nawabganj", ["Nawabganj", "382210"]),  # exact match against one final
         ("José", ["José García"]),  # accented subspan (Unicode tokenizer)
@@ -87,6 +92,11 @@ def test_is_leaked_value_covered_true(leaked_value: str, final_values: list[str]
     [
         # Cross-entity: pieces come from unrelated final entities -> a real, distinct leak.
         ("John Smith", ["John Doe", "Jane Smith"]),
+        # Reverse / non-contiguous order within a SINGLE final entity: shared tokens are
+        # NOT enough — order and adjacency are required, so a reversed span is not covered.
+        ("John Doe", ["Doe John"]),
+        ("Ann Lee", ["Lee Ann Boulevard"]),
+        ("John Doe", ["Doe John Memorial Highway"]),
         # Content descriptor is NOT ignored: a named event is a distinct leak.
         ("Davos Summit", ["Davos"]),
         ("Chihuahuan Desert Festival", ["Chihuahuan Desert"]),
@@ -163,3 +173,35 @@ def test_coverage_prompt_requires_systematic_structured_text_scan() -> None:
     assert "Tables, bullets, forms" in prompt
     assert "Short or single-token values" in prompt
     assert "Honorifics attached to person names" in prompt
+
+
+def _stub_evaluate_selection() -> EvaluateModelSelection:
+    return EvaluateModelSelection(
+        entity_coverage_judge="nemotron-super",
+        detection_validity_judge="gpt-oss-120b",
+        replace_type_fidelity_judge="gpt-oss-120b",
+        replace_relational_consistency_judge="gpt-oss-120b",
+        replace_attribute_fidelity_judge="gpt-oss-120b",
+        rewrite_judge="nemotron-30b-thinking",
+    )
+
+
+def test_column_config_builds_prompt_and_resolves_model() -> None:
+    """Smoke-guard the real prompt-build path: a broken ``_coverage_prompt`` signature
+    (e.g. a stray required parameter) must fail loudly here, since ``run_non_critical``
+    swallows exceptions downstream and would otherwise mask it as ``entity_coverage=None``.
+    """
+    workflow = EntityCoverageWorkflow(
+        adapter=Mock(),
+        entity_labels=["sex", "title"],
+        strict_entity_protection=True,
+        data_summary="Customer support transcripts.",
+    )
+
+    config = workflow.column_config(_stub_evaluate_selection())
+
+    assert config.model_alias == "nemotron-super"
+    # Prompt built without error and carries the instance-specific context.
+    assert isinstance(config.prompt, str) and config.prompt
+    assert "Customer support transcripts." in config.prompt  # data_summary threaded in
+    assert "sex, title" in config.prompt  # entity_labels scope threaded in

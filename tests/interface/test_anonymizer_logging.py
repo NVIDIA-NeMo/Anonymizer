@@ -183,7 +183,7 @@ def test_evaluate_replace_logs_stages(stub_input: AnonymizerInput, caplog: pytes
 
     messages = caplog.text
     assert "🧪 Running Redact evaluation on 2 records" in messages
-    assert "Running replace judges" in messages
+    assert "⚖️ Running replace judges" in messages
     assert "📋 Replace judges complete" in messages
     assert re.search(r"Replace judges complete.*\[\d+\.\ds\]", messages), "Replace evaluation timing not found"
     assert "🎉 Evaluation complete — 2 records processed" in messages
@@ -207,10 +207,10 @@ def test_evaluate_rewrite_logs_stages(stub_input: AnonymizerInput, caplog: pytes
 
     messages = caplog.text
     assert "🧪 Running rewrite evaluation on 2 records" in messages
-    assert "Running rewrite judges" in messages
+    assert "⚖️ Running rewrite judges" in messages
     assert "📋 Rewrite judges complete" in messages
     assert re.search(r"Rewrite judges complete.*\[\d+\.\ds\]", messages), "Rewrite evaluation timing not found"
-    assert "Running entity coverage" in messages
+    assert "🔎 Running entity coverage" in messages
     assert "📋 Entity coverage complete" in messages
     assert re.search(r"Entity coverage complete.*\[\d+\.\ds\]", messages), "Coverage timing not found"
     assert "🎉 Evaluation complete — 2 records processed" in messages

@@ -907,6 +907,40 @@ def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInpu
     assert COL_DETECTION_VALID in evaluated.dataframe.columns
 
 
+def test_evaluate_config_detection_validity_defaults_off() -> None:
+    """Goal 2: detection-validity scoring is opt-in — the config default must be False
+    so a plain ``EvaluateConfig()`` never triggers the extra detection judge."""
+    assert EvaluateConfig().compute_detection_validity is False
+
+
+def test_evaluate_defaults_skip_detection_validity_in_runner_call(stub_input: AnonymizerInput) -> None:
+    """With the default ``EvaluateConfig()``, evaluate() must forward
+    ``compute_detection_validity=False`` to the rewrite runner (the judge is not run)."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [None],
+            COL_ENTITIES_BY_VALUE: [{}],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    anonymizer.evaluate(run_result, config=EvaluateConfig())
+
+    assert rewrite_runner.evaluate.call_args.kwargs["compute_detection_validity"] is False
+
+
 def test_evaluate_rewrite_raises_without_rewrite_config() -> None:
     """evaluate() must raise ValueError when result has no rewrite_config and no replace_method."""
     anonymizer, _, _, _ = _make_anonymizer()
