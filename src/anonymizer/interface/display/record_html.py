@@ -1,28 +1,24 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+"""Owns the HTML layouts and templates for rendering one anonymizer result record (replace + rewrite modes)."""
 
 from __future__ import annotations
 
 import html
-import json
 import logging
-import re
-from dataclasses import dataclass
 
 import pandas as pd
 
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
-    COL_ATTRIBUTE_FIDELITY_JUDGE,
     COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
-    COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
-    COL_RELATIONAL_CONSISTENCY_JUDGE,
     COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
@@ -30,13 +26,32 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
 )
 from anonymizer.engine.schemas import (
-    EntitiesByValueSchema,
     EntitiesSchema,
-    EntityReplacementMapSchema,
     EntitySchema,
 )
+from anonymizer.interface.display.payload_coercion import (
+    count_detected_entity_label_pairs,
+    count_replacement_triples,
+    extract_all_attribute_entries,
+    extract_all_relations,
+    extract_judge_scores,
+    normalize_attribute_entries,
+    normalize_disposition,
+    normalize_invalid_entities,
+    normalize_relations,
+    normalize_replacement_map,
+)
+from anonymizer.interface.display.replaced_spans import (
+    build_original_entities_from_map,
+    build_replaced_entities,
+    build_replaced_entities_from_map,
+)
+
+__all__ = ["render_record_html"]
+
 
 logger = logging.getLogger(__name__)
+
 
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
@@ -53,6 +68,7 @@ ENTITY_COLORS: list[str] = [
     "#fee2e2",  # red
 ]
 
+
 LABEL_BORDER_COLORS: list[str] = [
     "#3b82f6",
     "#22c55e",
@@ -67,14 +83,6 @@ LABEL_BORDER_COLORS: list[str] = [
     "#a855f7",
     "#ef4444",
 ]
-
-
-@dataclass(frozen=True)
-class _SyntheticLookupMaps:
-    by_value_label: dict[tuple[str, str], str]
-    by_value: dict[str, str]
-    by_value_label_ci: dict[tuple[str, str], str]
-    by_value_ci: dict[str, str]
 
 
 def _color_for_label(label: str) -> tuple[str, str]:
@@ -101,16 +109,16 @@ def _render_replace_html(row: pd.Series, *, text_col: str, record_index: int | N
     text = str(row.get(text_col, ""))
     replaced_text = str(row.get(f"{text_col}_replaced", ""))
     entities = _resolve_display_entities(row)
-    replacement_map = _normalize_replacement_map(row.get(COL_REPLACEMENT_MAP, {}))
+    replacement_map = normalize_replacement_map(row.get(COL_REPLACEMENT_MAP, {}))
 
     if not entities and replacement_map:
-        entities = _build_original_entities_from_map(replacement_map, text)
+        entities = build_original_entities_from_map(replacement_map, text)
 
     original_html = _render_highlighted_text(text, entities)
 
-    replaced_entities = _build_replaced_entities(entities, replacement_map, text, replaced_text)
+    replaced_entities = build_replaced_entities(entities, replacement_map, text, replaced_text)
     if not replaced_entities and replacement_map:
-        replaced_entities = _build_replaced_entities_from_map(replacement_map, replaced_text)
+        replaced_entities = build_replaced_entities_from_map(replacement_map, replaced_text)
     replaced_html = _render_highlighted_text(replaced_text, replaced_entities)
     table_html = _render_replacement_table(replacement_map)
     detection_judge_html = _render_detection_judge_section(row)
@@ -192,158 +200,6 @@ def _render_highlighted_text(text: str, entities: list[EntitySchema]) -> str:
     return "".join(parts)
 
 
-def _build_replaced_entities(
-    original_entities: list[EntitySchema],
-    replacement_map: list[dict[str, str]],
-    original_text: str,
-    replaced_text: str,
-) -> list[EntitySchema]:
-    """Compute entity positions in the replaced text by locating synthetic values directly.
-
-    Instead of replaying cursor arithmetic (which drifts when entity values
-    differ in case from the replacement map keys), we resolve each entity's
-    synthetic value and find it in the replaced text by scanning forward.
-    """
-    by_value_label: dict[tuple[str, str], str] = {}
-    by_value: dict[str, str] = {}
-    by_value_label_ci: dict[tuple[str, str], str] = {}
-    by_value_ci: dict[str, str] = {}
-    for entry in replacement_map:
-        orig = entry.get("original", "")
-        label = entry.get("label", "")
-        synth = entry.get("synthetic", "")
-        by_value_label[(orig, label)] = synth
-        by_value[orig] = synth
-        by_value_label_ci[(orig.lower(), label)] = synth
-        by_value_ci[orig.lower()] = synth
-    lookups = _SyntheticLookupMaps(
-        by_value_label=by_value_label,
-        by_value=by_value,
-        by_value_label_ci=by_value_label_ci,
-        by_value_ci=by_value_ci,
-    )
-
-    sorted_entities = sorted(original_entities, key=lambda e: (e.start_position, e.end_position))
-    replaced_entities: list[EntitySchema] = []
-    original_cursor = 0
-    search_from = 0
-
-    for entity in sorted_entities:
-        start = entity.start_position
-        end = entity.end_position
-        value = entity.value
-        label = entity.label
-        if start < original_cursor or end <= start or end > len(original_text):
-            continue
-
-        synthetic = _resolve_synthetic(value, label, lookups)
-        original_span = original_text[start:end]
-
-        pos = replaced_text.find(synthetic, search_from) if synthetic else -1
-        if pos < 0 and synthetic != original_span:
-            pos = replaced_text.find(original_span, search_from)
-            if pos >= 0:
-                synthetic = original_span
-
-        if pos < 0:
-            original_cursor = end
-            continue
-
-        replaced_entities.append(
-            EntitySchema(
-                value=replaced_text[pos : pos + len(synthetic)],
-                label=label,
-                start_position=pos,
-                end_position=pos + len(synthetic),
-            )
-        )
-        search_from = pos + len(synthetic)
-        original_cursor = end
-
-    return replaced_entities
-
-
-def _resolve_synthetic(
-    value: str,
-    label: str,
-    lookups: _SyntheticLookupMaps,
-) -> str:
-    """Look up synthetic value with exact-match first, then case-insensitive fallback."""
-    result = lookups.by_value_label.get((value, label))
-    if result is not None:
-        return result
-    result = lookups.by_value.get(value)
-    if result is not None:
-        return result
-    result = lookups.by_value_label_ci.get((value.lower(), label))
-    if result is not None:
-        return result
-    result = lookups.by_value_ci.get(value.lower())
-    if result is not None:
-        return result
-    return value
-
-
-def _build_original_entities_from_map(
-    replacement_map: list[dict[str, str]],
-    original_text: str,
-) -> list[EntitySchema]:
-    """Build entity positions by finding original values in original text.
-
-    Fallback when _detected_entities is empty but replacement_map exists.
-    Uses case-insensitive matching to align with how the detection engine
-    finds entities (e.g. "The Lantern" matching "the Lantern" in text).
-    """
-    result: list[EntitySchema] = []
-    for entry in replacement_map:
-        original = str(entry.get("original", ""))
-        label = str(entry.get("label", ""))
-        if not original or not label:
-            continue
-        for match in re.finditer(re.escape(original), original_text, flags=re.IGNORECASE):
-            result.append(
-                EntitySchema(
-                    value=original_text[match.start() : match.end()],
-                    label=label,
-                    start_position=match.start(),
-                    end_position=match.end(),
-                )
-            )
-    return sorted(result, key=lambda e: (e.start_position, e.end_position))
-
-
-def _build_replaced_entities_from_map(
-    replacement_map: list[dict[str, str]],
-    replaced_text: str,
-) -> list[EntitySchema]:
-    """Build entity positions by finding synthetic values in replaced text.
-
-    Fallback when _detected_entities is empty but replacement_map exists (e.g. LLM
-    replace path where entity format differs).
-    """
-    result: list[EntitySchema] = []
-    for entry in replacement_map:
-        synthetic = str(entry.get("synthetic", ""))
-        label = str(entry.get("label", ""))
-        if not synthetic or not label:
-            continue
-        start = 0
-        while True:
-            pos = replaced_text.find(synthetic, start)
-            if pos < 0:
-                break
-            result.append(
-                EntitySchema(
-                    value=synthetic,
-                    label=label,
-                    start_position=pos,
-                    end_position=pos + len(synthetic),
-                )
-            )
-            start = pos + len(synthetic)
-    return sorted(result, key=lambda e: (e.start_position, e.end_position))
-
-
 def _render_replacement_table(replacement_map: list[dict[str, str]]) -> str:
     if not replacement_map:
         return "<p style='opacity:0.5;font-style:italic'>No replacement map available.</p>"
@@ -372,45 +228,6 @@ def _render_replacement_table(replacement_map: list[dict[str, str]]) -> str:
         "<th style='padding:6px 12px'>Replacement</th>"
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
-
-
-def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]:
-    """Coerce ``_replacement_map`` cell values into a list of ``{original, label, synthetic}`` dicts.
-
-    Cells can arrive as JSON strings, Pydantic models, plain dicts, or after a
-    parquet round-trip with ``replacements`` wrapped as a ``numpy.ndarray``.
-    Run the value through ``EntityReplacementMapSchema.model_validate`` so
-    Pydantic's coercion absorbs numpy shapes, then fall back to a permissive
-    hand-walk if validation rejects the payload.
-    """
-    if raw is None:
-        return []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if not isinstance(raw, dict):
-        return []
-    try:
-        parsed = EntityReplacementMapSchema.model_validate(raw)
-        return [r.model_dump() for r in parsed.replacements]
-    except Exception:
-        pass
-    replacements = raw.get("replacements", [])
-    if hasattr(replacements, "tolist"):
-        replacements = replacements.tolist()
-    if not isinstance(replacements, list):
-        return []
-    result: list[dict[str, str]] = []
-    for r in replacements:
-        if hasattr(r, "model_dump"):
-            r = r.model_dump()
-        if isinstance(r, dict):
-            result.append(r)
-    return result
 
 
 def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
@@ -459,7 +276,7 @@ def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
         )
         details_html = ""
         if float(detection_valid) < 1.0:
-            invalid_entries = _normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
+            invalid_entries = normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
             if invalid_entries:
                 rows_html: list[str] = []
                 for entry in invalid_entries:
@@ -497,7 +314,7 @@ def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
 
     # --- Row 3: judge scores with highlighted criterion names ---
     judge_raw = row.get(COL_JUDGE_EVALUATION)
-    judge_scores = _extract_judge_scores(judge_raw)
+    judge_scores = extract_judge_scores(judge_raw)
     if isinstance(judge_raw, dict) and not judge_scores:
         logger.warning(
             "Judge evaluation present but produced no scores (unexpected shape: %s)", type(judge_raw).__name__
@@ -520,26 +337,6 @@ def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
         return "<p style='opacity:0.5;font-style:italic'>No scores available.</p>"
 
     return "<div style='font-size:0.9em'>" + "".join(section_rows) + "</div>"
-
-
-def _extract_judge_scores(raw: object) -> list[tuple[str, int | str]]:
-    """Extract (name, score) pairs from the judge evaluation column.
-
-    LLMJudgeColumnConfig output is a plain dict keyed by rubric name, each
-    value carrying ``{"score": <int|str>, "reasoning": "..."}``. Scores are
-    returned as-is — callers must not assume int (rewrite mode uses strings).
-    """
-    if not isinstance(raw, dict):
-        return []
-    result: list[tuple[str, int | str]] = []
-    for name, value in raw.items():
-        if not isinstance(value, dict) or "score" not in value:
-            continue
-        score = value["score"]
-        if score is None:
-            continue
-        result.append((str(name), score))
-    return result
 
 
 def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
@@ -581,8 +378,8 @@ def _render_detection_judge_section(row: pd.Series) -> str:
     if COL_DETECTION_VALID not in row.index:
         return ""
     valid = row.get(COL_DETECTION_VALID)
-    invalid_entries = _normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
-    total = _count_detected_entity_label_pairs(row)
+    invalid_entries = normalize_invalid_entities(row.get(COL_DETECTION_INVALID_ENTITIES))
+    total = count_detected_entity_label_pairs(row)
     correct = max(total - len(invalid_entries), 0)
     badge, rate_html = _verdict_badge(valid, correct, total)
 
@@ -641,8 +438,8 @@ def _render_type_fidelity_section(row: pd.Series, replacement_map: list[dict[str
     if COL_TYPE_FIDELITY_VALID not in row.index:
         return ""
     valid = row.get(COL_TYPE_FIDELITY_VALID)
-    invalid_entries = _normalize_invalid_entities(row.get(COL_TYPE_FIDELITY_INVALID_REPLACEMENTS))
-    total = _count_replacement_triples(row, fallback=replacement_map)
+    invalid_entries = normalize_invalid_entities(row.get(COL_TYPE_FIDELITY_INVALID_REPLACEMENTS))
+    total = count_replacement_triples(row, fallback=replacement_map)
     correct = max(total - len(invalid_entries), 0)
     badge, rate_html = _verdict_badge(valid, correct, total)
 
@@ -703,10 +500,10 @@ def _render_attribute_fidelity_section(row: pd.Series) -> str:
     if COL_ATTRIBUTE_FIDELITY_VALID not in row.index:
         return ""
     valid = row.get(COL_ATTRIBUTE_FIDELITY_VALID)
-    all_entries = _extract_all_attribute_entries(row)
+    all_entries = extract_all_attribute_entries(row)
     invalid_count = sum(1 for e in all_entries if not bool(e.get("passes", False)))
     if not all_entries:
-        fallback_invalid = _normalize_attribute_entries(row.get(COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES))
+        fallback_invalid = normalize_attribute_entries(row.get(COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES))
         invalid_count = len(fallback_invalid)
         all_entries = [{**entry, "passes": False} for entry in fallback_invalid]
     total = len(all_entries)
@@ -779,56 +576,6 @@ def _render_attribute_entries_table(entries: list[dict[str, object]]) -> str:
     )
 
 
-def _extract_all_attribute_entries(row: pd.Series) -> list[dict[str, object]]:
-    """Read the full entities list (passes + fails) from the raw attribute-fidelity column."""
-    raw = row.get(COL_ATTRIBUTE_FIDELITY_JUDGE) if COL_ATTRIBUTE_FIDELITY_JUDGE in row.index else None
-    if raw is None:
-        return []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if not isinstance(raw, dict):
-        return []
-    entities = raw.get("entities", [])
-    if hasattr(entities, "tolist"):
-        entities = entities.tolist()
-    if not isinstance(entities, list):
-        return []
-    out: list[dict[str, object]] = []
-    for entry in entities:
-        if hasattr(entry, "model_dump"):
-            entry = entry.model_dump()
-        if isinstance(entry, dict):
-            out.append(entry)
-    return out
-
-
-def _normalize_attribute_entries(raw: object) -> list[dict[str, object]]:
-    """Coerce the invalid-entities column into a list of plain dicts."""
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if hasattr(raw, "tolist"):
-        raw = raw.tolist()
-    if not isinstance(raw, list):
-        return []
-    out: list[dict[str, object]] = []
-    for entry in raw:
-        if hasattr(entry, "model_dump"):
-            entry = entry.model_dump()
-        if isinstance(entry, dict):
-            out.append(entry)
-    return out
-
-
 def _render_relational_consistency_section(row: pd.Series) -> str:
     """Render the relational-consistency verdict for Substitute runs.
 
@@ -839,12 +586,12 @@ def _render_relational_consistency_section(row: pd.Series) -> str:
     if COL_RELATIONAL_CONSISTENCY_VALID not in row.index:
         return ""
     valid = row.get(COL_RELATIONAL_CONSISTENCY_VALID)
-    all_relations = _extract_all_relations(row)
+    all_relations = extract_all_relations(row)
     invalid_count = sum(1 for r in all_relations if not bool(r.get("passes", False)))
     # Fall back to the invalid-relations column when the raw output is missing,
     # so the LLM alignment score still surfaces "at least this many failures".
     if not all_relations:
-        fallback_invalid = _normalize_relations(row.get(COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS))
+        fallback_invalid = normalize_relations(row.get(COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS))
         invalid_count = len(fallback_invalid)
         all_relations = [{**entry, "passes": False} for entry in fallback_invalid]
     total = len(all_relations)
@@ -919,124 +666,10 @@ def _render_relations_table(relations: list[dict[str, object]]) -> str:
     )
 
 
-def _extract_all_relations(row: pd.Series) -> list[dict[str, object]]:
-    """Read the full relations list (passes + fails) from the raw judge column."""
-    raw = row.get(COL_RELATIONAL_CONSISTENCY_JUDGE) if COL_RELATIONAL_CONSISTENCY_JUDGE in row.index else None
-    if raw is None:
-        return []
-    if hasattr(raw, "model_dump"):
-        raw = raw.model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if not isinstance(raw, dict):
-        return []
-    relations = raw.get("relations", [])
-    if hasattr(relations, "tolist"):
-        relations = relations.tolist()
-    if not isinstance(relations, list):
-        return []
-    out: list[dict[str, object]] = []
-    for entry in relations:
-        if hasattr(entry, "model_dump"):
-            entry = entry.model_dump()
-        if isinstance(entry, dict):
-            out.append(entry)
-    return out
-
-
-def _normalize_relations(raw: object) -> list[dict[str, object]]:
-    """Coerce the invalid-relations column into a list of plain dicts."""
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if hasattr(raw, "tolist"):
-        raw = raw.tolist()
-    if not isinstance(raw, list):
-        return []
-    out: list[dict[str, object]] = []
-    for entry in raw:
-        if hasattr(entry, "model_dump"):
-            entry = entry.model_dump()
-        if isinstance(entry, dict):
-            out.append(entry)
-    return out
-
-
-def _count_detected_entity_label_pairs(row: pd.Series) -> int:
-    """Count (value, label) pairs the judge had a chance to evaluate.
-
-    The judge schema flags entities at the (value, label) granularity, so the
-    denominator for the LLM alignment score is the total number of such pairs in the
-    deduped entity payload, not the number of unique values.
-    """
-    raw = row.get(COL_ENTITIES_BY_VALUE) if COL_ENTITIES_BY_VALUE in row.index else None
-    if raw is None:
-        return 0
-    try:
-        parsed = EntitiesByValueSchema.from_raw(raw)
-    except Exception:
-        return 0
-    return sum(len(entity.labels) for entity in parsed.entities_by_value)
-
-
-def _count_replacement_triples(row: pd.Series, *, fallback: list[dict[str, str]]) -> int:
-    """Count replacement entries the type-fidelity judge had a chance to evaluate.
-
-    ``_normalize_replacement_map`` (used to render the table) rejects shapes
-    like ``{"replacements": numpy.ndarray(...)}`` from parquet round-trips,
-    which would silently zero out the success-rate denominator here. Validate
-    via Pydantic instead so the count matches what the judge actually saw.
-    """
-    raw = row.get(COL_REPLACEMENT_MAP) if COL_REPLACEMENT_MAP in row.index else None
-    if raw is not None:
-        if hasattr(raw, "model_dump"):
-            raw = raw.model_dump(mode="python")
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except (json.JSONDecodeError, ValueError):
-                raw = None
-        if isinstance(raw, dict):
-            try:
-                return len(EntityReplacementMapSchema.model_validate(raw).replacements)
-            except Exception:
-                pass
-    return len(fallback)
-
-
-def _normalize_invalid_entities(raw: object) -> list[dict[str, str]]:
-    """Coerce the invalid-entities column into a list of plain dicts."""
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if hasattr(raw, "tolist"):
-        raw = raw.tolist()
-    if not isinstance(raw, list):
-        return []
-    out: list[dict[str, str]] = []
-    for entry in raw:
-        if hasattr(entry, "model_dump"):
-            entry = entry.model_dump()
-        if isinstance(entry, dict):
-            out.append(entry)
-    return out
-
-
 def _render_disposition_table(row: pd.Series) -> str:
     """Render entity disposition table from _sensitivity_disposition column."""
     raw = row.get(COL_SENSITIVITY_DISPOSITION)
-    entries = _normalize_disposition(raw)
+    entries = normalize_disposition(raw)
     if not entries:
         return ""
 
@@ -1068,24 +701,6 @@ def _render_disposition_table(row: pd.Series) -> str:
         "</tr></thead><tbody>" + "".join(rows_html) + "</tbody></table>"
     )
 
-
-def _normalize_disposition(raw: object) -> list[dict[str, str]]:
-    """Extract disposition entries from the raw column value.
-
-    LLMStructuredColumnConfig output lands as a plain dict keyed by
-    ``sensitivity_disposition``, each entry being an EntityDispositionSchema dict.
-    """
-    if not isinstance(raw, dict):
-        return []
-    entries = raw.get("sensitivity_disposition", [])
-    if not isinstance(entries, list):
-        return []
-    return [e for e in entries if isinstance(e, dict)]
-
-
-# ---------------------------------------------------------------------------
-# Templates
-# ---------------------------------------------------------------------------
 
 _REPLACE_TEMPLATE = """\
 <div style="font-family:system-ui,-apple-system,sans-serif;max-width:960px;margin:12px 0">
@@ -1120,6 +735,7 @@ letter-spacing:0.05em;margin-bottom:6px;opacity:0.5">Replacement Map</div>
     </div>
   </div>
 </div>"""
+
 
 _REWRITE_TEMPLATE = """\
 <div style="font-family:system-ui,-apple-system,sans-serif;max-width:960px;margin:12px 0">

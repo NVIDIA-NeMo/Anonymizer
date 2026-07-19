@@ -20,13 +20,11 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.rewrite.final_judge import PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, SensitivityDispositionSchema
-from anonymizer.interface.display import (
-    _build_replaced_entities,
-    _extract_judge_scores,
-    _normalize_replacement_map,
-    _render_highlighted_text,
-    _verdict_badge,
-    render_record_html,
+from anonymizer.interface.display import render_record_html
+from anonymizer.interface.display.payload_coercion import extract_judge_scores, normalize_replacement_map
+from anonymizer.interface.display.record_html import _render_highlighted_text, _verdict_badge
+from anonymizer.interface.display.replaced_spans import (
+    build_replaced_entities,
 )
 from anonymizer.interface.results import PreviewResult
 
@@ -109,7 +107,7 @@ def test_replaced_entities_tracks_shifted_positions() -> None:
         {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
         {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
     ]
-    result = _build_replaced_entities(
+    result = build_replaced_entities(
         original_entities,
         replacement_map,
         "Alice works at Acme",
@@ -125,30 +123,30 @@ def test_replaced_entities_tracks_shifted_positions() -> None:
 
 def test_replaced_entities_empty_map_uses_original_values() -> None:
     original_entities = [_entity("Alice", "first_name", 0, 5)]
-    result = _build_replaced_entities(original_entities, [], "Alice works", "Alice works")
+    result = build_replaced_entities(original_entities, [], "Alice works", "Alice works")
     assert len(result) == 1
     assert result[0].value == "Alice"
 
 
 def test_normalize_replacement_map_from_dict() -> None:
     raw = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
-    result = _normalize_replacement_map(raw)
+    result = normalize_replacement_map(raw)
     assert len(result) == 1
     assert result[0]["synthetic"] == "Maya"
 
 
 def test_normalize_replacement_map_from_json_string() -> None:
     raw = '{"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}'
-    result = _normalize_replacement_map(raw)
+    result = normalize_replacement_map(raw)
     assert len(result) == 1
 
 
 def test_normalize_replacement_map_invalid_json_returns_empty() -> None:
-    assert _normalize_replacement_map("bad json {{{") == []
+    assert normalize_replacement_map("bad json {{{") == []
 
 
 def test_normalize_replacement_map_non_dict_returns_empty() -> None:
-    assert _normalize_replacement_map([1, 2, 3]) == []
+    assert normalize_replacement_map([1, 2, 3]) == []
 
 
 def test_verdict_badge_satisfied_when_all_correct_and_valid_true() -> None:
@@ -428,11 +426,11 @@ def test_render_record_html_mask_strategy_labels_are_distinct() -> None:
 
 def test_build_original_entities_from_map_case_insensitive() -> None:
     """Fallback map scanning finds entities regardless of case."""
-    from anonymizer.interface.display import _build_original_entities_from_map
+    from anonymizer.interface.display.replaced_spans import build_original_entities_from_map
 
     replacement_map = [{"original": "The Lantern", "label": "company_name"}]
     text = "She works at the Lantern daily"
-    result = _build_original_entities_from_map(replacement_map, text)
+    result = build_original_entities_from_map(replacement_map, text)
     assert len(result) == 1
     assert result[0].value == "the Lantern"
     assert result[0].start_position == 13
@@ -477,7 +475,7 @@ def test_build_replaced_entities_no_drift_with_case_mismatch() -> None:
     ]
     replaced_text = "Leila works at The Ember in Boulder. The Ember is her home. Diego visits."
 
-    result = _build_replaced_entities(original_entities, replacement_map, original_text, replaced_text)
+    result = build_replaced_entities(original_entities, replacement_map, original_text, replaced_text)
     assert len(result) == 5
     for entity in result:
         actual = replaced_text[entity.start_position : entity.end_position]
@@ -500,7 +498,7 @@ def test_build_replaced_entities_no_drift_when_entity_absent_from_map() -> None:
     ]
     replaced_text = "Contact Sofia and Carlos at NovaCorp"
 
-    result = _build_replaced_entities(original_entities, replacement_map, original_text, replaced_text)
+    result = build_replaced_entities(original_entities, replacement_map, original_text, replaced_text)
     assert len(result) == 3
     for entity in result:
         actual = replaced_text[entity.start_position : entity.end_position]
@@ -588,7 +586,7 @@ def test_render_record_html_rewrite_mode_nan_judge_column_does_not_warn(
             COL_JUDGE_EVALUATION: np.nan,
         }
     )
-    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
+    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display.record_html"):
         render_record_html(row, record_index=0)
     assert not any("Judge evaluation present but produced no scores" in rec.message for rec in caplog.records)
 
@@ -609,7 +607,7 @@ def test_render_record_html_rewrite_mode_malformed_judge_dict_warns(
             COL_JUDGE_EVALUATION: {"unexpected_key": "no score field here"},
         }
     )
-    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display"):
+    with caplog.at_level(logging.WARNING, logger="anonymizer.interface.display.record_html"):
         render_record_html(row, record_index=0)
     assert any("Judge evaluation present but produced no scores" in rec.message for rec in caplog.records)
 
@@ -670,7 +668,7 @@ def test_render_record_html_replace_mode_unchanged_when_no_rewritten_column() ->
 
 
 # ---------------------------------------------------------------------------
-# Tests: _extract_judge_scores
+# Tests: extract_judge_scores
 # ---------------------------------------------------------------------------
 
 
@@ -680,14 +678,14 @@ def test_extract_judge_scores_returns_string_scores() -> None:
         "quality": {"score": "medium", "reasoning": "ok"},
         "style": {"score": "low", "reasoning": "rough"},
     }
-    result = _extract_judge_scores(raw)
+    result = extract_judge_scores(raw)
     assert result == [("privacy", "high"), ("quality", "medium"), ("style", "low")]
 
 
 def test_extract_judge_scores_categorical_not_silently_empty() -> None:
     """String scores must not be silently dropped (old int() cast raised ValueError)."""
     raw = {"privacy": {"score": "high", "reasoning": "..."}}
-    result = _extract_judge_scores(raw)
+    result = extract_judge_scores(raw)
     assert len(result) == 1
     assert result[0] == ("privacy", "high")
 
