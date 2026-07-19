@@ -122,4 +122,4 @@ AnonymizerConfig(replace=Hash(algorithm="sha1", digest_length=8))
 
 ## Evaluating replace output
 
-After running `replace`, you can score the quality of substitutions using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on all four judges (detection validity, type fidelity, attribute fidelity, relational consistency) and how to call `Anonymizer.evaluate()`.
+After running `replace`, you can score residual leakage and the quality of substitutions using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on the always-on entity coverage judge, the three Substitute quality judges (type fidelity, attribute fidelity, relational consistency), the opt-in detection validity judge, and how to call `Anonymizer.evaluate()`.
