@@ -45,7 +45,41 @@ with open("/tmp/preview.pkl", "rb") as f:
 evaluated = anonymizer.evaluate(loaded)
 ```
 
-Four LLM judges run per record: one that scores detection quality and three that score replacement quality (Substitute mode only).
+Which judges run depends on the strategy and your `EvaluateConfig`:
+
+| Judge | When it runs |
+|-------|--------------|
+| **Entity Coverage** | Always. |
+| **Detection Validity** | Only when `EvaluateConfig(compute_detection_validity=True)` — off by default. |
+| **Type Fidelity, Attribute Fidelity, Relational Consistency** | Substitute mode only. |
+
+---
+
+### Entity Coverage
+
+> "Which sensitive values from the original text survived into the anonymized output?"
+
+Entity coverage is the primary residual-leakage metric and **always runs**. The judge scans the original text independently and reports any in-scope sensitive values that were **not** removed or replaced. A deterministic postprocessing step then drops candidates that are already accounted for by the Anonymizer's final entities (exact, sub-span, or composite matches), so only genuine leaks remain.
+
+The judge is scoped and contextualized by the same signals used during anonymization:
+
+- **`entity_labels`** — the detection taxonomy in scope; the judge only reports values whose type falls within it.
+- **`data_summary`** — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.
+- **`strict_entity_protection`** — (rewrite only) when enabled, the judge also reports inferable/indirect sensitive values, not just literal identifiers.
+
+| Output column | Type | Description |
+|---|---|---|
+| `entity_coverage` | `float \| None` | `n_final / (n_final + n_leaked)` — fraction of sensitive values that were removed. `1.0` means nothing leaked; `None` if the judge was unavailable. |
+| `leaked_entities` | `list` | Each surviving value with its `value`, `label`, and one-sentence `reasoning`. Empty when nothing leaked. |
+
+**Special values:**
+
+| Scenario | `entity_coverage` | `leaked_entities` |
+|---|---|---|
+| No sensitive values in the original text | `1.0` | `[]` |
+| Judge ran and found no surviving values | `1.0` | `[]` |
+| Judge ran and found surviving values | 0–1 fraction | populated |
+| Judge call failed or returned a malformed response | `None` | `[]` |
 
 ---
 
@@ -55,7 +89,7 @@ Four LLM judges run per record: one that scores detection quality and three that
 
 > "Are the detected entities actually correct (value, label) pairs in context?"
 
-This judge runs regardless of which replace mode was used. It looks at each detected span and flags:
+Detection validity is **opt-in** — it runs only when you pass `Anonymizer.evaluate(..., config=EvaluateConfig(compute_detection_validity=True))`. It is disabled by default and is intended for internal model/threshold experiments rather than as a customer-facing metric. When enabled, it looks at each detected span and flags:
 
 - **false_positive** — the span is not actually identifying or sensitive in this context (common word, generic phrase, boilerplate).
 - **wrong_label** — the span is sensitive but the label sits in a clearly different domain (e.g. a company name labeled `first_name`). Sibling labels within the same broad domain are treated as valid.
@@ -138,10 +172,11 @@ For a tabular overview across all records:
 ```python
 evaluated.dataframe[
     [
-        "detection_valid",
+        "entity_coverage",
         "type_fidelity_valid",
         "attribute_fidelity_valid",
         "relational_consistency_valid",
+        # "detection_valid" — present only if compute_detection_validity=True
     ]
 ]
 ```
@@ -152,14 +187,15 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 ### Model roles
 
-All four judges default to `gpt-oss-120b`. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them by passing a `model_configs` YAML to `Anonymizer(model_configs=...)` — see [Models](models.md) for the full override pattern.
+The entity coverage judge defaults to `nemotron-super`; the other replace-evaluation judges default to `gpt-oss-120b`. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them by passing a `model_configs` YAML to `Anonymizer(model_configs=...)` — see [Models](models.md) for the full override pattern.
 
-The four roles are `detection_validity_judge`, `replace_type_fidelity_judge`, `replace_attribute_fidelity_judge`, and `replace_relational_consistency_judge`.
+The roles are `entity_coverage_judge`, `detection_validity_judge`, `replace_type_fidelity_judge`, `replace_attribute_fidelity_judge`, and `replace_relational_consistency_judge`.
 
 ```yaml
 # my_models.yaml
 selected_models:
   evaluate:
+    entity_coverage_judge: your-model-alias
     detection_validity_judge: your-model-alias
     replace_type_fidelity_judge: your-model-alias
     replace_attribute_fidelity_judge: your-model-alias
@@ -174,7 +210,7 @@ Rewrite evaluation has two layers:
 
 1. **Automatic (always runs)** — leakage mass, utility score, weighted leakage rate, and `needs_human_review` are computed as part of every `run()` / `preview()` call. See [Rewrite](rewrite.md) for the repair loop and output columns.
 
-2. **Post-hoc LLM judges (optional)** — call `Anonymizer.evaluate()` on a completed rewrite result to add the entity detection judge and three holistic quality rubrics.
+2. **Post-hoc LLM judges (optional)** — call `Anonymizer.evaluate()` on a completed rewrite result to add the entity coverage judge (always), three holistic quality rubrics (always), and the detection validity judge (only with `EvaluateConfig(compute_detection_validity=True)`).
 
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
@@ -207,9 +243,15 @@ evaluated = anonymizer.evaluate(loaded)
 
 ---
 
+### Entity Coverage
+
+Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `leaked_entities`. In rewrite mode the judge additionally honours `strict_entity_protection`: when the rewrite config enables it, inferable/indirect sensitive values are reported as leaks, not just literal identifiers.
+
+---
+
 ### Entity Detection Judge
 
-Same judge as in replace mode — see [Entity Detection Judge](#entity-detection-judge) above. In rewrite mode, `detection_valid` is returned as a **0–1 fraction** (the share of detected entities that passed), rather than a boolean. A value of `1.0` means all detections are valid; lower values mean more entities were flagged — the value itself is the fraction that passed.
+Same judge as in replace mode — see [Entity Detection Judge](#entity-detection-judge) above, and like there it is **opt-in** via `EvaluateConfig(compute_detection_validity=True)` (off by default). In rewrite mode, `detection_valid` is returned as a **0–1 fraction** (the share of detected entities that passed), rather than a boolean. A value of `1.0` means all detections are valid; lower values mean more entities were flagged — the value itself is the fraction that passed.
 
 | Output column | Type | Description |
 |---|---|---|
@@ -282,7 +324,7 @@ The three rubric scores are stored together under the `judge_evaluation` column 
 
 ### Reading rewrite evaluation results
 
-`display_record()` renders a formatted per-record view that includes the detection validity fraction and all three judge rubrics alongside the rewritten text:
+`display_record()` renders a formatted per-record view that includes entity coverage, all three judge rubrics, and (when enabled) the detection validity fraction alongside the rewritten text:
 
 ```python
 evaluated.display_record(0)
@@ -291,7 +333,8 @@ evaluated.display_record(0)
 For a tabular overview across all records:
 
 ```python
-evaluated.dataframe[["detection_valid", "judge_evaluation"]]
+evaluated.dataframe[["entity_coverage", "judge_evaluation"]]
+# add "detection_valid" if you evaluated with compute_detection_validity=True
 ```
 
 Use `trace_dataframe` for the full internal trace including raw judge outputs.
@@ -300,12 +343,13 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 ### Model roles
 
-The rewrite quality judge defaults to `nemotron-30b-thinking`. The detection validity judge shares the `detection_validity_judge` role used by replace evaluation. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them via `model_configs`:
+The rewrite quality judge defaults to `nemotron-30b-thinking` and the entity coverage judge to `nemotron-super`. The detection validity judge shares the `detection_validity_judge` role used by replace evaluation. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them via `model_configs`:
 
 ```yaml
 # my_models.yaml
 selected_models:
   evaluate:
+    entity_coverage_judge: your-model-alias
     detection_validity_judge: your-model-alias
     rewrite_judge: your-model-alias
 ```
