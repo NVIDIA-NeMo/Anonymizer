@@ -17,7 +17,7 @@ import logging
 import math
 import sys
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 import cyclopts
 import pandas as pd
@@ -61,9 +61,6 @@ from measurement_tools.benchmark_analysis_math import (
     safe_ratio as _safe_ratio,
 )
 from measurement_tools.benchmark_analysis_math import (
-    sum_bool_or_zero as _sum_bool_or_zero,
-)
-from measurement_tools.benchmark_analysis_math import (
     sum_int_or_none as _sum_int_or_none,
 )
 from measurement_tools.benchmark_analysis_math import (
@@ -99,9 +96,16 @@ from measurement_tools.benchmark_analysis_models import (
 from measurement_tools.benchmark_analysis_models import (
     _EvaluationRollup as _EvaluationRollup,
 )
+from measurement_tools.benchmark_group_analysis import (
+    build_group_rows as build_group_rows,
+)
+from measurement_tools.benchmark_model_usage import (
+    build_model_usage_group_rows as build_model_usage_group_rows,
+)
+from measurement_tools.benchmark_model_usage import (
+    build_model_usage_rows as build_model_usage_rows,
+)
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
-from measurement_tools.stats import median_or_none as _median_or_none
-from measurement_tools.stats import none_if_nan as _none_if_nan
 from measurement_tools.stats import sum_int_or_zero as _sum_int_or_zero
 from measurement_tools.stats import sum_or_none as _sum_or_none
 from measurement_tools.stats import sum_or_zero as _sum_or_zero
@@ -586,148 +590,6 @@ def _rows_for_case(dataframe: pd.DataFrame, case_id: str) -> pd.DataFrame:
     return dataframe[mask]
 
 
-_MODEL_USAGE_SUFFIXES = {
-    ".request_usage.total_requests": "observed_total_requests",
-    ".request_usage.successful_requests": "observed_successful_requests",
-    ".request_usage.failed_requests": "observed_failed_requests",
-    ".token_usage.input_tokens": "observed_input_tokens",
-    ".token_usage.output_tokens": "observed_output_tokens",
-    ".token_usage.total_tokens": "observed_total_tokens",
-    ".token_usage.reasoning_tokens": "observed_reasoning_tokens",
-}
-
-_MODEL_USAGE_METADATA_SUFFIXES = {
-    ".model_alias": "model_alias",
-    ".model_name": "model_name",
-    ".model_provider_name": "model_provider_name",
-}
-
-
-def build_model_usage_rows(measurements: pd.DataFrame) -> list[ModelUsageAnalysisRow]:
-    model_rows = _model_workflow_rows(measurements)
-    if model_rows.empty:
-        return []
-    model_usage_keys = _model_usage_keys(model_rows.columns)
-    rows: list[ModelUsageAnalysisRow] = []
-    for _, measurement in model_rows.iterrows():
-        data = measurement.to_dict()
-        case_id = _string_from_row(data, ["run_tags.case_id", "run_id"])
-        run_id = _string_from_row(data, ["run_id", "run_tags.case_id"])
-        if case_id is None or run_id is None:
-            continue
-        for model_usage_key in model_usage_keys:
-            usage = _model_usage_metrics(data, model_usage_key)
-            if not _has_observed_model_usage(usage):
-                continue
-            metadata = _model_usage_metadata(data, model_usage_key)
-            rows.append(
-                ModelUsageAnalysisRow(
-                    suite_id=_string_from_row(data, ["run_tags.suite_id"]),
-                    workload_id=_string_from_row(data, ["run_tags.workload_id"]),
-                    config_id=_string_from_row(data, ["run_tags.config_id"]),
-                    experimental_detection_strategy=_string_from_row(
-                        data, ["run_tags.experimental_detection_strategy"]
-                    ),
-                    experimental_replacement_strategy=_string_from_row(
-                        data, ["run_tags.experimental_replacement_strategy"]
-                    ),
-                    dd_parser_compat=_string_from_row(data, ["run_tags.dd_parser_compat"]),
-                    repetition=_int_from_row(data, ["run_tags.repetition"]),
-                    case_id=case_id,
-                    run_id=run_id,
-                    workflow_name=_string_from_row(data, ["workflow_name"]),
-                    model_alias=metadata.get("model_alias"),
-                    model_name=metadata.get("model_name") or model_usage_key,
-                    model_provider_name=metadata.get("model_provider_name"),
-                    ndd_elapsed_sec=_float_from_row(data, ["elapsed_sec"]),
-                    **usage,
-                )
-            )
-    return rows
-
-
-def _model_usage_keys(columns: pd.Index) -> list[str]:
-    keys: set[str] = set()
-    for column in columns:
-        parsed = _model_usage_column_parts(str(column))
-        if parsed is not None:
-            keys.add(parsed[0])
-    return sorted(keys)
-
-
-def _model_usage_column_parts(column: str) -> tuple[str, str] | None:
-    prefix = "model_usage."
-    if not column.startswith(prefix):
-        return None
-    for suffix, metric in {**_MODEL_USAGE_SUFFIXES, **_MODEL_USAGE_METADATA_SUFFIXES}.items():
-        if column.endswith(suffix):
-            return column[len(prefix) : -len(suffix)], metric
-    return None
-
-
-def _model_usage_metrics(data: dict[str, Any], model_usage_key: str) -> dict[str, int | float | None]:
-    values: dict[str, int | float | None] = {
-        "observed_total_requests": 0,
-        "observed_successful_requests": 0,
-        "observed_failed_requests": 0,
-        "observed_input_tokens": 0,
-        "observed_output_tokens": 0,
-        "observed_total_tokens": 0,
-        "observed_reasoning_tokens": None,
-        "observed_failed_request_rate": None,
-    }
-    for suffix, metric in _MODEL_USAGE_SUFFIXES.items():
-        value = data.get(f"model_usage.{model_usage_key}{suffix}")
-        if value is None or pd.isna(value):
-            continue
-        values[metric] = _coerce_int(value)
-    values["observed_failed_request_rate"] = _request_failure_rate(
-        failed=values["observed_failed_requests"],
-        total=values["observed_total_requests"],
-    )
-    return values
-
-
-def _model_usage_metadata(data: dict[str, Any], model_usage_key: str) -> dict[str, str | None]:
-    values: dict[str, str | None] = {
-        "model_alias": None,
-        "model_name": None,
-        "model_provider_name": None,
-    }
-    for suffix, field_name in _MODEL_USAGE_METADATA_SUFFIXES.items():
-        value = data.get(f"model_usage.{model_usage_key}{suffix}")
-        if value is None or pd.isna(value):
-            continue
-        values[field_name] = str(value)
-    return values
-
-
-def _has_observed_model_usage(usage: dict[str, int | float | None]) -> bool:
-    return any(value not in (None, 0) for value in usage.values())
-
-
-def _string_from_row(data: dict[str, Any], columns: list[str]) -> str | None:
-    for column in columns:
-        value = data.get(column)
-        if value is not None and not pd.isna(value):
-            return str(value)
-    return None
-
-
-def _int_from_row(data: dict[str, Any], columns: list[str]) -> int | None:
-    value = _string_from_row(data, columns)
-    return int(float(value)) if value is not None else None
-
-
-def _float_from_row(data: dict[str, Any], columns: list[str]) -> float | None:
-    value = _string_from_row(data, columns)
-    return float(value) if value is not None else None
-
-
-def _coerce_int(value: Any) -> int:
-    return int(float(value))
-
-
 def _artifact_signature_hashes(artifact_rows: pd.DataFrame) -> list[str]:
     if "final_entity_signature_hashes" not in artifact_rows.columns:
         return []
@@ -814,259 +676,6 @@ def _signature_count(artifact_rows: pd.DataFrame, *, signature_hashes: list[str]
     if signature_hashes:
         return float(len(signature_hashes))
     return _sum_or_none(artifact_rows, "final_entity_signature_count")
-
-
-def build_group_rows(cases: list[CaseAnalysisRow]) -> list[GroupAnalysisRow]:
-    if not cases:
-        return []
-    table = pd.DataFrame([case.model_dump() for case in cases])
-    rows: list[GroupAnalysisRow] = []
-    group_columns = [
-        "workload_id",
-        "workload_category",
-        "config_id",
-        "experimental_detection_strategy",
-        "experimental_replacement_strategy",
-        "entity_label_set_id",
-        "entity_label_count",
-        "gliner_threshold",
-    ]
-    for keys, group in table.groupby(group_columns, dropna=False):
-        rows.append(_build_group_row(keys, group))
-    return rows
-
-
-def build_model_usage_group_rows(model_usage: list[ModelUsageAnalysisRow]) -> list[ModelUsageGroupAnalysisRow]:
-    if not model_usage:
-        return []
-    table = pd.DataFrame([row.model_dump() for row in model_usage])
-    rows: list[ModelUsageGroupAnalysisRow] = []
-    group_columns = [
-        "workload_id",
-        "config_id",
-        "experimental_detection_strategy",
-        "experimental_replacement_strategy",
-        "dd_parser_compat",
-        "workflow_name",
-        "model_alias",
-        "model_name",
-        "model_provider_name",
-    ]
-    for keys, group in table.groupby(group_columns, dropna=False):
-        rows.append(_build_model_usage_group_row(keys, group))
-    return rows
-
-
-def _build_model_usage_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> ModelUsageGroupAnalysisRow:
-    (
-        workload_id,
-        config_id,
-        detection_strategy,
-        replacement_strategy,
-        dd_parser_compat,
-        workflow_name,
-        model_alias,
-        model_name,
-        provider_name,
-    ) = keys
-    reasoning_sum = _sum_int_or_none(group, "observed_reasoning_tokens")
-    total_requests = _sum_int_or_zero(group, "observed_total_requests")
-    failed_requests = _sum_int_or_zero(group, "observed_failed_requests")
-    return ModelUsageGroupAnalysisRow(
-        workload_id=_none_if_nan(workload_id),
-        config_id=_none_if_nan(config_id),
-        experimental_detection_strategy=_none_if_nan(detection_strategy),
-        experimental_replacement_strategy=_none_if_nan(replacement_strategy),
-        dd_parser_compat=_none_if_nan(dd_parser_compat),
-        workflow_name=_none_if_nan(workflow_name),
-        model_alias=_none_if_nan(model_alias),
-        model_name=str(model_name),
-        model_provider_name=_none_if_nan(provider_name),
-        case_count=int(group["case_id"].nunique()),
-        workflow_count=len(group),
-        sum_observed_total_requests=total_requests,
-        sum_observed_successful_requests=_sum_int_or_zero(group, "observed_successful_requests"),
-        sum_observed_failed_requests=failed_requests,
-        sum_observed_input_tokens=_sum_int_or_zero(group, "observed_input_tokens"),
-        sum_observed_output_tokens=_sum_int_or_zero(group, "observed_output_tokens"),
-        sum_observed_total_tokens=_sum_int_or_zero(group, "observed_total_tokens"),
-        sum_observed_reasoning_tokens=reasoning_sum,
-        observed_failed_request_rate=_request_failure_rate(failed=failed_requests, total=total_requests),
-        median_observed_total_requests=_median_or_none(group, "observed_total_requests"),
-        median_observed_failed_requests=_median_or_none(group, "observed_failed_requests"),
-        median_observed_total_tokens=_median_or_none(group, "observed_total_tokens"),
-    )
-
-
-def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysisRow:
-    (
-        workload_id,
-        workload_category,
-        config_id,
-        detection_strategy,
-        replacement_strategy,
-        entity_label_set_id,
-        entity_label_count,
-        gliner_threshold,
-    ) = keys
-    case_count = int(group["case_id"].nunique())
-    failed_case_count = _sum_bool_or_zero(group, "case_failed")
-    total_record_count = _sum_int_or_zero(group, "record_count")
-    total_input_text_tokens = _sum_int_or_none(group, "input_text_tokens_total")
-    total_empty_detection_count = _sum_int_or_zero(group, "empty_detection_count")
-    total_ground_truth_record_count = _sum_int_or_zero(group, "ground_truth_record_count")
-    total_empty_detection_with_gt_count = _sum_int_or_zero(group, "empty_detection_with_ground_truth_count")
-    final_entity_count = _sum_or_none(group, "final_entity_count")
-    ground_truth_entity_count = _sum_or_none(group, "ground_truth_entity_count")
-    true_positive = _sum_or_none(group, "entity_true_positive_count")
-    false_positive = _sum_or_none(group, "entity_false_positive_count")
-    false_negative = _sum_or_none(group, "entity_false_negative_count")
-    strict_precision = _safe_ratio(true_positive, _sum_optional_numbers(true_positive, false_positive))
-    strict_recall = _safe_ratio(true_positive, _sum_optional_numbers(true_positive, false_negative))
-    relaxed_gt_found = _sum_or_none(group, "entity_relaxed_gt_found_count")
-    relaxed_detected_tp = _sum_or_none(group, "entity_relaxed_detected_tp_count")
-    label_compatible_gt_found = _sum_or_none(group, "entity_relaxed_label_compatible_gt_found_count")
-    label_compatible_detected_tp = _sum_or_none(group, "entity_relaxed_label_compatible_detected_tp_count")
-    relaxed_precision = _safe_ratio(relaxed_detected_tp, final_entity_count)
-    relaxed_recall = _safe_ratio(relaxed_gt_found, ground_truth_entity_count)
-    label_compatible_precision = _safe_ratio(label_compatible_detected_tp, final_entity_count)
-    label_compatible_recall = _safe_ratio(label_compatible_gt_found, ground_truth_entity_count)
-    evaluation_metrics = _group_evaluation_metrics(group)
-    return GroupAnalysisRow(
-        workload_id=_none_if_nan(workload_id),
-        workload_category=_none_if_nan(workload_category),
-        config_id=_none_if_nan(config_id),
-        experimental_detection_strategy=_none_if_nan(detection_strategy),
-        experimental_replacement_strategy=_none_if_nan(replacement_strategy),
-        entity_label_set_id=_none_if_nan(entity_label_set_id),
-        entity_label_count=_int_if_not_nan(entity_label_count),
-        gliner_threshold=_float_if_not_nan(gliner_threshold),
-        case_count=case_count,
-        failed_case_count=failed_case_count,
-        failed_case_rate=_request_failure_rate(failed=failed_case_count, total=case_count),
-        error_stage_count=_sum_int_or_zero(group, "error_stage_count"),
-        error_ndd_workflow_count=_sum_int_or_zero(group, "error_ndd_workflow_count"),
-        error_model_workflow_count=_sum_int_or_zero(group, "error_model_workflow_count"),
-        median_pipeline_elapsed_sec=_median_or_none(group, "pipeline_elapsed_sec"),
-        median_ndd_elapsed_sec_total=_median_or_none(group, "ndd_elapsed_sec_total"),
-        median_observed_total_requests=_median_or_none(group, "observed_total_requests"),
-        median_observed_successful_requests=_median_or_none(group, "observed_successful_requests"),
-        median_observed_input_tokens=_median_or_none(group, "observed_input_tokens"),
-        median_observed_output_tokens=_median_or_none(group, "observed_output_tokens"),
-        median_observed_total_tokens=_median_or_none(group, "observed_total_tokens"),
-        median_observed_failed_requests=_median_or_none(group, "observed_failed_requests"),
-        median_observed_failed_request_rate=_median_or_none(group, "observed_failed_request_rate"),
-        median_observed_bridge_fallback_requests=_median_or_none(group, "observed_bridge_fallback_requests"),
-        median_observed_non_bridge_total_requests=_median_or_none(group, "observed_non_bridge_total_requests"),
-        median_observed_non_bridge_failed_requests=_median_or_none(group, "observed_non_bridge_failed_requests"),
-        median_observed_non_bridge_failed_request_rate=_median_or_none(
-            group,
-            "observed_non_bridge_failed_request_rate",
-        ),
-        total_record_count=total_record_count,
-        median_record_count=_median_or_none(group, "record_count"),
-        total_input_text_tokens=total_input_text_tokens,
-        median_input_text_tokens_total=_median_or_none(group, "input_text_tokens_total"),
-        median_records_per_pipeline_sec=_median_or_none(group, "records_per_pipeline_sec"),
-        median_records_per_ndd_sec=_median_or_none(group, "records_per_ndd_sec"),
-        median_input_text_tokens_per_pipeline_sec=_median_or_none(group, "input_text_tokens_per_pipeline_sec"),
-        median_input_text_tokens_per_ndd_sec=_median_or_none(group, "input_text_tokens_per_ndd_sec"),
-        median_topology_endpoint_count=_median_or_none(group, "topology_endpoint_count"),
-        median_topology_gpu_count=_median_or_none(group, "topology_gpu_count"),
-        median_topology_tensor_parallelism=_median_or_none(group, "topology_tensor_parallelism"),
-        median_topology_shard_count=_median_or_none(group, "topology_shard_count"),
-        median_input_text_tokens_per_endpoint_sec=_median_or_none(group, "input_text_tokens_per_endpoint_sec"),
-        median_input_text_tokens_per_gpu_sec=_median_or_none(group, "input_text_tokens_per_gpu_sec"),
-        median_final_entity_count=_median_or_none(group, "final_entity_count"),
-        total_empty_detection_count=total_empty_detection_count,
-        empty_detection_rate=_safe_ratio(total_empty_detection_count, total_record_count),
-        total_empty_detection_with_ground_truth_count=total_empty_detection_with_gt_count,
-        empty_detection_with_ground_truth_rate=_safe_ratio(
-            total_empty_detection_with_gt_count,
-            total_ground_truth_record_count,
-        ),
-        total_ground_truth_record_count=total_ground_truth_record_count,
-        sum_ground_truth_entity_count=ground_truth_entity_count,
-        sum_entity_true_positive_count=true_positive,
-        sum_entity_false_positive_count=false_positive,
-        sum_entity_false_negative_count=false_negative,
-        micro_entity_precision=strict_precision,
-        micro_entity_recall=strict_recall,
-        micro_entity_f1=_f1(strict_precision, strict_recall),
-        sum_entity_relaxed_gt_found_count=relaxed_gt_found,
-        sum_entity_relaxed_detected_tp_count=relaxed_detected_tp,
-        sum_entity_relaxed_label_compatible_gt_found_count=label_compatible_gt_found,
-        sum_entity_relaxed_label_compatible_detected_tp_count=label_compatible_detected_tp,
-        micro_entity_relaxed_precision=relaxed_precision,
-        micro_entity_relaxed_recall=relaxed_recall,
-        micro_entity_relaxed_f1=_f1(relaxed_precision, relaxed_recall),
-        micro_entity_relaxed_label_compatible_precision=label_compatible_precision,
-        micro_entity_relaxed_label_compatible_recall=label_compatible_recall,
-        micro_entity_relaxed_label_compatible_f1=_f1(label_compatible_precision, label_compatible_recall),
-        median_entity_relaxed_f1=_median_or_none(group, "entity_relaxed_f1"),
-        median_entity_relaxed_label_compatible_f1=_median_or_none(
-            group,
-            "entity_relaxed_label_compatible_f1",
-        ),
-        median_replacement_missing_final_entity_count=_median_or_none(
-            group,
-            "replacement_missing_final_entity_count",
-        ),
-        median_replacement_missing_final_value_count=_median_or_none(group, "replacement_missing_final_value_count"),
-        replacement_missing_final_entity_label_counts=_sum_prefixed_ints(
-            group,
-            "replacement_missing_final_entity_label_counts.",
-        ),
-        median_replacement_synthetic_original_collision_count=_median_or_none(
-            group,
-            "replacement_synthetic_original_collision_count",
-        ),
-        median_replacement_synthetic_original_collision_value_count=_median_or_none(
-            group,
-            "replacement_synthetic_original_collision_value_count",
-        ),
-        replacement_synthetic_original_collision_label_counts=_sum_prefixed_ints(
-            group,
-            "replacement_synthetic_original_collision_label_counts.",
-        ),
-        sum_original_value_leak_count=_sum_or_none(group, "original_value_leak_count"),
-        leaking_case_count=_positive_count(group, "original_value_leak_count"),
-        median_original_value_leak_count=_median_or_none(group, "original_value_leak_count"),
-        **evaluation_metrics,
-        median_seed_entity_count=_median_or_none(group, "seed_entity_count"),
-        median_seed_validation_candidate_count=_median_or_none(group, "seed_validation_candidate_count"),
-        median_estimated_seed_validation_chunk_count=_median_or_none(group, "estimated_seed_validation_chunk_count"),
-        median_augmented_entity_count=_median_or_none(group, "augmented_entity_count"),
-        median_augmented_new_final_value_count=_median_or_none(group, "augmented_new_final_value_count"),
-        median_artifact_final_entity_count=_median_or_none(group, "artifact_final_entity_count"),
-        median_artifact_final_detector_entity_count=_median_or_none(group, "artifact_final_detector_entity_count"),
-        median_artifact_final_augmenter_entity_count=_median_or_none(group, "artifact_final_augmenter_entity_count"),
-        median_artifact_final_entity_signature_count=_median_or_none(group, "artifact_final_entity_signature_count"),
-    )
-
-
-def _int_if_not_nan(value: object) -> int | None:
-    if pd.isna(value):
-        return None
-    return int(float(cast(Any, value)))
-
-
-def _float_if_not_nan(value: object) -> float | None:
-    if pd.isna(value):
-        return None
-    return float(cast(Any, value))
-
-
-def _group_evaluation_metrics(group: pd.DataFrame) -> dict[str, int | float | None]:
-    metrics: dict[str, int | float | None] = {}
-    for rollup in _EVALUATION_ROLLUPS:
-        judged_count = _sum_int_or_zero(group, f"{rollup.prefix}_judged_record_count")
-        valid_count = _sum_int_or_zero(group, f"{rollup.prefix}_valid_record_count")
-        metrics[f"sum_{rollup.prefix}_judged_record_count"] = judged_count
-        metrics[f"sum_{rollup.prefix}_valid_record_count"] = valid_count
-        metrics[f"micro_{rollup.prefix}_valid_rate"] = _safe_ratio(valid_count, judged_count)
-        metrics[f"sum_{rollup.invalid_count_column}"] = _sum_int_or_zero(group, rollup.invalid_count_column)
-    return metrics
 
 
 def _estimated_validation_chunk_count(
