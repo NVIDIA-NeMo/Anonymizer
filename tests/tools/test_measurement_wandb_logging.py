@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
-import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -608,7 +608,7 @@ def test_wandb_native_failure_log_does_not_echo_exception(
 
 
 def test_wandb_outbound_models_structurally_exclude_sensitive_fields(wandb_setup_tool: ModuleType) -> None:
-    models = sys.modules[wandb_setup_tool.WandbPublishPayload.__module__]
+    models = importlib.import_module("measurement_tools.wandb_models")
 
     with pytest.raises(ValidationError, match="Extra inputs"):
         models.WandbHistoryPayload(metrics={}, text="Alice")
