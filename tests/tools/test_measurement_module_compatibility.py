@@ -110,6 +110,25 @@ def test_wandb_facades_preserve_canonical_identity_and_reconstruction() -> None:
             sys.modules.pop(module_name, None)
 
 
+def test_wandb_setup_facade_preserves_staging_identity_and_payload_contracts() -> None:
+    setup = importlib.import_module("measurement_tools.wandb_setup")
+    payload = importlib.import_module("measurement_tools.wandb_payload")
+    run_identity = importlib.import_module("measurement_tools.wandb_run_identity")
+    staging = importlib.import_module("measurement_tools.wandb_staging")
+
+    assert payload.__all__ == ["BenchmarkWandbFinalization", "build_publish_payload"]
+    assert run_identity.__all__ == ["default_run_name", "effective_wandb_tags"]
+    assert staging.__all__ == [
+        "open_directory_no_follow",
+        "prepare_wandb_staging_dir",
+        "validate_directory_metadata",
+    ]
+    assert setup.BenchmarkWandbFinalization is payload.BenchmarkWandbFinalization
+    assert setup._default_run_name is run_identity.default_run_name
+    assert setup._effective_wandb_tags is run_identity.effective_wandb_tags
+    assert setup.BenchmarkWandbFinalization.__module__ == "measurement_tools.wandb_payload"
+
+
 @pytest.mark.parametrize(
     "canonical_module",
     [
