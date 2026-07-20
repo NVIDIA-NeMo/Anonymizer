@@ -6,24 +6,18 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets
-import stat
+import stat as stat
 import sys
 import threading
-from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
-from measurement_tools.wandb_ingress import read_measurement_snapshot
 from measurement_tools.wandb_models import (
     DEFAULT_WANDB_PROJECT,
     PUBLICATION_COMPLETE_KEY,
     PUBLICATION_SEAL_DIGEST_KEY,
-    BenchmarkMetadata,
     ResolvedWandbConfig,
-    WandbConfigPayload,
     WandbInitPayload,
     WandbInputs,
     WandbMode,
@@ -31,9 +25,18 @@ from measurement_tools.wandb_models import (
     WandbPublishPayload,
     WandbPublishResult,
     WandbRunMetadata,
-    generated_wandb_tag,
-    is_safe_wandb_tag,
 )
+from measurement_tools.wandb_models import (
+    BenchmarkMetadata as BenchmarkMetadata,
+)
+from measurement_tools.wandb_models import (
+    WandbConfigPayload as WandbConfigPayload,
+)
+from measurement_tools.wandb_payload import BenchmarkWandbFinalization as BenchmarkWandbFinalization
+from measurement_tools.wandb_payload import build_publish_payload
+from measurement_tools.wandb_run_identity import default_run_name, effective_wandb_tags
+from measurement_tools.wandb_staging import open_directory_no_follow, validate_directory_metadata
+from measurement_tools.wandb_staging import prepare_wandb_staging_dir as _prepare_wandb_staging_dir
 
 __all__ = [
     "DEFAULT_WANDB_PROJECT",
@@ -45,16 +48,11 @@ __all__ = [
 
 logger = logging.getLogger("measurement.wandb")
 
+_default_run_name = default_run_name
+_effective_wandb_tags = effective_wandb_tags
+
 WANDB_SANITIZER_VERSION = 2
 _WANDB_INSTALL_HINT = "Install the optional measurement dependency group: uv sync --group measurement"
-
-
-@dataclass(frozen=True)
-class BenchmarkWandbFinalization:
-    """Artifacts needed to finalize benchmark W&B logging."""
-
-    measurement_path: Path
-    cases: Sequence[Any]
 
 
 _PUBLISHER_WANDB_MODULE: Any | None = None
@@ -296,40 +294,13 @@ def _build_publish_payload(
     finalization: BenchmarkWandbFinalization,
     metadata: WandbRunMetadata | None,
 ) -> tuple[WandbPublishPayload, str, int]:
-    from measurement_tools.wandb_logging import build_outbound_measurements  # noqa: PLC0415
-
-    cases = list(finalization.cases)
-    expected_statuses = {str(case.case_id): str(case.status.value) for case in cases}
-    snapshot = read_measurement_snapshot(finalization.measurement_path, expected_statuses=expected_statuses)
-    history, summary, tables = build_outbound_measurements(
-        snapshot,
-        cases=cases,
-        log_tables=settings.wandb_log_tables,
+    return build_publish_payload(
+        settings,
+        suite_id=suite_id,
+        output_dir=output_dir,
+        finalization=finalization,
+        metadata=metadata,
     )
-    staging_dir = prepare_wandb_staging_dir(output_dir)
-    resolved_metadata = metadata or WandbRunMetadata(
-        benchmark=BenchmarkMetadata(suite_id=suite_id),
-    )
-    init = WandbInitPayload(
-        run_id=secrets.token_hex(16),
-        project=settings.wandb_project,
-        name=settings.wandb_run_name or _default_run_name(suite_id, resolved_metadata),
-        mode=settings.wandb_mode,
-        directory=staging_dir,
-        group=settings.wandb_group or suite_id,
-        job_type=settings.wandb_job_type or "benchmark",
-        entity=settings.wandb_entity,
-        tags=tuple(_effective_wandb_tags(settings, suite_id=suite_id, metadata=resolved_metadata)),
-    )
-    config = WandbConfigPayload.from_run_metadata(settings, suite_id=suite_id, metadata=resolved_metadata)
-    payload = WandbPublishPayload(
-        init=init,
-        config=config,
-        history=history,
-        summary=summary,
-        tables=tables,
-    )
-    return payload, snapshot.sha256, len(snapshot.records)
 
 
 def _publication_already_complete(run: Any, payload: WandbPublishPayload) -> bool:
@@ -418,103 +389,18 @@ def _sdk_init_kwargs(wandb: Any, payload: WandbInitPayload) -> dict[str, Any]:
 
 
 def prepare_wandb_staging_dir(output_dir: Path) -> Path:
-    output_descriptor = _open_directory_no_follow(output_dir)
-    staging_dir = output_dir / ".wandb-private"
-    try:
-        try:
-            os.mkdir(".wandb-private", mode=0o700, dir_fd=output_descriptor)
-        except FileExistsError:
-            pass
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-        staging_descriptor = os.open(
-            ".wandb-private",
-            flags | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=output_descriptor,
-        )
-        try:
-            metadata = os.fstat(staging_descriptor)
-            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
-                raise ValueError("W&B staging directory must be an owned directory")
-            os.fchmod(staging_descriptor, 0o700)
-        finally:
-            os.close(staging_descriptor)
-    except OSError as exc:
-        raise ValueError("W&B staging directory cannot contain symlinks or special files") from exc
-    finally:
-        os.close(output_descriptor)
-    return staging_dir
+    """Prepare secure W&B staging through the canonical filesystem owner."""
+    return _prepare_wandb_staging_dir(output_dir)
 
 
 def _open_directory_no_follow(path: Path) -> int:
-    absolute = path.absolute()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-    no_follow = getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(absolute.anchor, flags)
-        for index, part in enumerate(absolute.parts[1:], start=1):
-            child = os.open(part, flags | no_follow, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = child
-            _validate_directory_metadata(os.fstat(descriptor), final=index == len(absolute.parts) - 1)
-        return descriptor
-    except (OSError, ValueError) as exc:
-        if "descriptor" in locals():
-            os.close(descriptor)
-        raise ValueError("W&B output path cannot contain symlinks, untrusted directories, or special files") from exc
+    """Compatibility alias for the canonical no-follow traversal."""
+    return open_directory_no_follow(path)
 
 
 def _validate_directory_metadata(metadata: os.stat_result, *, final: bool) -> None:
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError("W&B output path must contain only directories")
-    if final and metadata.st_uid != os.geteuid():
-        raise ValueError("W&B output directory must be owned by the current user")
-    sticky = metadata.st_mode & stat.S_ISVTX
-    world_writable = metadata.st_mode & stat.S_IWOTH
-    group_writable = metadata.st_mode & stat.S_IWGRP
-    root_owned = metadata.st_uid == 0
-    if world_writable and not sticky:
-        raise ValueError("W&B output path contains an untrusted writable directory")
-    if group_writable and not sticky and not root_owned:
-        raise ValueError("W&B output path contains an untrusted writable directory")
-
-
-def _default_run_name(suite_id: str, metadata: WandbRunMetadata | None) -> str:
-    git = metadata.git if metadata is not None else None
-    if git is None:
-        return suite_id
-    commit = git.commit
-    branch = git.branch
-    if isinstance(commit, str) and commit:
-        suffix = commit[:7]
-        if isinstance(branch, str) and branch:
-            return f"{suite_id} {branch}@{suffix}"
-        return f"{suite_id} @{suffix}"
-    if isinstance(branch, str) and branch:
-        return f"{suite_id} {branch}"
-    return suite_id
-
-
-def _effective_wandb_tags(
-    settings: ResolvedWandbConfig,
-    *,
-    suite_id: str,
-    metadata: WandbRunMetadata | None,
-) -> list[str]:
-    tags = [tag for tag in settings.effective_wandb_tags if is_safe_wandb_tag(tag)]
-    suite_tag = generated_wandb_tag("suite", suite_id)
-    if suite_tag is not None:
-        tags.append(suite_tag)
-    git = metadata.git if metadata is not None else None
-    if git is not None:
-        branch = git.branch
-        dirty = git.dirty
-        if isinstance(branch, str) and branch:
-            branch_tag = generated_wandb_tag("branch", branch)
-            if branch_tag is not None:
-                tags.append(branch_tag)
-        if isinstance(dirty, bool):
-            tags.append("dirty" if dirty else "clean")
-    return tags
+    """Compatibility alias for canonical directory metadata validation."""
+    validate_directory_metadata(metadata, final=final)
 
 
 def _define_benchmark_metrics(run: Any) -> None:
