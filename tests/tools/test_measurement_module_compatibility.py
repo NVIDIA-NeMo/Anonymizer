@@ -1,0 +1,231 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import importlib
+import importlib.util
+import os
+import pickle
+import subprocess
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+from pydantic import BaseModel
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MEASUREMENT_ROOT = REPO_ROOT / "tools/measurement"
+
+
+@pytest.fixture(autouse=True)
+def _measurement_import_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(MEASUREMENT_ROOT))
+
+
+def _load_module(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "defined_class", "canonical_import"),
+    [
+        ("measurement_tools/wandb_models.py", "WandbMode", "StrictFrozenModel"),
+        ("measurement_tools/wandb_setup.py", "WandbPublisher", "ResolvedWandbConfig"),
+        ("create_wandb_report.py", "WandbReportResult", "WandbProjectPath"),
+        ("run_benchmarks.py", "BenchmarkSpec", "Anonymizer"),
+        ("sweep_benchmarks.py", "SweepSpec", "WandbProjectPath"),
+        ("analyze_benchmark_output.py", "BenchmarkOutputAnalysis", "AnalysisExportResult"),
+    ],
+)
+def test_exact_tool_paths_support_repeated_dynamic_loading(
+    relative_path: str,
+    defined_class: str,
+    canonical_import: str,
+) -> None:
+    path = MEASUREMENT_ROOT / relative_path
+    module_names = (f"compat_first_{path.stem}", f"compat_second_{path.stem}")
+    first = _load_module(path, module_names[0])
+    second = _load_module(path, module_names[1])
+    try:
+        first_class = getattr(first, defined_class)
+        second_class = getattr(second, defined_class)
+        assert first_class is not second_class
+        assert first_class.__module__ == module_names[0]
+        assert second_class.__module__ == module_names[1]
+        assert getattr(first, canonical_import) is getattr(second, canonical_import)
+    finally:
+        for module_name in module_names:
+            sys.modules.pop(module_name, None)
+
+
+def test_wandb_facades_preserve_canonical_identity_and_reconstruction() -> None:
+    models = importlib.import_module("measurement_tools.wandb_models")
+    setup = importlib.import_module("measurement_tools.wandb_setup")
+    report_models = importlib.import_module("measurement_tools.wandb_report_models")
+    report = _load_module(MEASUREMENT_ROOT / "create_wandb_report.py", "compat_report_facade")
+    runner = _load_module(MEASUREMENT_ROOT / "run_benchmarks.py", "compat_runner_facade")
+    sweep = _load_module(MEASUREMENT_ROOT / "sweep_benchmarks.py", "compat_sweep_facade")
+    try:
+        assert setup.WandbMode is models.WandbMode
+        assert setup.ResolvedWandbConfig is models.ResolvedWandbConfig
+        assert report.WandbProjectPath is report_models.WandbProjectPath
+        assert report.WandbRunPath is report_models.WandbRunPath
+        assert runner.WandbMode is models.WandbMode
+        assert runner.ResolvedWandbConfig is models.ResolvedWandbConfig
+        assert sweep.WandbProjectPath is report_models.WandbProjectPath
+        assert sweep.run_benchmarks.is_remote_input_source is runner.is_remote_input_source
+
+        assert models.WandbMode.__module__ == "measurement_tools.wandb_models"
+        assert models.ResolvedWandbConfig.__module__ == "measurement_tools.wandb_models"
+        settings = models.ResolvedWandbConfig()
+        reconstructed = models.ResolvedWandbConfig.model_validate(settings.model_dump())
+        assert reconstructed == settings
+        assert pickle.loads(pickle.dumps(models.WandbMode.offline)) is models.WandbMode.offline
+    finally:
+        for module_name in ("compat_report_facade", "compat_runner_facade", "compat_sweep_facade"):
+            sys.modules.pop(module_name, None)
+
+
+@pytest.mark.parametrize(
+    ("script", "help_text"),
+    [
+        ("create_wandb_report.py", "Create a W&B benchmark report"),
+        ("run_benchmarks.py", "Run Anonymizer benchmark suites"),
+        ("sweep_benchmarks.py", "Run a benchmark suite sweep"),
+        ("analyze_benchmark_output.py", "Analyze joined benchmark measurements"),
+    ],
+)
+def test_executable_tool_paths_preserve_help_and_main_behavior(script: str, help_text: str) -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(MEASUREMENT_ROOT), env.get("PYTHONPATH")))
+    )
+    result = subprocess.run(
+        [sys.executable, str(MEASUREMENT_ROOT / script), "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert help_text in result.stdout
+    assert "Usage:" in result.stdout
+
+
+def test_observed_monkeypatch_namespaces_remain_available() -> None:
+    setup = importlib.import_module("measurement_tools.wandb_setup")
+    report = _load_module(MEASUREMENT_ROOT / "create_wandb_report.py", "compat_report_patches")
+    runner = _load_module(MEASUREMENT_ROOT / "run_benchmarks.py", "compat_runner_patches")
+    sweep = _load_module(MEASUREMENT_ROOT / "sweep_benchmarks.py", "compat_sweep_patches")
+    surfaces: list[tuple[Any, tuple[str, ...]]] = [
+        (
+            setup,
+            (
+                "_PUBLISHER_WANDB_MODULE",
+                "prepare_wandb_staging_dir",
+                "_effective_wandb_tags",
+                "publish_benchmark_wandb_best_effort",
+            ),
+        ),
+        (
+            setup.os,
+            ("open", "close", "fstat"),
+        ),
+        (
+            report,
+            (
+                "require_wandb_report_sdk",
+                "require_wandb_workspace_sdk",
+                "build_benchmark_report",
+                "build_benchmark_group_report",
+                "build_benchmark_workspace",
+                "_save_report",
+                "_save_workspace",
+                "create_benchmark_report",
+                "create_benchmark_group_report",
+                "create_benchmark_workspace",
+            ),
+        ),
+        (
+            runner,
+            (
+                "Anonymizer",
+                "_run_case",
+                "_execute_case",
+                "_run_case_error",
+                "configured_measurement_session",
+                "export_measurement_tables",
+                "combine_detection_artifact_analysis",
+                "_git_metadata",
+                "_package_versions",
+                "publish_benchmark_wandb_best_effort",
+                "run_suite",
+                "run_or_plan",
+            ),
+        ),
+        (
+            sweep,
+            (
+                "create_benchmark_workspace",
+                "create_benchmark_group_report",
+                "run_benchmarks",
+                "run_sweep",
+            ),
+        ),
+    ]
+    try:
+        for namespace, names in surfaces:
+            for name in names:
+                assert hasattr(namespace, name), f"{namespace.__name__}.{name}"
+    finally:
+        for module_name in ("compat_report_patches", "compat_runner_patches", "compat_sweep_patches"):
+            sys.modules.pop(module_name, None)
+
+
+def _inherited_policy_names(
+    model: type[BaseModel],
+    registry: dict[type[BaseModel], dict[str, Any]],
+) -> Iterator[str]:
+    for parent in reversed(model.mro()):
+        if issubclass(parent, BaseModel):
+            yield from registry.get(parent, {})
+
+
+def test_outbound_field_policy_validation_is_complete_at_import() -> None:
+    models = importlib.import_module("measurement_tools.wandb_models")
+
+    models.validate_outbound_field_policies()
+    for model, _policies in models.OUTBOUND_FIELD_POLICIES.items():
+        assert set(model.model_fields) == set(_inherited_policy_names(model, models.OUTBOUND_FIELD_POLICIES))
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "anchor"),
+    [
+        ("tools/measurement/import_wandb_run.py", "from measurement_tools.wandb_models import"),
+        ("tools/measurement/measurement_tools/wandb_logging.py", "from measurement_tools.wandb_models import"),
+        ("tools/measurement/measurement_tools/wandb_report_models.py", "from measurement_tools.wandb_models import"),
+        ("tools/measurement/sweep_benchmarks.py", "import run_benchmarks"),
+        ("tests/tools/test_measurement_strict_import_publisher.py", "publish_benchmark_wandb_best_effort.__module__"),
+        (".github/workflows/benchmark-ci.yml", "uv run python tools/measurement/run_benchmarks.py"),
+        ("tools/measurement/examples/run-repo-data-smoke-with-dd-traces.sh", "tools/measurement/run_benchmarks.py"),
+        ("docs/development/observability.md", "tools/measurement/create_wandb_report.py"),
+    ],
+)
+def test_direct_consumer_anchors_remain_at_observed_paths(relative_path: str, anchor: str) -> None:
+    assert anchor in (REPO_ROOT / relative_path).read_text(encoding="utf-8")
