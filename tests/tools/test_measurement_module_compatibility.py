@@ -41,20 +41,26 @@ def _load_module(path: Path, name: str) -> ModuleType:
 
 
 @pytest.mark.parametrize(
-    ("relative_path", "defined_class", "canonical_import"),
+    ("relative_path", "defined_class", "canonical_import", "canonical_module"),
     [
-        ("measurement_tools/wandb_models.py", "WandbMode", "StrictFrozenModel"),
-        ("measurement_tools/wandb_setup.py", "WandbPublisher", "ResolvedWandbConfig"),
-        ("create_wandb_report.py", "WandbReportResult", "WandbProjectPath"),
-        ("run_benchmarks.py", "BenchmarkSpec", "Anonymizer"),
-        ("sweep_benchmarks.py", "SweepSpec", "WandbProjectPath"),
-        ("analyze_benchmark_output.py", "BenchmarkOutputAnalysis", "AnalysisExportResult"),
+        (
+            "measurement_tools/wandb_models.py",
+            "WandbMode",
+            "StrictFrozenModel",
+            "measurement_tools.wandb_settings",
+        ),
+        ("measurement_tools/wandb_setup.py", "WandbPublisher", "ResolvedWandbConfig", None),
+        ("create_wandb_report.py", "WandbReportResult", "WandbProjectPath", None),
+        ("run_benchmarks.py", "BenchmarkSpec", "Anonymizer", None),
+        ("sweep_benchmarks.py", "SweepSpec", "WandbProjectPath", None),
+        ("analyze_benchmark_output.py", "BenchmarkOutputAnalysis", "AnalysisExportResult", None),
     ],
 )
 def test_exact_tool_paths_support_repeated_dynamic_loading(
     relative_path: str,
     defined_class: str,
     canonical_import: str,
+    canonical_module: str | None,
 ) -> None:
     path = MEASUREMENT_ROOT / relative_path
     module_names = (f"compat_first_{path.stem}", f"compat_second_{path.stem}")
@@ -63,9 +69,13 @@ def test_exact_tool_paths_support_repeated_dynamic_loading(
     try:
         first_class = getattr(first, defined_class)
         second_class = getattr(second, defined_class)
-        assert first_class is not second_class
-        assert first_class.__module__ == module_names[0]
-        assert second_class.__module__ == module_names[1]
+        if canonical_module is None:
+            assert first_class is not second_class
+            assert first_class.__module__ == module_names[0]
+            assert second_class.__module__ == module_names[1]
+        else:
+            assert first_class is second_class
+            assert first_class.__module__ == canonical_module
         assert getattr(first, canonical_import) is getattr(second, canonical_import)
     finally:
         for module_name in module_names:
@@ -89,8 +99,8 @@ def test_wandb_facades_preserve_canonical_identity_and_reconstruction() -> None:
         assert sweep.WandbProjectPath is report_models.WandbProjectPath
         assert sweep.run_benchmarks.is_remote_input_source is runner.is_remote_input_source
 
-        assert models.WandbMode.__module__ == "measurement_tools.wandb_models"
-        assert models.ResolvedWandbConfig.__module__ == "measurement_tools.wandb_models"
+        assert models.WandbMode.__module__ == "measurement_tools.wandb_settings"
+        assert models.ResolvedWandbConfig.__module__ == "measurement_tools.wandb_settings"
         settings = models.ResolvedWandbConfig()
         reconstructed = models.ResolvedWandbConfig.model_validate(settings.model_dump())
         assert reconstructed == settings
@@ -98,6 +108,22 @@ def test_wandb_facades_preserve_canonical_identity_and_reconstruction() -> None:
     finally:
         for module_name in ("compat_report_facade", "compat_runner_facade", "compat_sweep_facade"):
             sys.modules.pop(module_name, None)
+
+
+@pytest.mark.parametrize(
+    "canonical_module",
+    [
+        "measurement_tools.wandb_policy",
+        "measurement_tools.wandb_settings",
+        "measurement_tools.wandb_metadata",
+    ],
+)
+def test_wandb_model_facade_reexports_every_canonical_symbol(canonical_module: str) -> None:
+    models = importlib.import_module("measurement_tools.wandb_models")
+    canonical = importlib.import_module(canonical_module)
+
+    for name in canonical.__all__:
+        assert getattr(models, name) is getattr(canonical, name)
 
 
 @pytest.mark.parametrize(
@@ -111,9 +137,7 @@ def test_wandb_facades_preserve_canonical_identity_and_reconstruction() -> None:
 )
 def test_executable_tool_paths_preserve_help_and_main_behavior(script: str, help_text: str) -> None:
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        filter(None, (str(MEASUREMENT_ROOT), env.get("PYTHONPATH")))
-    )
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(MEASUREMENT_ROOT), env.get("PYTHONPATH"))))
     result = subprocess.run(
         [sys.executable, str(MEASUREMENT_ROOT / script), "--help"],
         cwd=REPO_ROOT,
