@@ -56,9 +56,7 @@ def build_model_usage_rows(measurements: pd.DataFrame) -> list[ModelUsageAnalysi
                     suite_id=string_from_row(data, ["run_tags.suite_id"]),
                     workload_id=string_from_row(data, ["run_tags.workload_id"]),
                     config_id=string_from_row(data, ["run_tags.config_id"]),
-                    experimental_detection_strategy=string_from_row(
-                        data, ["run_tags.experimental_detection_strategy"]
-                    ),
+                    experimental_detection_strategy=string_from_row(data, ["run_tags.experimental_detection_strategy"]),
                     experimental_replacement_strategy=string_from_row(
                         data, ["run_tags.experimental_replacement_strategy"]
                     ),
@@ -219,6 +217,7 @@ def build_model_usage_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> M
         median_observed_failed_requests=_median_or_none(group, "observed_failed_requests"),
         median_observed_total_tokens=_median_or_none(group, "observed_total_tokens"),
     )
+
 
 __all__ = [
     "build_model_usage_group_row",
