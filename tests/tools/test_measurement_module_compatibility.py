@@ -73,7 +73,12 @@ def _load_module(path: Path, name: str) -> ModuleType:
             "WandbProjectPath",
             "measurement_tools.benchmark_sweep_models",
         ),
-        ("analyze_benchmark_output.py", "BenchmarkOutputAnalysis", "AnalysisExportResult", None),
+        (
+            "analyze_benchmark_output.py",
+            "BenchmarkOutputAnalysis",
+            "AnalysisExportResult",
+            "measurement_tools.benchmark_analysis_models",
+        ),
     ],
 )
 def test_exact_tool_paths_support_repeated_dynamic_loading(
