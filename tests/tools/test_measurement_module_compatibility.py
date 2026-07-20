@@ -49,7 +49,12 @@ def _load_module(path: Path, name: str) -> ModuleType:
             "StrictFrozenModel",
             "measurement_tools.wandb_settings",
         ),
-        ("measurement_tools/wandb_setup.py", "WandbPublisher", "ResolvedWandbConfig", None),
+        (
+            "measurement_tools/wandb_setup.py",
+            "WandbPublisher",
+            "ResolvedWandbConfig",
+            "measurement_tools.wandb_publisher",
+        ),
         ("create_wandb_report.py", "WandbReportResult", "WandbProjectPath", None),
         ("run_benchmarks.py", "BenchmarkSpec", "Anonymizer", None),
         ("sweep_benchmarks.py", "SweepSpec", "WandbProjectPath", None),
@@ -127,6 +132,27 @@ def test_wandb_setup_facade_preserves_staging_identity_and_payload_contracts() -
     assert setup._default_run_name is run_identity.default_run_name
     assert setup._effective_wandb_tags is run_identity.effective_wandb_tags
     assert setup.BenchmarkWandbFinalization.__module__ == "measurement_tools.wandb_payload"
+
+
+def test_wandb_setup_facade_preserves_sdk_environment_and_publisher_contracts() -> None:
+    setup = importlib.import_module("measurement_tools.wandb_setup")
+    publisher = importlib.import_module("measurement_tools.wandb_publisher")
+    sdk_environment = importlib.import_module("measurement_tools.wandb_sdk_environment")
+
+    assert publisher.__all__ == [
+        "WandbPublisher",
+        "define_benchmark_metrics",
+        "publication_already_complete",
+        "publication_state",
+        "raise_lifecycle_failures",
+        "sdk_init_kwargs",
+        "wandb_run_url",
+    ]
+    assert sdk_environment.__all__ == ["WandbSdkEnvironment", "publisher_environment", "require_wandb"]
+    assert setup.WandbPublisher is publisher.WandbPublisher
+    assert setup.WandbSdkEnvironment is sdk_environment.WandbSdkEnvironment
+    assert setup._publisher_environment is sdk_environment.publisher_environment
+    assert setup.WandbPublisher.__module__ == "measurement_tools.wandb_publisher"
 
 
 @pytest.mark.parametrize(
@@ -267,7 +293,7 @@ def test_outbound_field_policy_validation_is_complete_at_import() -> None:
         ("tools/measurement/measurement_tools/wandb_logging.py", "from measurement_tools.wandb_models import"),
         ("tools/measurement/measurement_tools/wandb_report_models.py", "from measurement_tools.wandb_models import"),
         ("tools/measurement/sweep_benchmarks.py", "import run_benchmarks"),
-        ("tests/tools/test_measurement_strict_import_publisher.py", "publish_benchmark_wandb_best_effort.__module__"),
+        ("tests/tools/test_measurement_strict_import_publisher.py", "WandbPublisher.__module__"),
         (".github/workflows/benchmark-ci.yml", "uv run python tools/measurement/run_benchmarks.py"),
         ("tools/measurement/examples/run-repo-data-smoke-with-dd-traces.sh", "tools/measurement/run_benchmarks.py"),
         ("docs/development/observability.md", "tools/measurement/create_wandb_report.py"),
