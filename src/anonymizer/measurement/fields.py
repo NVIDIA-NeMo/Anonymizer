@@ -4,7 +4,14 @@
 
 from __future__ import annotations
 
-SCALAR_LAST_VALUE_FIELDS = ("mode", "stage", "status", "strategy")
+SCALAR_LAST_VALUE_FIELDS = (
+    "mode",
+    "stage",
+    "status",
+    "strategy",
+    "attacker_endpoint_kind",
+    "reid_threshold",
+)
 SCALAR_ADDITIVE_FIELDS = (
     "elapsed_sec",
     "input_row_count",
@@ -49,6 +56,16 @@ SCALAR_ADDITIVE_FIELDS = (
     "native_trace_column_count",
     "private_trace_column_count",
     "unsupported_column_count",
+    "rows_processed",
+    "rows_failed",
+    "reidentified_rows",
+    "direct_reidentified_rows",
+    "correctmatch_reidentified_rows",
+    "reid_error_rows",
+    "correct_guess_count",
+    "incorrect_guess_count",
+    "total_guess_count",
+    "missing_output_rows",
 )
 SCALAR_AVERAGED_FIELDS = (
     "observed_failed_request_rate",
@@ -64,4 +81,7 @@ SCALAR_AVERAGED_FIELDS = (
     "leakage_mass",
     "weighted_leakage_rate",
     "repair_iterations",
+    "reidentification_rate_pct",
+    "coverage_pct",
+    "mean_reid_score",
 )
