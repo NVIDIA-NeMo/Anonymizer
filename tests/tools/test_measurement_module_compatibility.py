@@ -61,7 +61,12 @@ def _load_module(path: Path, name: str) -> ModuleType:
             "WandbProjectPath",
             "measurement_tools.wandb_report_contracts",
         ),
-        ("run_benchmarks.py", "BenchmarkSpec", "Anonymizer", None),
+        (
+            "run_benchmarks.py",
+            "BenchmarkSpec",
+            "Anonymizer",
+            "measurement_tools.benchmark_models",
+        ),
         ("sweep_benchmarks.py", "SweepSpec", "WandbProjectPath", None),
         ("analyze_benchmark_output.py", "BenchmarkOutputAnalysis", "AnalysisExportResult", None),
     ],
@@ -245,6 +250,79 @@ def test_wandb_report_facade_preserves_workspace_construction_contracts() -> Non
         assert report.create_benchmark_workspace.__module__ == "compat_workspace_construction_facade"
     finally:
         sys.modules.pop("compat_workspace_construction_facade", None)
+
+
+def test_benchmark_facade_preserves_models_specs_inputs_and_planning_contracts() -> None:
+    inputs = importlib.import_module("measurement_tools.benchmark_inputs")
+    models = importlib.import_module("measurement_tools.benchmark_models")
+    planning = importlib.import_module("measurement_tools.benchmark_planning")
+    specs = importlib.import_module("measurement_tools.benchmark_specs")
+    runner = _load_module(MEASUREMENT_ROOT / "run_benchmarks.py", "compat_benchmark_b1_facade")
+    try:
+        assert models.__all__ == [
+            "BenchmarkCase",
+            "BenchmarkResult",
+            "BenchmarkSpec",
+            "CaseRunPaths",
+            "CaseStatus",
+            "ConfigSpec",
+            "DDTraceMode",
+            "MatrixEntry",
+            "ReplaceKind",
+            "ReplaceSpec",
+            "RESERVED_RUN_TAG_KEYS",
+            "RewriteSpec",
+            "WorkloadSpec",
+            "duplicate_matrix_entries",
+            "duplicates",
+        ]
+        assert specs.__all__ == [
+            "active_config_ids",
+            "build_cases",
+            "cross_product_matrix",
+            "input_columns",
+            "load_spec",
+            "preflight_config_errors",
+            "preflight_model_configs",
+            "preflight_model_providers",
+            "preflight_model_providers_with_errors",
+            "preflight_suite",
+            "preflight_workload",
+            "preflight_workload_errors",
+            "prepare_output_dir",
+        ]
+        assert inputs.__all__ == [
+            "build_anonymizer_config",
+            "build_input",
+            "build_replace",
+            "build_rewrite",
+            "is_local_input_source",
+            "materialize_sliced_source",
+            "present",
+            "privacy_goal",
+            "read_local_input_dataframe",
+            "resolve_config_source",
+            "resolve_input_source",
+            "resolve_optional_path",
+            "resolve_path",
+            "safe_case_filename",
+            "slice_bounds",
+            "workload_has_row_slice",
+            "write_local_input_dataframe",
+        ]
+        assert planning.__all__ == ["dry_run_result", "plan_suite"]
+        assert runner.BenchmarkSpec is models.BenchmarkSpec
+        assert runner._CaseRunPaths is models.CaseRunPaths
+        assert runner.load_spec is specs.load_spec
+        assert runner.build_cases is specs.build_cases
+        assert runner.build_input is inputs.build_input
+        assert runner.build_anonymizer_config is inputs.build_anonymizer_config
+        assert runner._resolve_input_source is inputs.resolve_input_source
+        assert runner.dry_run_result is not planning.dry_run_result
+        assert runner.plan_suite is not planning.plan_suite
+        assert runner.plan_suite.__module__ == "compat_benchmark_b1_facade"
+    finally:
+        sys.modules.pop("compat_benchmark_b1_facade", None)
 
 
 @pytest.mark.parametrize(
