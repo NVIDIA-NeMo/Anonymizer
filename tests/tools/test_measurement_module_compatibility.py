@@ -325,6 +325,61 @@ def test_benchmark_facade_preserves_models_specs_inputs_and_planning_contracts()
         sys.modules.pop("compat_benchmark_b1_facade", None)
 
 
+def test_benchmark_facade_preserves_artifact_and_metadata_contracts() -> None:
+    artifacts = importlib.import_module("measurement_tools.benchmark_artifacts")
+    metadata = importlib.import_module("measurement_tools.benchmark_wandb_metadata")
+    runner = _load_module(MEASUREMENT_ROOT / "run_benchmarks.py", "compat_benchmark_b2_facade")
+    try:
+        assert artifacts.__all__ == [
+            "changed_detection_artifact_files",
+            "combine_detection_artifact_analysis",
+            "combine_measurements",
+            "export_case_detection_artifact_analysis",
+            "export_detection_artifact_analysis",
+            "export_measurement_tables",
+            "jsonl_chunk",
+            "render_result",
+            "snapshot_detection_artifacts",
+            "with_case_metadata",
+            "write_detection_artifact_payloads",
+            "write_summary",
+        ]
+        assert metadata.__all__ == [
+            "BENCHMARK_SUITE_SCHEMA_VERSION",
+            "WANDB_METADATA_SCHEMA_VERSION",
+            "benchmark_metadata",
+            "build_wandb_metadata",
+            "config_metadata",
+            "detect_metadata",
+            "execution_metadata",
+            "file_hash",
+            "git_metadata",
+            "git_output",
+            "model_source_metadata",
+            "package_version",
+            "package_versions",
+            "replace_metadata",
+            "rewrite_metadata",
+            "run_tags",
+            "runtime_metadata",
+            "source_metadata",
+            "source_suffix",
+            "stable_hash",
+            "sweep_metadata",
+            "workload_metadata",
+        ]
+        assert runner.combine_measurements is artifacts.combine_measurements
+        assert runner.export_measurement_tables is artifacts.export_measurement_tables
+        assert runner._with_case_metadata is artifacts.with_case_metadata
+        assert runner._git_metadata is metadata.git_metadata
+        assert runner._package_versions is metadata.package_versions
+        assert runner._execution_metadata is metadata.execution_metadata
+        assert runner.build_wandb_metadata is not metadata.build_wandb_metadata
+        assert runner.build_wandb_metadata.__module__ == "compat_benchmark_b2_facade"
+    finally:
+        sys.modules.pop("compat_benchmark_b2_facade", None)
+
+
 @pytest.mark.parametrize(
     "canonical_module",
     [
