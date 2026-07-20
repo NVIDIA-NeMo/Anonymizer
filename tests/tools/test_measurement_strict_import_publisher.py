@@ -26,6 +26,11 @@ from tests.tools.measurement_test_support import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _wandb_publisher_module() -> ModuleType:
+    publisher = importlib.import_module("measurement_tools.wandb_publisher")
+    return sys.modules[publisher.WandbPublisher.__module__]
+
+
 def _write_simple_suite(tmp_path: Path, *, suite_id: str = "base-suite") -> Path:
     return _write_yaml(tmp_path / "suite.yaml", _simple_suite_payload(suite_id=suite_id))
 
@@ -649,7 +654,7 @@ def test_wandb_publisher_uses_explicit_handle_and_finishes_once(
     case = _write_case_measurements(run_benchmarks_tool, tmp_path, _minimal_benchmark_case(run_benchmarks_tool))
     state = _wandb_state()
     fake_wandb = _fake_wandb_module(state)
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     monkeypatch.setattr(setup_module, "require_wandb", lambda: fake_wandb)
 
     result = setup_module.WandbPublisher().publish(
@@ -756,7 +761,7 @@ def test_wandb_table_opt_in_changes_only_table_payloads(
     run_benchmarks_tool: ModuleType,
 ) -> None:
     case = _write_case_measurements(run_benchmarks_tool, tmp_path, _minimal_benchmark_case(run_benchmarks_tool))
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     states: list[SimpleNamespace] = []
 
     for log_tables in (False, True):
@@ -811,7 +816,7 @@ def test_wandb_publisher_surfaces_each_strict_lifecycle_failure(
         return run
 
     fake_wandb.init = failing_init
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     monkeypatch.setattr(setup_module, "require_wandb", lambda: fake_wandb)
 
     with pytest.raises(RuntimeError, match=f"{failure_stage} failed"):
@@ -844,7 +849,7 @@ def test_wandb_publisher_preserves_publish_and_finish_errors(
         return run
 
     fake_wandb.init = init_with_two_failures
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     monkeypatch.setattr(setup_module, "require_wandb", lambda: fake_wandb)
 
     with pytest.raises(ExceptionGroup) as raised:
@@ -876,7 +881,7 @@ def test_wandb_publisher_surfaces_finish_errors(
         return run
 
     fake_wandb.init = init_with_bad_finish
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     monkeypatch.setattr(setup_module, "require_wandb", lambda: fake_wandb)
 
     with pytest.raises(RuntimeError, match="finish failed"):
@@ -943,7 +948,7 @@ def test_wandb_publisher_rejects_changed_run_identity_and_finishes(
         return run
 
     fake_wandb.init = init_with_changed_id
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     monkeypatch.setattr(setup_module, "require_wandb", lambda: fake_wandb)
 
     with pytest.raises(RuntimeError, match="different run identity"):
@@ -967,7 +972,7 @@ def test_wandb_publisher_rejects_ambient_active_run(
     case = _write_case_measurements(run_benchmarks_tool, tmp_path, _minimal_benchmark_case(run_benchmarks_tool))
     state = _wandb_state()
     fake_wandb = _fake_wandb_module(state, active_run=True)
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     monkeypatch.setattr(setup_module, "require_wandb", lambda: fake_wandb)
 
     with pytest.raises(RuntimeError, match="ambient W&B run"):
@@ -1000,7 +1005,7 @@ def test_wandb_publisher_finishes_after_keyboard_interrupt(
         return run
 
     fake_wandb.init = init_with_interrupt
-    setup_module = sys.modules[run_benchmarks_tool.publish_benchmark_wandb_best_effort.__module__]
+    setup_module = _wandb_publisher_module()
     monkeypatch.setattr(setup_module, "require_wandb", lambda: fake_wandb)
 
     with pytest.raises(KeyboardInterrupt):
