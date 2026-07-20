@@ -447,6 +447,7 @@ class Anonymizer:
                 check_substitute=isinstance(replace_method, Substitute),
                 check_rewrite=False,
                 check_evaluate=True,
+                check_rewrite_judge=is_rewrite,
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
