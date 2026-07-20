@@ -13,19 +13,34 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import sys
-import unicodedata
-from html import escape as escape_html
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
 
 import cyclopts
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
-from measurement_tools.wandb_metric_schema import metric_paths
-from measurement_tools.wandb_models import ConfigMetadata, ResolvedWandbConfig, WandbMode, WorkloadMetadata
+from measurement_tools.wandb_models import (  # noqa: F401
+    ConfigMetadata,
+    ResolvedWandbConfig,
+    WandbMode,
+    WorkloadMetadata,
+)
+from measurement_tools.wandb_report_catalog import (
+    _MEASUREMENT_TABLE_KEYS,
+    _WORKSPACE_BAR_SECTIONS,
+    _WORKSPACE_COMPARISON_COLUMNS,
+    _WORKSPACE_JOB_FILTERS,
+    _WORKSPACE_SUMMARY_SCALARS,
+    all_report_metrics,
+    bar_panel,
+    benchmark_panels,
+    group_visible_columns,
+    metric_panels,
+    metric_title,
+    single_run_visible_columns,
+    summary_columns,
+)
+from measurement_tools.wandb_report_contracts import WandbReportResult, WandbWorkspaceResult
 from measurement_tools.wandb_report_models import (
     GroupComparison,
     WandbProjectPath,
@@ -37,208 +52,51 @@ from measurement_tools.wandb_report_models import (
     parse_wandb_run_view,
     validate_wandb_returned_url,
 )
+from measurement_tools.wandb_report_sdk import (
+    read_group_views,
+    report_settings,
+    require_wandb_report_sdk,
+    require_wandb_workspace_sdk,
+    sweep_param_columns,
+)
+from measurement_tools.wandb_report_text import (
+    code_span,
+    escape_heading,
+    escape_link_label,
+    escape_list_text,
+    escape_markdown_text,
+    plain_text,
+    scalar_text,
+    table_code,
+    validate_output_text,
+    validate_output_url,
+)
 from measurement_tools.wandb_setup import WandbSdkEnvironment, require_wandb
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.wandb_report")
 
-_WANDB_REPORT_INSTALL_HINT = "Install the optional measurement dependency group: uv sync --group measurement"
-
-
-_ROW_FLOW_FIELDS = ("input_row_count", "output_row_count", "failed_record_count")
-_ROW_THROUGHPUT_FIELDS = ("input_rows_per_sec_mean", "output_rows_per_sec_mean")
-_CASE_HEALTH_METRICS = metric_paths(
-    "benchmark",
-    "case_total",
-    "case_completed",
-    "case_errored",
-    "case_success_rate",
-)
-_CASE_LATENCY_METRICS = [
-    *metric_paths("benchmark", "case_elapsed_sec_mean", "case_elapsed_sec_sum"),
-    *metric_paths("measurement/stage", "elapsed_sec"),
-]
-_NDD_ROW_FLOW_METRICS = metric_paths(
-    "measurement/ndd_workflow",
-    "seed_row_count",
-    *_ROW_FLOW_FIELDS,
-    "column_count",
-)
-_NDD_REQUEST_HEALTH_METRICS = metric_paths(
-    "measurement/ndd_workflow",
-    "observed_total_requests",
-    "observed_successful_requests",
-    "observed_failed_requests",
-    "observed_failed_request_rate_mean",
-)
-_NDD_TOKEN_METRICS = metric_paths(
-    "measurement/ndd_workflow",
-    "observed_input_tokens",
-    "observed_output_tokens",
-    "observed_total_tokens",
-    "observed_tokens_per_successful_request_mean",
-)
-_NDD_THROUGHPUT_METRICS = metric_paths(
-    "measurement/ndd_workflow",
-    "elapsed_sec",
-    *_ROW_THROUGHPUT_FIELDS,
-    "observed_requests_per_sec_mean",
-    "observed_tokens_per_sec_mean",
-)
-_RECORD_PRIVACY_METRICS = metric_paths(
-    "measurement/record",
-    "final_entity_count",
-    "entity_precision_mean",
-    "entity_recall_mean",
-    "entity_f1_mean",
-    "original_value_leak_count",
-    "leakage_mass_mean",
-    "weighted_leakage_rate_mean",
-    "detected_candidate_count",
-    "validation_chunk_count",
-    "llm_calls_estimated_total",
-)
-_REWRITE_UTILITY_METRICS = metric_paths(
-    "measurement/record",
-    "utility_score_mean",
-    "repair_iterations_mean",
-)
-_REPLACEMENT_QUALITY_METRICS = metric_paths(
-    "measurement/record",
-    "replacement_count",
-    "replacement_duplicate_value_count",
-    "replacement_missing_final_entity_count",
-    "replacement_missing_final_value_count",
-    "replacement_synthetic_original_collision_count",
-    "replacement_synthetic_original_collision_value_count",
-)
-_STAGE_THROUGHPUT_METRICS = metric_paths(
-    "measurement/stage",
-    *_ROW_FLOW_FIELDS,
-    *_ROW_THROUGHPUT_FIELDS,
-)
-_METRIC_PANEL_GROUPS = [
-    ("Case Health", _CASE_HEALTH_METRICS),
-    ("Case Latency", _CASE_LATENCY_METRICS),
-    ("NDD Row Flow", _NDD_ROW_FLOW_METRICS),
-    ("NDD Request Health", _NDD_REQUEST_HEALTH_METRICS),
-    ("NDD Token Usage", _NDD_TOKEN_METRICS),
-    ("NDD Throughput", _NDD_THROUGHPUT_METRICS),
-    ("Record Privacy", _RECORD_PRIVACY_METRICS),
-    ("Rewrite Utility", _REWRITE_UTILITY_METRICS),
-    ("Replacement Quality", _REPLACEMENT_QUALITY_METRICS),
-    ("Stage Throughput", _STAGE_THROUGHPUT_METRICS),
-]
-_MEASUREMENT_TABLE_KEYS = metric_paths(
-    "measurement_table",
-    "run",
-    "stage",
-    "ndd_workflow",
-    "model_workflow",
-    "record",
-    "evaluation_record",
-)
-_WORKSPACE_JOB_FILTERS = ("benchmark", "benchmark-import", "benchmark-sweep")
-_WORKSPACE_SUMMARY_SCALARS = metric_paths(
-    "benchmark",
-    "case_success_rate",
-    "case_completed",
-    "case_errored",
-    "case_elapsed_sec_mean",
-)
-_WORKSPACE_COMPARISON_COLUMNS = [
-    "config:sweep_arm_id",
-    "config:benchmark_strategies",
-    "config:benchmark_gliner_thresholds",
-    "config:benchmark_risk_tolerances",
-    "summary:benchmark/case_success_rate",
-    "summary:measurement/record/utility_score_mean",
-    "summary:measurement/record/weighted_leakage_rate_mean",
-    "summary:measurement/ndd_workflow/observed_total_tokens",
-]
-_WORKSPACE_BAR_SECTIONS = (
-    ("Benchmark Summary", (("Case Health", _CASE_HEALTH_METRICS), ("Case Latency", _CASE_LATENCY_METRICS)), True),
-    (
-        "Privacy",
-        (("Privacy Outcomes", _RECORD_PRIVACY_METRICS), ("Replacement Quality", _REPLACEMENT_QUALITY_METRICS)),
-        True,
-    ),
-    ("Utility", (("Rewrite Utility", _REWRITE_UTILITY_METRICS),), True),
-    (
-        "Cost/Throughput",
-        (
-            ("NDD Request Health", _NDD_REQUEST_HEALTH_METRICS),
-            ("NDD Token Usage", _NDD_TOKEN_METRICS),
-            ("NDD Throughput", _NDD_THROUGHPUT_METRICS),
-            ("Stage Throughput", _STAGE_THROUGHPUT_METRICS),
-        ),
-        True,
-    ),
-)
-
-
-class _WandbOutputValidation:
-    @field_validator("project_path", "group", "title")
-    @classmethod
-    def validate_output_text(cls, value: str | None) -> str | None:
-        return _validate_output_text(value)
-
-
-class WandbReportResult(_WandbOutputValidation, BaseModel):
-    run_path: str | None = None
-    run_url: str | None = None
-    project_path: str
-    group: str | None = None
-    report_url: str
-    draft: bool
-    title: str
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    @field_validator("run_url", "report_url")
-    @classmethod
-    def validate_output_urls(cls, value: str | None) -> str | None:
-        return _validate_output_url(value)
-
-
-class WandbWorkspaceResult(_WandbOutputValidation, BaseModel):
-    project_path: str
-    group: str | None = None
-    workspace_url: str
-    title: str
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    @field_validator("workspace_url")
-    @classmethod
-    def validate_output_urls(cls, value: str) -> str:
-        validated = _validate_output_url(value)
-        if validated is None:
-            raise ValueError("W&B workspace URL is required")
-        return validated
-
-
-def require_wandb_report_sdk() -> tuple[Any, Any, Any]:
-    """Import W&B report APIs when report generation is requested."""
-    wandb = require_wandb()
-    try:
-        from wandb.apis.reports import v2 as wr
-        from wandb_workspaces import expr
-    except ImportError as exc:
-        raise ImportError(f"W&B report generation requires wandb[workspaces]. {_WANDB_REPORT_INSTALL_HINT}") from exc
-    return wandb, wr, expr
-
-
-def require_wandb_workspace_sdk() -> tuple[Any, Any]:
-    """Import W&B workspace APIs when workspace generation is requested."""
-    require_wandb()
-    try:
-        import wandb_workspaces.reports.v2 as wr
-        import wandb_workspaces.workspaces as ws
-    except ImportError as exc:
-        raise ImportError(f"W&B workspace generation requires wandb[workspaces]. {_WANDB_REPORT_INSTALL_HINT}") from exc
-    return ws, wr
+_all_report_metrics = all_report_metrics
+_bar_panel = bar_panel
+_benchmark_panels = benchmark_panels
+_code_span = code_span
+_escape_heading = escape_heading
+_escape_link_label = escape_link_label
+_escape_list_text = escape_list_text
+_escape_markdown_text = escape_markdown_text
+_group_visible_columns = group_visible_columns
+_metric_panels = metric_panels
+_metric_title = metric_title
+_plain_text = plain_text
+_read_group_views = read_group_views
+_report_settings = report_settings
+_scalar_text = scalar_text
+_single_run_visible_columns = single_run_visible_columns
+_summary_columns = summary_columns
+_sweep_param_columns = sweep_param_columns
+_table_code = table_code
+_validate_output_text = validate_output_text
+_validate_output_url = validate_output_url
 
 
 def create_benchmark_report(
@@ -470,21 +328,6 @@ def build_benchmark_group_report(
     )
 
 
-def _single_run_visible_columns() -> list[str]:
-    return _summary_columns(_all_report_metrics())
-
-
-def _group_visible_columns(comparison: GroupComparison, parameter_columns: list[str] | None = None) -> list[str]:
-    columns = [
-        f"config:{comparison.config_key}",
-        "config:run_kind",
-        *(["config:sweep_id", "config:sweep_params"] if comparison.run_kind == "sweep_arm" else []),
-        *(parameter_columns or []),
-        *_summary_columns(_all_report_metrics()),
-    ]
-    return list(dict.fromkeys(columns))
-
-
 def _benchmark_workspace_settings(ws: Any) -> Any:
     return ws.WorkspaceSettings(
         sort_panels_alphabetically=False,
@@ -576,83 +419,6 @@ def _workspace_metric_accessor(wr: Any, column: str) -> Any:
     if section == "summary":
         return wr.SummaryMetric(name)
     raise ValueError(f"Unsupported workspace metric section: {section!r}")
-
-
-def _metric_title(metric: str) -> str:
-    return metric.rsplit("/", maxsplit=1)[-1].replace("_", " ").title()
-
-
-def _benchmark_panels(wr: Any, *, groupby: Any | None = None) -> list[Any]:
-    return [
-        *_metric_panels(wr, groupby=groupby),
-        wr.MediaBrowser(title="Sanitized Measurement Tables", media_keys=_MEASUREMENT_TABLE_KEYS, mode="grid"),
-    ]
-
-
-def _metric_panels(wr: Any, *, groupby: Any | None) -> list[Any]:
-    return [_bar_panel(wr, title, metrics, groupby=groupby) for title, metrics in _METRIC_PANEL_GROUPS]
-
-
-def _bar_panel(wr: Any, title: str, metrics: list[str], *, groupby: Any | None = None) -> Any:
-    return wr.BarPlot(title=title, metrics=metrics, groupby=groupby)
-
-
-def _all_report_metrics() -> list[str]:
-    return list(dict.fromkeys(metric for _, metrics in _METRIC_PANEL_GROUPS for metric in metrics))
-
-
-def _summary_columns(metrics: list[str]) -> list[str]:
-    return [f"summary:{metric}" for metric in metrics]
-
-
-def _read_group_views(wandb: Any, *, project_path: WandbProjectPath, group: str) -> list[WandbRunView]:
-    runs = wandb.Api(timeout=60).runs(project_path.path, filters={"group": group})
-    views: list[WandbRunView] = []
-    for run in runs:
-        try:
-            run_id = getattr(run, "id", None)
-            if not isinstance(run_id, str):
-                raise ValueError("W&B group run is missing a string identity")
-            view = parse_wandb_run_view(
-                run,
-                run_path=WandbRunPath(
-                    entity=project_path.entity,
-                    project=project_path.project,
-                    run_id=run_id,
-                    base_url=project_path.base_url,
-                ),
-                allowed_metrics=frozenset(_all_report_metrics()),
-            )
-        except (ValueError, ValidationError):
-            raise ValueError("W&B group contains invalid run metadata") from None
-        views.append(view)
-    return views
-
-
-def _sweep_param_columns(views: list[WandbRunView]) -> list[str]:
-    keys = sorted({key for view in views if view.metadata.sweep is not None for key in view.metadata.sweep.params})
-    return [f"config:sweep_param_{key}" for key in keys]
-
-
-def _report_settings(
-    settings: ResolvedWandbConfig | None,
-    target: WandbRunPath | WandbProjectPath,
-) -> ResolvedWandbConfig:
-    target_base_url = target.base_url if target.base_url != "https://wandb.ai" else None
-    if settings is None:
-        return ResolvedWandbConfig.from_env_and_overrides(
-            wandb_mode=WandbMode.online,
-            wandb_entity=target.entity,
-            wandb_project=target.project,
-            wandb_base_url=target_base_url,
-        )
-    if target_base_url is not None and settings.wandb_base_url not in {None, target_base_url}:
-        raise ValueError("W&B target URL conflicts with resolved base URL")
-    return settings.validated_update(
-        wandb_entity=target.entity,
-        wandb_project=target.project,
-        wandb_base_url=target_base_url or settings.wandb_base_url,
-    )
 
 
 def build_group_report_markdown(*, group: str, comparison: GroupComparison | None = None) -> str:
@@ -814,83 +580,6 @@ def _number_metric(summary: dict[str, Any], key: str) -> str:
     if value is None:
         return "n/a"
     return f"{float(value):.4g}"
-
-
-def _scalar_text(value: Any) -> str:
-    if value is None:
-        return "n/a"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float | str):
-        return str(value)
-    return json.dumps(value, ensure_ascii=True, sort_keys=True)
-
-
-def _plain_text(value: str) -> str:
-    if any(
-        unicodedata.category(character) == "Cf"
-        or (unicodedata.category(character) == "Cc" and character not in "\t\n\r")
-        for character in value
-    ):
-        raise ValueError("W&B display text contains unsafe control characters")
-    return " ".join(value.split())
-
-
-def _validate_output_url(value: str | None) -> str | None:
-    if value is None:
-        return None
-    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in value):
-        raise ValueError("W&B output URL contains unsafe control characters")
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or parsed.hostname is None
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
-        raise ValueError("W&B output URL must be a credential-free HTTP(S) URL")
-    if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-        raise ValueError("W&B output URL must use HTTPS unless it targets loopback")
-    return value
-
-
-def _validate_output_text(value: str | None) -> str | None:
-    if value is not None:
-        _plain_text(value)
-    return value
-
-
-def _escape_link_label(value: str) -> str:
-    text = escape_html(_plain_text(value), quote=False)
-    return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
-
-
-def _escape_markdown_text(value: str) -> str:
-    text = escape_html(_plain_text(value), quote=False)
-    for character in ("\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "-", ".", "!", "|"):
-        text = text.replace(character, f"\\{character}")
-    return text
-
-
-def _escape_heading(value: str) -> str:
-    return _escape_markdown_text(value)
-
-
-def _code_span(value: Any) -> str:
-    text = escape_html(_scalar_text(value), quote=False).replace("|", "&#124;")
-    text = _plain_text(text)
-    fence = "`" * (max((len(match) for match in re.findall(r"`+", text)), default=0) + 1)
-    if "`" in text:
-        return f"{fence} {text} {fence}"
-    return f"`{text}`"
-
-
-def _table_code(value: Any) -> str:
-    return _code_span(value)
-
-
-def _escape_list_text(value: Any) -> str:
-    return escape_html(_plain_text(_scalar_text(value)), quote=False).replace("|", "&#124;")
 
 
 def render_result(result: WandbReportResult | WandbWorkspaceResult, *, json_output: bool) -> str:

@@ -55,7 +55,12 @@ def _load_module(path: Path, name: str) -> ModuleType:
             "ResolvedWandbConfig",
             "measurement_tools.wandb_publisher",
         ),
-        ("create_wandb_report.py", "WandbReportResult", "WandbProjectPath", None),
+        (
+            "create_wandb_report.py",
+            "WandbReportResult",
+            "WandbProjectPath",
+            "measurement_tools.wandb_report_contracts",
+        ),
         ("run_benchmarks.py", "BenchmarkSpec", "Anonymizer", None),
         ("sweep_benchmarks.py", "SweepSpec", "WandbProjectPath", None),
         ("analyze_benchmark_output.py", "BenchmarkOutputAnalysis", "AnalysisExportResult", None),
@@ -153,6 +158,25 @@ def test_wandb_setup_facade_preserves_sdk_environment_and_publisher_contracts() 
     assert setup.WandbSdkEnvironment is sdk_environment.WandbSdkEnvironment
     assert setup._publisher_environment is sdk_environment.publisher_environment
     assert setup.WandbPublisher.__module__ == "measurement_tools.wandb_publisher"
+
+
+def test_wandb_report_facade_preserves_leaf_contracts() -> None:
+    catalog = importlib.import_module("measurement_tools.wandb_report_catalog")
+    contracts = importlib.import_module("measurement_tools.wandb_report_contracts")
+    sdk = importlib.import_module("measurement_tools.wandb_report_sdk")
+    text = importlib.import_module("measurement_tools.wandb_report_text")
+    report = _load_module(MEASUREMENT_ROOT / "create_wandb_report.py", "compat_report_leaf_facade")
+    try:
+        assert report.WandbReportResult is contracts.WandbReportResult
+        assert report.WandbWorkspaceResult is contracts.WandbWorkspaceResult
+        assert report._all_report_metrics is catalog.all_report_metrics
+        assert report._group_visible_columns is catalog.group_visible_columns
+        assert report._read_group_views is sdk.read_group_views
+        assert report._report_settings is sdk.report_settings
+        assert report._plain_text is text.plain_text
+        assert report._validate_output_url is text.validate_output_url
+    finally:
+        sys.modules.pop("compat_report_leaf_facade", None)
 
 
 @pytest.mark.parametrize(
