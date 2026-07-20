@@ -179,6 +179,37 @@ def test_wandb_report_facade_preserves_leaf_contracts() -> None:
         sys.modules.pop("compat_report_leaf_facade", None)
 
 
+def test_wandb_report_facade_preserves_report_construction_contracts() -> None:
+    reports = importlib.import_module("measurement_tools.wandb_reports")
+    report = _load_module(MEASUREMENT_ROOT / "create_wandb_report.py", "compat_report_construction_facade")
+    try:
+        assert reports.__all__ == [
+            "build_benchmark_group_report",
+            "build_benchmark_report",
+            "build_group_report_markdown",
+            "build_report_markdown",
+            "config_line",
+            "create_benchmark_group_report",
+            "create_benchmark_report",
+            "default_report_title",
+            "int_metric",
+            "metric",
+            "number_metric",
+            "save_report",
+            "workload_line",
+        ]
+        assert report.build_benchmark_report is reports.build_benchmark_report
+        assert report.build_benchmark_group_report is reports.build_benchmark_group_report
+        assert report.build_report_markdown is reports.build_report_markdown
+        assert report._save_report is reports.save_report
+        assert report._default_report_title is reports.default_report_title
+        assert report.create_benchmark_report is not reports.create_benchmark_report
+        assert report.create_benchmark_group_report is not reports.create_benchmark_group_report
+        assert report.create_benchmark_report.__module__ == "compat_report_construction_facade"
+    finally:
+        sys.modules.pop("compat_report_construction_facade", None)
+
+
 @pytest.mark.parametrize(
     "canonical_module",
     [
