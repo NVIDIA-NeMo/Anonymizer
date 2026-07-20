@@ -42,7 +42,10 @@ def load_tool() -> Callable[..., ModuleType]:
         assert spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-        for import_path in (*additional_paths, path.parent):
+        import_paths = list(additional_paths)
+        if not any(path.is_relative_to(import_path) for import_path in additional_paths):
+            import_paths.append(path.parent)
+        for import_path in import_paths:
             sys.path.insert(0, str(import_path))
         spec.loader.exec_module(module)
         return module

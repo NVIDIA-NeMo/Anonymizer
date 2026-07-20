@@ -210,6 +210,43 @@ def test_wandb_report_facade_preserves_report_construction_contracts() -> None:
         sys.modules.pop("compat_report_construction_facade", None)
 
 
+def test_wandb_report_facade_preserves_workspace_construction_contracts() -> None:
+    workspaces = importlib.import_module("measurement_tools.wandb_workspaces")
+    report = _load_module(MEASUREMENT_ROOT / "create_wandb_report.py", "compat_workspace_construction_facade")
+    try:
+        assert workspaces.__all__ == [
+            "benchmark_run_filters",
+            "benchmark_run_groupby",
+            "benchmark_runset_settings",
+            "benchmark_workspace_sections",
+            "benchmark_workspace_settings",
+            "build_benchmark_workspace",
+            "comparison_workspace_panels",
+            "create_benchmark_workspace",
+            "default_workspace_title",
+            "save_workspace",
+            "table_workspace_panels",
+            "workspace_bar_panels",
+            "workspace_metric_accessor",
+        ]
+        assert report.build_benchmark_workspace is workspaces.build_benchmark_workspace
+        assert report._benchmark_workspace_settings is workspaces.benchmark_workspace_settings
+        assert report._benchmark_runset_settings is workspaces.benchmark_runset_settings
+        assert report._benchmark_run_filters is workspaces.benchmark_run_filters
+        assert report._benchmark_run_groupby is workspaces.benchmark_run_groupby
+        assert report._benchmark_workspace_sections is workspaces.benchmark_workspace_sections
+        assert report._workspace_bar_panels is workspaces.workspace_bar_panels
+        assert report._comparison_workspace_panels is workspaces.comparison_workspace_panels
+        assert report._table_workspace_panels is workspaces.table_workspace_panels
+        assert report._workspace_metric_accessor is workspaces.workspace_metric_accessor
+        assert report._save_workspace is workspaces.save_workspace
+        assert report._default_workspace_title is workspaces.default_workspace_title
+        assert report.create_benchmark_workspace is not workspaces.create_benchmark_workspace
+        assert report.create_benchmark_workspace.__module__ == "compat_workspace_construction_facade"
+    finally:
+        sys.modules.pop("compat_workspace_construction_facade", None)
+
+
 @pytest.mark.parametrize(
     "canonical_module",
     [
