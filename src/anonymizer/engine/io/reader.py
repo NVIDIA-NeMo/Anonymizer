@@ -44,11 +44,11 @@ def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> Reso
 
 
 # Suffixes appended to the user's text column to form per-mode output columns
-# (see ``_rename_output_columns`` in ``anonymizer.interface.anonymizer``).
+# (see ``rename_output_columns`` in ``anonymizer.interface.output_columns``).
 _OUTPUT_COLUMN_SUFFIXES: tuple[str, ...] = ("_replaced", "_with_spans", "_rewritten")
 
 # Fixed user-facing output column names that don't depend on the text column
-# (see ``_build_user_dataframe`` in ``anonymizer.interface.anonymizer``).
+# (see ``build_user_dataframe`` in ``anonymizer.interface.output_columns``).
 _STATIC_OUTPUT_COLUMNS: tuple[str, ...] = (
     COL_FINAL_ENTITIES,
     COL_UTILITY_SCORE,
@@ -88,7 +88,7 @@ def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_
     ``final_entities__input_replaced``) are re-checked against the remaining
     user columns. That second pass is necessary — without it, an input column
     that matches a *post-rename* derived name (``final_entities__input_replaced``)
-    would never be reserved, and ``_rename_output_columns`` would later
+    would never be reserved, and ``rename_output_columns`` would later
     overwrite it, producing duplicate user-facing labels.
 
     The returned ``ResolvedInput.resolved_text_column`` reflects the final

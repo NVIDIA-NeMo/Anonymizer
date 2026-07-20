@@ -35,3 +35,13 @@ source_modules =
     anonymizer.interface.display.replaced_spans
 forbidden_modules =
     anonymizer.interface.display.record_html
+
+# Facade extractions (active after Group B2) must not re-import the facade.
+[importlinter:contract:facade-extractions-no-backedge]
+name = output_columns / run_telemetry do not import the Anonymizer facade
+type = forbidden
+source_modules =
+    anonymizer.interface.output_columns
+    anonymizer.interface.run_telemetry
+forbidden_modules =
+    anonymizer.interface.anonymizer
