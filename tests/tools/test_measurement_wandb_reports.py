@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -512,6 +513,31 @@ def test_wandb_report_markdown_uses_sanitized_fields(wandb_report_tool: ModuleTy
     assert "source_suffix=`.csv`" in markdown
     assert "/secret/path.csv" not in markdown
     assert "sk-secret-token" not in markdown
+
+
+def test_wandb_report_save_uses_auth_preflight_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    wandb_reports = importlib.import_module("measurement_tools.wandb_reports")
+
+    report = SimpleNamespace(save=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("relogin required")))
+    fallback_calls: list[tuple[Any, bool]] = []
+
+    def fallback(value: Any, *, draft: bool) -> str:
+        fallback_calls.append((value, draft))
+        return "saved"
+
+    monkeypatch.setattr(wandb_reports, "_save_report_without_project_preflight", fallback)
+
+    assert wandb_reports.save_report(report, draft=True) == "saved"
+    assert fallback_calls == [(report, True)]
+
+
+def test_wandb_report_save_preserves_unrelated_sdk_errors() -> None:
+    wandb_reports = importlib.import_module("measurement_tools.wandb_reports")
+
+    report = SimpleNamespace(save=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("permission denied")))
+
+    with pytest.raises(RuntimeError, match="permission denied"):
+        wandb_reports.save_report(report, draft=False)
 
 
 def test_wandb_report_views_parse_v1_and_v2_with_explicit_axes(wandb_report_tool: ModuleType) -> None:

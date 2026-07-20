@@ -19,12 +19,10 @@ from typing import Annotated, Any, Literal
 
 import cyclopts
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
-from measurement_tools.wandb_models import (  # noqa: F401
-    ConfigMetadata,
-    ResolvedWandbConfig,
-    WandbMode,
-    WorkloadMetadata,
-)
+from measurement_tools.wandb_models import ConfigMetadata as ConfigMetadata
+from measurement_tools.wandb_models import ResolvedWandbConfig as ResolvedWandbConfig
+from measurement_tools.wandb_models import WandbMode as WandbMode
+from measurement_tools.wandb_models import WorkloadMetadata as WorkloadMetadata
 from measurement_tools.wandb_report_catalog import (
     _MEASUREMENT_TABLE_KEYS,
     _WORKSPACE_BAR_SECTIONS,
@@ -45,12 +43,16 @@ from measurement_tools.wandb_report_models import (
     GroupComparison,
     WandbProjectPath,
     WandbRunPath,
-    WandbRunView,
     group_comparison,
     parse_wandb_project_path,
     parse_wandb_run_path,
-    parse_wandb_run_view,
     validate_wandb_returned_url,
+)
+from measurement_tools.wandb_report_models import (
+    WandbRunView as WandbRunView,
+)
+from measurement_tools.wandb_report_models import (
+    parse_wandb_run_view as parse_wandb_run_view,
 )
 from measurement_tools.wandb_report_sdk import (
     read_group_views,
@@ -71,7 +73,31 @@ from measurement_tools.wandb_report_text import (
     validate_output_text,
     validate_output_url,
 )
-from measurement_tools.wandb_setup import WandbSdkEnvironment, require_wandb
+from measurement_tools.wandb_reports import (
+    build_benchmark_group_report,
+    build_benchmark_report,
+    config_line,
+    default_report_title,
+    int_metric,
+    metric,
+    number_metric,
+    save_report,
+    workload_line,
+)
+from measurement_tools.wandb_reports import (
+    build_group_report_markdown as build_group_report_markdown,
+)
+from measurement_tools.wandb_reports import (
+    build_report_markdown as build_report_markdown,
+)
+from measurement_tools.wandb_reports import (
+    create_benchmark_group_report as _create_benchmark_group_report,
+)
+from measurement_tools.wandb_reports import (
+    create_benchmark_report as _create_benchmark_report,
+)
+from measurement_tools.wandb_setup import WandbSdkEnvironment
+from measurement_tools.wandb_setup import require_wandb as require_wandb
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.wandb_report")
@@ -97,6 +123,13 @@ _sweep_param_columns = sweep_param_columns
 _table_code = table_code
 _validate_output_text = validate_output_text
 _validate_output_url = validate_output_url
+_config_line = config_line
+_default_report_title = default_report_title
+_int_metric = int_metric
+_metric = metric
+_number_metric = number_metric
+_save_report = save_report
+_workload_line = workload_line
 
 
 def create_benchmark_report(
@@ -109,36 +142,16 @@ def create_benchmark_report(
     timeout: int = 60,
 ) -> WandbReportResult:
     """Create a W&B report for one benchmark run."""
-    resolved = _report_settings(settings, run_path)
-    effective_run_path = run_path.with_base_url(resolved.wandb_base_url or run_path.base_url)
-    with WandbSdkEnvironment(resolved):
-        wandb, wr, expr = require_wandb_report_sdk()
-        run = wandb.Api(timeout=timeout).run(run_path.path)
-        view = parse_wandb_run_view(
-            run,
-            run_path=effective_run_path,
-            allowed_metrics=frozenset(_all_report_metrics()),
-        )
-        report_title = _plain_text(title) if title is not None else _default_report_title(view)
-        report_description = _plain_text(
-            description or "SDK-generated benchmark report for a NeMo Anonymizer measurement run."
-        )
-        report = build_benchmark_report(
-            view,
-            title=report_title,
-            description=report_description,
-            wr=wr,
-            expr=expr,
-        )
-        _save_report(report, draft=draft)
-        report_url = validate_wandb_returned_url(report.url, expected_base_url=effective_run_path.base_url)
-    return WandbReportResult(
-        run_path=run_path.path,
-        run_url=effective_run_path.url,
-        project_path=f"{run_path.entity}/{run_path.project}",
-        report_url=report_url,
+    return _create_benchmark_report(
+        run_path,
+        settings=settings,
+        title=title,
+        description=description,
         draft=draft,
-        title=report_title,
+        timeout=timeout,
+        sdk_loader=require_wandb_report_sdk,
+        report_builder=build_benchmark_report,
+        report_saver=_save_report,
     )
 
 
@@ -190,36 +203,17 @@ def create_benchmark_group_report(
     expected_run_kind: Literal["native_suite", "sweep_arm", "imported_case"] | None = None,
 ) -> WandbReportResult:
     """Create a W&B report for a benchmark run group."""
-    resolved = _report_settings(settings, project_path)
-    effective_project_path = project_path.with_base_url(resolved.wandb_base_url or project_path.base_url)
-    with WandbSdkEnvironment(resolved):
-        wandb, wr, expr = require_wandb_report_sdk()
-        views = _read_group_views(wandb, project_path=effective_project_path, group=group)
-        comparison = group_comparison(views, expected_run_kind=expected_run_kind)
-        report_title = (
-            _plain_text(title) if title is not None else f"NeMo Anonymizer Benchmark Group: {_plain_text(group)}"
-        )
-        report_description = _plain_text(
-            description or "SDK-generated benchmark sweep report for NeMo Anonymizer measurement runs."
-        )
-        report = build_benchmark_group_report(
-            effective_project_path,
-            group=group,
-            title=report_title,
-            description=report_description,
-            sweep_param_columns=_sweep_param_columns(views),
-            comparison=comparison,
-            wr=wr,
-            expr=expr,
-        )
-        _save_report(report, draft=draft)
-        report_url = validate_wandb_returned_url(report.url, expected_base_url=effective_project_path.base_url)
-    return WandbReportResult(
-        project_path=project_path.path,
+    return _create_benchmark_group_report(
+        project_path,
+        settings=settings,
         group=group,
-        report_url=report_url,
+        title=title,
+        description=description,
         draft=draft,
-        title=report_title,
+        expected_run_kind=expected_run_kind,
+        sdk_loader=require_wandb_report_sdk,
+        report_builder=build_benchmark_group_report,
+        report_saver=_save_report,
     )
 
 
@@ -251,80 +245,6 @@ def build_benchmark_workspace(
             groupby=groupby,
             comparison_config_key=comparison_config_key,
         ),
-    )
-
-
-def build_benchmark_report(view: WandbRunView, *, title: str, description: str, wr: Any, expr: Any) -> Any:
-    """Build an unsaved report object from a W&B run."""
-    run_path = view.path
-    run_id = run_path.run_id
-    runset = wr.Runset(
-        entity=run_path.entity,
-        project=run_path.project,
-        name="Benchmark run",
-        filters=[expr.Metric("ID") == run_id],
-        pinned_columns=["Name", "State", "CreatedTimestamp", "Tags"],
-        visible_columns=_single_run_visible_columns(),
-        run_settings={run_id: wr.RunSettings(color="#2F80ED", disabled=False)},
-    )
-    safe_title = _escape_heading(title)
-    return wr.Report(
-        entity=run_path.entity,
-        project=run_path.project,
-        title=safe_title,
-        description=_escape_markdown_text(description),
-        width="fluid",
-        blocks=[
-            wr.H1(safe_title),
-            wr.MarkdownBlock(build_report_markdown(view)),
-            wr.H2("Run Panels"),
-            wr.PanelGrid(runsets=[runset], panels=_benchmark_panels(wr)),
-        ],
-    )
-
-
-def build_benchmark_group_report(
-    project_path: WandbProjectPath,
-    *,
-    group: str,
-    title: str,
-    description: str,
-    sweep_param_columns: list[str] | None = None,
-    comparison: GroupComparison | None = None,
-    wr: Any,
-    expr: Any,
-) -> Any:
-    """Build an unsaved report object for a W&B run group."""
-    resolved_comparison = comparison or GroupComparison(
-        run_kind="sweep_arm",
-        config_key="sweep_arm_id",
-        label="Sweep Arm",
-    )
-    runset = wr.Runset(
-        entity=project_path.entity,
-        project=project_path.project,
-        name="Benchmark sweep",
-        filters=[expr.Metric("Group") == group],
-        groupby=[f"config.{resolved_comparison.config_key}"],
-        pinned_columns=["Name", "State", "CreatedTimestamp", "Group", "Tags"],
-        visible_columns=_group_visible_columns(resolved_comparison, sweep_param_columns),
-    )
-    safe_title = _escape_heading(title)
-    return wr.Report(
-        entity=project_path.entity,
-        project=project_path.project,
-        title=safe_title,
-        description=_escape_markdown_text(description),
-        width="fluid",
-        blocks=[
-            wr.H1(safe_title),
-            wr.MarkdownBlock(build_group_report_markdown(group=group, comparison=resolved_comparison)),
-            wr.H2("Sweep Panels"),
-            wr.PanelGrid(
-                runsets=[runset],
-                panels=_benchmark_panels(wr, groupby=wr.Config(resolved_comparison.config_key)),
-            ),
-        ],
     )
 
 
@@ -421,165 +341,14 @@ def _workspace_metric_accessor(wr: Any, column: str) -> Any:
     raise ValueError(f"Unsupported workspace metric section: {section!r}")
 
 
-def build_group_report_markdown(*, group: str, comparison: GroupComparison | None = None) -> str:
-    resolved = comparison or GroupComparison(run_kind="sweep_arm", config_key="sweep_arm_id", label="Sweep Arm")
-    return f"""### Group Summary
-
-This report compares benchmark runs in W&B group {_code_span(group)}.
-
-Run kind: {_code_span(resolved.run_kind)}. Comparison axis: {_code_span(resolved.label)}.
-
-### Privacy Boundary
-
-This report is built from benchmark W&B summary/config fields. The benchmark runner sanitizes these fields before upload and excludes raw text, prompts, model responses, replacement maps, entity payloads, trace records, paths, URLs, provider config payloads, and sensitive-looking run tags.
-"""
-
-
-def build_report_markdown(view: WandbRunView) -> str:
-    """Render report Markdown exclusively from a closed typed run view."""
-    summary = view.summary.metrics
-    metadata = view.metadata
-    benchmark = metadata.benchmark
-    runtime = metadata.runtime
-    git = metadata.git
-    workload_lines = [_workload_line(item) for item in metadata.workloads]
-    config_lines = [_config_line(item) for item in metadata.configs]
-    return f"""### Run Summary
-
-[{_escape_link_label(view.name)}]({view.path.url}) finished with **{_int_metric(summary, "benchmark/case_completed")}/{_int_metric(summary, "benchmark/case_total")} cases completed** and **{_int_metric(summary, "benchmark/case_errored")} errors**.
-
-| Metric | Value |
-| --- | ---: |
-| Case success rate | {_number_metric(summary, "benchmark/case_success_rate")} |
-| Mean case elapsed seconds | {_number_metric(summary, "benchmark/case_elapsed_sec_mean")} |
-| Final entities | {_int_metric(summary, "measurement/record/final_entity_count")} |
-| Original value leaks | {_int_metric(summary, "measurement/record/original_value_leak_count")} |
-| Model requests | {_int_metric(summary, "measurement/ndd_workflow/observed_total_requests")} |
-| Failed model requests | {_int_metric(summary, "measurement/ndd_workflow/observed_failed_requests")} |
-| Total model tokens | {_int_metric(summary, "measurement/ndd_workflow/observed_total_tokens")} |
-
-### Benchmark Metadata
-
-| Field | Value |
-| --- | --- |
-| Run kind | {_table_code(metadata.run_kind)} |
-| Suite | {_table_code(benchmark.suite_id if benchmark else None)} |
-| Suite file hash | {_table_code(benchmark.suite_file_hash if benchmark else None)} |
-| Git branch | {_table_code(git.branch if git else None)} |
-| Git commit | {_table_code(git.commit if git else None)} |
-| Git dirty | {_table_code(git.dirty if git else None)} |
-| Anonymizer | {_table_code(runtime.anonymizer_version if runtime else None)} |
-| DataDesigner | {_table_code(runtime.datadesigner_version if runtime else None)} |
-| W&B | {_table_code(runtime.wandb_version if runtime else None)} |
-
-### Workloads
-
-{chr(10).join(workload_lines) or "- none"}
-
-### Configs
-
-{chr(10).join(config_lines) or "- none"}
-
-### Privacy Boundary
-
-This report is built from benchmark W&B summary/config fields. The benchmark runner sanitizes these fields before upload and excludes raw text, prompts, model responses, replacement maps, entity payloads, trace records, paths, URLs, provider config payloads, and sensitive-looking run tags.
-"""
-
-
-def _save_report(report: Any, *, draft: bool) -> Any:
-    """Save a report, falling back around a W&B SDK project-list auth edge."""
-    try:
-        return report.save(draft=draft)
-    except Exception as exc:  # noqa: BLE001 -- preserve the SDK error as fallback context
-        if "relogin required" not in str(exc).lower():
-            raise
-        logger.info("Falling back to direct W&B report upsert after project preflight auth failure.")
-        return _save_report_without_project_preflight(report, draft=draft)
-
-
-def _save_report_without_project_preflight(report: Any, *, draft: bool) -> Any:
-    """Call the same report upsert mutation without the project-list preflight."""
-    wandb = require_wandb()
-    from wandb_workspaces._graphql import execute_graphql
-    from wandb_workspaces.reports.v2 import gql, internal
-
-    api = wandb.Api()
-    model = report._to_model()
-    result = execute_graphql(
-        api,
-        gql.upsert_view,
-        {
-            "id": None if not model.id else model.id,
-            "name": internal._generate_name() if not model.name else model.name,
-            "entityName": model.project.entity_name,
-            "projectName": model.project.name,
-            "description": model.description,
-            "displayName": model.display_name,
-            "type": "runs/draft" if draft else "runs",
-            "spec": model.spec.model_dump_json(by_alias=True, exclude_none=True),
-        },
-    )
-    report.id = result["upsertView"]["view"]["id"]
-    return report
-
-
 def _save_workspace(workspace: Any) -> Any:
     """Save a workspace through the W&B Workspaces API."""
     return workspace.save()
 
 
-def _default_report_title(view: WandbRunView) -> str:
-    return f"NeMo Anonymizer Benchmark: {_plain_text(view.name)}"[:128]
-
-
 def _default_workspace_title(*, group: str | None) -> str:
     suffix = f": {_plain_text(group)}" if group else ""
     return f"NeMo Anonymizer Benchmark Workspace{suffix}"[:128]
-
-
-def _workload_line(item: WorkloadMetadata) -> str:
-    source_suffix = item.source.suffix if item.source else None
-    source_kind = item.source.kind if item.source else None
-    return (
-        f"- {_code_span(item.id)}: source_kind={_code_span(source_kind)}, "
-        f"source_suffix={_code_span(source_suffix)}, row_limit={_escape_list_text(item.row_limit)}, "
-        f"text_column={_code_span(item.text_column)}"
-    )
-
-
-def _config_line(item: ConfigMetadata) -> str:
-    detect = item.detect
-    replace = item.replace
-    rewrite = item.rewrite
-    parts = [
-        f"strategy={_code_span(replace.strategy if replace else ('rewrite' if rewrite else None))}",
-        f"entity_label_count={_escape_list_text(detect.entity_label_count if detect else None)}",
-        f"gliner_threshold={_escape_list_text(detect.gliner_threshold if detect else None)}",
-    ]
-    if rewrite:
-        parts.append(f"risk_tolerance={_code_span(rewrite.risk_tolerance)}")
-    return f"- {_code_span(item.id)}: " + ", ".join(parts)
-
-
-def _metric(summary: dict[str, Any], key: str) -> int | float | None:
-    value = summary.get(key)
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int | float):
-        return value
-    return None
-
-
-def _int_metric(summary: dict[str, Any], key: str) -> int:
-    value = _metric(summary, key)
-    return int(value) if value is not None else 0
-
-
-def _number_metric(summary: dict[str, Any], key: str) -> str:
-    value = _metric(summary, key)
-    if value is None:
-        return "n/a"
-    return f"{float(value):.4g}"
 
 
 def render_result(result: WandbReportResult | WandbWorkspaceResult, *, json_output: bool) -> str:
