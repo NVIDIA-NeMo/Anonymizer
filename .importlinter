@@ -47,3 +47,16 @@ source_modules =
     anonymizer.interface.run_telemetry
 forbidden_modules =
     anonymizer.interface.anonymizer
+
+[importlinter:contract:wandb-leaves-do-not-import-wandb-models]
+name = W&B leaves do not import the compatibility facade
+type = forbidden
+source_modules =
+    measurement_tools.wandb_policy
+    measurement_tools.wandb_settings
+    measurement_tools.wandb_metadata
+    measurement_tools.wandb_metrics
+    measurement_tools.wandb_publication
+    measurement_tools.wandb_field_policies
+forbidden_modules =
+    measurement_tools.wandb_models

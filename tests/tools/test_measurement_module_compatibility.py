@@ -118,6 +118,7 @@ def test_wandb_facades_preserve_canonical_identity_and_reconstruction() -> None:
         "measurement_tools.wandb_metadata",
         "measurement_tools.wandb_metrics",
         "measurement_tools.wandb_publication",
+        "measurement_tools.wandb_field_policies",
     ],
 )
 def test_wandb_model_facade_reexports_every_canonical_symbol(canonical_module: str) -> None:
