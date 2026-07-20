@@ -1,5 +1,7 @@
 [importlinter]
-root_package = anonymizer
+root_packages =
+    anonymizer
+    measurement_tools
 
 # The NDD adapter layer is a leaf boundary: it must never import the engine
 # sub-workflows that call it.
