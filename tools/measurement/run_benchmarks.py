@@ -10,27 +10,83 @@ Usage:
 
 import logging
 import platform
-import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
-from enum import StrEnum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any
 
 import cyclopts
 import pandas as pd
-import pyarrow.parquet as pq
-import yaml
 from analyze_detection_artifacts import (
     analyze_artifacts,
     iter_detection_parquet_files,
 )
-from data_designer.config.models import ModelProvider
-from data_designer.config.utils.io_helpers import load_config_file
 from export_measurements import export_tables, read_measurements
+from measurement_tools.benchmark_inputs import (
+    build_anonymizer_config,
+    build_input,
+    is_local_input_source,
+    materialize_sliced_source,
+    present,
+    privacy_goal,
+    read_local_input_dataframe,
+    resolve_config_source,
+    resolve_input_source,
+    resolve_optional_path,
+    resolve_path,
+    safe_case_filename,
+    slice_bounds,
+    workload_has_row_slice,
+    write_local_input_dataframe,
+)
+from measurement_tools.benchmark_inputs import (
+    build_replace as build_replace,
+)
+from measurement_tools.benchmark_inputs import (
+    build_rewrite as build_rewrite,
+)
+from measurement_tools.benchmark_models import (
+    RESERVED_RUN_TAG_KEYS as RESERVED_RUN_TAG_KEYS,
+)
+from measurement_tools.benchmark_models import (
+    BenchmarkCase,
+    BenchmarkResult,
+    BenchmarkSpec,
+    CaseRunPaths,
+    CaseStatus,
+    ConfigSpec,
+    DDTraceMode,
+    ReplaceSpec,
+    RewriteSpec,
+    WorkloadSpec,
+    duplicate_matrix_entries,
+    duplicates,
+)
+from measurement_tools.benchmark_models import (
+    MatrixEntry as MatrixEntry,
+)
+from measurement_tools.benchmark_models import (
+    ReplaceKind as ReplaceKind,
+)
+from measurement_tools.benchmark_planning import dry_run_result as _canonical_dry_run_result
+from measurement_tools.benchmark_planning import plan_suite as _canonical_plan_suite
+from measurement_tools.benchmark_specs import (
+    active_config_ids,
+    build_cases,
+    cross_product_matrix,
+    input_columns,
+    load_spec,
+    preflight_config_errors,
+    preflight_model_configs,
+    preflight_model_providers,
+    preflight_model_providers_with_errors,
+    preflight_suite,
+    preflight_workload,
+    preflight_workload_errors,
+    prepare_output_dir,
+)
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input, summarize_validation_error
 from measurement_tools.execution import benchmark_execution_metadata, stable_metadata_hash
 from measurement_tools.tables import ExportFormat
@@ -42,20 +98,15 @@ from measurement_tools.wandb_setup import (
     WandbRunMetadata,
     publish_benchmark_wandb_best_effort,
 )
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import ValidationError
 
+from anonymizer.config.anonymizer_config import Rewrite as Rewrite
 from anonymizer.config.anonymizer_config import (
-    AnonymizerConfig,
-    AnonymizerInput,
-    Detect,
-    Rewrite,
     infer_input_source_suffix,
     is_remote_input_source,
 )
-from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
-from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT, PrivacyGoal, RiskTolerance
-from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
-from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
+from anonymizer.config.replace_strategies import Redact as Redact
+from anonymizer.config.rewrite import RiskTolerance as RiskTolerance
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import (
     MEASUREMENT_SCHEMA_VERSION,
@@ -67,378 +118,34 @@ from anonymizer.measurement import (
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.benchmark")
 
-
-class CaseStatus(StrEnum):
-    planned = "planned"
-    completed = "completed"
-    error = "error"
-
-
-class DDTraceMode(StrEnum):
-    none = "none"
-    last_message = "last_message"
-    all_messages = "all_messages"
-
-
-class ReplaceKind(StrEnum):
-    redact = "redact"
-    hash = "hash"
-    annotate = "annotate"
-    substitute = "substitute"
-
-
-class WorkloadSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    source: str
-    text_column: str = "text"
-    id_column: str | None = None
-    data_summary: str | None = None
-    row_limit: int | None = Field(default=None, ge=1)
-    row_offset: int = Field(default=0, ge=0)
-
-
-class ReplaceSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    strategy: ReplaceKind
-    format_template: str | None = None
-    normalize_label: bool | None = None
-    algorithm: str | None = None
-    digest_length: int | None = None
-    instructions: str | None = None
-
-
-class RewriteSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    protect: str | None = None
-    preserve: str | None = None
-    instructions: str | None = None
-    risk_tolerance: RiskTolerance = RiskTolerance.low
-    max_repair_iterations: int = 3
-    strict_entity_protection: bool = False
-
-
-class ConfigSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    detect: dict[str, Any] = Field(default_factory=dict)
-    replace: str | ReplaceSpec | None = None
-    rewrite: RewriteSpec | None = None
-    evaluate: bool = False
-    emit_telemetry: bool = False
-
-    @model_validator(mode="after")
-    def validate_mode(self) -> "ConfigSpec":
-        if self.replace is None and self.rewrite is None:
-            raise ValueError("config must define replace or rewrite")
-        if self.replace is not None and self.rewrite is not None:
-            raise ValueError("config cannot define both replace and rewrite")
-        if self.evaluate and self.rewrite is not None:
-            raise ValueError("evaluate is only supported for replace configs")
-        return self
-
-
-class MatrixEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    workload: str
-    config: str
-    repetitions: int = Field(default=1, ge=1)
-
-
-RESERVED_RUN_TAG_KEYS = frozenset({"suite_id", "workload_id", "config_id", "repetition", "case_id"})
 BENCHMARK_SUITE_SCHEMA_VERSION = 1
 WANDB_METADATA_SCHEMA_VERSION = 2
 
-
-def _duplicates(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    duplicates: set[str] = set()
-    for value in values:
-        if value in seen:
-            duplicates.add(value)
-        seen.add(value)
-    return sorted(duplicates)
-
-
-class BenchmarkSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    suite_id: str
-    model_configs: str | None = None
-    model_providers: str | None = None
-    artifact_path: str | None = None
-    run_tags: dict[str, Any] = Field(default_factory=dict)
-    case_retries: int = Field(default=0, ge=0)
-    case_retry_backoff_sec: float = Field(default=0.0, ge=0.0)
-    workloads: list[WorkloadSpec] = Field(min_length=1)
-    configs: list[ConfigSpec] = Field(min_length=1)
-    matrix: list[MatrixEntry] | None = Field(default=None, min_length=1)
-
-    @model_validator(mode="after")
-    def validate_ids(self) -> "BenchmarkSpec":
-        workload_ids = [workload.id for workload in self.workloads]
-        config_ids = [config.id for config in self.configs]
-        if duplicate_workloads := _duplicates(workload_ids):
-            raise ValueError(f"duplicate workload id(s): {', '.join(duplicate_workloads)}")
-        if duplicate_configs := _duplicates(config_ids):
-            raise ValueError(f"duplicate config id(s): {', '.join(duplicate_configs)}")
-        self._validate_matrix_references(set(workload_ids), set(config_ids))
-        self._validate_run_tags()
-        return self
-
-    def _validate_matrix_references(self, workload_ids: set[str], config_ids: set[str]) -> None:
-        if self.matrix is None:
-            return
-        missing_workloads = sorted({entry.workload for entry in self.matrix} - workload_ids)
-        missing_configs = sorted({entry.config for entry in self.matrix} - config_ids)
-        if missing_workloads:
-            raise ValueError(f"matrix references unknown workload id(s): {', '.join(missing_workloads)}")
-        if missing_configs:
-            raise ValueError(f"matrix references unknown config id(s): {', '.join(missing_configs)}")
-        duplicate_entries = _duplicate_matrix_entries(self.matrix)
-        if duplicate_entries:
-            formatted = ", ".join(f"{workload}/{config}" for workload, config in duplicate_entries)
-            raise ValueError(f"duplicate matrix workload/config entry(s): {formatted}; use repetitions for repeats")
-
-    def _validate_run_tags(self) -> None:
-        reserved_tags = sorted(set(self.run_tags) & RESERVED_RUN_TAG_KEYS)
-        if reserved_tags:
-            formatted = ", ".join(reserved_tags)
-            raise ValueError(f"run_tags cannot define reserved benchmark tag(s): {formatted}")
-
-
-class BenchmarkCase(BaseModel):
-    suite_id: str
-    workload_id: str
-    config_id: str
-    repetition: int
-    case_id: str
-    status: CaseStatus = CaseStatus.planned
-    elapsed_sec: float | None = None
-    measurement_path: str | None = None
-    detection_artifact_path: str | None = None
-    trace_path: str | None = None
-    task_trace_path: str | None = None
-    error: str | None = None
-    attempt_count: int = 0
-    attempt_errors: list[str] = Field(default_factory=list)
-
-
-class BenchmarkResult(BaseModel):
-    suite_id: str
-    output_dir: str
-    measurement_path: str
-    summary_path: str
-    table_dir: str | None
-    detection_artifact_analysis_path: str | None = None
-    cases: list[BenchmarkCase]
-    execution: dict[str, Any] = Field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class _CaseRunPaths:
-    raw_path: Path
-    artifact_output_path: Path
-    trace_path: Path | None
-    task_trace_path: Path | None
-    artifact_snapshot: dict[str, int] | None
-    export_detection_artifacts: bool
-
-
-def load_spec(path: Path) -> BenchmarkSpec:
-    if not path.exists() or path.is_dir():
-        raise ValueError(f"spec path is not a file: {path}")
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError("benchmark spec must be a YAML mapping")
-    return BenchmarkSpec.model_validate(raw)
-
-
-def build_cases(spec: BenchmarkSpec) -> list[BenchmarkCase]:
-    matrix = spec.matrix or _cross_product_matrix(spec)
-    return [
-        BenchmarkCase(
-            suite_id=spec.suite_id,
-            workload_id=entry.workload,
-            config_id=entry.config,
-            repetition=repetition,
-            case_id=f"{entry.workload}__{entry.config}__r{repetition:03d}",
-        )
-        for entry in matrix
-        for repetition in range(entry.repetitions)
-    ]
-
-
-def _cross_product_matrix(spec: BenchmarkSpec) -> list[MatrixEntry]:
-    return [
-        MatrixEntry(workload=workload.id, config=config.id, repetitions=1)
-        for workload in spec.workloads
-        for config in spec.configs
-    ]
-
-
-def _duplicate_matrix_entries(matrix: list[MatrixEntry]) -> list[tuple[str, str]]:
-    seen: set[tuple[str, str]] = set()
-    duplicates: set[tuple[str, str]] = set()
-    for entry in matrix:
-        key = (entry.workload, entry.config)
-        if key in seen:
-            duplicates.add(key)
-        seen.add(key)
-    return sorted(duplicates)
-
-
-def prepare_output_dir(output_dir: Path, *, overwrite: bool, dry_run: bool) -> None:
-    if dry_run:
-        return
-    if output_dir.exists() and not output_dir.is_dir():
-        raise ValueError(f"output path exists and is not a directory: {output_dir}")
-    if output_dir.exists():
-        if overwrite:
-            shutil.rmtree(output_dir)
-        elif any(output_dir.iterdir()):
-            raise ValueError(f"output directory is not empty: {output_dir}; pass --overwrite to replace it")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "raw").mkdir(exist_ok=True)
-
-
-def preflight_suite(spec: BenchmarkSpec, *, spec_path: Path) -> None:
-    """Validate cheap suite inputs before any benchmark case consumes model time."""
-    base_dir = spec_path.parent
-    errors: list[str] = []
-    parsed_models = _preflight_model_configs(spec, base_dir=base_dir, errors=errors)
-
-    _preflight_model_providers_with_errors(spec, base_dir=base_dir, errors=errors)
-    errors.extend(_preflight_workload_errors(spec, base_dir=base_dir))
-    errors.extend(_preflight_config_errors(spec, parsed_models=parsed_models))
-    if errors:
-        raise ValueError("Benchmark preflight failed:\n- " + "\n- ".join(errors))
-
-
-def _preflight_model_configs(spec: BenchmarkSpec, *, base_dir: Path, errors: list[str]) -> Any | None:
-    try:
-        return parse_model_configs(_resolve_config_source(spec.model_configs, base_dir))
-    except Exception as exc:
-        errors.append(f"model_configs invalid: {exc}")
-        return None
-
-
-def _preflight_model_providers_with_errors(
-    spec: BenchmarkSpec,
-    *,
-    base_dir: Path,
-    errors: list[str],
-) -> None:
-    try:
-        _preflight_model_providers(spec, base_dir=base_dir)
-    except Exception as exc:
-        errors.append(f"model_providers invalid: {exc}")
-
-
-def _preflight_workload_errors(spec: BenchmarkSpec, *, base_dir: Path) -> list[str]:
-    errors: list[str] = []
-    for workload in spec.workloads:
-        try:
-            _preflight_workload(workload, base_dir=base_dir)
-        except Exception as exc:
-            errors.append(str(exc))
-    return errors
-
-
-def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) -> list[str]:
-    errors: list[str] = []
-    active_config_ids = _active_config_ids(spec)
-    for config in spec.configs:
-        if config.id not in active_config_ids:
-            continue
-        try:
-            anonymizer_config = build_anonymizer_config(config)
-        except Exception as exc:
-            errors.append(f"config '{config.id}' invalid: {exc}")
-            continue
-        if parsed_models is None:
-            continue
-        try:
-            validate_model_alias_references(
-                parsed_models.model_configs,
-                parsed_models.selected_models,
-                check_substitute=isinstance(anonymizer_config.replace, Substitute)
-                or anonymizer_config.rewrite is not None,
-                check_rewrite=anonymizer_config.rewrite is not None,
-                check_evaluate=config.evaluate,
-            )
-        except ValueError as exc:
-            errors.append(f"config '{config.id}' model aliases invalid: {exc}")
-    return errors
-
-
-def _active_config_ids(spec: BenchmarkSpec) -> set[str]:
-    if spec.matrix is None:
-        return {config.id for config in spec.configs}
-    return {entry.config for entry in spec.matrix}
-
-
-def _preflight_model_providers(spec: BenchmarkSpec, *, base_dir: Path) -> None:
-    raw = _resolve_config_source(spec.model_providers, base_dir)
-    if raw is None:
-        return
-    if "\n" in raw:
-        config_dict = yaml.safe_load(raw)
-    else:
-        candidate = Path(raw.strip()).expanduser()
-        if candidate.suffix in (".yaml", ".yml"):
-            if not candidate.is_file():
-                raise FileNotFoundError(f"Providers config file not found: {candidate}")
-            config_dict = load_config_file(candidate)
-        else:
-            config_dict = yaml.safe_load(raw)
-    raw_providers = config_dict.get("providers") if isinstance(config_dict, dict) else None
-    if not isinstance(raw_providers, list):
-        raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
-    for provider in raw_providers:
-        ModelProvider.model_validate(provider)
-
-
-def _preflight_workload(workload: WorkloadSpec, *, base_dir: Path) -> None:
-    resolved_source = _resolve_input_source(workload.source, base_dir)
-    if _workload_has_row_slice(workload) and not _is_local_input_source(str(resolved_source)):
-        raise ValueError(f"workload '{workload.id}' row slicing requires a local workload source")
-    input_data = AnonymizerInput(
-        source=str(resolved_source),
-        text_column=workload.text_column,
-        id_column=workload.id_column,
-        data_summary=workload.data_summary,
-    )
-    columns = _input_columns(input_data.source)
-    if columns is None:
-        return
-    if workload.text_column not in columns:
-        raise ValueError(
-            f"workload '{workload.id}' text_column '{workload.text_column}' not found in {input_data.source}; "
-            f"available columns: {sorted(columns)}"
-        )
-    if workload.id_column is not None and workload.id_column not in columns:
-        raise ValueError(
-            f"workload '{workload.id}' id_column '{workload.id_column}' not found in {input_data.source}; "
-            f"available columns: {sorted(columns)}"
-        )
-
-
-def _input_columns(source: str) -> set[str] | None:
-    suffix = infer_input_source_suffix(source)
-    if suffix not in SUPPORTED_IO_FORMATS:
-        supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
-        raise ValueError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
-    if is_remote_input_source(source):
-        return None
-    if suffix == ".csv":
-        return set(pd.read_csv(source, nrows=0).columns)
-    return set(pq.ParquetFile(source).schema_arrow.names)
+_CaseRunPaths = CaseRunPaths
+_active_config_ids = active_config_ids
+_cross_product_matrix = cross_product_matrix
+_duplicate_matrix_entries = duplicate_matrix_entries
+_duplicates = duplicates
+_input_columns = input_columns
+_is_local_input_source = is_local_input_source
+_materialize_sliced_source = materialize_sliced_source
+_preflight_config_errors = preflight_config_errors
+_preflight_model_configs = preflight_model_configs
+_preflight_model_providers = preflight_model_providers
+_preflight_model_providers_with_errors = preflight_model_providers_with_errors
+_preflight_workload = preflight_workload
+_preflight_workload_errors = preflight_workload_errors
+_present = present
+_privacy_goal = privacy_goal
+_read_local_input_dataframe = read_local_input_dataframe
+_resolve_config_source = resolve_config_source
+_resolve_input_source = resolve_input_source
+_resolve_optional_path = resolve_optional_path
+_resolve_path = resolve_path
+_safe_case_filename = safe_case_filename
+_slice_bounds = slice_bounds
+_workload_has_row_slice = workload_has_row_slice
+_write_local_input_dataframe = write_local_input_dataframe
 
 
 def run_suite(
@@ -856,136 +563,6 @@ def _execute_case(
             )
 
 
-def build_input(
-    workload: WorkloadSpec,
-    base_dir: Path,
-    *,
-    slice_dir: Path | None = None,
-    case_id: str | None = None,
-) -> AnonymizerInput:
-    resolved_source = _resolve_input_source(workload.source, base_dir)
-    source = (
-        _materialize_sliced_source(workload, resolved_source, slice_dir=slice_dir, case_id=case_id)
-        if _workload_has_row_slice(workload)
-        else resolved_source
-    )
-    return AnonymizerInput(
-        source=str(source),
-        text_column=workload.text_column,
-        id_column=workload.id_column,
-        data_summary=workload.data_summary,
-    )
-
-
-def _workload_has_row_slice(workload: WorkloadSpec) -> bool:
-    return workload.row_limit is not None or workload.row_offset > 0
-
-
-def _is_local_input_source(source: str) -> bool:
-    return "://" not in source
-
-
-def _materialize_sliced_source(
-    workload: WorkloadSpec,
-    source: str | Path,
-    *,
-    slice_dir: Path | None,
-    case_id: str | None,
-) -> Path:
-    if not _is_local_input_source(str(source)):
-        raise ValueError(f"workload '{workload.id}' row slicing requires a local workload source")
-    if slice_dir is None or case_id is None:
-        raise ValueError("row slicing requires slice_dir and case_id")
-    source_path = Path(source)
-    suffix = infer_input_source_suffix(str(source_path))
-    dataframe = _read_local_input_dataframe(source_path, suffix=suffix)
-    sliced = dataframe.iloc[_slice_bounds(workload)]
-    slice_dir.mkdir(parents=True, exist_ok=True)
-    destination = slice_dir / f"{_safe_case_filename(case_id)}{suffix}"
-    _write_local_input_dataframe(sliced, destination, suffix=suffix)
-    return destination
-
-
-def _slice_bounds(workload: WorkloadSpec) -> slice:
-    start = workload.row_offset
-    stop = start + workload.row_limit if workload.row_limit is not None else None
-    return slice(start, stop)
-
-
-def _read_local_input_dataframe(source: Path, *, suffix: str) -> pd.DataFrame:
-    if suffix == ".csv":
-        return pd.read_csv(source)
-    if suffix == ".parquet":
-        return pd.read_parquet(source)
-    supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
-    raise ValueError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
-
-
-def _write_local_input_dataframe(dataframe: pd.DataFrame, destination: Path, *, suffix: str) -> None:
-    if suffix == ".csv":
-        dataframe.to_csv(destination, index=False)
-        return
-    if suffix == ".parquet":
-        dataframe.to_parquet(destination, index=False)
-        return
-    supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
-    raise ValueError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
-
-
-def _safe_case_filename(case_id: str) -> str:
-    return "".join(char if char.isalnum() or char in "._-" else "_" for char in case_id)
-
-
-def build_anonymizer_config(config: ConfigSpec) -> AnonymizerConfig:
-    detect = Detect.model_validate(config.detect)
-    if config.replace is not None:
-        return AnonymizerConfig(
-            detect=detect, replace=build_replace(config.replace), emit_telemetry=config.emit_telemetry
-        )
-    return AnonymizerConfig(detect=detect, rewrite=build_rewrite(config.rewrite), emit_telemetry=config.emit_telemetry)
-
-
-def build_replace(raw: str | ReplaceSpec) -> Redact | Hash | Annotate | Substitute:
-    spec = ReplaceSpec(strategy=ReplaceKind(raw)) if isinstance(raw, str) else raw
-    if spec.strategy == ReplaceKind.redact:
-        return Redact(**_present({"format_template": spec.format_template, "normalize_label": spec.normalize_label}))
-    if spec.strategy == ReplaceKind.hash:
-        return Hash(
-            **_present(
-                {
-                    "format_template": spec.format_template,
-                    "algorithm": spec.algorithm,
-                    "digest_length": spec.digest_length,
-                }
-            )
-        )
-    if spec.strategy == ReplaceKind.annotate:
-        return Annotate(**_present({"format_template": spec.format_template}))
-    return Substitute(**_present({"instructions": spec.instructions}))
-
-
-def build_rewrite(spec: RewriteSpec | None) -> Rewrite:
-    if spec is None:
-        raise ValueError("rewrite config is missing")
-    privacy_goal = _privacy_goal(spec)
-    return Rewrite(
-        privacy_goal=privacy_goal,
-        instructions=spec.instructions,
-        risk_tolerance=spec.risk_tolerance,
-        max_repair_iterations=spec.max_repair_iterations,
-        strict_entity_protection=spec.strict_entity_protection,
-    )
-
-
-def _privacy_goal(spec: RewriteSpec) -> PrivacyGoal | None:
-    if spec.protect is None and spec.preserve is None:
-        return None
-    return PrivacyGoal(
-        protect=spec.protect or DEFAULT_PROTECT_TEXT,
-        preserve=spec.preserve or DEFAULT_PRESERVE_TEXT,
-    )
-
-
 def combine_measurements(cases: list[BenchmarkCase], destination: Path) -> Path:
     with destination.open("w", encoding="utf-8") as output:
         for case in cases:
@@ -1126,40 +703,10 @@ def _run_tags(case: BenchmarkCase, spec: BenchmarkSpec) -> dict[str, Any]:
     }
 
 
-def _present(values: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in values.items() if value is not None}
-
-
 def _get_item(items: dict[str, Any], item_id: str, item_type: str) -> Any:
     if item_id not in items:
         raise ValueError(f"unknown {item_type}: {item_id}")
     return items[item_id]
-
-
-def _resolve_input_source(source: str, base_dir: Path) -> str | Path:
-    if "://" in source:
-        return source
-    return _resolve_path(source, base_dir)
-
-
-def _resolve_optional_path(raw: str | None, base_dir: Path) -> Path | None:
-    if raw is None:
-        return None
-    return _resolve_path(raw, base_dir)
-
-
-def _resolve_config_source(raw: str | None, base_dir: Path) -> str | None:
-    if raw is None or "\n" in raw:
-        return raw
-    candidate = Path(raw).expanduser()
-    if candidate.suffix in {".yaml", ".yml"}:
-        return str(_resolve_path(raw, base_dir))
-    return raw
-
-
-def _resolve_path(raw: str, base_dir: Path) -> Path:
-    path = Path(raw).expanduser()
-    return path if path.is_absolute() else base_dir / path
 
 
 def dry_run_result(
@@ -1173,33 +720,16 @@ def dry_run_result(
     dd_task_trace: bool = False,
     task_trace_dir: Path | None = None,
 ) -> BenchmarkResult:
-    cases = build_cases(spec)
-    if dd_trace != DDTraceMode.none:
-        resolved_trace_dir = trace_dir or output_dir / "traces"
-        cases = [
-            case.model_copy(update={"trace_path": str(resolved_trace_dir / f"{case.case_id}.jsonl")}) for case in cases
-        ]
-    if dd_task_trace:
-        resolved_task_trace_dir = task_trace_dir or output_dir / "task-traces"
-        cases = [
-            case.model_copy(update={"task_trace_path": str(resolved_task_trace_dir / f"{case.case_id}.jsonl")})
-            for case in cases
-        ]
-    return BenchmarkResult(
-        suite_id=spec.suite_id,
-        output_dir=str(output_dir),
-        measurement_path=str(output_dir / "measurements.jsonl"),
-        summary_path=str(output_dir / "summary.json"),
-        table_dir=str(output_dir / "tables") if export else None,
-        detection_artifact_analysis_path=str(output_dir / "detection-artifacts.jsonl") if export else None,
-        cases=cases,
-        execution=_execution_metadata(
-            output_dir=output_dir,
-            export=export,
-            fail_fast=fail_fast,
-            dd_trace=dd_trace,
-            dd_task_trace=dd_task_trace,
-        ),
+    return _canonical_dry_run_result(
+        spec,
+        output_dir=output_dir,
+        export=export,
+        fail_fast=fail_fast,
+        dd_trace=dd_trace,
+        trace_dir=trace_dir,
+        dd_task_trace=dd_task_trace,
+        task_trace_dir=task_trace_dir,
+        execution_metadata=_execution_metadata,
     )
 
 
@@ -1215,9 +745,9 @@ def plan_suite(
     dd_task_trace: bool = False,
     task_trace_dir: Path | None = None,
 ) -> BenchmarkResult:
-    preflight_suite(spec, spec_path=spec_path)
-    return dry_run_result(
+    return _canonical_plan_suite(
         spec,
+        spec_path=spec_path,
         output_dir=output_dir,
         export=export,
         fail_fast=fail_fast,
@@ -1225,6 +755,7 @@ def plan_suite(
         trace_dir=trace_dir,
         dd_task_trace=dd_task_trace,
         task_trace_dir=task_trace_dir,
+        execution_metadata=_execution_metadata,
     )
 
 
