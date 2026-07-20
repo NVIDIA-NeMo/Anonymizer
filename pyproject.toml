@@ -26,6 +26,7 @@ anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.pl
 
 [dependency-groups]
 dev = [
+    "import-linter>=2.13",
     "pre-commit>=4.0.0,<5",
     "pytest>=9.0.3,<10",
     "pytest-cov>=7.0,<8",
