@@ -67,7 +67,12 @@ def _load_module(path: Path, name: str) -> ModuleType:
             "Anonymizer",
             "measurement_tools.benchmark_models",
         ),
-        ("sweep_benchmarks.py", "SweepSpec", "WandbProjectPath", None),
+        (
+            "sweep_benchmarks.py",
+            "SweepSpec",
+            "WandbProjectPath",
+            "measurement_tools.benchmark_sweep_models",
+        ),
         ("analyze_benchmark_output.py", "BenchmarkOutputAnalysis", "AnalysisExportResult", None),
     ],
 )

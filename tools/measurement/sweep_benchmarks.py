@@ -11,96 +11,30 @@ Usage:
 
 from __future__ import annotations
 
-import copy
-import itertools
 import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Callable, cast
+from typing import Annotated, Any, Callable
 
 import cyclopts
 import run_benchmarks
-import yaml
 from create_wandb_report import WandbProjectPath, create_benchmark_group_report, create_benchmark_workspace
+from measurement_tools.benchmark_sweep_compiler import (
+    arm_suite_payload,
+    expand_sweep_arms,
+    load_sweep_spec,
+    materialize_arm_suite,
+    rebase_suite_paths,
+    resolve_path,
+)
+from measurement_tools.benchmark_sweep_models import SweepArm, SweepArmResult, SweepCliOptions, SweepResult, SweepSpec
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input, summarize_validation_error
-from measurement_tools.wandb_models import SweepMetadata, generated_wandb_tag
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from measurement_tools.wandb_models import generated_wandb_tag
+from pydantic import ValidationError
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.sweep")
-
-
-class SweepSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sweep_id: str
-    base_suite: str
-    output_root: str | None = None
-    parameters: dict[str, list[Any]] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_parameters(self) -> "SweepSpec":
-        empty = [name for name, values in self.parameters.items() if not values]
-        if empty:
-            raise ValueError(f"sweep parameter(s) must have at least one value: {', '.join(sorted(empty))}")
-        return self
-
-
-class SweepArm(BaseModel):
-    arm_id: str
-    parameters: dict[str, Any]
-
-
-class SweepArmResult(BaseModel):
-    arm_id: str
-    parameters: dict[str, Any]
-    suite_path: str
-    output_dir: str
-    wandb_run_name: str
-    status: str
-    completed_cases: int = 0
-    errored_cases: int = 0
-    total_cases: int = 0
-    error: str | None = None
-
-
-class SweepResult(BaseModel):
-    sweep_id: str
-    output_root: str
-    arms: list[SweepArmResult]
-    report_url: str | None = None
-    workspace_url: str | None = None
-    report_error: str | None = None
-    workspace_error: str | None = None
-
-    @property
-    def completed_arms(self) -> int:
-        return sum(1 for arm in self.arms if arm.status == "completed")
-
-    @property
-    def errored_arms(self) -> int:
-        return sum(1 for arm in self.arms if arm.status == "error")
-
-
-@dataclass(frozen=True)
-class SweepCliOptions:
-    spec: Path
-    output_root: Path | None
-    overwrite: bool
-    dry_run: bool
-    export: bool
-    fail_fast: bool
-    create_report: bool
-    create_workspace: bool
-    wandb_mode: run_benchmarks.WandbMode | None
-    wandb_entity: str | None
-    wandb_project: str | None
-    wandb_base_url: str | None
-    wandb_group: str | None
-    wandb_job_type: str | None
-    wandb_tags: str | None
-    wandb_log_tables: bool | None
 
 
 class WandbViewCreationError(RuntimeError):
@@ -115,96 +49,9 @@ class _WandbViewOperation:
     create: Callable[..., Any]
 
 
-def load_sweep_spec(path: Path) -> SweepSpec:
-    raw = _read_yaml_mapping(path)
-    spec = SweepSpec.model_validate(raw)
-    values = spec.model_dump()
-    values["base_suite"] = str(_resolve_path(spec.base_suite, path.parent))
-    return SweepSpec.model_validate(values)
-
-
-def expand_sweep_arms(spec: SweepSpec) -> list[SweepArm]:
-    names = list(spec.parameters)
-    value_grid = itertools.product(*(spec.parameters[name] for name in names))
-    return [
-        SweepArm(arm_id=f"arm-{index:03d}", parameters=dict(zip(names, values, strict=True)))
-        for index, values in enumerate(value_grid)
-    ]
-
-
-def materialize_arm_suite(spec: SweepSpec, arm: SweepArm, *, output_root: Path, overwrite: bool) -> Path:
-    patched = _arm_suite_payload(spec, arm)
-    arm_dir = output_root / arm.arm_id
-    arm_dir.mkdir(parents=True, exist_ok=True)
-    suite_path = arm_dir / "suite.yaml"
-    if suite_path.exists() and not overwrite:
-        raise ValueError(f"sweep arm suite already exists: {suite_path}")
-    suite_path.write_text(yaml.safe_dump(patched, sort_keys=False), encoding="utf-8")
-    return suite_path
-
-
-def _arm_suite_payload(spec: SweepSpec, arm: SweepArm) -> dict[str, Any]:
-    base_path = Path(spec.base_suite)
-    suite = _rebase_suite_paths(_read_yaml_mapping(base_path), base_path.parent)
-    return _patched_suite(suite, spec=spec, arm=arm)
-
-
-def _patched_suite(suite: dict[str, Any], *, spec: SweepSpec, arm: SweepArm) -> dict[str, Any]:
-    patched = copy.deepcopy(suite)
-    run_tags = dict(patched.get("run_tags") or {})
-    run_tags.update(_sweep_run_tags(spec, arm))
-    patched["run_tags"] = run_tags
-    for path, value in arm.parameters.items():
-        _apply_parameter(patched, path, value)
-    return patched
-
-
-def _sweep_run_tags(spec: SweepSpec, arm: SweepArm) -> dict[str, Any]:
-    sweep = SweepMetadata.from_arm(
-        sweep_id=spec.sweep_id,
-        arm_id=arm.arm_id,
-        params={_safe_param_name(path): value for path, value in arm.parameters.items()},
-    )
-    return {"wandb_sweep": sweep.model_dump(mode="json")}
-
-
-def _apply_parameter(suite: dict[str, Any], path: str, value: Any) -> None:
-    parts = path.split(".")
-    if len(parts) >= 3 and parts[0] == "configs":
-        _apply_config_parameter(suite, parts[1], parts[2:], value)
-        return
-    _set_nested(suite, parts, value)
-
-
-def _apply_config_parameter(suite: dict[str, Any], config_selector: str, parts: list[str], value: Any) -> None:
-    configs = suite.get("configs")
-    if not isinstance(configs, list):
-        raise ValueError("base suite must define a configs list")
-    matched = [config for config in configs if isinstance(config, dict) and _config_matches(config, config_selector)]
-    if not matched:
-        raise ValueError(f"sweep parameter references unknown config selector: {config_selector}")
-    for config in matched:
-        _set_nested(config, parts, value)
-
-
-def _config_matches(config: dict[str, Any], selector: str) -> bool:
-    return selector == "*" or config.get("id") == selector
-
-
-def _set_nested(target: dict[str, Any], parts: list[str], value: Any) -> None:
-    current = target
-    for part in parts[:-1]:
-        existing = current.get(part)
-        if isinstance(existing, str):
-            existing = {"strategy": existing}
-            current[part] = existing
-        if existing is None:
-            existing = {}
-            current[part] = existing
-        if not isinstance(existing, dict):
-            raise ValueError(f"cannot set nested sweep parameter through non-mapping field: {part}")
-        current = cast(dict[str, Any], existing)
-    current[parts[-1]] = value
+_arm_suite_payload = arm_suite_payload
+_rebase_suite_paths = rebase_suite_paths
+_resolve_path = resolve_path
 
 
 def run_sweep(
@@ -479,45 +326,6 @@ def _default_output_root(spec: SweepSpec, sweep_path: Path) -> Path:
     if spec.output_root:
         return _resolve_path(spec.output_root, sweep_path.parent)
     return sweep_path.with_suffix("").with_name(spec.sweep_id)
-
-
-def _resolve_path(value: str, base_dir: Path) -> Path:
-    path = Path(value).expanduser()
-    return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
-
-
-def _read_yaml_mapping(path: Path) -> dict[str, Any]:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError(f"YAML file must contain a mapping: {path}")
-    return raw
-
-
-def _safe_param_name(path: str) -> str:
-    return path.replace("*", "all").replace(".", "_").replace("-", "_")
-
-
-def _rebase_suite_paths(suite: dict[str, Any], base_dir: Path) -> dict[str, Any]:
-    rebased = copy.deepcopy(suite)
-    for key in ("model_configs", "model_providers"):
-        if isinstance(rebased.get(key), str) and _is_yaml_file_reference(rebased[key]):
-            rebased[key] = str(_resolve_path(rebased[key], base_dir))
-    if isinstance(rebased.get("artifact_path"), str):
-        rebased["artifact_path"] = str(_resolve_path(rebased["artifact_path"], base_dir))
-    for workload in rebased.get("workloads", []):
-        if isinstance(workload, dict) and isinstance(workload.get("source"), str):
-            workload["source"] = _rebase_source(workload["source"], base_dir)
-    return rebased
-
-
-def _is_yaml_file_reference(value: str) -> bool:
-    return "\n" not in value and Path(value).suffix.lower() in {".yaml", ".yml"}
-
-
-def _rebase_source(source: str, base_dir: Path) -> str:
-    if run_benchmarks.is_remote_input_source(source):
-        return source
-    return str(_resolve_path(source, base_dir))
 
 
 def render_result(result: SweepResult, *, json_output: bool) -> str:
