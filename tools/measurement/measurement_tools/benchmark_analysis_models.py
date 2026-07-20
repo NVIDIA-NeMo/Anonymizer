@@ -16,6 +16,7 @@ class _EvaluationRollup:
     valid_column: str
     invalid_count_column: str
 
+
 _EVALUATION_ROLLUPS = (
     _EvaluationRollup("detection", "detection_valid", "detection_invalid_entity_count"),
     _EvaluationRollup("type_fidelity", "type_fidelity_valid", "type_fidelity_invalid_replacement_count"),
@@ -26,6 +27,7 @@ _EVALUATION_ROLLUPS = (
     ),
     _EvaluationRollup("attribute_fidelity", "attribute_fidelity_valid", "attribute_fidelity_invalid_entity_count"),
 )
+
 
 class CaseAnalysisRow(BaseModel):
     suite_id: str | None = None
@@ -138,6 +140,7 @@ class CaseAnalysisRow(BaseModel):
     artifact_final_entity_signature_labels: dict[str, str] = Field(default_factory=dict)
     artifact_final_entity_signature_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
+
 class GroupAnalysisRow(BaseModel):
     workload_id: str | None = None
     workload_category: str | None = None
@@ -240,6 +243,7 @@ class GroupAnalysisRow(BaseModel):
     median_artifact_final_augmenter_entity_count: float | None = None
     median_artifact_final_entity_signature_count: float | None = None
 
+
 class ModelUsageAnalysisRow(BaseModel):
     suite_id: str | None = None
     workload_id: str | None = None
@@ -264,6 +268,7 @@ class ModelUsageAnalysisRow(BaseModel):
     observed_reasoning_tokens: int | None = None
     observed_failed_request_rate: float | None = None
 
+
 class ModelUsageGroupAnalysisRow(BaseModel):
     workload_id: str | None = None
     config_id: str | None = None
@@ -287,6 +292,7 @@ class ModelUsageGroupAnalysisRow(BaseModel):
     median_observed_total_requests: float | None = None
     median_observed_failed_requests: float | None = None
     median_observed_total_tokens: float | None = None
+
 
 class BenchmarkOutputAnalysis(BaseModel):
     benchmark_dir: str
