@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 import cyclopts
 from measurement_tools.cli import LogFormat, configure_logging, log_bad_input
@@ -24,11 +24,6 @@ from measurement_tools.wandb_models import ResolvedWandbConfig as ResolvedWandbC
 from measurement_tools.wandb_models import WandbMode as WandbMode
 from measurement_tools.wandb_models import WorkloadMetadata as WorkloadMetadata
 from measurement_tools.wandb_report_catalog import (
-    _MEASUREMENT_TABLE_KEYS,
-    _WORKSPACE_BAR_SECTIONS,
-    _WORKSPACE_COMPARISON_COLUMNS,
-    _WORKSPACE_JOB_FILTERS,
-    _WORKSPACE_SUMMARY_SCALARS,
     all_report_metrics,
     bar_panel,
     benchmark_panels,
@@ -40,19 +35,25 @@ from measurement_tools.wandb_report_catalog import (
 )
 from measurement_tools.wandb_report_contracts import WandbReportResult, WandbWorkspaceResult
 from measurement_tools.wandb_report_models import (
-    GroupComparison,
+    GroupComparison as GroupComparison,
+)
+from measurement_tools.wandb_report_models import (
     WandbProjectPath,
     WandbRunPath,
-    group_comparison,
     parse_wandb_project_path,
     parse_wandb_run_path,
-    validate_wandb_returned_url,
 )
 from measurement_tools.wandb_report_models import (
     WandbRunView as WandbRunView,
 )
 from measurement_tools.wandb_report_models import (
+    group_comparison as group_comparison,
+)
+from measurement_tools.wandb_report_models import (
     parse_wandb_run_view as parse_wandb_run_view,
+)
+from measurement_tools.wandb_report_models import (
+    validate_wandb_returned_url as validate_wandb_returned_url,
 )
 from measurement_tools.wandb_report_sdk import (
     read_group_views,
@@ -96,8 +97,25 @@ from measurement_tools.wandb_reports import (
 from measurement_tools.wandb_reports import (
     create_benchmark_report as _create_benchmark_report,
 )
-from measurement_tools.wandb_setup import WandbSdkEnvironment
+from measurement_tools.wandb_setup import WandbSdkEnvironment as WandbSdkEnvironment
 from measurement_tools.wandb_setup import require_wandb as require_wandb
+from measurement_tools.wandb_workspaces import (
+    benchmark_run_filters,
+    benchmark_run_groupby,
+    benchmark_runset_settings,
+    benchmark_workspace_sections,
+    benchmark_workspace_settings,
+    build_benchmark_workspace,
+    comparison_workspace_panels,
+    default_workspace_title,
+    save_workspace,
+    table_workspace_panels,
+    workspace_bar_panels,
+    workspace_metric_accessor,
+)
+from measurement_tools.wandb_workspaces import (
+    create_benchmark_workspace as _create_benchmark_workspace,
+)
 
 app = cyclopts.App(help=__doc__)
 logger = logging.getLogger("measurement.wandb_report")
@@ -130,6 +148,17 @@ _metric = metric
 _number_metric = number_metric
 _save_report = save_report
 _workload_line = workload_line
+_benchmark_run_filters = benchmark_run_filters
+_benchmark_run_groupby = benchmark_run_groupby
+_benchmark_runset_settings = benchmark_runset_settings
+_benchmark_workspace_sections = benchmark_workspace_sections
+_benchmark_workspace_settings = benchmark_workspace_settings
+_comparison_workspace_panels = comparison_workspace_panels
+_default_workspace_title = default_workspace_title
+_save_workspace = save_workspace
+_table_workspace_panels = table_workspace_panels
+_workspace_bar_panels = workspace_bar_panels
+_workspace_metric_accessor = workspace_metric_accessor
 
 
 def create_benchmark_report(
@@ -164,31 +193,16 @@ def create_benchmark_workspace(
     expected_run_kind: Literal["native_suite", "sweep_arm", "imported_case"] | None = None,
 ) -> WandbWorkspaceResult:
     """Create a W&B workspace for benchmark runs in a project."""
-    resolved = _report_settings(settings, project_path)
-    effective_project_path = project_path.with_base_url(resolved.wandb_base_url or project_path.base_url)
-    with WandbSdkEnvironment(resolved):
-        comparison: GroupComparison | None = None
-        if group is not None:
-            wandb, _wr, _expr = require_wandb_report_sdk()
-            views = _read_group_views(wandb, project_path=effective_project_path, group=group)
-            comparison = group_comparison(views, expected_run_kind=expected_run_kind)
-        ws, workspace_wr = require_wandb_workspace_sdk()
-        workspace_title = _plain_text(title) if title is not None else _default_workspace_title(group=group)
-        workspace = build_benchmark_workspace(
-            effective_project_path,
-            group=group,
-            title=workspace_title,
-            comparison_config_key=comparison.config_key if comparison is not None else "sweep_arm_id",
-            ws=ws,
-            wr=workspace_wr,
-        )
-        saved = _save_workspace(workspace)
-        workspace_url = validate_wandb_returned_url(saved.url, expected_base_url=effective_project_path.base_url)
-    return WandbWorkspaceResult(
-        project_path=project_path.path,
+    return _create_benchmark_workspace(
+        project_path,
+        settings=settings,
         group=group,
-        workspace_url=workspace_url,
-        title=workspace_title,
+        title=title,
+        expected_run_kind=expected_run_kind,
+        report_sdk_loader=require_wandb_report_sdk,
+        workspace_sdk_loader=require_wandb_workspace_sdk,
+        workspace_builder=build_benchmark_workspace,
+        workspace_saver=_save_workspace,
     )
 
 
@@ -215,140 +229,6 @@ def create_benchmark_group_report(
         report_builder=build_benchmark_group_report,
         report_saver=_save_report,
     )
-
-
-def build_benchmark_workspace(
-    project_path: WandbProjectPath,
-    *,
-    group: str | None,
-    title: str,
-    comparison_config_key: str = "sweep_arm_id",
-    ws: Any,
-    wr: Any,
-) -> Any:
-    """Build an unsaved manual W&B workspace for benchmark runs."""
-    groupby = wr.Config(comparison_config_key) if group else None
-    return ws.Workspace(
-        entity=project_path.entity,
-        project=project_path.project,
-        name=title,
-        auto_generate_panels=False,
-        settings=_benchmark_workspace_settings(ws),
-        runset_settings=_benchmark_runset_settings(
-            ws,
-            group=group,
-            comparison_config_key=comparison_config_key,
-        ),
-        sections=_benchmark_workspace_sections(
-            ws,
-            wr,
-            groupby=groupby,
-            comparison_config_key=comparison_config_key,
-        ),
-    )
-
-
-def _benchmark_workspace_settings(ws: Any) -> Any:
-    return ws.WorkspaceSettings(
-        sort_panels_alphabetically=False,
-        group_by_prefix="first",
-        max_runs=10,
-    )
-
-
-def _benchmark_runset_settings(ws: Any, *, group: str | None, comparison_config_key: str) -> Any:
-    return ws.RunsetSettings(
-        filters=_benchmark_run_filters(ws, group=group),
-        groupby=_benchmark_run_groupby(ws, group=group, comparison_config_key=comparison_config_key),
-        order=[ws.Ordering(ws.Metric("CreatedTimestamp"), ascending=False)],
-        pinned_columns=["Name", "State", "CreatedTimestamp", "Group", "JobType", "Tags"],
-    )
-
-
-def _benchmark_run_filters(ws: Any, *, group: str | None) -> Any:
-    job_filter = ws.Or(*(ws.Metric("JobType") == job_type for job_type in _WORKSPACE_JOB_FILTERS))
-    return ws.And(job_filter, ws.Metric("Group") == group) if group else job_filter
-
-
-def _benchmark_run_groupby(ws: Any, *, group: str | None, comparison_config_key: str) -> list[Any]:
-    return [ws.Config(comparison_config_key)] if group else [ws.Metric("Group")]
-
-
-def _benchmark_workspace_sections(
-    ws: Any,
-    wr: Any,
-    *,
-    groupby: Any | None,
-    comparison_config_key: str,
-) -> list[Any]:
-    sections = []
-    for name, panel_defs, is_open in _WORKSPACE_BAR_SECTIONS:
-        panels = _workspace_bar_panels(wr, panel_defs, groupby=groupby)
-        if name == "Benchmark Summary":
-            panels = [
-                *(
-                    wr.ScalarChart(title=_metric_title(metric), metric=metric, groupby_aggfunc="mean")
-                    for metric in _WORKSPACE_SUMMARY_SCALARS
-                ),
-                *panels,
-            ]
-        sections.append(ws.Section(name=name, panels=panels, is_open=is_open))
-    if groupby is not None:
-        sections.append(
-            ws.Section(
-                name="Sweep Comparison",
-                panels=_comparison_workspace_panels(wr, comparison_config_key=comparison_config_key),
-                is_open=True,
-            )
-        )
-    sections.append(ws.Section(name="Tables", panels=_table_workspace_panels(wr), is_open=False))
-    return sections
-
-
-def _workspace_bar_panels(
-    wr: Any,
-    panel_defs: tuple[tuple[str, list[str]], ...],
-    *,
-    groupby: Any | None,
-) -> list[Any]:
-    return [_bar_panel(wr, title, metrics, groupby=groupby) for title, metrics in panel_defs]
-
-
-def _comparison_workspace_panels(wr: Any, *, comparison_config_key: str = "sweep_arm_id") -> list[Any]:
-    columns = [f"config:{comparison_config_key}", *_WORKSPACE_COMPARISON_COLUMNS[1:]]
-    return [
-        wr.RunComparer(diff_only=True),
-        wr.ParallelCoordinatesPlot(
-            title="Sweep Parameter Tradeoffs",
-            columns=[
-                wr.ParallelCoordinatesPlotColumn(metric=_workspace_metric_accessor(wr, column)) for column in columns
-            ],
-        ),
-        wr.ParameterImportancePlot(with_respect_to="measurement/record/weighted_leakage_rate_mean"),
-    ]
-
-
-def _table_workspace_panels(wr: Any) -> list[Any]:
-    return [wr.MediaBrowser(title="Sanitized Measurement Tables", media_keys=_MEASUREMENT_TABLE_KEYS, mode="grid")]
-
-
-def _workspace_metric_accessor(wr: Any, column: str) -> Any:
-    section, name = column.split(":", maxsplit=1)
-    if section == "config":
-        return wr.Config(name)
-    if section == "summary":
-        return wr.SummaryMetric(name)
-    raise ValueError(f"Unsupported workspace metric section: {section!r}")
-
-
-def _save_workspace(workspace: Any) -> Any:
-    """Save a workspace through the W&B Workspaces API."""
-    return workspace.save()
-
-
-def _default_workspace_title(*, group: str | None) -> str:
-    suffix = f": {_plain_text(group)}" if group else ""
-    return f"NeMo Anonymizer Benchmark Workspace{suffix}"[:128]
 
 
 def render_result(result: WandbReportResult | WandbWorkspaceResult, *, json_output: bool) -> str:
