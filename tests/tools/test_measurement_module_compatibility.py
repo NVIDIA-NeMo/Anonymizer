@@ -380,6 +380,46 @@ def test_benchmark_facade_preserves_artifact_and_metadata_contracts() -> None:
         sys.modules.pop("compat_benchmark_b2_facade", None)
 
 
+def test_benchmark_facade_preserves_execution_contracts() -> None:
+    execution = importlib.import_module("measurement_tools.benchmark_execution")
+    runner = _load_module(MEASUREMENT_ROOT / "run_benchmarks.py", "compat_benchmark_b3_facade")
+    try:
+        assert execution.__all__ == [
+            "benchmark_result",
+            "build_contexts",
+            "case_detection_artifact_path",
+            "case_run_paths",
+            "case_task_trace_path",
+            "case_trace_path",
+            "case_with_result",
+            "combine_suite_detection_artifacts",
+            "execute_case",
+            "export_case_detection_artifacts_if_requested",
+            "export_suite_tables",
+            "get_item",
+            "run_case",
+            "run_case_error",
+            "run_case_success",
+            "run_cases",
+            "run_or_plan",
+            "run_suite",
+            "should_export_measurements",
+            "sleep_before_case_retry",
+        ]
+        assert runner._build_contexts is execution.build_contexts
+        assert runner._run_cases is execution.run_cases
+        assert runner._run_case_success is execution.run_case_success
+        assert runner._case_run_paths is execution.case_run_paths
+        assert runner.run_suite is not execution.run_suite
+        assert runner._run_case is not execution.run_case
+        assert runner._run_case_error is not execution.run_case_error
+        assert runner._execute_case is not execution.execute_case
+        assert runner.run_or_plan is not execution.run_or_plan
+        assert runner.run_or_plan.__module__ == "compat_benchmark_b3_facade"
+    finally:
+        sys.modules.pop("compat_benchmark_b3_facade", None)
+
+
 @pytest.mark.parametrize(
     "canonical_module",
     [
