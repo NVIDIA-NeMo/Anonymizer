@@ -887,15 +887,15 @@ def test_wandb_ingress_accepts_rat_bench_reidentification_summary(
                 "reid_error_rows": 0,
                 "reidentification_rate_pct": 20.0,
                 "coverage_pct": 55.0,
-                "correct_guess_count": 11,
-                "incorrect_guess_count": 9,
+                "correct_guess_count": 9,
+                "incorrect_guess_count": 11,
                 "total_guess_count": 20,
                 "mean_reid_score": 0.12,
                 "reid_threshold": 0.2,
                 "missing_output_rows": 0,
                 "elapsed_sec": 3.5,
                 "attacker_model": "openai/gpt-oss-120b",
-                "attacker_endpoint_kind": "bigiron",
+                "attacker_endpoint_kind": "self_hosted",
             }
         )
         + "\n",
@@ -927,8 +927,8 @@ def test_wandb_ingress_rejects_rat_bench_percentages_above_100(
         "reid_error_rows": 0,
         "reidentification_rate_pct": 100.1,
         "coverage_pct": 55.0,
-        "correct_guess_count": 11,
-        "incorrect_guess_count": 9,
+        "correct_guess_count": 9,
+        "incorrect_guess_count": 11,
         "total_guess_count": 20,
         "mean_reid_score": 0.12,
         "reid_threshold": 0.2,
@@ -960,8 +960,8 @@ def test_wandb_ingress_rejects_unknown_rat_bench_attacker_endpoint_kind(
         "reid_error_rows": 0,
         "reidentification_rate_pct": 20.0,
         "coverage_pct": 55.0,
-        "correct_guess_count": 11,
-        "incorrect_guess_count": 9,
+        "correct_guess_count": 9,
+        "incorrect_guess_count": 11,
         "total_guess_count": 20,
         "mean_reid_score": 0.12,
         "reid_threshold": 0.2,
@@ -970,4 +970,47 @@ def test_wandb_ingress_rejects_unknown_rat_bench_attacker_endpoint_kind(
     }
 
     with pytest.raises(wandb_ingress_tool.ValidationError):
+        wandb_ingress_tool.RatBenchReidentificationMeasurement.model_validate(payload, strict=True)
+
+
+@pytest.mark.parametrize(
+    ("updates", "match"),
+    [
+        ({"reidentified_rows": 11}, "reidentified_rows"),
+        ({"direct_reidentified_rows": 2}, "direct_reidentified_rows"),
+        ({"reid_error_rows": 11}, "reid_error_rows"),
+        ({"total_guess_count": 999}, "total_guess_count"),
+        ({"reidentification_rate_pct": 30.0}, "reidentification_rate_pct"),
+        ({"coverage_pct": 45.0}, "coverage_pct"),
+    ],
+)
+def test_wandb_ingress_rejects_inconsistent_rat_bench_reidentification_summary(
+    wandb_ingress_tool: ModuleType,
+    updates: dict[str, Any],
+    match: str,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "record_type": "rat_bench_reidentification",
+        "run_id": "run-a",
+        "run_tags": {},
+        "timestamp_unix_sec": 1.0,
+        "rows_processed": 10,
+        "rows_failed": 0,
+        "reidentified_rows": 2,
+        "direct_reidentified_rows": 1,
+        "correctmatch_reidentified_rows": 1,
+        "reid_error_rows": 0,
+        "reidentification_rate_pct": 20.0,
+        "coverage_pct": 55.0,
+        "correct_guess_count": 9,
+        "incorrect_guess_count": 11,
+        "total_guess_count": 20,
+        "mean_reid_score": 0.12,
+        "reid_threshold": 0.2,
+        "attacker_endpoint_kind": "self_hosted",
+    }
+    payload.update(updates)
+
+    with pytest.raises(wandb_ingress_tool.ValidationError, match=match):
         wandb_ingress_tool.RatBenchReidentificationMeasurement.model_validate(payload, strict=True)

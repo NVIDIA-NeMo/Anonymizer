@@ -346,15 +346,15 @@ def test_wandb_aggregates_rat_bench_reidentification_record(
             "reid_error_rows": 0,
             "reidentification_rate_pct": 20.0,
             "coverage_pct": 55.0,
-            "correct_guess_count": 11,
-            "incorrect_guess_count": 9,
+            "correct_guess_count": 9,
+            "incorrect_guess_count": 11,
             "total_guess_count": 20,
             "mean_reid_score": 0.12,
             "reid_threshold": 0.2,
             "missing_output_rows": 0,
             "elapsed_sec": 3.5,
             "attacker_model": "openai/gpt-oss-120b",
-            "attacker_endpoint_kind": "bigiron",
+            "attacker_endpoint_kind": "self_hosted",
         },
         strict=True,
     )
@@ -368,7 +368,7 @@ def test_wandb_aggregates_rat_bench_reidentification_record(
     assert aggregated["measurement/rat_bench_reidentification/mean_reid_score_mean"] == pytest.approx(0.12)
     assert aggregated["measurement/rat_bench_reidentification/reid_threshold"] == 0.2
     assert "measurement/rat_bench_reidentification/reid_threshold_mean" not in aggregated
-    assert aggregated["measurement/rat_bench_reidentification/attacker_endpoint_kind"] == "bigiron"
+    assert aggregated["measurement/rat_bench_reidentification/attacker_endpoint_kind"] == "self_hosted"
     assert "measurement/rat_bench_reidentification/attacker_model" not in aggregated
 
 
