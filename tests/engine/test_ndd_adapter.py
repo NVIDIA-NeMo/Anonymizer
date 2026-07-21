@@ -13,8 +13,8 @@ from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
-from anonymizer.engine.ndd import adapter as ndd_adapter
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.engine.ndd.dd_observability import as_alias_list
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
@@ -62,7 +62,7 @@ def _make_columns() -> list[ColumnConfigT]:
 
 
 def test_as_alias_list_drops_none_items_before_stringifying() -> None:
-    assert ndd_adapter._as_alias_list(["validator", None, "", 0]) == ["validator", "0"]
+    assert as_alias_list(["validator", None, "", 0]) == ["validator", "0"]
 
 
 def test_attach_record_ids_adds_deterministic_ids() -> None:
