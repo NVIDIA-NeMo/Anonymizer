@@ -27,6 +27,20 @@ class TestNextWindowEnd:
         text = "a;b;c;d;e"
         assert next_window_end(text, 0, 4, delimiter=";") == 4  # "a;b;" (last ';' within [0,4))
 
+    def test_early_newline_falls_back_to_sentence_boundary(self) -> None:
+        # Only newline is near the start (degenerate back-off); a period sits in
+        # the tail half, so the window backs off to the sentence boundary instead.
+        text = "ab\n" + "c" * 10 + "." + "d" * 10
+        assert next_window_end(text, 0, 20) == 14  # just after the "." at index 13
+
+    def test_early_delimiters_hard_cut_with_warning(self, caplog) -> None:
+        # Newline AND period only near the start: both back-offs are degenerate,
+        # so the window is hard-cut at max_chars and a warning is logged.
+        text = "a.\nb" + "x" * 40
+        with caplog.at_level("WARNING", logger="anonymizer.windowing"):
+            assert next_window_end(text, 0, 20) == 20
+        assert any("hard-cutting" in rec.message for rec in caplog.records)
+
 
 class TestIterBoundaryWindows:
     def test_tiles_on_newlines(self) -> None:
