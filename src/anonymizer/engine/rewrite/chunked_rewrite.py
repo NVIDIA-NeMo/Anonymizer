@@ -66,8 +66,8 @@ def _compile_template(template: str) -> Any:
 _CONTINUITY_PREAMBLE = """<continuity>
 You are rewriting ONE section of a longer document. Below is a summary of how the
 EARLIER sections have already been rewritten. Keep this section consistent with it
-(same pseudonyms, tone, and narrative); do NOT repeat earlier content. Output only
-the rewritten text for THIS section.
+(same pseudonyms, tone, and narrative). Rewrite THIS section in full, even if its
+content resembles earlier sections. Output only the rewritten text for THIS section.
 
 Summary so far:
 {{ summary }}
