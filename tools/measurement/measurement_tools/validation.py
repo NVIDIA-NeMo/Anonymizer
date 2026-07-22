@@ -26,4 +26,6 @@ VisibleSlurmIdentifier = Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9][A-Za-
 NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
 NonNegativeFloat = Annotated[FiniteFloat, Field(ge=0)]
 Probability = Annotated[FiniteFloat, Field(ge=0, le=1)]
+Percentage = Annotated[FiniteFloat, Field(ge=0, le=100)]
 MeasurementStrategy = Literal["Annotate", "Hash", "Redact", "Rewrite", "Substitute"]
+RatBenchAttackerEndpointKind = Literal["self_hosted", "nvidia_inference_fallback"]

@@ -27,7 +27,9 @@ from measurement_tools.validation import (
     MeasurementStrategy,
     NonNegativeFloat,
     NonNegativeInt,
+    Percentage,
     Probability,
+    RatBenchAttackerEndpointKind,
     StrictFrozenModel,
 )
 
@@ -221,6 +223,54 @@ class TraceCoverageMeasurement(_MeasurementEnvelope):
     unsupported_column_types: list[StrictStr]
 
 
+class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
+    record_type: Literal["rat_bench_reidentification"]
+    rows_processed: NonNegativeInt
+    rows_failed: NonNegativeInt
+    reidentified_rows: NonNegativeInt
+    direct_reidentified_rows: NonNegativeInt
+    correctmatch_reidentified_rows: NonNegativeInt
+    reid_error_rows: NonNegativeInt
+    reidentification_rate_pct: Percentage
+    coverage_pct: Percentage
+    correct_guess_count: NonNegativeInt
+    incorrect_guess_count: NonNegativeInt
+    total_guess_count: NonNegativeInt
+    mean_reid_score: NonNegativeFloat
+    reid_threshold: NonNegativeFloat
+    missing_output_rows: NonNegativeInt | None = None
+    elapsed_sec: NonNegativeFloat | None = None
+    attacker_model: StrictStr | None = None
+    attacker_endpoint_kind: RatBenchAttackerEndpointKind | None = None
+
+    @model_validator(mode="after")
+    def validate_summary_counts(self) -> RatBenchReidentificationMeasurement:
+        if self.reidentified_rows > self.rows_processed:
+            raise ValueError("reidentified_rows cannot exceed rows_processed")
+        if self.direct_reidentified_rows + self.correctmatch_reidentified_rows != self.reidentified_rows:
+            raise ValueError(
+                "direct_reidentified_rows plus correctmatch_reidentified_rows must equal reidentified_rows"
+            )
+        if self.reid_error_rows > self.rows_processed:
+            raise ValueError("reid_error_rows cannot exceed rows_processed")
+        if self.correct_guess_count + self.incorrect_guess_count != self.total_guess_count:
+            raise ValueError("correct_guess_count plus incorrect_guess_count must equal total_guess_count")
+
+        expected_reidentification_rate = (
+            self.reidentified_rows / self.rows_processed * 100.0 if self.rows_processed else 0.0
+        )
+        if abs(self.reidentification_rate_pct - expected_reidentification_rate) > 1e-6:
+            raise ValueError("reidentification_rate_pct must match reidentified_rows / rows_processed")
+
+        expected_coverage = (
+            self.incorrect_guess_count / self.total_guess_count * 100.0 if self.total_guess_count else 0.0
+        )
+        if abs(self.coverage_pct - expected_coverage) > 1e-6:
+            raise ValueError("coverage_pct must match incorrect_guess_count / total_guess_count")
+
+        return self
+
+
 MeasurementRecord = Annotated[
     RunMeasurement
     | StageMeasurement
@@ -228,7 +278,8 @@ MeasurementRecord = Annotated[
     | EvaluationMeasurement
     | NddWorkflowMeasurement
     | ModelWorkflowMeasurement
-    | TraceCoverageMeasurement,
+    | TraceCoverageMeasurement
+    | RatBenchReidentificationMeasurement,
     Field(discriminator="record_type"),
 ]
 _RECORD_ADAPTER = TypeAdapter(MeasurementRecord)

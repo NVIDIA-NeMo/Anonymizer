@@ -327,6 +327,51 @@ def test_wandb_scalar_registry_matches_package_field_catalog(wandb_logging_tool:
         WandbHistoryPayload(metrics={f"measurement/record/{field_name}": 0})
 
 
+def test_wandb_aggregates_rat_bench_reidentification_record(
+    wandb_ingress_tool: ModuleType,
+    wandb_logging_tool: ModuleType,
+) -> None:
+    record = wandb_ingress_tool.RatBenchReidentificationMeasurement.model_validate(
+        {
+            "schema_version": 1,
+            "record_type": "rat_bench_reidentification",
+            "run_id": "run-a",
+            "run_tags": {},
+            "timestamp_unix_sec": 1.0,
+            "rows_processed": 10,
+            "rows_failed": 1,
+            "reidentified_rows": 2,
+            "direct_reidentified_rows": 1,
+            "correctmatch_reidentified_rows": 1,
+            "reid_error_rows": 0,
+            "reidentification_rate_pct": 20.0,
+            "coverage_pct": 55.0,
+            "correct_guess_count": 9,
+            "incorrect_guess_count": 11,
+            "total_guess_count": 20,
+            "mean_reid_score": 0.12,
+            "reid_threshold": 0.2,
+            "missing_output_rows": 0,
+            "elapsed_sec": 3.5,
+            "attacker_model": "openai/gpt-oss-120b",
+            "attacker_endpoint_kind": "self_hosted",
+        },
+        strict=True,
+    )
+
+    aggregated = wandb_logging_tool.aggregate_measurement_scalars((record,))
+
+    assert aggregated["measurement/rat_bench_reidentification/rows_processed"] == 10.0
+    assert aggregated["measurement/rat_bench_reidentification/reidentified_rows"] == 2.0
+    assert aggregated["measurement/rat_bench_reidentification/reidentification_rate_pct_mean"] == pytest.approx(20.0)
+    assert aggregated["measurement/rat_bench_reidentification/coverage_pct_mean"] == pytest.approx(55.0)
+    assert aggregated["measurement/rat_bench_reidentification/mean_reid_score_mean"] == pytest.approx(0.12)
+    assert aggregated["measurement/rat_bench_reidentification/reid_threshold"] == 0.2
+    assert "measurement/rat_bench_reidentification/reid_threshold_mean" not in aggregated
+    assert aggregated["measurement/rat_bench_reidentification/attacker_endpoint_kind"] == "self_hosted"
+    assert "measurement/rat_bench_reidentification/attacker_model" not in aggregated
+
+
 def test_wandb_report_metric_names_match_aggregated_names(
     wandb_ingress_tool: ModuleType,
     wandb_logging_tool: ModuleType,

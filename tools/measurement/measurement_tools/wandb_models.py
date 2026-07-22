@@ -31,7 +31,9 @@ from measurement_tools.validation import (
     MeasurementStrategy,
     NonNegativeFloat,
     NonNegativeInt,
+    Percentage,
     Probability,
+    RatBenchAttackerEndpointKind,
     RedactedStrictFrozenModel,
     StrictFrozenModel,
     VisibleIdentifier,
@@ -738,6 +740,26 @@ class TraceCoverageTableRow(StrictFrozenModel):
     unsupported_column_count: NonNegativeInt
 
 
+class RatBenchReidentificationTableRow(_MetricTableRow):
+    record_type: Literal["rat_bench_reidentification"]
+    rows_processed: NonNegativeInt
+    rows_failed: NonNegativeInt
+    reidentified_rows: NonNegativeInt
+    direct_reidentified_rows: NonNegativeInt
+    correctmatch_reidentified_rows: NonNegativeInt
+    reid_error_rows: NonNegativeInt
+    reidentification_rate_pct: Percentage
+    coverage_pct: Percentage
+    correct_guess_count: NonNegativeInt
+    incorrect_guess_count: NonNegativeInt
+    total_guess_count: NonNegativeInt
+    mean_reid_score: NonNegativeFloat
+    reid_threshold: NonNegativeFloat
+    missing_output_rows: NonNegativeInt | None = None
+    attacker_model: StrictStr | None = None
+    attacker_endpoint_kind: RatBenchAttackerEndpointKind | None = None
+
+
 WandbTableRow = Annotated[
     RunTableRow
     | StageTableRow
@@ -745,7 +767,8 @@ WandbTableRow = Annotated[
     | EvaluationTableRow
     | NddWorkflowTableRow
     | ModelWorkflowTableRow
-    | TraceCoverageTableRow,
+    | TraceCoverageTableRow
+    | RatBenchReidentificationTableRow,
     Field(discriminator="record_type"),
 ]
 WANDB_TABLE_ROW_MODELS: Mapping[str, type[BaseModel]] = MappingProxyType(
@@ -757,6 +780,7 @@ WANDB_TABLE_ROW_MODELS: Mapping[str, type[BaseModel]] = MappingProxyType(
         "ndd_workflow": NddWorkflowTableRow,
         "model_workflow": ModelWorkflowTableRow,
         "dd_trace_coverage": TraceCoverageTableRow,
+        "rat_bench_reidentification": RatBenchReidentificationTableRow,
     }
 )
 _MEASUREMENT_RECORD_TYPES = frozenset(WANDB_TABLE_ROW_MODELS)
@@ -1053,6 +1077,27 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "native_trace_column_count",
         "private_trace_column_count",
         "unsupported_column_count",
+        exposure=Exposure.table_opt_in,
+    ),
+    RatBenchReidentificationTableRow: _aggregate_policies(
+        "record_type",
+        "rows_processed",
+        "rows_failed",
+        "reidentified_rows",
+        "direct_reidentified_rows",
+        "correctmatch_reidentified_rows",
+        "reid_error_rows",
+        "reidentification_rate_pct",
+        "coverage_pct",
+        "correct_guess_count",
+        "incorrect_guess_count",
+        "total_guess_count",
+        "mean_reid_score",
+        "reid_threshold",
+        "missing_output_rows",
+        "attacker_model",
+        "attacker_endpoint_kind",
+        data_class=DataClass.operational,
         exposure=Exposure.table_opt_in,
     ),
     WandbTablePayload: {
