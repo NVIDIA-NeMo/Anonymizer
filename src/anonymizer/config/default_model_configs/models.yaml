@@ -28,3 +28,17 @@ model_configs:
       temperature: 0.4
       top_p: 1.0
       timeout: 300
+
+  - alias: nemotron-super
+    model: nvidia/nemotron-3-super-v3
+    provider: nvidia
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 16384
+      temperature: 0.3
+      top_p: 0.95
+      timeout: 300
+      extra_body:
+        reasoning_effort: none
+        chat_template_kwargs:
+          enable_thinking: false

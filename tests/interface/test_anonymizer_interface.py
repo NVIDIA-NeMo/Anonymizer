@@ -12,12 +12,13 @@ import pytest
 from data_designer.config.models import ModelConfig
 
 from anonymizer import RunConfig
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_VALID,
+    COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_REPLACED_TEXT,
@@ -896,13 +897,48 @@ def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInpu
             "needs_human_review": [False],
             COL_JUDGE_EVALUATION: [None],
             COL_DETECTION_VALID: [0.9],
+            COL_ENTITIES_BY_VALUE: [{}],
         }
     )
     rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
 
-    evaluated = anonymizer.evaluate(run_result)
+    evaluated = anonymizer.evaluate(run_result, config=EvaluateConfig(compute_detection_validity=True))
 
     assert COL_DETECTION_VALID in evaluated.dataframe.columns
+
+
+def test_evaluate_config_detection_validity_defaults_off() -> None:
+    """Goal 2: detection-validity scoring is opt-in — the config default must be False
+    so a plain ``EvaluateConfig()`` never triggers the extra detection judge."""
+    assert EvaluateConfig().compute_detection_validity is False
+
+
+def test_evaluate_defaults_skip_detection_validity_in_runner_call(stub_input: AnonymizerInput) -> None:
+    """With the default ``EvaluateConfig()``, evaluate() must forward
+    ``compute_detection_validity=False`` to the rewrite runner (the judge is not run)."""
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [None],
+            COL_ENTITIES_BY_VALUE: [{}],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    anonymizer.evaluate(run_result, config=EvaluateConfig())
+
+    assert rewrite_runner.evaluate.call_args.kwargs["compute_detection_validity"] is False
 
 
 def test_evaluate_rewrite_raises_without_rewrite_config() -> None:
@@ -990,3 +1026,107 @@ def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: An
             "evaluate() on a rewrite result must pass check_rewrite=False to avoid "
             "requiring rewrite pipeline model aliases that are unused during evaluation"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: strict_entity_protection flows config -> result -> coverage judge
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("strict", [True, False])
+def test_run_persists_strict_entity_protection(stub_input: AnonymizerInput, strict: bool) -> None:
+    """run() must copy config.rewrite.strict_entity_protection onto the result."""
+    config = AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=strict))
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert result.strict_entity_protection is strict
+
+
+@pytest.mark.parametrize("strict", [True, False])
+def test_preview_persists_strict_entity_protection(stub_input: AnonymizerInput, strict: bool) -> None:
+    """preview() must copy config.rewrite.strict_entity_protection onto the PreviewResult."""
+    config = AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=strict))
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    preview = anonymizer.preview(config=config, data=stub_input, num_records=1)
+
+    assert preview.strict_entity_protection is strict
+
+
+def test_evaluate_passes_strict_entity_protection_to_coverage_judge(stub_input: AnonymizerInput) -> None:
+    """evaluate() must forward the result's strict flag into EntityCoverageWorkflow.
+
+    Regression: strict_entity_protection was dropped after run()/preview(), so the
+    entity-coverage judge always scored in non-strict mode regardless of config.
+    """
+    config = AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True))
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+
+    run_result = anonymizer.run(config=config, data=stub_input)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [None],
+            COL_DETECTION_VALID: [1.0],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    with patch("anonymizer.interface.anonymizer.EntityCoverageWorkflow") as mock_coverage_wf:
+        mock_coverage_wf.return_value.run_non_critical.return_value = (eval_df, [])
+        anonymizer.evaluate(run_result)
+
+    assert mock_coverage_wf.call_args is not None, "EntityCoverageWorkflow was not constructed"
+    assert mock_coverage_wf.call_args.kwargs["strict_entity_protection"] is True
+
+
+def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> None:
+    """run()/preview() must preserve input context for later evaluation."""
+    data = stub_input.model_copy(update={"data_summary": "Customer support transcripts."})
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=data)
+    preview = anonymizer.preview(config=config, data=data, num_records=1)
+
+    assert result.data_summary == "Customer support transcripts."
+    assert preview.data_summary == "Customer support transcripts."
+
+
+def test_evaluate_passes_data_summary_to_coverage_judge(stub_input: AnonymizerInput) -> None:
+    """evaluate() must forward the input summary to EntityCoverageWorkflow."""
+    data = stub_input.model_copy(update={"data_summary": "Customer support transcripts."})
+    config = AnonymizerConfig(rewrite=Rewrite())
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+    run_result = anonymizer.run(config=config, data=data)
+
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            "utility_score": [0.85],
+            "leakage_mass": [0.3],
+            "weighted_leakage_rate": [0.23],
+            "any_high_leaked": [False],
+            "needs_human_review": [False],
+            COL_JUDGE_EVALUATION: [None],
+            COL_DETECTION_VALID: [1.0],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+
+    with patch("anonymizer.interface.anonymizer.EntityCoverageWorkflow") as mock_coverage_wf:
+        mock_coverage_wf.return_value.run_non_critical.return_value = (eval_df, [])
+        evaluated = anonymizer.evaluate(run_result)
+
+    assert mock_coverage_wf.call_args.kwargs["data_summary"] == "Customer support transcripts."
+    assert evaluated.data_summary == "Customer support transcripts."

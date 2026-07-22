@@ -135,9 +135,11 @@ config = AnonymizerConfig(
 | `weighted_leakage_rate` | Always | Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass. |
 | `any_high_leaked` | Always | Whether any high-sensitivity entity leaked through. |
 | `needs_human_review` | Always | Flag for records that may need manual review. |
-| `detection_valid` | After `evaluate()` | Fraction of detected entities that passed the detection judge (0.0--1.0); `None` if judge unavailable. |
-| `detection_invalid_entities` | After `evaluate()` | Flagged detections with value, label, and one-sentence reasoning. |
+| `entity_coverage` | After `evaluate()` | Fraction of sensitive values removed (0.0--1.0); `1.0` if nothing leaked, `None` if judge unavailable. |
+| `leaked_entities` | After `evaluate()` | Sensitive values that survived into the rewritten text, each with value, label, and reasoning. |
 | `judge_evaluation` | After `evaluate()` | Dict with `privacy`, `quality`, and `style` rubric scores and reasoning. |
+| `detection_valid` | After `evaluate(config=EvaluateConfig(compute_detection_validity=True))` | Fraction of detected entities that passed the detection judge (0.0--1.0); `None` if judge unavailable. Opt-in, off by default. |
+| `detection_invalid_entities` | After `evaluate(config=EvaluateConfig(compute_detection_validity=True))` | Flagged detections with value, label, and one-sentence reasoning. |
 
 Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, QA pairs, repair iterations).
 
@@ -187,4 +189,4 @@ Rewrite uses multiple LLM roles. All default to models in the [default config](m
 
 ## Evaluating rewrite output
 
-After running rewrite, you can score detection quality and the holistic rewrite quality using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on the detection judge and the three rewrite quality rubrics (privacy, quality, style), and how to call `Anonymizer.evaluate()`.
+After running rewrite, you can score residual leakage and the holistic rewrite quality using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on the always-on entity coverage judge, the three rewrite quality rubrics (privacy, quality, style), the opt-in detection judge, and how to call `Anonymizer.evaluate()`.

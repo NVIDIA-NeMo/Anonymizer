@@ -462,7 +462,7 @@ class RewriteWorkflow:
             df = _join_judge_columns(df, judge_result.dataframe)
             return df, judge_result.failed_records
         except Exception:
-            logger.warning("Final judge step failed; defaulting to judge_evaluation=None", exc_info=True)
+            logger.debug("Rewrite judge workflow failed; scores may be unavailable.", exc_info=True)
             df[COL_JUDGE_EVALUATION] = None
             return df, []
 
@@ -478,24 +478,27 @@ class RewriteWorkflow:
         selected_models: EvaluateModelSelection,
         privacy_goal: PrivacyGoal,
         preview_num_records: int | None = None,
+        compute_detection_validity: bool = False,
     ) -> RewriteResult:
         """Run detection validity judge and holistic judge on a completed rewrite result.
 
         Takes the trace dataframe from a prior run() / preview() and appends
-        COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES, and COL_JUDGE_EVALUATION.
+        COL_JUDGE_EVALUATION, and optionally COL_DETECTION_VALID /
+        COL_DETECTION_INVALID_ENTITIES when ``compute_detection_validity=True``.
         COL_NEEDS_HUMAN_REVIEW is not modified — it was set during run() based on
         objective metrics and judge scores do not influence it.
         """
         entity_rows, passthrough_rows = split_rows(df, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
 
         passthrough_rows = passthrough_rows.copy()
-        if not passthrough_rows.empty:
-            logger.info(
-                "%d passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid).",
-                len(passthrough_rows),
-            )
-        passthrough_rows[COL_DETECTION_VALID] = 1.0
-        passthrough_rows[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
+        if compute_detection_validity:
+            if not passthrough_rows.empty:
+                logger.info(
+                    "%d passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid).",
+                    len(passthrough_rows),
+                )
+            passthrough_rows[COL_DETECTION_VALID] = 1.0
+            passthrough_rows[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(passthrough_rows))]
         passthrough_rows[COL_JUDGE_EVALUATION] = None
 
         if entity_rows.empty:
@@ -504,27 +507,28 @@ class RewriteWorkflow:
 
         all_failed: list[FailedRecord] = []
 
-        # --- Detection validity judge ---
-        try:
-            detection_result = self._detection_judge_wf.evaluate(
-                entity_rows,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-            )
-            entity_rows = _join_preserving(
-                entity_rows,
-                detection_result.dataframe,
-                defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
-            )
-            all_failed.extend(detection_result.failed_records)
-            # Convert bool all_valid → 0–1 fraction so detection validity sits on the
-            # same scale as utility_score and leakage_mass in the rewrite scores section.
-            entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
-        except Exception:
-            logger.warning("Detection judge step failed; defaulting to detection_valid=None.", exc_info=True)
-            entity_rows[COL_DETECTION_VALID] = None
-            entity_rows[COL_DETECTION_INVALID_ENTITIES] = None
+        # --- Detection validity judge (opt-in) ---
+        if compute_detection_validity:
+            try:
+                detection_result = self._detection_judge_wf.evaluate(
+                    entity_rows,
+                    model_configs=model_configs,
+                    selected_models=selected_models,
+                    preview_num_records=preview_num_records,
+                )
+                entity_rows = _join_preserving(
+                    entity_rows,
+                    detection_result.dataframe,
+                    defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
+                )
+                all_failed.extend(detection_result.failed_records)
+                # Convert bool all_valid → 0–1 fraction so detection validity sits on the
+                # same scale as utility_score and leakage_mass in the rewrite scores section.
+                entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
+            except Exception:
+                logger.debug("Detection validity judge failed; scores may be unavailable.", exc_info=True)
+                entity_rows[COL_DETECTION_VALID] = None
+                entity_rows[COL_DETECTION_INVALID_ENTITIES] = None
 
         # --- Holistic judge (privacy / quality / style) ---
         entity_rows, judge_failed = self._run_final_judge(

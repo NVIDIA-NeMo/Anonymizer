@@ -101,6 +101,7 @@ class EvaluateModelSelection(BaseModel):
     output, while ``evaluate(...)`` validates the roles that score it.
     """
 
+    entity_coverage_judge: str
     detection_validity_judge: str
     replace_type_fidelity_judge: str
     replace_relational_consistency_judge: str

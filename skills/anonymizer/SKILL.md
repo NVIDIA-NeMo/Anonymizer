@@ -36,7 +36,7 @@ regulatory and business context.
 - **For cross-record consistency** (same value → same replacement everywhere), use `Hash`, not `Substitute`. `Substitute` is consistent within a row only.
 - **In Replace mode, default to `Substitute`** if the user hasn't specified a strategy. It's the most general-purpose choice and matches the bulk of production usage.
 - **`Annotate` is for inspection, not production.** Its output keeps the original entity text and is not privacy-safe. Use it during iteration to confirm detection is working, then switch.
-- **Evaluation is opt-in and runs as a separate step** (Replace and Rewrite modes). After `preview()` / `run()`, call `anonymizer.evaluate(result)` to score the output with LLM-as-judge. Replace mode: `Substitute` gets four judges (detection validity, type fidelity, relational consistency, attribute fidelity); `Redact` / `Annotate` / `Hash` get detection-validity only. Rewrite mode: detection validity + holistic privacy/quality/style judge. Evaluation is diagnostic — it scores quality, it does not change the anonymized output.
+- **Evaluation is opt-in and runs as a separate step** (Replace and Rewrite modes). After `preview()` / `run()`, call `anonymizer.evaluate(result)` to score the output with LLM-as-judge. **Entity coverage always runs** in both modes — it reports residual leaks (`entity_coverage` fraction + `leaked_entities`). On top of that: Replace `Substitute` adds three quality judges (type fidelity, relational consistency, attribute fidelity); Rewrite adds the holistic privacy/quality/style judge. Detection validity is **opt-in** via `EvaluateConfig(compute_detection_validity=True)` (off by default). Evaluation is diagnostic — it scores quality, it does not change the anonymized output.
 - **Always set `AnonymizerInput.data_summary`**, even briefly. It is the single cheapest quality lever and it improves both detection and rewrite.
 - **Never claim privacy guarantees.** Anonymizer is best-effort. Outputs may need human review depending on `risk_tolerance`. Tell the user this when you finalize.
 
@@ -49,9 +49,9 @@ regulatory and business context.
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
 - **Validator pool is the only model role with built-in load-spreading.** Set `entity_validator: [a, b, c]` in `models.yaml` if rate limits drop rows. Other roles (rewriter, evaluator, etc.) are single-alias.
 - **Self-hosted GLiNER:** When detection must not call `build.nvidia.com` (PHI on-prem, air-gapped, latency), run the reference server from a **source checkout** with `python tools/serve_gliner.py`. The server is not installed by `pip install nemo-anonymizer`. Add a provider with `endpoint: http://localhost:8001/v1`, then route `entity_detector` through a `gliner-pii-detector` alias with `provider: local-gliner` and `skip_health_check: true`. Match any custom `--port` or `--host` in the provider endpoint. `model_configs` is a **complete** model pool, not an overlay. Copy `src/anonymizer/config/default_model_configs/models.yaml` and change only the detector entry, keeping `gpt-oss-120b` and `nemotron-30b-thinking`. See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) or the [published self-hosting guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/).
-- **The evaluation judges use their own model roles** (`detection_validity_judge`, `replace_type_fidelity_judge`, `replace_relational_consistency_judge`, `replace_attribute_fidelity_judge`, `rewrite_judge`), configured in the `evaluate` section of `models.yaml`. They are **not** consumed by `preview()` / `run()`, so a config that anonymizes fine can still fail validation at `evaluate()` if those roles are unset. Defaults ship in `src/anonymizer/config/default_model_configs/evaluate.yaml`.
-- **Verdict columns are null when the judge was unavailable** — `None` means "unscored", never a pass. Replace verdict columns (`type_fidelity_valid`, etc.) are `True` / `False` / `None`. Rewrite `detection_valid` is a `0–1` float fraction (or `None` if unscored). Inspect verdicts per record with `evaluated.display_record(i)`.
-- **`EvaluateConfig` is an empty placeholder today** — no knobs to set. `anonymizer.evaluate(result)` is the whole API; pass nothing else.
+- **The evaluation judges use their own model roles** (`entity_coverage_judge`, `detection_validity_judge`, `replace_type_fidelity_judge`, `replace_relational_consistency_judge`, `replace_attribute_fidelity_judge`, `rewrite_judge`), configured in the `evaluate` section of `models.yaml`. They are **not** consumed by `preview()` / `run()`, so a config that anonymizes fine can still fail validation at `evaluate()` if those roles are unset. Defaults ship in `src/anonymizer/config/default_model_configs/evaluate.yaml` (`entity_coverage_judge` defaults to `nemotron-super`).
+- **Verdict columns are null when the judge was unavailable** — `None` means "unscored", never a pass. `entity_coverage` is a `0–1` float (`1.0` = nothing leaked) or `None`; `leaked_entities` is a list of surviving values. Replace verdict columns (`type_fidelity_valid`, etc.) are `True` / `False` / `None`. Rewrite `detection_valid` is a `0–1` float fraction (or `None` if unscored). Inspect verdicts per record with `evaluated.display_record(i)`.
+- **`EvaluateConfig` has one knob today: `compute_detection_validity`** (default `False`). Plain `anonymizer.evaluate(result)` runs entity coverage + the mode's quality judges; pass `EvaluateConfig(compute_detection_validity=True)` only to additionally score detection validity (an internal-facing tag-precision metric).
 
 # Reference Docs
 
@@ -191,27 +191,33 @@ def main() -> None:
 
     # Optional LLM-as-judge evaluation (Replace and Rewrite modes). Opt-in, separate
     # step — scores quality without changing the anonymized output.
-    # Replace: Substitute -> 4 judges (detection validity, type fidelity, relational
-    #   consistency, attribute fidelity); Redact/Annotate/Hash -> detection-validity only.
-    # Rewrite: detection validity + holistic privacy/quality/style judge.
+    # Both modes: entity_coverage (residual-leak metric) always runs.
+    # Replace: Substitute adds type fidelity, relational consistency, attribute fidelity.
+    # Rewrite: adds the holistic privacy/quality/style judge.
+    # Detection validity is opt-in (EvaluateConfig(compute_detection_validity=True)).
     # Needs the `evaluate` model roles in models.yaml
     # (see src/anonymizer/config/default_model_configs/evaluate.yaml).
     if args.evaluate:
         result = anonymizer.evaluate(result)
         df = result.dataframe
+        # entity_coverage is a 0–1 float (1.0 = nothing leaked); mean is the headline metric.
+        if "entity_coverage" in df.columns:
+            scored = int(df["entity_coverage"].notna().sum())
+            mean_cov = df["entity_coverage"].mean()
+            print(f"entity_coverage: mean={mean_cov:.2f}  scored={scored}/{len(df)}")
         if config.replace is not None:
             for col in (
-                "detection_valid",
                 "type_fidelity_valid",
                 "relational_consistency_valid",
                 "attribute_fidelity_valid",
+                "detection_valid",  # present only with compute_detection_validity=True
             ):
                 if col in df.columns:
                     passed = int(df[col].eq(True).sum())  # None = unscored, never a pass
                     scored = int(df[col].notna().sum())
                     print(f"{col}: {passed}/{scored} passed ({len(df) - scored} unscored)")
         else:
-            # Rewrite: detection_valid is a 0–1 fraction (mean is more informative than pass count).
+            # Rewrite: detection_valid is a 0–1 fraction (present only when opted in).
             if "detection_valid" in df.columns:
                 scored = int(df["detection_valid"].notna().sum())
                 mean_val = df["detection_valid"].mean()
