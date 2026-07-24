@@ -164,13 +164,30 @@ def _filter_replacement_map_to_input_entities(
         for label in entity.labels
         if entity.value and label
     }
+    # Normalized form → (canonical_value, label) for fuzzy whitespace fallback.
+    # The LLM generating the map may normalise unusual Unicode whitespace to a
+    # regular space in the original field; we want to keep those entries using
+    # the canonical (detected) entity value so downstream lookups succeed.
+    _nws = lambda s: " ".join(s.split())  # noqa: E731
+    normalized_allowed: dict[tuple[str, str], tuple[str, str]] = {
+        (_nws(v), lbl): (v, lbl) for v, lbl in allowed_pairs
+    }
     protected_original_values = {value for value, _ in allowed_pairs}
     filtered: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     synthetic_collision_labels: Counter[str] = Counter()
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
-        if key not in allowed_pairs or key in seen:
+        if key not in allowed_pairs:
+            # Try whitespace-normalised fallback
+            norm_key = (_nws(replacement.original), replacement.label)
+            canonical = normalized_allowed.get(norm_key)
+            if canonical is None or canonical in seen:
+                continue
+            # Rewrite original to the canonical (detected) value
+            key = canonical
+            replacement = replacement.model_copy(update={"original": canonical[0]})
+        if key in seen:
             continue
         if replacement.synthetic in protected_original_values:
             synthetic_collision_labels[replacement.label] += 1
