@@ -23,7 +23,7 @@ for path in sorted(package.rglob("*.py")):
         continue
     if parts[-1] == "__init__":
         continue
-    if "test" in parts[-1]:
+    if parts[-1].startswith("test_"):
         continue
     if len(parts) > 1 and parts[1] in {"engine", "utils"}:
         continue
