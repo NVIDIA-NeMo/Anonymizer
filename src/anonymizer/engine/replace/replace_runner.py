@@ -122,9 +122,10 @@ class ReplacementWorkflow:
     ) -> ReplacementResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.
 
-        For Substitute, runs all 4 judges (detection + type fidelity + relational
-        consistency + attribute fidelity) as columns of a single DataDesigner
-        workflow. For other strategies, runs the detection judge only.
+        Entity coverage always runs for every replace strategy. Substitute also
+        runs type fidelity, relational consistency, and attribute fidelity.
+        Detection validity runs only when ``compute_detection_validity=True``.
+        All active judges are submitted as columns of one DataDesigner workflow.
 
         Raises ``ValueError`` if the workflow has no adapter wired up or if the
         dataframe is missing the columns the judges read.

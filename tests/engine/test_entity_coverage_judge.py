@@ -5,9 +5,15 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pandas as pd
 import pytest
 
 from anonymizer.config.models import EvaluateModelSelection
+from anonymizer.engine.constants import (
+    COL_ENTITY_COVERAGE,
+    COL_ENTITY_COVERAGE_JUDGE,
+    COL_LEAKED_ENTITIES,
+)
 from anonymizer.engine.evaluation.entity_coverage_judge import (
     EntityCoverageWorkflow,
     _coverage_prompt,
@@ -15,6 +21,8 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
     _is_leaked_value_covered,
     _parse_leaked_entities,
 )
+from anonymizer.engine.evaluation.judge_base import JudgeResult
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
 
 
 def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> None:
@@ -205,3 +213,45 @@ def test_column_config_builds_prompt_and_resolves_model() -> None:
     assert isinstance(config.prompt, str) and config.prompt
     assert "Customer support transcripts." in config.prompt  # data_summary threaded in
     assert "sex, title" in config.prompt  # entity_labels scope threaded in
+
+
+def test_build_prompt_stub_fails_loudly_instead_of_ignoring_instance_configuration() -> None:
+    workflow = EntityCoverageWorkflow(adapter=Mock(), entity_labels=["first_name"])
+
+    with pytest.raises(NotImplementedError, match="builds its prompt in column_config"):
+        workflow._build_prompt()
+
+
+def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> None:
+    adapter = Mock()
+    adapter._attach_record_ids.side_effect = lambda dataframe: dataframe.assign(
+        **{RECORD_ID_COLUMN: ["row-0", "row-1"]}
+    )
+    workflow = EntityCoverageWorkflow(adapter=adapter)
+    failed_record = Mock()
+    workflow.evaluate = Mock(
+        return_value=JudgeResult(
+            dataframe=pd.DataFrame(
+                {
+                    RECORD_ID_COLUMN: ["row-0"],
+                    COL_ENTITY_COVERAGE_JUDGE: [{"leaked_entities": []}],
+                    COL_ENTITY_COVERAGE: [1.0],
+                    COL_LEAKED_ENTITIES: [[]],
+                }
+            ),
+            failed_records=[failed_record],
+        )
+    )
+
+    result, failed_records = workflow.run_non_critical(
+        pd.DataFrame({"input_value": ["scored", "dropped"]}),
+        model_configs=[],
+        selected_models=_stub_evaluate_selection(),
+    )
+
+    assert result["input_value"].tolist() == ["scored", "dropped"]
+    assert result.loc[0, COL_ENTITY_COVERAGE] == 1.0
+    assert result.loc[1, COL_ENTITY_COVERAGE] is None
+    assert result[COL_LEAKED_ENTITIES].tolist() == [[], []]
+    assert RECORD_ID_COLUMN not in result.columns
+    assert failed_records == [failed_record]

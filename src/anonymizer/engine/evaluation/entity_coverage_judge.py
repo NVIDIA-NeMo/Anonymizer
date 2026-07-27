@@ -24,7 +24,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
@@ -483,7 +483,14 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     @classmethod
     def _build_prompt(cls) -> str:
-        return _coverage_prompt(entity_labels=None, strict_entity_protection=False)
+        """Unused abstract-base hook; instance configuration is required here.
+
+        ``column_config()`` below builds the prompt from ``entity_labels``,
+        ``strict_entity_protection``, and ``data_summary``. Fail loudly if a
+        future refactor accidentally routes through the base implementation
+        instead of silently evaluating with incorrect default scope.
+        """
+        raise NotImplementedError("EntityCoverageWorkflow builds its prompt in column_config().")
 
     @classmethod
     def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
@@ -546,16 +553,41 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         Returns ``(annotated_df, failed_records)``.
         """
         try:
+            had_record_ids = RECORD_ID_COLUMN in dataframe.columns
+            prepared = self._adapter._attach_record_ids(dataframe)
             result = self.evaluate(
-                dataframe,
+                prepared,
                 model_configs=model_configs,
                 selected_models=selected_models,
                 preview_num_records=preview_num_records,
             )
-            out = dataframe.copy()
-            for col in (self.RAW_COL, self.VALID_COL, self.INVALID_COL):
-                if col in result.dataframe.columns:
-                    out[col] = result.dataframe[col].values
+            if RECORD_ID_COLUMN not in result.dataframe.columns:
+                raise ValueError("Entity coverage output is missing record IDs required for row alignment.")
+
+            score_cols = [
+                col for col in (self.RAW_COL, self.VALID_COL, self.INVALID_COL) if col in result.dataframe.columns
+            ]
+            out = prepared.drop(columns=score_cols, errors="ignore").merge(
+                result.dataframe[[RECORD_ID_COLUMN, *score_cols]],
+                on=RECORD_ID_COLUMN,
+                how="left",
+                sort=False,
+                validate="one_to_one",
+            )
+
+            if self.VALID_COL not in out.columns:
+                out[self.VALID_COL] = None
+            else:
+                out[self.VALID_COL] = out[self.VALID_COL].astype(object)
+                out.loc[out[self.VALID_COL].isna(), self.VALID_COL] = None
+            if self.INVALID_COL not in out.columns:
+                out[self.INVALID_COL] = [[] for _ in range(len(out))]
+            else:
+                out[self.INVALID_COL] = out[self.INVALID_COL].apply(
+                    lambda value: value if isinstance(value, list) else []
+                )
+            if not had_record_ids:
+                out = out.drop(columns=[RECORD_ID_COLUMN])
             return out, result.failed_records
         except Exception:
             logger.debug("Entity coverage workflow failed; scores may be unavailable.", exc_info=True)
