@@ -45,7 +45,7 @@ config = AnonymizerConfig(
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
-| `deterministic_detection` | `False` | Experimental local detector for high-confidence structured entities such as email addresses, SSNs, URLs, IP addresses, MAC addresses, and credit/debit cards. Matching labels are handled before GLiNER; the remaining labels continue through the model-based path. |
+| `deterministic_detection` | `False` | Experimental local detector for high-confidence structured entities such as email addresses, URLs, IP addresses, MAC addresses, and credit/debit cards. Matching labels are handled before GLiNER; the remaining labels continue through the model-based path. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
 
@@ -54,6 +54,8 @@ config = AnonymizerConfig(
 ## Deterministic detection
 
 `Detect(deterministic_detection=True)` enables a first local detection pass for narrowly structured labels that can be matched and validated without a model. Those labels are removed from the GLiNER request, then merged back into the seed entities before augmentation and finalization.
+
+SSN-like national identifiers are left on the model-based path. The local deterministic pole does not claim `ssn` because checksum and format rules are jurisdiction-specific, while Anonymizer's default label vocabulary can be used across multilingual or multi-country datasets.
 
 This knob is default-off while the split-pole path is experimental. Use it when you want to evaluate whether deterministic handling of regexable/checksum-backed entities reduces model work or improves recall for those entities in your data.
 

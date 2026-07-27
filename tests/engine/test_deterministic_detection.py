@@ -24,7 +24,7 @@ def test_deterministic_detector_finds_structured_labels() -> None:
     assert labels["email"] == ["alice@example.com"]
     assert labels["url"] == ["https://example.com/a?x=1"]
     assert labels["credit_debit_card"] == ["4111 1111 1111 1111"]
-    assert labels["ssn"] == ["123-45-6789"]
+    assert "ssn" not in labels
     assert labels["ipv4"] == ["192.168.1.1"]
     assert labels["ipv6"] == ["2001:db8::1"]
     assert labels["mac_address"] == ["49:FD:EE:1A:3B:7C"]
@@ -36,12 +36,12 @@ def test_card_detection_requires_luhn() -> None:
     assert labels["credit_debit_card"] == ["4111-1111-1111-1111"]
 
 
-def test_ssn_detection_rejects_reserved_areas_and_zip_context() -> None:
+def test_deterministic_detector_does_not_claim_us_ssn() -> None:
     text = "Good SSN 123-45-6789, reserved 000-45-6789 and 666-45-6789, ZIP 123456789."
 
     labels = _by_label(text)
 
-    assert labels["ssn"] == ["123-45-6789"]
+    assert "ssn" not in labels
 
 
 def test_deterministic_detector_respects_requested_labels() -> None:

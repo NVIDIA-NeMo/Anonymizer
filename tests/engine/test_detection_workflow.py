@@ -541,7 +541,7 @@ def test_deterministic_detection_routes_remaining_labels_to_gliner(
     adapter.run_workflow.return_value = WorkflowRunResult(
         dataframe=pd.DataFrame(
             {
-                COL_TEXT: ["Alice emailed alice@example.com"],
+                COL_TEXT: ["Alice emailed alice@example.com with SSN 123-45-6789"],
                 COL_DETECTED_ENTITIES: [{"entities": []}],
             }
         ),
@@ -550,12 +550,12 @@ def test_deterministic_detection_routes_remaining_labels_to_gliner(
     workflow = EntityDetectionWorkflow(adapter=adapter)
 
     workflow.run(
-        pd.DataFrame({COL_TEXT: ["Alice emailed alice@example.com"]}),
+        pd.DataFrame({COL_TEXT: ["Alice emailed alice@example.com with SSN 123-45-6789"]}),
         model_configs=stub_detector_model_configs,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         deterministic_detection=True,
-        entity_labels=["email", "first_name", "url"],
+        entity_labels=["email", "first_name", "ssn", "url"],
         tag_latent_entities=False,
     )
 
@@ -572,11 +572,12 @@ def test_deterministic_detection_routes_remaining_labels_to_gliner(
         stub_detection_model_selection.entity_detector,
     )
     assert detector_config.inference_parameters.extra_body is not None
-    assert detector_config.inference_parameters.extra_body["labels"] == ["first_name"]
+    assert detector_config.inference_parameters.extra_body["labels"] == ["first_name", "ssn"]
 
     validation_col = _find_column(columns, COL_VALIDATION_DECISIONS)
     assert isinstance(validation_col, ChunkedValidationConfig)
     assert "- first_name:" in validation_col.prompt_template
+    assert "- ssn:" in validation_col.prompt_template
     assert "- email:" not in validation_col.prompt_template
     assert "- url:" not in validation_col.prompt_template
 

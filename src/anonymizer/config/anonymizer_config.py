@@ -104,7 +104,7 @@ class Detect(BaseModel):
         default=False,
         description=(
             "Experimental: when True, run a local deterministic pole for high-confidence "
-            "structured labels (email, url, ipv4, ipv6, mac_address, credit_debit_card, ssn) "
+            "structured labels (email, url, ipv4, ipv6, mac_address, credit_debit_card) "
             "and send the remaining labels to GLiNER."
         ),
     )
