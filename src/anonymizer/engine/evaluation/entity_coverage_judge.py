@@ -221,7 +221,15 @@ Do flag:
 
 
 def _final_entities_for_coverage(parsed: EntitiesByValueSchema) -> list[dict[str, str]]:
-    """Flatten EntitiesByValueSchema into one (value, label) row per pair for prompt context."""
+    """Flatten EntitiesByValueSchema into one entry per (value, label) pair.
+
+    The coverage denominator counts (value, label) pairs rather than unique
+    values or source occurrences. This keeps the numerator and denominator in
+    the same unit — the judge also returns leaked entities as (value, label)
+    pairs — so the score remains consistent. An entity detected under multiple
+    labels (e.g. "Alice" as both first_name and user_name) contributes one
+    entry per label, which is intentional: each detection deserves credit.
+    """
     return [{"value": e.value, "label": label} for e in parsed.entities_by_value for label in e.labels]
 
 
