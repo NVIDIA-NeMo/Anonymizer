@@ -90,6 +90,8 @@ def _strict_protection_block(strict_entity_protection: bool) -> str:
         "Do NOT apply MINIMUM NECESSARY CHANGE reasoning to excuse a missed entity.\n"
         "Do NOT excuse a missed entity because its combined re-identification risk is low.\n"
         "Any PII span not caught by the anonymizer is a miss in strict mode.\n"
+        "Strict mode lowers the threshold for borderline literal spans — it does NOT change\n"
+        "the requirement that every flagged value must be literally present in the original text.\n"
         "</strict_entity_protection>"
     )
 
