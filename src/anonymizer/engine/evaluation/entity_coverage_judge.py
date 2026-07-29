@@ -34,29 +34,12 @@ logger = logging.getLogger("anonymizer.evaluation.entity_coverage_judge")
 
 _FINAL_ENTITIES_FOR_COVERAGE_COL = "_final_entities_for_coverage_judge"
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
-# Grammatical stopwords only — function words that carry no PII and just absorb
-# article/preposition noise in a value (e.g. "the Nawabganj" matches "Nawabganj").
-# Deliberately does NOT include generic content descriptors (festival, summit, club,
-# conference, …): those turn a named event/org into a quasi-identifier, so ignoring
-# them would suppress real leaks (e.g. "Davos Summit" collapsing into "Davos").
-_COVERAGE_IGNORE_TOKENS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "at",
-        "by",
-        "for",
-        "from",
-        "in",
-        "of",
-        "on",
-        "or",
-        "the",
-        "to",
-        "with",
-    }
-)
+# Leading articles stripped during core-token normalization so that a judge value
+# like "the Nawabganj" still matches a detected entity "Nawabganj". Restricted to
+# leading position only — prepositions such as "of" and "at" are intentionally
+# excluded because they can be load-bearing in entity names (e.g. "Bank of America",
+# "AT&T") and stripping them from arbitrary positions would suppress real leaks.
+_LEADING_ARTICLES = frozenset({"a", "an", "the"})
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +306,14 @@ def _is_concatenation_of_whole_values(leaked_tokens: list[str], final_token_list
 
 
 def _core_token_sequence(tokens: list[str]) -> list[str]:
-    """Tokens in original order with grammatical stopwords (``_COVERAGE_IGNORE_TOKENS``) removed."""
-    return [token for token in tokens if token not in _COVERAGE_IGNORE_TOKENS]
+    """Tokens with a leading article (a/an/the) stripped, preserving all other positions.
+
+    Only the leading article is removed so that prepositions load-bearing in entity
+    names (e.g. "of" in "Bank of America") are never silently dropped.
+    """
+    if tokens and tokens[0] in _LEADING_ARTICLES:
+        return tokens[1:]
+    return tokens
 
 
 def _is_contiguous_sublist(needle: list[str], haystack: list[str]) -> bool:

@@ -118,6 +118,11 @@ def test_is_leaked_value_covered_true(leaked_value: str, final_values: list[str]
         ("uncovered value", ["Mstr Marzella", "Nawabganj"]),
         # No final entities -> nothing can be covered.
         ("Alice", []),
+        # "at" must not be stripped — old stopword removal reduced "AT&T" to ["t"],
+        # which was then incorrectly matched as a subspan of "T-Mobile" → ["t", "mobile"].
+        ("AT&T", ["T-Mobile"]),
+        # "of" is load-bearing in org names; stripping it would create a false subspan match.
+        ("Bank of America", ["Bank"]),
     ],
 )
 def test_is_leaked_value_covered_false(leaked_value: str, final_values: list[str]) -> None:
