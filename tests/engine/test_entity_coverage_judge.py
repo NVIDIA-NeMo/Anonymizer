@@ -18,6 +18,7 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
     EntityCoverageWorkflow,
     _coverage_prompt,
     _filter_covered_leaked_entities,
+    _filter_out_of_scope_entities,
     _is_leaked_value_covered,
     _parse_leaked_entities,
 )
@@ -279,3 +280,36 @@ def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> 
     assert result[COL_LEAKED_ENTITIES].tolist() == [[], []]
     assert RECORD_ID_COLUMN not in result.columns
     assert failed_records == [failed_record]
+
+
+def test_filter_out_of_scope_entities_drops_out_of_scope_label() -> None:
+    entities = [
+        {"value": "Alice", "label": "first_name", "reasoning": "..."},
+        {"value": "555-1234", "label": "phone_number", "reasoning": "..."},
+    ]
+    result = _filter_out_of_scope_entities(entities, entity_labels=["first_name", "email"])
+    assert result == [{"value": "Alice", "label": "first_name", "reasoning": "..."}]
+
+
+def test_filter_out_of_scope_entities_drops_empty_label() -> None:
+    entities = [
+        {"value": "Alice", "label": "", "reasoning": "..."},
+        {"value": "bob@example.com", "label": "email", "reasoning": "..."},
+    ]
+    result = _filter_out_of_scope_entities(entities, entity_labels=None)
+    assert result == [{"value": "bob@example.com", "label": "email", "reasoning": "..."}]
+
+
+def test_filter_out_of_scope_entities_allows_all_when_no_scope_configured() -> None:
+    entities = [
+        {"value": "Alice", "label": "first_name", "reasoning": "..."},
+        {"value": "555-1234", "label": "phone_number", "reasoning": "..."},
+    ]
+    result = _filter_out_of_scope_entities(entities, entity_labels=None)
+    assert result == entities
+
+
+def test_filter_out_of_scope_entities_is_case_insensitive() -> None:
+    entities = [{"value": "Alice", "label": "First_Name", "reasoning": "..."}]
+    result = _filter_out_of_scope_entities(entities, entity_labels=["first_name"])
+    assert result == entities

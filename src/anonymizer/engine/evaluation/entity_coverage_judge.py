@@ -360,6 +360,35 @@ def _normalize_literal_text(value: object) -> str:
     return " ".join(str(value).casefold().split())
 
 
+def _filter_out_of_scope_entities(
+    entities: list[dict[str, object]],
+    entity_labels: list[str] | None,
+) -> list[dict[str, object]]:
+    """Drop entities with empty labels or labels outside the configured scope.
+
+    When ``entity_labels`` is None all labels are in scope; only empty labels
+    are dropped. This mirrors the prompt's scope instruction deterministically
+    so a model that returns out-of-scope labels does not lower the coverage score.
+
+    Label drift (e.g. the model returning ``"given_name"`` instead of
+    ``"first_name"``) is unlikely in practice — the prompt explicitly instructs
+    the model to return labels exactly as they appear in the entity_type_scope,
+    and ``LLMStructuredColumnConfig`` reinforces this via the schema field
+    descriptions. The filter therefore drops genuine hallucinated labels without
+    meaningfully risking false negatives on well-formed responses.
+    """
+    allowed = {label.casefold() for label in entity_labels} if entity_labels is not None else None
+    result = []
+    for entity in entities:
+        label = str(entity.get("label", "")).strip()
+        if not label:
+            continue
+        if allowed is not None and label.casefold() not in allowed:
+            continue
+        result.append(entity)
+    return result
+
+
 def _filter_nonliteral_entities(
     entities: list[dict[str, object]],
     original_text: object,
@@ -483,6 +512,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 coverage_vals.append(None)
                 leaked_lists.append([])
             else:
+                leaked = _filter_out_of_scope_entities(leaked, self._entity_labels)
                 leaked = _filter_nonliteral_entities(leaked, out[COL_TEXT].loc[idx])
                 leaked = _deduplicate_judge_entities(leaked)
                 final_entities = out[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx]
