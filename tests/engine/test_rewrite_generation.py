@@ -158,24 +158,18 @@ def test_format_rewrite_disposition_block_serializes_required_fields() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_replace_pairs_warns_on_unmatched_replace_entity(
+def test_apply_direct_replacements_raises_on_unmatched_replace_entity(
     stub_sensitivity_disposition: dict,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    import logging
-
-    from anonymizer.engine.rewrite.rewrite_generation import _get_replace_pairs
-
-    # Map exists but has no entry for "Alice"
+    # Map exists but has no entry for "Alice" — must raise, not silently pass through PII
     row = {
         COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition,
         COL_REPLACEMENT_MAP: {"replacements": [{"original": "Bob", "label": "first_name", "synthetic": "Carlos"}]},
+        COL_TEXT: "Alice works here.",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] works here.",
     }
-    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.generation"):
-        pairs = _get_replace_pairs(row)
-    assert pairs == []
-    assert "Alice" in caplog.text
-    assert "unprotected" in caplog.text
+    with pytest.raises(RuntimeError, match="Alice"):
+        _apply_direct_replacements(row)
 
 
 def test_get_replace_pairs_matches_unicode_whitespace_variant(caplog: pytest.LogCaptureFixture) -> None:
@@ -207,14 +201,29 @@ def test_get_replace_pairs_matches_unicode_whitespace_variant(caplog: pytest.Log
         },
     }
     with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.generation"):
-        pairs = _get_replace_pairs(row)
+        pairs, replace_values = _get_replace_pairs(row)
     assert pairs == [(f"204{narrow_nbsp}Bluegrass", "500 Oak Lane")]
+    assert replace_values == {f"204{narrow_nbsp}Bluegrass"}
     assert "unprotected" not in caplog.text
 
 
 # ---------------------------------------------------------------------------
 # Tests: _apply_direct_replacements
 # ---------------------------------------------------------------------------
+
+
+def test_apply_direct_replacements_raises_when_replacement_map_missing(
+    stub_sensitivity_disposition: dict,
+) -> None:
+    # No replacement map at all — must raise rather than pass PII through
+    row = {
+        COL_SENSITIVITY_DISPOSITION: stub_sensitivity_disposition,
+        COL_REPLACEMENT_MAP: None,
+        COL_TEXT: "Alice works here.",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] works here.",
+    }
+    with pytest.raises(RuntimeError, match="Alice"):
+        _apply_direct_replacements(row)
 
 
 def test_apply_direct_replacements_substitutes_in_plain_and_tagged_text(

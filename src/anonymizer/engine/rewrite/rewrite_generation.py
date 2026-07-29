@@ -152,8 +152,12 @@ def _normalize_ws(s: str) -> str:
     return " ".join(s.split())
 
 
-def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
-    """Return (original, synthetic) pairs for entities with protection_method='replace'.
+def _get_replace_pairs(row: dict[str, Any]) -> tuple[list[tuple[str, str]], set[str]]:
+    """Return (pairs, replace_values) for entities with protection_method='replace'.
+
+    ``pairs`` contains (original, synthetic) tuples ready for substitution.
+    ``replace_values`` is the full set of entity values that required replacement,
+    returned so the caller can detect and raise on any unmatched entries.
 
     Falls back to whitespace-normalized matching when the map's ``original`` field
     differs only in Unicode whitespace from the disposition entity value (e.g. the
@@ -165,11 +169,10 @@ def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
         e.entity_value for e in disposition.sensitivity_disposition if e.protection_method_suggestion == "replace"
     }
     if not replace_values:
-        return []
+        return [], set()
     raw_map = row.get(COL_REPLACEMENT_MAP)
     if not raw_map:
-        logger.warning("COL_REPLACEMENT_MAP is None but entities require replacement; no replacements applied.")
-        return []
+        return [], replace_values
     raw_map = normalize_payload(raw_map)
     if hasattr(raw_map, "model_dump"):
         raw_map = raw_map.model_dump(mode="python")
@@ -190,13 +193,7 @@ def _get_replace_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
                 pairs.append((disposition_value, r.synthetic))
                 matched.add(disposition_value)
 
-    unmatched = replace_values - matched
-    if unmatched:
-        logger.warning(
-            "Replace entities have no entry in the replacement map and will pass through unprotected: %s",
-            sorted(unmatched),
-        )
-    return pairs
+    return pairs, replace_values
 
 
 @custom_column_generator(
@@ -218,7 +215,14 @@ def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
     """
     plain_text = str(row.get(COL_TEXT, ""))
     tagged_text = str(row.get(COL_TAGGED_TEXT, ""))
-    pairs = _get_replace_pairs(row)
+    pairs, replace_values = _get_replace_pairs(row)
+    matched = {original for original, _ in pairs}
+    unmatched = replace_values - matched
+    if unmatched:
+        raise RuntimeError(
+            f"Replace entities have no entry in the replacement map; refusing to pass PII-containing text "
+            f"to the rewrite LLM without protection instructions: {sorted(unmatched)}"
+        )
     if pairs:
         sorted_pairs = sorted(pairs, key=lambda p: len(p[0]), reverse=True)
         pattern = re.compile("|".join(re.escape(original) for original, _ in sorted_pairs))
