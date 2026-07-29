@@ -216,7 +216,7 @@ class EvaluateConfig(BaseModel):
     """Run the tag-precision judge (detection_valid / detection_invalid_entities).
 
     Disabled by default — intended for internal use during model and threshold
-    experiments, not a customer-facing metric. When True, adds
+    experiments. When True, adds
     ``detection_valid`` and ``detection_invalid_entities`` columns to the
     evaluate() output alongside ``entity_coverage``.
     """
