@@ -128,8 +128,7 @@ def _coverage_prompt(
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
     labels_str = ", ".join(active_labels)
 
-    prompt = f"""You are an exhaustive privacy-entity span extractor. Extract every literal value \
-in the ORIGINAL TEXT whose semantic type is in scope.
+    prompt = f"""You are a privacy-entity span extractor. Your task is defined below.
 
 <task>
 Work independently from the anonymizer: identify all in-scope direct and quasi-identifiers \
@@ -143,8 +142,6 @@ Return structured JSON:
 
 <identifier_taxonomy>
 These entity types are in scope: {labels_str}.
-Check every configured type systematically. Report only concrete values that literally appear \
-in the text, not information that is merely implied.
 Quasi-identifiers: combinations of values that together re-identify someone \
 (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
 times of day, schedules) can act as quasi-identifiers when combined with other attributes \
@@ -173,11 +170,10 @@ For each candidate, verify ALL of the following:
 1. Its value is a literal, non-empty span in the original text.
 2. It is an actual assigned or stated value, not a generic field name, heading, instruction, \
 blank placeholder, or category name.
-3. Its semantic type matches one of the entity types in scope.
-4. Report the complete contiguous span that represents one sensitive value. Preserve all \
+3. Report the complete contiguous span that represents one sensitive value. Preserve all \
 tokens belonging to that value, including multi-token values, while excluding surrounding \
 labels, punctuation, instructions, or boilerplate.
-5. Evaluate the value using its original-text context rather than its form or how identifying \
+4. Evaluate the value using its original-text context rather than its form or how identifying \
 it appears in isolation.
 
 In structured text, distinguish a generic category name from a literal category value. A short \
@@ -191,7 +187,6 @@ Do NOT flag:
 - Information that is inferable but not literally present in the text.
 
 Do flag:
-- The `value` MUST be a literal substring found in the original text.
 - `reasoning` MUST be one sentence explaining which in-scope semantic type the value represents.
 - A value that fills the role of a listed sensitive type in context, even when it is
   short, a single token, an unfamiliar or foreign-looking word, or resembles an ordinary
