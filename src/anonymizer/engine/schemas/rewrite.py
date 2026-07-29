@@ -154,10 +154,10 @@ class EntityDispositionSchema(BaseModel):
             and self.protection_method_suggestion != ProtectionMethod.leave_as_is
         ):
             logger.warning(
-                "Entity %d (%r): combined_risk_level='low' conflicts with "
+                "Entity %d (label=%r): combined_risk_level='low' conflicts with "
                 "protection_method_suggestion=%r; promoting risk to 'medium'.",
                 self.id,
-                self.entity_value,
+                self.entity_label,
                 self.protection_method_suggestion,
             )
             # Trust the protection intent over the risk label; promote risk to medium
