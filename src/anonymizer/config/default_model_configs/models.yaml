@@ -30,7 +30,7 @@ model_configs:
       timeout: 300
 
   - alias: nemotron-super
-    model: nvidia/nemotron-3-super-v3
+    model: nvidia/nemotron-3-super-120b-a12b
     provider: nvidia
     inference_parameters:
       max_parallel_requests: 16
