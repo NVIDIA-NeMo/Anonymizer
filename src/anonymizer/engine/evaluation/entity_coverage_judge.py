@@ -3,13 +3,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import ClassVar
 
 import pandas as pd
-from data_designer.config.column_configs import LLMTextColumnConfig
+from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
@@ -207,12 +206,6 @@ Do flag:
 <<COL_TEXT>>
 </original_text>
 </inputs>
-
-<output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-outside the JSON object. Your entire response must be a single valid JSON object.
-</output_format>
 """
     return substitute_placeholders(
         prompt,
@@ -233,7 +226,7 @@ def _final_entities_for_coverage(parsed: EntitiesByValueSchema) -> list[dict[str
 
 
 def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
-    """Parse raw LLM output into the leaked entity list.
+    """Parse structured judge output into the leaked entity list.
 
     Returns the list (possibly empty) on success, or None when the payload is
     malformed or missing so downstream display renders "judge unavailable".
@@ -242,10 +235,6 @@ def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
         return None
     if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
-    if isinstance(raw, str):
-        raw = _parse_json_object(raw)
-        if raw is None:
-            return None
     if not isinstance(raw, dict):
         return None
     try:
@@ -253,23 +242,6 @@ def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
     except Exception:
         return None
     return [e.model_dump() for e in parsed.leaked_entities]
-
-
-def _parse_json_object(raw: str) -> dict[str, object] | None:
-    """Parse a JSON object, tolerating fences or brief surrounding model text."""
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        decoder = json.JSONDecoder()
-        for match in re.finditer(r"\{", raw):
-            try:
-                parsed, _ = decoder.raw_decode(raw[match.start() :])
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-        return None
-    return parsed if isinstance(parsed, dict) else None
 
 
 def _coverage_token_list(value: object) -> list[str]:
@@ -484,9 +456,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     # ----------------------------------------------------------------- overrides
 
-    def column_config(self, selected_models: EvaluateModelSelection) -> LLMTextColumnConfig:
+    def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
         """Override to inject instance-specific entity_labels and strict_entity_protection."""
-        return LLMTextColumnConfig(
+        return LLMStructuredColumnConfig(
             name=self.RAW_COL,
             prompt=_coverage_prompt(
                 entity_labels=self._entity_labels,
@@ -494,6 +466,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 data_summary=self._data_summary,
             ),
             model_alias=resolve_model_alias(self.MODEL_ROLE, selected_models),
+            output_format=EntityCoverageSchema,
         )
 
     def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:

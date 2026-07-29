@@ -147,20 +147,14 @@ def test_filter_covered_leaked_entities_passthrough_on_no_final_entities() -> No
     assert _filter_covered_leaked_entities(leaked, None) == leaked
 
 
-def test_parse_leaked_entities_accepts_gemma_thought_prefixed_json_fence() -> None:
-    raw = """thought
-```json
-{
-  "leaked_entities": [
-    {
-      "value": "Alice",
-      "label": "givenname",
-      "reasoning": "The given name was not detected."
-    }
-  ]
-}
-```"""
+def test_parse_leaked_entities_accepts_pydantic_model() -> None:
+    from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageSchema, LeakedEntity
 
+    raw = EntityCoverageSchema(
+        leaked_entities=[
+            LeakedEntity(value="Alice", label="givenname", reasoning="The given name was not detected.")
+        ]
+    )
     assert _parse_leaked_entities(raw) == [
         {
             "value": "Alice",
@@ -168,6 +162,31 @@ def test_parse_leaked_entities_accepts_gemma_thought_prefixed_json_fence() -> No
             "reasoning": "The given name was not detected.",
         }
     ]
+
+
+def test_parse_leaked_entities_accepts_dict() -> None:
+    raw = {
+        "leaked_entities": [
+            {"value": "Alice", "label": "givenname", "reasoning": "The given name was not detected."}
+        ]
+    }
+    assert _parse_leaked_entities(raw) == [
+        {
+            "value": "Alice",
+            "label": "givenname",
+            "reasoning": "The given name was not detected.",
+        }
+    ]
+
+
+def test_parse_leaked_entities_returns_none_for_string_input() -> None:
+    # With LLMStructuredColumnConfig, raw input is never a plain string.
+    # Strings are treated as malformed and return None.
+    assert _parse_leaked_entities('{"leaked_entities": []}') is None
+
+
+def test_parse_leaked_entities_returns_none_for_none() -> None:
+    assert _parse_leaked_entities(None) is None
 
 
 def test_coverage_prompt_extracts_independently_before_deterministic_filtering() -> None:
