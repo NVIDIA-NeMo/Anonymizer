@@ -152,9 +152,7 @@ def test_parse_leaked_entities_accepts_pydantic_model() -> None:
     from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageSchema, LeakedEntity
 
     raw = EntityCoverageSchema(
-        leaked_entities=[
-            LeakedEntity(value="Alice", label="givenname", reasoning="The given name was not detected.")
-        ]
+        leaked_entities=[LeakedEntity(value="Alice", label="givenname", reasoning="The given name was not detected.")]
     )
     assert _parse_leaked_entities(raw) == [
         {
@@ -167,9 +165,7 @@ def test_parse_leaked_entities_accepts_pydantic_model() -> None:
 
 def test_parse_leaked_entities_accepts_dict() -> None:
     raw = {
-        "leaked_entities": [
-            {"value": "Alice", "label": "givenname", "reasoning": "The given name was not detected."}
-        ]
+        "leaked_entities": [{"value": "Alice", "label": "givenname", "reasoning": "The given name was not detected."}]
     }
     assert _parse_leaked_entities(raw) == [
         {
