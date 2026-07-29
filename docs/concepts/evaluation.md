@@ -45,13 +45,13 @@ with open("/tmp/preview.pkl", "rb") as f:
 evaluated = anonymizer.evaluate(loaded)
 ```
 
-Which judges run depends on the strategy and your `EvaluateConfig`:
+The active judges depend on the anonymization strategy and `EvaluateConfig`:
 
-| Judge | When it runs |
-|-------|--------------|
-| **Entity Coverage** | Always. |
-| **Detection Validity** | Only when `EvaluateConfig(compute_detection_validity=True)` — off by default. |
-| **Type Fidelity, Attribute Fidelity, Relational Consistency** | Substitute mode only. |
+| Evaluation | Applies to |
+|------------|------------|
+| Entity Coverage | All anonymization strategies |
+| Detection Validity | Optional; enable with EvaluateConfig(compute_detection_validity=True) |
+| Type Fidelity, Attribute Fidelity, Relational Consistency** | Substitute mode only |
 
 ---
 
@@ -89,7 +89,7 @@ The judge is scoped and contextualized by the same signals used during anonymiza
 
 > "Are the detected entities actually correct (value, label) pairs in context?"
 
-Detection validity is **opt-in** — it runs only when you pass `Anonymizer.evaluate(..., config=EvaluateConfig(compute_detection_validity=True))`. It is disabled by default and is intended for internal model/threshold experiments rather than as a customer-facing metric. When enabled, it looks at each detected span and flags:
+Detection validity is disabled by default. To enable it, set `compute_detection_validity=True` in `EvaluateConfig`. This metric is intended for internal model and threshold evaluation. It examines each detected span and flags:
 
 - **false_positive** — the span is not actually identifying or sensitive in this context (common word, generic phrase, boilerplate).
 - **wrong_label** — the span is sensitive but the label sits in a clearly different domain (e.g. a company name labeled `first_name`). Sibling labels within the same broad domain are treated as valid.
