@@ -586,8 +586,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             if not had_record_ids:
                 out = out.drop(columns=[RECORD_ID_COLUMN])
             return out, result.failed_records
-        except Exception:
-            logger.debug("Entity coverage workflow failed; scores may be unavailable.", exc_info=True)
+        except Exception as exc:
+            logger.warning("Entity coverage workflow failed; scores may be unavailable. Reason: %s", exc)
+            logger.debug("Entity coverage workflow failed.", exc_info=True)
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]

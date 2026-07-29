@@ -596,7 +596,7 @@ def _render_entity_coverage_section(row: pd.Series, *, is_rewrite: bool = False)
     n_detected = _count_detected_entity_label_pairs(row)
     total = n_detected + n_leaked
 
-    if coverage is None:
+    if coverage is None or pd.isna(coverage):
         summary_html = "<span style='color:#888;font-weight:600'>Unavailable</span>"
     elif is_rewrite:
         pct = round(float(coverage) * 100)
