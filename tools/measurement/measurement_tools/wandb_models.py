@@ -276,6 +276,38 @@ class BenchmarkMetadata(StrictFrozenModel):
     suite_file_hash: StrictStr | None = None
 
 
+class BenchmarkIdentityMetadata(StrictFrozenModel):
+    role: Literal["main-baseline", "release-baseline", "candidate"] | None = None
+    kind: Literal["main", "release", "pr", "branch", "experiment"] | None = None
+    suite_version: StrictStr | None = None
+    branch: StrictStr | None = None
+    commit_sha: Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{40,64}$")] | None = None
+    commit_short: Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{7,16}$")] | None = None
+    pr_number: NonNegativeInt | None = None
+    release_version: StrictStr | None = None
+    anonymizer_config_id: VisibleIdentifier | None = None
+    anonymizer_mode: Literal["replace", "rewrite"] | None = None
+
+    @model_validator(mode="after")
+    def validate_branch_identity(self) -> BenchmarkIdentityMetadata:
+        if self.kind in {"pr", "branch"} and self.pr_number is None:
+            raise ValueError("PR or candidate branch benchmark identity requires pr_number")
+        if (
+            self.commit_sha is not None
+            and self.commit_short is not None
+            and not self.commit_sha.startswith(self.commit_short)
+        ):
+            raise ValueError("commit_short must match the prefix of commit_sha")
+        role_kind = {
+            "main-baseline": {"main"},
+            "release-baseline": {"release"},
+            "candidate": {"pr", "branch", "experiment"},
+        }
+        if self.role is not None and self.kind is not None and self.kind not in role_kind[self.role]:
+            raise ValueError(f"benchmark role {self.role!r} is incompatible with kind {self.kind!r}")
+        return self
+
+
 class SlurmJobMetadata(StrictFrozenModel):
     role: VisibleSlurmIdentifier
     job_id: VisibleSlurmIdentifier
@@ -424,6 +456,7 @@ class WandbRunMetadata(StrictFrozenModel):
     runtime: RuntimeMetadata | None = None
     git: GitMetadata | None = None
     model_sources: ModelSourcesMetadata | None = None
+    benchmark_identity: BenchmarkIdentityMetadata | None = None
     workloads: tuple[WorkloadMetadata, ...] = ()
     configs: tuple[ConfigMetadata, ...] = ()
     matrix: tuple[MatrixMetadata, ...] = ()
@@ -491,6 +524,18 @@ class WandbRunMetadata(StrictFrozenModel):
             "benchmark_risk_tolerances",
             _compact_values(item.rewrite.risk_tolerance if item.rewrite else None for item in self.configs),
         )
+        identity = self.benchmark_identity
+        if identity is not None:
+            _set_scalar(values, "benchmark_role", identity.role)
+            _set_scalar(values, "benchmark_kind", identity.kind)
+            _set_scalar(values, "suite_version", identity.suite_version)
+            _set_scalar(values, "branch", identity.branch)
+            _set_scalar(values, "commit_sha", identity.commit_sha)
+            _set_scalar(values, "commit_short", identity.commit_short)
+            _set_scalar(values, "pr_number", identity.pr_number)
+            _set_scalar(values, "release_version", identity.release_version)
+            _set_scalar(values, "anonymizer_config_id", identity.anonymizer_config_id)
+            _set_scalar(values, "anonymizer_mode", identity.anonymizer_mode)
         return values
 
 
@@ -510,6 +555,16 @@ class WandbConfigPayload(WandbRunMetadata):
     benchmark_gliner_thresholds: SafeScalar | None = None
     benchmark_entity_label_counts: SafeScalar | None = None
     benchmark_risk_tolerances: SafeScalar | None = None
+    benchmark_role: Literal["main-baseline", "release-baseline", "candidate"] | None = None
+    benchmark_kind: Literal["main", "release", "pr", "branch", "experiment"] | None = None
+    suite_version: StrictStr | None = None
+    branch: StrictStr | None = None
+    commit_sha: Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{40,64}$")] | None = None
+    commit_short: Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{7,16}$")] | None = None
+    pr_number: NonNegativeInt | None = None
+    release_version: StrictStr | None = None
+    anonymizer_config_id: VisibleIdentifier | None = None
+    anonymizer_mode: Literal["replace", "rewrite"] | None = None
     native_suite_id: VisibleIdentifier | None = None
     sweep_id: VisibleIdentifier | None = None
     sweep_arm_id: VisibleIdentifier | None = None
@@ -919,6 +974,19 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "case_retry_backoff_sec",
         "suite_file_hash",
     ),
+    BenchmarkIdentityMetadata: _aggregate_policies(
+        "role",
+        "kind",
+        "suite_version",
+        "branch",
+        "commit_sha",
+        "commit_short",
+        "pr_number",
+        "release_version",
+        "anonymizer_config_id",
+        "anonymizer_mode",
+        data_class=DataClass.pseudonymous,
+    ),
     SlurmJobMetadata: _aggregate_policies("role", "job_id", data_class=DataClass.pseudonymous),
     SlurmMetadata: _aggregate_policies(
         "job_id",
@@ -992,6 +1060,7 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "runtime",
         "git",
         "model_sources",
+        "benchmark_identity",
         "workloads",
         "configs",
         "matrix",
@@ -1015,6 +1084,16 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "benchmark_gliner_thresholds",
         "benchmark_entity_label_counts",
         "benchmark_risk_tolerances",
+        "benchmark_role",
+        "benchmark_kind",
+        "suite_version",
+        "branch",
+        "commit_sha",
+        "commit_short",
+        "pr_number",
+        "release_version",
+        "anonymizer_config_id",
+        "anonymizer_mode",
         "native_suite_id",
         "sweep_id",
         "sweep_arm_id",
