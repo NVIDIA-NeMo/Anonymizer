@@ -459,6 +459,33 @@ def test_wandb_benchmark_identity_requires_pr_for_candidate_branch() -> None:
         BenchmarkIdentityMetadata(kind="branch", branch="feature/candidate")
 
 
+def test_wandb_benchmark_identity_rejects_inconsistent_commit_identifiers() -> None:
+    from measurement_tools.wandb_models import BenchmarkIdentityMetadata
+
+    with pytest.raises(ValidationError, match="commit_short must match"):
+        BenchmarkIdentityMetadata(
+            kind="experiment",
+            commit_sha="abcdef0123456789abcdef0123456789abcdef01",
+            commit_short="1234567",
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "kind"),
+    [
+        ("main-baseline", "pr"),
+        ("release-baseline", "main"),
+        ("candidate", "main"),
+        ("candidate", "release"),
+    ],
+)
+def test_wandb_benchmark_identity_rejects_incompatible_role_kind_pairs(role: str, kind: str) -> None:
+    from measurement_tools.wandb_models import BenchmarkIdentityMetadata
+
+    with pytest.raises(ValidationError, match="incompatible"):
+        BenchmarkIdentityMetadata(role=role, kind=kind, pr_number=210 if kind in {"pr", "branch"} else None)
+
+
 def test_wandb_run_tags_filter_sensitive_generated_values(wandb_setup_tool: ModuleType) -> None:
     metadata = wandb_setup_tool.WandbRunMetadata.model_validate(
         {

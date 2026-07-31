@@ -292,6 +292,17 @@ class BenchmarkIdentityMetadata(StrictFrozenModel):
     def validate_branch_identity(self) -> BenchmarkIdentityMetadata:
         if self.kind in {"pr", "branch"} and self.pr_number is None:
             raise ValueError("PR or candidate branch benchmark identity requires pr_number")
+        if self.commit_sha is not None and self.commit_short is not None and not self.commit_sha.startswith(
+            self.commit_short
+        ):
+            raise ValueError("commit_short must match the prefix of commit_sha")
+        role_kind = {
+            "main-baseline": {"main"},
+            "release-baseline": {"release"},
+            "candidate": {"pr", "branch", "experiment"},
+        }
+        if self.role is not None and self.kind is not None and self.kind not in role_kind[self.role]:
+            raise ValueError(f"benchmark role {self.role!r} is incompatible with kind {self.kind!r}")
         return self
 
 
