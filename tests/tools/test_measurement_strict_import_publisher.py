@@ -406,6 +406,89 @@ def test_strict_import_retry_is_a_remote_publication_noop(
         )
 
 
+def test_strict_import_retry_refreshes_benchmark_identity_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    wandb_import_tool: ModuleType,
+) -> None:
+    measurement_path, seal_path = _write_sealed_import_case(wandb_import_tool, tmp_path)
+    settings = wandb_import_tool.ResolvedWandbConfig(
+        wandb_mode=wandb_import_tool.WandbMode.online,
+        wandb_base_url="https://wandb.example",
+        wandb_entity="entity",
+        wandb_project="project",
+    )
+    setup = sys.modules[wandb_import_tool.WandbPublisher.__module__]
+    state = _wandb_state()
+    monkeypatch.setattr(setup, "require_wandb", lambda: _fake_wandb_module(state))
+    publisher = wandb_import_tool.WandbPublisher()
+    prepared_without_identity = wandb_import_tool.prepare_sealed_import(
+        measurement_path,
+        seal_path=seal_path,
+        settings=settings,
+    )
+    commit_sha = "abcdef0123456789abcdef0123456789abcdef01"
+    prepared_with_identity = wandb_import_tool.prepare_sealed_import(
+        measurement_path,
+        seal_path=seal_path,
+        settings=settings,
+        benchmark_identity=wandb_import_tool.BenchmarkIdentityMetadata(
+            role="candidate",
+            kind="pr",
+            suite_version="2026-07-31",
+            branch="contributor/feat/example",
+            commit_sha=commit_sha,
+            commit_short=commit_sha[:12],
+            pr_number=236,
+            anonymizer_config_id="rat-throughput",
+            anonymizer_mode="rewrite",
+        ),
+    )
+
+    first = publisher.publish_payload(
+        settings,
+        payload=prepared_without_identity.payload,
+        measurement_sha256=prepared_without_identity.measurement_sha256,
+        record_count=prepared_without_identity.record_count,
+    )
+    defined_metrics_after_first_publish = len(state.defined_metrics)
+    second = publisher.publish_payload(
+        settings,
+        payload=prepared_with_identity.payload,
+        measurement_sha256=prepared_with_identity.measurement_sha256,
+        record_count=prepared_with_identity.record_count,
+    )
+
+    assert first.run_id == second.run_id
+    assert second.publication_state == "already_complete"
+    assert len(state.config_updates) == 2
+    assert state.config_updates[1] == {
+        "benchmark_identity": {
+            "role": "candidate",
+            "kind": "pr",
+            "suite_version": "2026-07-31",
+            "branch": "contributor/feat/example",
+            "commit_sha": commit_sha,
+            "commit_short": commit_sha[:12],
+            "pr_number": 236,
+            "anonymizer_config_id": "rat-throughput",
+            "anonymizer_mode": "rewrite",
+        },
+        "benchmark_role": "candidate",
+        "benchmark_kind": "pr",
+        "suite_version": "2026-07-31",
+        "branch": "contributor/feat/example",
+        "commit_sha": commit_sha,
+        "commit_short": commit_sha[:12],
+        "pr_number": 236,
+        "anonymizer_config_id": "rat-throughput",
+        "anonymizer_mode": "rewrite",
+    }
+    assert len(state.logged) == 1
+    assert len(state.summary_updates) == 1
+    assert len(state.defined_metrics) == defined_metrics_after_first_publish
+
+
 def test_strict_import_reports_resumed_incomplete_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
