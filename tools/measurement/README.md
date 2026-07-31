@@ -300,9 +300,9 @@ and `WANDB_TAGS` are deliberately ignored. Precedence is an explicit CLI value,
 then the corresponding `ANONYMIZER_MEASUREMENT_WANDB_*` variable, then the
 publisher default. The W&B SDK still receives its audited timeout variables,
 including `WANDB_HTTP_TIMEOUT` and `WANDB_INIT_TIMEOUT`. Authentication comes
-from the SDK's local credential files under the preserved home directory; the
-publisher removes `WANDB_API_KEY` from the SDK process environment. Set a
-self-hosted endpoint through `--wandb-base-url` or
+from the SDK's local credential files under the preserved home directory or
+from `WANDB_API_KEY` when the launcher provides it in the process environment.
+Set a self-hosted endpoint through `--wandb-base-url` or
 `ANONYMIZER_MEASUREMENT_WANDB_BASE_URL`; ambient `WANDB_BASE_URL` is ignored.
 Remote endpoints require HTTPS. Plain HTTP is accepted only for loopback
 development endpoints. SDK error reporting is disabled before W&B is imported.
@@ -362,8 +362,9 @@ current user. Keep the directory when an offline run must be synchronized later.
 During SDK use, a process-wide guard replaces the process environment with a
 minimal runtime allowlist, audited W&B timeout settings, and the fully resolved
 publisher settings. Local W&B credential files remain available through the
-preserved home directory. Environment credentials, proxy settings, custom CA
-settings, and ambient `WANDB_*` values are withheld from the SDK. The
+preserved home directory, and `WANDB_API_KEY` remains available when explicitly
+provided by a launcher. Proxy settings, custom CA settings, and ambient
+`WANDB_*` routing values are withheld from the SDK. The
 guard restores the exact original environment after the explicit run handle finishes.
 Nested or concurrent native publishers in one process are rejected. Each
 native run receives a fresh opaque 128-bit ID and uses `resume="never"`.
@@ -375,16 +376,16 @@ the native runner logs only the exception type to avoid echoing source values.
 
 Before an external launcher starts benchmark work, verify W&B authentication from
 the same account or container and the same preserved home directory used by the
-publisher. Keep credentials in the local W&B credential files; do not pass a key
-through the launcher environment or command line.
+publisher. Keep credentials in the local W&B credential files or pass
+`WANDB_API_KEY` through the launcher environment. Do not pass a key on the
+command line.
 
 ```bash
-# W&B public cloud
-env -u WANDB_API_KEY uv run wandb login --verify --cloud
+# W&B public cloud, using a stored SDK credential
+uv run wandb login --verify --cloud
 
-# Self-hosted or dedicated cloud
-env -u WANDB_API_KEY uv run wandb login --verify \
-  --host https://wandb.example.com
+# Self-hosted or dedicated cloud, using a stored SDK credential
+uv run wandb login --verify --host https://wandb.example.com
 ```
 
 Both commands verify the stored credential against the selected endpoint and

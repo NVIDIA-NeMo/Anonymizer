@@ -573,7 +573,7 @@ def test_wandb_environment_isolates_routing_and_restores_exactly(
     with wandb_setup_tool.WandbSdkEnvironment(settings):
         assert os.environ["WANDB_GROUP"] == "resolved-group"
         assert os.environ["WANDB_PROJECT"] == "resolved-project"
-        assert "WANDB_API_KEY" not in os.environ
+        assert os.environ["WANDB_API_KEY"] == "auth-token"
         assert os.environ["WANDB_ERROR_REPORTING"] == "false"
         assert "UNRELATED" not in os.environ
         with pytest.raises(RuntimeError, match="nested or concurrent"):
