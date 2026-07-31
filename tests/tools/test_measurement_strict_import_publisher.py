@@ -311,6 +311,44 @@ def test_strict_import_exposes_multi_job_slurm_metadata(
     ]
 
 
+def test_strict_import_projects_benchmark_identity_config(
+    tmp_path: Path,
+    wandb_import_tool: ModuleType,
+) -> None:
+    measurement_path, seal_path = _write_sealed_import_case(wandb_import_tool, tmp_path)
+    commit_sha = "abcdef0123456789abcdef0123456789abcdef01"
+    prepared = wandb_import_tool.prepare_sealed_import(
+        measurement_path,
+        seal_path=seal_path,
+        settings=wandb_import_tool.ResolvedWandbConfig(wandb_mode=wandb_import_tool.WandbMode.offline),
+        benchmark_identity=wandb_import_tool.BenchmarkIdentityMetadata(
+            role="candidate",
+            kind="pr",
+            suite_version="2026-07-30",
+            branch="contributor/feat/wandb-benchmark-identity",
+            commit_sha=commit_sha,
+            commit_short=commit_sha[:12],
+            pr_number=210,
+            anonymizer_config_id="rat-rewrite-throughput",
+            anonymizer_mode="rewrite",
+        ),
+    )
+
+    config = prepared.payload.config
+    sdk_values = config.sdk_values()
+    assert config.benchmark_role == "candidate"
+    assert config.benchmark_kind == "pr"
+    assert config.suite_version == "2026-07-30"
+    assert config.branch == "contributor/feat/wandb-benchmark-identity"
+    assert config.commit_sha == commit_sha
+    assert config.commit_short == commit_sha[:12]
+    assert config.pr_number == 210
+    assert config.anonymizer_config_id == "rat-rewrite-throughput"
+    assert config.anonymizer_mode == "rewrite"
+    assert sdk_values["benchmark_role"] == "candidate"
+    assert sdk_values["commit_sha"] == commit_sha
+
+
 def test_strict_import_retry_is_a_remote_publication_noop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

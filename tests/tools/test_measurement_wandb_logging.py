@@ -452,6 +452,13 @@ def test_wandb_config_projects_only_declared_metadata(wandb_setup_tool: ModuleTy
     assert config.sdk_values()["sweep_param_configs_all_detect_gliner_threshold"] == 0.3
 
 
+def test_wandb_benchmark_identity_requires_pr_for_candidate_branch() -> None:
+    from measurement_tools.wandb_models import BenchmarkIdentityMetadata
+
+    with pytest.raises(ValidationError, match="requires pr_number"):
+        BenchmarkIdentityMetadata(kind="branch", branch="feature/candidate")
+
+
 def test_wandb_run_tags_filter_sensitive_generated_values(wandb_setup_tool: ModuleType) -> None:
     metadata = wandb_setup_tool.WandbRunMetadata.model_validate(
         {

@@ -434,6 +434,23 @@ uv run python tools/measurement/import_wandb_run.py \
   --json
 ```
 
+External launchers can add safe benchmark identity fields to W&B config for
+filtering and comparisons:
+
+```bash
+  --benchmark-role candidate \
+  --benchmark-kind pr \
+  --suite-version 2026-07-30 \
+  --branch contributor/feat/wandb-benchmark-identity \
+  --commit-sha 0123456789abcdef0123456789abcdef01234567 \
+  --pr-number 210 \
+  --anonymizer-config-id rat-rewrite-throughput \
+  --anonymizer-mode rewrite
+```
+
+`--pr-number` is required for `--benchmark-kind pr` and `branch`. Main and
+release baselines can omit it.
+
 The importer captures the seal and JSONL once, verifies their content binding,
 builds the complete typed payload, then initializes W&B. It derives a stable
 128-bit run ID from the destination, sealed case identity, seal digest, schema
