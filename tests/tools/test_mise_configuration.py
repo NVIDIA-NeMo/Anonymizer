@@ -42,6 +42,8 @@ def test_mise_typecheck_preserves_blocking_repository_contract() -> None:
 def test_mise_ty_version_matches_project_typecheck_version() -> None:
     mise = _read_toml(REPO_ROOT / ".mise.toml")
     project = _read_toml(REPO_ROOT / "pyproject.toml")
-    ty_requirement = next(requirement for requirement in project["dependency-groups"]["dev"] if requirement.startswith("ty=="))
+    ty_requirement = next(
+        requirement for requirement in project["dependency-groups"]["dev"] if requirement.startswith("ty==")
+    )
 
     assert mise["tools"]["ty"] == ty_requirement.removeprefix("ty==")
