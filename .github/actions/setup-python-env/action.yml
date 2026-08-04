@@ -76,6 +76,8 @@ runs:
         python-version-file: ".python-version"
 
     - name: Install mise and project tools
+      env:
+        MISE_REQUIRE_SIGNED_INSTALL: "1"
       shell: bash
       run: |
         MISE_GPG_KEY=24853EC9F655CE80B48E6C3A8B81C9D17413A06D \
