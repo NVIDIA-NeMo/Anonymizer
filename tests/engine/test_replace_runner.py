@@ -168,7 +168,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
     )
 
     judge_defaults = {
-        COL_ENTITY_COVERAGE_JUDGE: {"leaked_entities": []},
+        COL_ENTITY_COVERAGE_JUDGE: {"candidate_entities": []},
         COL_TYPE_FIDELITY_JUDGE: {"all_valid": True, "invalid_replacements": []},
         COL_RELATIONAL_CONSISTENCY_JUDGE: {"all_consistent": True, "relations": []},
         COL_ATTRIBUTE_FIDELITY_JUDGE: {"all_valid": True, "entities": []},
@@ -245,7 +245,7 @@ def test_evaluate_threads_entity_labels_and_data_summary_into_coverage_prompt(
     def fake_run_workflow(df: pd.DataFrame, *, columns, **_: object) -> WorkflowRunResult:
         out = df.copy()
         for column in columns:
-            out[column.name] = [{"leaked_entities": []}] * len(out)
+            out[column.name] = [{"candidate_entities": []}] * len(out)
         return WorkflowRunResult(dataframe=out, failed_records=[])
 
     def fake_attach_ids(df: pd.DataFrame) -> pd.DataFrame:
@@ -308,7 +308,7 @@ def test_evaluate_preserves_all_rows_when_llm_drops_some(
     )
 
     judge_payload = {
-        COL_ENTITY_COVERAGE_JUDGE: {"leaked_entities": []},
+        COL_ENTITY_COVERAGE_JUDGE: {"candidate_entities": []},
         COL_TYPE_FIDELITY_JUDGE: {"all_valid": True, "invalid_replacements": []},
         COL_RELATIONAL_CONSISTENCY_JUDGE: {"all_consistent": True, "relations": []},
         COL_ATTRIBUTE_FIDELITY_JUDGE: {"all_valid": True, "entities": []},

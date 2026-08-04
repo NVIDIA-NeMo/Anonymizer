@@ -12,15 +12,15 @@ from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE,
     COL_ENTITY_COVERAGE_JUDGE,
-    COL_LEAKED_ENTITIES,
+    COL_MISSED_ENTITIES,
 )
 from anonymizer.engine.evaluation.entity_coverage_judge import (
     EntityCoverageWorkflow,
     _coverage_prompt,
-    _filter_covered_leaked_entities,
+    _filter_covered_missed_entities,
     _filter_out_of_scope_entities,
     _is_leaked_value_covered,
-    _parse_leaked_entities,
+    _parse_missed_entities,
 )
 from anonymizer.engine.evaluation.judge_base import JudgeResult
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
@@ -50,7 +50,7 @@ def test_coverage_prompt_includes_data_summary_as_interpretive_context() -> None
     assert "Do not infer or invent entities that are absent from the original text." in prompt
 
 
-def test_filter_covered_leaked_entities_removes_subspans_and_composites() -> None:
+def test_filter_covered_missed_entities_removes_subspans_and_composites() -> None:
     detected = [
         {"value": "Mstr Marzella", "label": "givenname"},
         {"value": "Nawabganj", "label": "city"},
@@ -71,7 +71,7 @@ def test_filter_covered_leaked_entities_removes_subspans_and_composites() -> Non
         {"value": "uncovered value", "label": "unique_id"},
     ]
 
-    assert _filter_covered_leaked_entities(leaked, detected) == [
+    assert _filter_covered_missed_entities(leaked, detected) == [
         {"value": "Chihuahuan Desert Festival", "label": "event"},
         {"value": "m", "label": "sex"},
         {"value": "Ann", "label": "first_name"},
@@ -130,7 +130,7 @@ def test_is_leaked_value_covered_false(leaked_value: str, final_values: list[str
     assert _is_leaked_value_covered(leaked_value, final_values) is False
 
 
-def test_filter_covered_leaked_entities_keeps_cross_entity_reconstruction() -> None:
+def test_filter_covered_missed_entities_keeps_cross_entity_reconstruction() -> None:
     """A leak whose tokens are spread across unrelated final entities is a real leak."""
     detected = [
         {"value": "John Doe", "label": "first_name"},
@@ -138,23 +138,25 @@ def test_filter_covered_leaked_entities_keeps_cross_entity_reconstruction() -> N
     ]
     leaked = [{"value": "John Smith", "label": "first_name"}]
 
-    assert _filter_covered_leaked_entities(leaked, detected) == leaked
+    assert _filter_covered_missed_entities(leaked, detected) == leaked
 
 
-def test_filter_covered_leaked_entities_passthrough_on_no_final_entities() -> None:
+def test_filter_covered_missed_entities_passthrough_on_no_final_entities() -> None:
     leaked = [{"value": "Alice", "label": "first_name"}]
 
-    assert _filter_covered_leaked_entities(leaked, []) == leaked
-    assert _filter_covered_leaked_entities(leaked, None) == leaked
+    assert _filter_covered_missed_entities(leaked, []) == leaked
+    assert _filter_covered_missed_entities(leaked, None) == leaked
 
 
-def test_parse_leaked_entities_accepts_pydantic_model() -> None:
-    from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageSchema, LeakedEntity
+def test_parse_missed_entities_accepts_pydantic_model() -> None:
+    from anonymizer.engine.evaluation.entity_coverage_judge import CandidateEntity, EntityCoverageSchema
 
     raw = EntityCoverageSchema(
-        leaked_entities=[LeakedEntity(value="Alice", label="givenname", reasoning="The given name was not detected.")]
+        candidate_entities=[
+            CandidateEntity(value="Alice", label="givenname", reasoning="The given name was not detected.")
+        ]
     )
-    assert _parse_leaked_entities(raw) == [
+    assert _parse_missed_entities(raw) == [
         {
             "value": "Alice",
             "label": "givenname",
@@ -163,11 +165,13 @@ def test_parse_leaked_entities_accepts_pydantic_model() -> None:
     ]
 
 
-def test_parse_leaked_entities_accepts_dict() -> None:
+def test_parse_missed_entities_accepts_dict() -> None:
     raw = {
-        "leaked_entities": [{"value": "Alice", "label": "givenname", "reasoning": "The given name was not detected."}]
+        "candidate_entities": [
+            {"value": "Alice", "label": "givenname", "reasoning": "The given name was not detected."}
+        ]
     }
-    assert _parse_leaked_entities(raw) == [
+    assert _parse_missed_entities(raw) == [
         {
             "value": "Alice",
             "label": "givenname",
@@ -176,21 +180,21 @@ def test_parse_leaked_entities_accepts_dict() -> None:
     ]
 
 
-def test_parse_leaked_entities_returns_none_for_string_input() -> None:
+def test_parse_missed_entities_returns_none_for_string_input() -> None:
     # With LLMStructuredColumnConfig, raw input is never a plain string.
     # Strings are treated as malformed and return None.
-    assert _parse_leaked_entities('{"leaked_entities": []}') is None
+    assert _parse_missed_entities('{"candidate_entities": []}') is None
 
 
-def test_parse_leaked_entities_returns_none_for_none() -> None:
-    assert _parse_leaked_entities(None) is None
+def test_parse_missed_entities_returns_none_for_none() -> None:
+    assert _parse_missed_entities(None) is None
 
 
-def test_parse_leaked_entities_returns_none_for_empty_dict() -> None:
-    # {} is a valid JSON object but omits leaked_entities entirely.
+def test_parse_missed_entities_returns_none_for_empty_dict() -> None:
+    # {} is a valid JSON object but omits missed_entities entirely.
     # This must be treated as an unavailable score, not "no leaks found",
     # so that an incomplete structured response can't silently produce perfect coverage.
-    assert _parse_leaked_entities({}) is None
+    assert _parse_missed_entities({}) is None
 
 
 def test_coverage_prompt_extracts_independently_before_deterministic_filtering() -> None:
@@ -262,9 +266,9 @@ def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> 
             dataframe=pd.DataFrame(
                 {
                     RECORD_ID_COLUMN: ["row-0"],
-                    COL_ENTITY_COVERAGE_JUDGE: [{"leaked_entities": []}],
+                    COL_ENTITY_COVERAGE_JUDGE: [{"candidate_entities": []}],
                     COL_ENTITY_COVERAGE: [1.0],
-                    COL_LEAKED_ENTITIES: [[]],
+                    COL_MISSED_ENTITIES: [[]],
                 }
             ),
             failed_records=[failed_record],
@@ -280,7 +284,7 @@ def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> 
     assert result["input_value"].tolist() == ["scored", "dropped"]
     assert result.loc[0, COL_ENTITY_COVERAGE] == 1.0
     assert result.loc[1, COL_ENTITY_COVERAGE] is None
-    assert result[COL_LEAKED_ENTITIES].tolist() == [[], []]
+    assert result[COL_MISSED_ENTITIES].tolist() == [[], []]
     assert RECORD_ID_COLUMN not in result.columns
     assert failed_records == [failed_record]
 

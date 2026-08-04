@@ -17,7 +17,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
     COL_ENTITY_COVERAGE_JUDGE,
-    COL_LEAKED_ENTITIES,
+    COL_MISSED_ENTITIES,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
     _jinja,
@@ -46,16 +46,16 @@ _LEADING_ARTICLES = frozenset({"a", "an", "the"})
 # ---------------------------------------------------------------------------
 
 
-class LeakedEntity(BaseModel):
-    value: str = Field(description="Exact text span from the original text that was missed by the anonymizer.")
+class CandidateEntity(BaseModel):
+    value: str = Field(description="Exact text span from the original text that is a PII or sensitive entity.")
     label: str = Field(description="Entity type label (e.g. first_name, email, phone_number).")
-    reasoning: str = Field(description="One sentence explaining why this is PII that the anonymizer missed.")
+    reasoning: str = Field(description="One sentence explaining why this value is a PII or sensitive entity.")
 
 
 class EntityCoverageSchema(BaseModel):
-    leaked_entities: list[LeakedEntity] = Field(
-        description="All PII entities present in the original text that the anonymizer failed to detect. "
-        "Empty list when the anonymizer caught everything.",
+    candidate_entities: list[CandidateEntity] = Field(
+        description="All in-scope PII and sensitive entities found in the original text. "
+        "Empty list when the original text contains no in-scope entity values.",
     )
 
 
@@ -136,7 +136,7 @@ without deciding whether another system already found or protected them. A deter
 postprocessing step will compare your candidates with the anonymizer final entities.
 
 Return structured JSON:
-- `leaked_entities`: every in-scope candidate with its `value`, `label`, and a short `reasoning`.
+- `candidate_entities`: every in-scope candidate with its `value`, `label`, and a short `reasoning`.
 - Return an empty list only when the original text contains no in-scope entity values.
 </task>
 
@@ -224,7 +224,7 @@ def _final_entities_for_coverage(parsed: EntitiesByValueSchema) -> list[dict[str
 
     The coverage denominator counts (value, label) pairs rather than unique
     values or source occurrences. This keeps the numerator and denominator in
-    the same unit — the judge also returns leaked entities as (value, label)
+    the same unit — the judge also returns missed entities as (value, label)
     pairs — so the score remains consistent. An entity detected under multiple
     labels (e.g. "Alice" as both first_name and user_name) contributes one
     entry per label, which is intentional: each detection deserves credit.
@@ -232,7 +232,7 @@ def _final_entities_for_coverage(parsed: EntitiesByValueSchema) -> list[dict[str
     return [{"value": e.value, "label": label} for e in parsed.entities_by_value for label in e.labels]
 
 
-def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
+def _parse_missed_entities(raw: object) -> list[dict[str, object]] | None:
     """Parse structured judge output into the leaked entity list.
 
     Returns the list (possibly empty) on success, or None when the payload is
@@ -248,7 +248,7 @@ def _parse_leaked_entities(raw: object) -> list[dict[str, object]] | None:
         parsed = EntityCoverageSchema.model_validate(raw)
     except Exception:
         return None
-    return [e.model_dump() for e in parsed.leaked_entities]
+    return [e.model_dump() for e in parsed.candidate_entities]
 
 
 def _coverage_token_list(value: object) -> list[str]:
@@ -347,19 +347,19 @@ def _is_leaked_value_covered(leaked_value: object, final_values: list[str]) -> b
     return _is_concatenation_of_whole_values(leaked_tokens, final_token_lists)
 
 
-def _filter_covered_leaked_entities(
-    leaked_entities: list[dict[str, object]],
+def _filter_covered_missed_entities(
+    missed_entities: list[dict[str, object]],
     final_entities: object,
 ) -> list[dict[str, object]]:
     """Drop judge-reported leaks that are already covered by final entity values."""
     if not isinstance(final_entities, list):
-        return leaked_entities
+        return missed_entities
 
     final_values = [str(entity.get("value", "")) for entity in final_entities if isinstance(entity, dict)]
     if not final_values:
-        return leaked_entities
+        return missed_entities
 
-    return [entity for entity in leaked_entities if not _is_leaked_value_covered(entity.get("value", ""), final_values)]
+    return [entity for entity in missed_entities if not _is_leaked_value_covered(entity.get("value", ""), final_values)]
 
 
 def _normalize_literal_text(value: object) -> str:
@@ -438,15 +438,15 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     Output columns:
       ``COL_ENTITY_COVERAGE`` (float|None) — n_final / (n_final + n_leaked)
-      ``COL_LEAKED_ENTITIES`` (list)        — missed entities with value, label, reasoning
+      ``COL_MISSED_ENTITIES`` (list)        — missed entities with value, label, reasoning
     """
 
     RAW_COL: ClassVar[str] = COL_ENTITY_COVERAGE_JUDGE
     VALID_COL: ClassVar[str] = COL_ENTITY_COVERAGE
-    INVALID_COL: ClassVar[str] = COL_LEAKED_ENTITIES
+    INVALID_COL: ClassVar[str] = COL_MISSED_ENTITIES
     SCHEMA: ClassVar[type[BaseModel]] = EntityCoverageSchema
-    VERDICT_FIELD: ClassVar[str] = "leaked_entities"
-    DEFAULT_PAYLOAD: ClassVar[dict] = {"leaked_entities": []}
+    VERDICT_FIELD: ClassVar[str] = "candidate_entities"
+    DEFAULT_PAYLOAD: ClassVar[dict] = {"candidate_entities": []}
     MODEL_ROLE: ClassVar[str] = "entity_coverage_judge"
     WORKFLOW_NAME: ClassVar[str] = "entity-coverage-judge"
 
@@ -488,7 +488,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     @classmethod
     def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
-        return [e.model_dump() for e in parsed.leaked_entities]
+        return [e.model_dump() for e in parsed.candidate_entities]
 
     # ----------------------------------------------------------------- overrides
 
@@ -514,7 +514,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
         for idx in out.index:
             raw = out[self.RAW_COL].loc[idx] if self.RAW_COL in out.columns else None
-            leaked = _parse_leaked_entities(raw)
+            leaked = _parse_missed_entities(raw)
             if leaked is None:
                 coverage_vals.append(None)
                 leaked_lists.append([])
@@ -523,7 +523,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 leaked = _filter_nonliteral_entities(leaked, out[COL_TEXT].loc[idx])
                 leaked = _deduplicate_judge_entities(leaked)
                 final_entities = out[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx]
-                leaked = _filter_covered_leaked_entities(leaked, final_entities)
+                leaked = _filter_covered_missed_entities(leaked, final_entities)
                 n_final = len(final_entities) if isinstance(final_entities, list) else 0
                 total = n_final + len(leaked)
                 coverage = 1.0 if total == 0 else n_final / total
@@ -544,7 +544,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         """Run coverage and annotate ``dataframe`` in-place; never raise.
 
-        Rows the LLM drops get ``entity_coverage=None`` / ``leaked_entities=[]``
+        Rows the LLM drops get ``entity_coverage=None`` / ``missed_entities=[]``
         rather than disappearing. On total workflow failure, all rows are defaulted.
         Returns ``(annotated_df, failed_records)``.
         """

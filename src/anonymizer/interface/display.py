@@ -22,7 +22,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
-    COL_LEAKED_ENTITIES,
+    COL_MISSED_ENTITIES,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_JUDGE,
     COL_RELATIONAL_CONSISTENCY_VALID,
@@ -591,7 +591,7 @@ def _render_entity_coverage_section(row: pd.Series, *, is_rewrite: bool = False)
     if COL_ENTITY_COVERAGE not in row.index:
         return ""
     coverage = row.get(COL_ENTITY_COVERAGE)
-    leaked_entries = _normalize_invalid_entities(row.get(COL_LEAKED_ENTITIES))
+    leaked_entries = _normalize_invalid_entities(row.get(COL_MISSED_ENTITIES))
     n_leaked = len(leaked_entries)
     n_detected = _count_detected_entity_label_pairs(row)
     total = n_detected + n_leaked

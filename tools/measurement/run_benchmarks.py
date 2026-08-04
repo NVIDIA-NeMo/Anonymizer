@@ -371,7 +371,6 @@ def _preflight_config_errors(spec: BenchmarkSpec, *, parsed_models: Any | None) 
                 or anonymizer_config.rewrite is not None,
                 check_rewrite=anonymizer_config.rewrite is not None,
                 check_evaluate=config.evaluate,
-                check_detection_validity_judge=config.evaluate,
             )
         except ValueError as exc:
             errors.append(f"config '{config.id}' model aliases invalid: {exc}")

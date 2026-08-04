@@ -71,12 +71,12 @@ The judge is scoped and contextualized by the same signals used during anonymiza
 
 | Output column | Type | Description |
 |---|---|---|
-| `entity_coverage` | `float \| None` | `n_final / (n_final + n_leaked)` — fraction of sensitive entities that were detected. `1.0` means no missed entities; `None` if the judge was unavailable. |
-| `leaked_entities` | `list` | Each entity not detected by the anonymizer, with its `value`, `label`, and one-sentence `reasoning`. Empty when no entities were missed. |
+| `entity_coverage` | `float \| None` | `n_final / (n_final + n_missed)` — fraction of sensitive entities that were detected. `1.0` means no missed entities; `None` if the judge was unavailable. |
+| `missed_entities` | `list` | Each entity not detected by the anonymizer, with its `value`, `label`, and one-sentence `reasoning`. Empty when no entities were missed. |
 
 **Special values:**
 
-| Scenario | `entity_coverage` | `leaked_entities` |
+| Scenario | `entity_coverage` | `missed_entities` |
 |---|---|---|
 | No sensitive values in the original text | `1.0` | `[]` |
 | Judge ran and found no missed entities | `1.0` | `[]` |
@@ -247,7 +247,7 @@ evaluated = anonymizer.evaluate(loaded)
 
 ### Entity Coverage
 
-Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `leaked_entities`. In rewrite mode the judge additionally honours `strict_entity_protection`: when the rewrite config enables it, the threshold for borderline literal spans is lowered — flagging quasi-identifiers that would normally receive benefit of the doubt.
+Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `missed_entities`. In rewrite mode the judge additionally honours `strict_entity_protection`: when the rewrite config enables it, the threshold for borderline literal spans is lowered — flagging quasi-identifiers that would normally receive benefit of the doubt.
 
 ---
 

@@ -35,7 +35,7 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
-    COL_LEAKED_ENTITIES,
+    COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_VALID,
@@ -1044,7 +1044,7 @@ def _build_user_dataframe(
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
-                 entity_coverage, leaked_entities (always after evaluate()),
+                 entity_coverage, missed_entities (always after evaluate()),
                  detection_valid, detection_invalid_entities (only when compute_detection_validity=True)
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
@@ -1064,7 +1064,7 @@ def _build_user_dataframe(
             COL_NEEDS_HUMAN_REVIEW,
             COL_JUDGE_EVALUATION,  # only present after evaluate()
             COL_ENTITY_COVERAGE,  # only present after evaluate()
-            COL_LEAKED_ENTITIES,  # only present after evaluate()
+            COL_MISSED_ENTITIES,  # only present after evaluate()
         }
         if compute_detection_validity:
             allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}
@@ -1075,7 +1075,7 @@ def _build_user_dataframe(
             f"{text_col}_with_spans",
             COL_FINAL_ENTITIES,
             COL_ENTITY_COVERAGE,
-            COL_LEAKED_ENTITIES,
+            COL_MISSED_ENTITIES,
             COL_TYPE_FIDELITY_VALID,
             COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
             COL_RELATIONAL_CONSISTENCY_VALID,
