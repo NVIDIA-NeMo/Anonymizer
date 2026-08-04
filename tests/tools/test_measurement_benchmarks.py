@@ -785,6 +785,7 @@ model_configs: |
       entity_validator: [validator]
       entity_augmenter: augmenter
     evaluate:
+      entity_coverage_judge: evaluator
       detection_validity_judge: missing-evaluator
   model_configs:
     - alias: detector
@@ -795,6 +796,9 @@ model_configs: |
       provider: stub
     - alias: augmenter
       model: test/augmenter
+      provider: stub
+    - alias: evaluator
+      model: test/evaluator
       provider: stub
 workloads:
   - id: biography
