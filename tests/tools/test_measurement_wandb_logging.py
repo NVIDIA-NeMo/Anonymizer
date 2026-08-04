@@ -7,6 +7,7 @@ import importlib
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any

@@ -34,6 +34,22 @@ __all__ = [
 
 logger = logging.getLogger("measurement.wandb")
 
+_RESUMABLE_CONFIG_REFRESH_KEYS = frozenset(
+    {
+        "benchmark_identity",
+        "benchmark_role",
+        "benchmark_kind",
+        "suite_version",
+        "branch",
+        "commit_sha",
+        "commit_short",
+        "pr_number",
+        "release_version",
+        "anonymizer_config_id",
+        "anonymizer_mode",
+    }
+)
+
 
 class WandbPublisher:
     """Own the complete strict native W&B publication lifecycle."""
@@ -90,7 +106,9 @@ class WandbPublisher:
                     raise RuntimeError("wandb.init returned a different run identity")
                 already_complete = publication_already_complete(run, payload)
                 resolved_publication_state = publication_state(run, already_complete=already_complete)
-                if not already_complete:
+                if already_complete:
+                    _refresh_resumed_complete_config(run, payload)
+                else:
                     define_benchmark_metrics(run)
                     run.config.update(payload.config.sdk_values(), allow_val_change=True)
                     tables = {
@@ -161,6 +179,22 @@ def publication_state(run: Any, *, already_complete: bool) -> WandbPublicationSt
     if already_complete:
         return WandbPublicationState.already_complete
     return WandbPublicationState.resumed if bool(getattr(run, "resumed", False)) else WandbPublicationState.created
+
+
+def _refresh_resumed_complete_config(run: Any, payload: WandbPublishPayload) -> None:
+    desired = {
+        key: value for key, value in payload.config.sdk_values().items() if key in _RESUMABLE_CONFIG_REFRESH_KEYS
+    }
+    if not desired:
+        return
+    config = getattr(run, "config", None)
+    get_config = getattr(config, "get", None)
+    update_config = getattr(config, "update", None)
+    if not callable(get_config) or not callable(update_config):
+        raise RuntimeError("resumed W&B run does not expose mutable publication config")
+    delta = {key: value for key, value in desired.items() if get_config(key) != value}
+    if delta:
+        update_config(delta, allow_val_change=True)
 
 
 def wandb_run_url(settings: ResolvedWandbConfig, *, run_id: str) -> str | None:

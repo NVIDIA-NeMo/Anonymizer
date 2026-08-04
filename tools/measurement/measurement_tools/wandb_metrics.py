@@ -14,7 +14,9 @@ from measurement_tools.validation import (
     MeasurementStrategy,
     NonNegativeFloat,
     NonNegativeInt,
+    Percentage,
     Probability,
+    RatBenchAttackerEndpointKind,
     StrictFrozenModel,
 )
 from measurement_tools.wandb_metadata import SafeScalar
@@ -24,6 +26,7 @@ __all__ = [
     "EvaluationTableRow",
     "ModelWorkflowTableRow",
     "NddWorkflowTableRow",
+    "RatBenchReidentificationTableRow",
     "RecordTableRow",
     "RunTableRow",
     "StageTableRow",
@@ -226,6 +229,26 @@ class TraceCoverageTableRow(StrictFrozenModel):
     unsupported_column_count: NonNegativeInt
 
 
+class RatBenchReidentificationTableRow(_MetricTableRow):
+    record_type: Literal["rat_bench_reidentification"]
+    rows_processed: NonNegativeInt
+    rows_failed: NonNegativeInt
+    reidentified_rows: NonNegativeInt
+    direct_reidentified_rows: NonNegativeInt
+    correctmatch_reidentified_rows: NonNegativeInt
+    reid_error_rows: NonNegativeInt
+    reidentification_rate_pct: Percentage
+    coverage_pct: Percentage
+    correct_guess_count: NonNegativeInt
+    incorrect_guess_count: NonNegativeInt
+    total_guess_count: NonNegativeInt
+    mean_reid_score: NonNegativeFloat
+    reid_threshold: NonNegativeFloat
+    missing_output_rows: NonNegativeInt | None = None
+    attacker_model: StrictStr | None = None
+    attacker_endpoint_kind: RatBenchAttackerEndpointKind | None = None
+
+
 WandbTableRow = Annotated[
     RunTableRow
     | StageTableRow
@@ -233,7 +256,8 @@ WandbTableRow = Annotated[
     | EvaluationTableRow
     | NddWorkflowTableRow
     | ModelWorkflowTableRow
-    | TraceCoverageTableRow,
+    | TraceCoverageTableRow
+    | RatBenchReidentificationTableRow,
     Field(discriminator="record_type"),
 ]
 WANDB_TABLE_ROW_MODELS: Mapping[str, type[BaseModel]] = MappingProxyType(
@@ -245,6 +269,7 @@ WANDB_TABLE_ROW_MODELS: Mapping[str, type[BaseModel]] = MappingProxyType(
         "ndd_workflow": NddWorkflowTableRow,
         "model_workflow": ModelWorkflowTableRow,
         "dd_trace_coverage": TraceCoverageTableRow,
+        "rat_bench_reidentification": RatBenchReidentificationTableRow,
     }
 )
 _MEASUREMENT_RECORD_TYPES = frozenset(WANDB_TABLE_ROW_MODELS)

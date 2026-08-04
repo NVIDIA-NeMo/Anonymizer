@@ -40,6 +40,7 @@ def require_wandb() -> Any:
 
 _WANDB_AMBIENT_ALLOWLIST = frozenset(
     {
+        "WANDB_API_KEY",
         "WANDB_HTTP_TIMEOUT",
         "WANDB_INIT_TIMEOUT",
         "WANDB__SERVICE_WAIT",

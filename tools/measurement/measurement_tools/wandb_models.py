@@ -11,6 +11,7 @@ from measurement_tools.wandb_field_policies import (
 from measurement_tools.wandb_field_policies import (
     validate_outbound_field_policies as validate_outbound_field_policies,
 )
+from measurement_tools.wandb_metadata import BenchmarkIdentityMetadata as BenchmarkIdentityMetadata
 from measurement_tools.wandb_metadata import BenchmarkMetadata as BenchmarkMetadata
 from measurement_tools.wandb_metadata import ConfigMetadata as ConfigMetadata
 from measurement_tools.wandb_metadata import DetectMetadata as DetectMetadata
@@ -36,6 +37,9 @@ from measurement_tools.wandb_metrics import WANDB_TABLE_ROW_MODELS as WANDB_TABL
 from measurement_tools.wandb_metrics import EvaluationTableRow as EvaluationTableRow
 from measurement_tools.wandb_metrics import ModelWorkflowTableRow as ModelWorkflowTableRow
 from measurement_tools.wandb_metrics import NddWorkflowTableRow as NddWorkflowTableRow
+from measurement_tools.wandb_metrics import (
+    RatBenchReidentificationTableRow as RatBenchReidentificationTableRow,
+)
 from measurement_tools.wandb_metrics import RecordTableRow as RecordTableRow
 from measurement_tools.wandb_metrics import RunTableRow as RunTableRow
 from measurement_tools.wandb_metrics import StageTableRow as StageTableRow
