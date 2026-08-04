@@ -57,28 +57,30 @@ The active judges depend on the anonymization strategy and `EvaluateConfig`:
 
 ### Entity Coverage
 
-> "Which sensitive values from the original text survived into the anonymized output?"
+> "Which sensitive values in the original text did the anonymizer fail to detect?"
 
-Entity coverage is the primary residual-leakage metric and **always runs**. The judge scans the original text independently and reports any in-scope sensitive values that were **not** removed or replaced. A deterministic postprocessing step then drops candidates that are already accounted for by the Anonymizer's final entities (exact, sub-span, or composite matches), so only genuine leaks remain.
+Entity coverage is the primary detection-recall metric and **always runs**. The judge scans the original text independently and reports any in-scope sensitive values that were **not detected** by the anonymizer. A deterministic postprocessing step then drops candidates that are already accounted for by the Anonymizer's final entities (exact, sub-span, or composite matches), so only genuine misses remain.
+
+Note: the judge measures detection coverage, not output leakage. A value that was detected but replaced with a poor substitute would still score as covered.
 
 The judge is scoped and contextualized by the same signals used during anonymization:
 
 - **`entity_labels`** — the detection taxonomy in scope; the judge only reports values whose type falls within it.
 - **`data_summary`** — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.
-- **`strict_entity_protection`** — (rewrite only) when enabled, the judge also reports inferable/indirect sensitive values, not just literal identifiers.
+- **`strict_entity_protection`** — (rewrite only) when enabled, the judge lowers the threshold for borderline literal spans — flagging quasi-identifiers that would normally receive benefit of the doubt.
 
 | Output column | Type | Description |
 |---|---|---|
-| `entity_coverage` | `float \| None` | `n_final / (n_final + n_leaked)` — fraction of sensitive values that were removed. `1.0` means nothing leaked; `None` if the judge was unavailable. |
-| `leaked_entities` | `list` | Each surviving value with its `value`, `label`, and one-sentence `reasoning`. Empty when nothing leaked. |
+| `entity_coverage` | `float \| None` | `n_final / (n_final + n_leaked)` — fraction of sensitive entities that were detected. `1.0` means no missed entities; `None` if the judge was unavailable. |
+| `leaked_entities` | `list` | Each entity not detected by the anonymizer, with its `value`, `label`, and one-sentence `reasoning`. Empty when no entities were missed. |
 
 **Special values:**
 
 | Scenario | `entity_coverage` | `leaked_entities` |
 |---|---|---|
 | No sensitive values in the original text | `1.0` | `[]` |
-| Judge ran and found no surviving values | `1.0` | `[]` |
-| Judge ran and found surviving values | 0–1 fraction | populated |
+| Judge ran and found no missed entities | `1.0` | `[]` |
+| Judge ran and found missed entities | 0–1 fraction | populated |
 | Judge call failed or returned a malformed response | `None` | `[]` |
 
 ---
@@ -245,7 +247,7 @@ evaluated = anonymizer.evaluate(loaded)
 
 ### Entity Coverage
 
-Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `leaked_entities`. In rewrite mode the judge additionally honours `strict_entity_protection`: when the rewrite config enables it, inferable/indirect sensitive values are reported as leaks, not just literal identifiers.
+Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `leaked_entities`. In rewrite mode the judge additionally honours `strict_entity_protection`: when the rewrite config enables it, the threshold for borderline literal spans is lowered — flagging quasi-identifiers that would normally receive benefit of the doubt.
 
 ---
 

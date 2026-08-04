@@ -503,6 +503,47 @@ def test_validate_model_alias_references_skips_rewrite_judge_without_check_rewri
     )
 
 
+def test_validate_model_alias_references_raises_on_unknown_detection_validity_judge_when_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "evaluate": stub_slim_model_selection.evaluate.model_copy(
+                update={"detection_validity_judge": "bad-detection-validity-alias"}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="bad-detection-validity-alias"):
+        validate_model_alias_references(
+            stub_known_model_configs,
+            selected_models,
+            check_evaluate=True,
+            check_detection_validity_judge=True,
+        )
+
+
+def test_validate_model_alias_references_skips_detection_validity_judge_when_not_enabled(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "evaluate": stub_slim_model_selection.evaluate.model_copy(
+                update={"detection_validity_judge": "bad-detection-validity-alias"}
+            )
+        }
+    )
+
+    # check_evaluate=True but check_detection_validity_judge not set — alias must be skipped
+    validate_model_alias_references(
+        stub_known_model_configs,
+        selected_models,
+        check_evaluate=True,
+    )
+
+
 class TestEntityValidatorNormalization:
     """``DetectionModelSelection.entity_validator`` accepts scalar or list input.
 

@@ -54,9 +54,8 @@ class LeakedEntity(BaseModel):
 
 class EntityCoverageSchema(BaseModel):
     leaked_entities: list[LeakedEntity] = Field(
-        default_factory=list,
         description="All PII entities present in the original text that the anonymizer failed to detect. "
-        "Empty when the anonymizer caught everything.",
+        "Empty list when the anonymizer caught everything.",
     )
 
 

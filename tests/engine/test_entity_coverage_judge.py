@@ -186,6 +186,13 @@ def test_parse_leaked_entities_returns_none_for_none() -> None:
     assert _parse_leaked_entities(None) is None
 
 
+def test_parse_leaked_entities_returns_none_for_empty_dict() -> None:
+    # {} is a valid JSON object but omits leaked_entities entirely.
+    # This must be treated as an unavailable score, not "no leaks found",
+    # so that an incomplete structured response can't silently produce perfect coverage.
+    assert _parse_leaked_entities({}) is None
+
+
 def test_coverage_prompt_extracts_independently_before_deterministic_filtering() -> None:
     prompt = _coverage_prompt(entity_labels=["sex", "title"], strict_entity_protection=False)
 

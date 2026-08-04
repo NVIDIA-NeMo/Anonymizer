@@ -448,6 +448,7 @@ class Anonymizer:
                 check_rewrite=False,
                 check_evaluate=True,
                 check_rewrite_judge=is_rewrite,
+                check_detection_validity_judge=evaluate_config.compute_detection_validity,
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc

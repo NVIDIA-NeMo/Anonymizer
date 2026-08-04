@@ -261,15 +261,19 @@ def validate_model_alias_references(
     check_rewrite: bool = False,
     check_evaluate: bool = False,
     check_rewrite_judge: bool = False,
+    check_detection_validity_judge: bool = False,
 ) -> None:
     """Validate that active workflow model aliases exist in the model pool.
 
-    ``check_evaluate`` validates the shared evaluation roles (``detection_validity_judge``
+    ``check_evaluate`` validates the shared evaluation roles (``entity_coverage_judge``
     is always checked when on; the three ``replace_*_judge`` roles are additionally
     checked when ``check_substitute`` is also True). ``check_rewrite_judge`` validates
     ``evaluate.rewrite_judge`` and must be set independently when evaluating a rewrite
     result — it is separate from ``check_rewrite`` so that full rewrite pipeline roles
     are not required just to call ``evaluate()`` on an existing rewrite result.
+    ``check_detection_validity_judge`` validates ``evaluate.detection_validity_judge``
+    and must be set independently because detection validity is disabled by default
+    (``EvaluateConfig.compute_detection_validity=False``).
     """
     known_aliases = {model_config.alias for model_config in model_configs}
     detection_roles = selected_models.detection.model_dump()
@@ -287,7 +291,10 @@ def validate_model_alias_references(
     if check_evaluate:
         evaluate_roles = selected_models.evaluate.model_dump()
         _collect_role(roles_to_check, "evaluate.entity_coverage_judge", evaluate_roles["entity_coverage_judge"])
-        _collect_role(roles_to_check, "evaluate.detection_validity_judge", evaluate_roles["detection_validity_judge"])
+        if check_detection_validity_judge:
+            _collect_role(
+                roles_to_check, "evaluate.detection_validity_judge", evaluate_roles["detection_validity_judge"]
+            )
         if check_rewrite_judge:
             _collect_role(roles_to_check, "evaluate.rewrite_judge", evaluate_roles["rewrite_judge"])
         if check_substitute:
