@@ -91,9 +91,7 @@ def _data_summary_block(data_summary: str | None) -> str:
     )
 
 
-def _coverage_prompt(
-    *, entity_labels: list[str] | None, data_summary: str | None = None
-) -> str:
+def _coverage_prompt(*, entity_labels: list[str] | None, data_summary: str | None = None) -> str:
     entity_scope_block = _entity_type_scope_block(entity_labels)
     data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
 
