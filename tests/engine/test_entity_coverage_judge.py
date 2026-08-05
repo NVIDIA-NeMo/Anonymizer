@@ -29,10 +29,9 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
 
 
 def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> None:
-    without_summary = _coverage_prompt(entity_labels=None, strict_entity_protection=False)
+    without_summary = _coverage_prompt(entity_labels=None)
     with_blank_summary = _coverage_prompt(
         entity_labels=None,
-        strict_entity_protection=False,
         data_summary="   ",
     )
 
@@ -43,7 +42,6 @@ def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> Non
 def test_coverage_prompt_includes_data_summary_as_interpretive_context() -> None:
     prompt = _coverage_prompt(
         entity_labels=["first_name"],
-        strict_entity_protection=False,
         data_summary="Customer support transcripts.",
     )
 
@@ -200,16 +198,20 @@ def test_parse_candidate_entities_returns_none_for_empty_dict() -> None:
 
 
 def test_coverage_prompt_extracts_independently_before_deterministic_filtering() -> None:
-    prompt = _coverage_prompt(entity_labels=["sex", "title"], strict_entity_protection=False)
+    prompt = _coverage_prompt(entity_labels=["sex", "title"])
 
     assert "Work independently from the anonymizer" in prompt
     assert "deterministic postprocessing step" in prompt
     assert "<anonymizer_final_entities>" not in prompt
     assert "_final_entities_for_coverage_judge" not in prompt
+    assert "strict_entity_protection" not in prompt
+    assert "MINIMUM NECESSARY" not in prompt
+    assert "benefit of the doubt" not in prompt
+    assert "sensitivity disposition" not in prompt
 
 
 def test_coverage_prompt_requires_systematic_structured_text_scan() -> None:
-    prompt = _coverage_prompt(entity_labels=["sex", "title"], strict_entity_protection=False)
+    prompt = _coverage_prompt(entity_labels=["sex", "title"])
 
     assert "salutations, signatures" in prompt
     assert "Tables, bullets, forms" in prompt
@@ -236,7 +238,6 @@ def test_column_config_builds_prompt_and_resolves_model() -> None:
     workflow = EntityCoverageWorkflow(
         adapter=Mock(),
         entity_labels=["sex", "title"],
-        strict_entity_protection=True,
         data_summary="Customer support transcripts.",
     )
 

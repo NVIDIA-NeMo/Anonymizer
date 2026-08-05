@@ -472,11 +472,10 @@ class Anonymizer:
         logger.info("🧪 Running %s evaluation on %d records", mode_name, num_records)
         logger.debug(
             "evaluation config: mode=%s, text_column=%s, detection_validity=%s, "
-            "strict_entity_protection=%s, entity_labels=%s, data_summary_provided=%s",
+            "entity_labels=%s, data_summary_provided=%s",
             mode_name,
             text_column,
             evaluate_config.compute_detection_validity,
-            strict_entity_protection,
             len(entity_labels) if entity_labels is not None else "default",
             bool(data_summary),
         )
@@ -519,7 +518,6 @@ class Anonymizer:
             coverage_wf = EntityCoverageWorkflow(
                 adapter=self._adapter,
                 entity_labels=entity_labels,
-                strict_entity_protection=strict_entity_protection,
                 data_summary=data_summary,
             )
             logger.info(LOG_INDENT + "🔎 Running entity coverage")

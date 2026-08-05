@@ -1029,7 +1029,7 @@ def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: An
 
 
 # ---------------------------------------------------------------------------
-# Tests: strict_entity_protection flows config -> result -> coverage judge
+# Tests: strict_entity_protection flows config -> result
 # ---------------------------------------------------------------------------
 
 
@@ -1053,40 +1053,6 @@ def test_preview_persists_strict_entity_protection(stub_input: AnonymizerInput, 
     preview = anonymizer.preview(config=config, data=stub_input, num_records=1)
 
     assert preview.strict_entity_protection is strict
-
-
-def test_evaluate_passes_strict_entity_protection_to_coverage_judge(stub_input: AnonymizerInput) -> None:
-    """evaluate() must forward the result's strict flag into EntityCoverageWorkflow.
-
-    Regression: strict_entity_protection was dropped after run()/preview(), so the
-    entity-coverage judge always scored in non-strict mode regardless of config.
-    """
-    config = AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True))
-    anonymizer, _, _, rewrite_runner = _make_anonymizer()
-
-    run_result = anonymizer.run(config=config, data=stub_input)
-
-    eval_df = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme"],
-            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
-            "utility_score": [0.85],
-            "leakage_mass": [0.3],
-            "weighted_leakage_rate": [0.23],
-            "any_high_leaked": [False],
-            "needs_human_review": [False],
-            COL_JUDGE_EVALUATION: [None],
-            COL_DETECTION_VALID: [1.0],
-        }
-    )
-    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
-
-    with patch("anonymizer.interface.anonymizer.EntityCoverageWorkflow") as mock_coverage_wf:
-        mock_coverage_wf.return_value.run_non_critical.return_value = (eval_df, [])
-        anonymizer.evaluate(run_result)
-
-    assert mock_coverage_wf.call_args is not None, "EntityCoverageWorkflow was not constructed"
-    assert mock_coverage_wf.call_args.kwargs["strict_entity_protection"] is True
 
 
 def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> None:

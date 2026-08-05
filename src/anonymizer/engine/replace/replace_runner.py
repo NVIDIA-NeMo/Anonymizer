@@ -146,8 +146,6 @@ class ReplacementWorkflow:
                 f"missing: {sorted(missing)}. Pass the trace_dataframe from a "
                 f"previous preview()/run() call."
             )
-        # strict_entity_protection is a rewrite-only knob (only on the Rewrite config); replace
-        # mode has no such setting, so the coverage judge intentionally runs non-strict here.
         entity_coverage_judge = EntityCoverageWorkflow(
             adapter=self._adapter,  # type: ignore[arg-type]
             entity_labels=entity_labels,

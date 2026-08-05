@@ -78,23 +78,6 @@ def _entity_type_scope_block(entity_labels: list[str] | None) -> str:
     )
 
 
-def _strict_protection_block(strict_entity_protection: bool) -> str:
-    if not strict_entity_protection:
-        return ""
-    return (
-        "<strict_entity_protection>\n"
-        "STRICT PROTECTION MODE IS ENABLED.\n\n"
-        "Flag ALL entities as leaked if they were not caught — including quasi-identifiers\n"
-        "and low-risk entities that would normally be given benefit of the doubt.\n"
-        "Do NOT apply MINIMUM NECESSARY CHANGE reasoning to excuse a missed entity.\n"
-        "Do NOT excuse a missed entity because its combined re-identification risk is low.\n"
-        "Any PII span not caught by the anonymizer is a miss in strict mode.\n"
-        "Strict mode lowers the threshold for borderline literal spans — it does NOT change\n"
-        "the requirement that every flagged value must be literally present in the original text.\n"
-        "</strict_entity_protection>"
-    )
-
-
 def _data_summary_block(data_summary: str | None) -> str:
     """Return optional dataset context without changing prompts when absent."""
     if not data_summary or not data_summary.strip():
@@ -109,20 +92,14 @@ def _data_summary_block(data_summary: str | None) -> str:
 
 
 def _coverage_prompt(
-    *, entity_labels: list[str] | None, strict_entity_protection: bool, data_summary: str | None = None
+    *, entity_labels: list[str] | None, data_summary: str | None = None
 ) -> str:
     entity_scope_block = _entity_type_scope_block(entity_labels)
-    strict_block = _strict_protection_block(strict_entity_protection)
     data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
 
     entity_scope_guidance = (
         "- Respect the entity_type_scope: do not flag PII types outside the configured scope as leaked."
         if entity_labels is not None
-        else ""
-    )
-    strict_guidance = (
-        "- In strict protection mode, flag every missed entity regardless of its perceived risk level."
-        if strict_entity_protection
         else ""
     )
 
@@ -196,10 +173,7 @@ Do flag:
   imply a type — those are not concrete values.)
 
 {entity_scope_guidance}
-{strict_guidance}
 </guidance>
-
-{strict_block}
 
 <inputs>
 <original_text>
@@ -454,12 +428,10 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         adapter: NddAdapter,
         *,
         entity_labels: list[str] | None = None,
-        strict_entity_protection: bool = False,
         data_summary: str | None = None,
     ) -> None:
         super().__init__(adapter)
         self._entity_labels = entity_labels
-        self._strict_entity_protection = strict_entity_protection
         self._data_summary = data_summary
 
     # ------------------------------------------------------------------ hooks
@@ -478,8 +450,8 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     def _build_prompt(cls) -> str:
         """Unused abstract-base hook; instance configuration is required here.
 
-        ``column_config()`` below builds the prompt from ``entity_labels``,
-        ``strict_entity_protection``, and ``data_summary``. Fail loudly if a
+        ``column_config()`` below builds the prompt from ``entity_labels``
+        and ``data_summary``. Fail loudly if a
         future refactor accidentally routes through the base implementation
         instead of silently evaluating with incorrect default scope.
         """
@@ -492,12 +464,11 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     # ----------------------------------------------------------------- overrides
 
     def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
-        """Override to inject instance-specific entity_labels and strict_entity_protection."""
+        """Override to inject instance-specific entity_labels and data_summary."""
         return LLMStructuredColumnConfig(
             name=self.RAW_COL,
             prompt=_coverage_prompt(
                 entity_labels=self._entity_labels,
-                strict_entity_protection=self._strict_entity_protection,
                 data_summary=self._data_summary,
             ),
             model_alias=resolve_model_alias(self.MODEL_ROLE, selected_models),

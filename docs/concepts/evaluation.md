@@ -67,7 +67,6 @@ The judge is scoped and contextualized by the same signals used during anonymiza
 
 - **`entity_labels`** — the detection taxonomy in scope; the judge only reports values whose type falls within it.
 - **`data_summary`** — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.
-- **`strict_entity_protection`** — (rewrite only) when enabled, the judge lowers the threshold for borderline literal spans — flagging quasi-identifiers that would normally receive benefit of the doubt.
 
 | Output column | Type | Description |
 |---|---|---|
@@ -247,7 +246,7 @@ evaluated = anonymizer.evaluate(loaded)
 
 ### Entity Coverage
 
-Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `missed_entities`. In rewrite mode the judge additionally honours `strict_entity_protection`: when the rewrite config enables it, the threshold for borderline literal spans is lowered — flagging quasi-identifiers that would normally receive benefit of the doubt.
+Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `missed_entities`.
 
 ---
 
