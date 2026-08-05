@@ -244,6 +244,7 @@ def resolve_overlaps(entities: list[EntitySpan]) -> list[EntitySpan]:
             -(item.end_position - item.start_position),
             item.start_position,
             item.end_position,
+            -item.score,
             item.label,
         ),
     )
