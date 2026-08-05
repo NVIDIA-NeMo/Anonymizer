@@ -16,7 +16,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, TypeGuard, cast
 
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
@@ -270,15 +270,18 @@ class NddAdapter:
     def __init__(self, data_designer: DataDesigner) -> None:
         self._data_designer = data_designer
         self._run_lock = RLock()
+        self._input_tokens_lock = Lock()
         self._cumulative_input_tokens: int = 0
         logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
 
     @property
     def total_input_tokens(self) -> int:
         """Cumulative input tokens across all run_workflow calls. 0 if none observed."""
-        return self._cumulative_input_tokens if self._cumulative_input_tokens > 0 else 0
+        with self._input_tokens_lock:
+            return self._cumulative_input_tokens if self._cumulative_input_tokens > 0 else 0
 
     def _add_input_tokens(self, model_usage: dict[str, Any] | None) -> None:
+        input_tokens = 0
         for usage in (model_usage or {}).values():
             if not isinstance(usage, Mapping):
                 continue
@@ -286,7 +289,11 @@ class NddAdapter:
             if isinstance(token_usage, Mapping):
                 tokens = token_usage.get("input_tokens")
                 if isinstance(tokens, int) and tokens > 0:
-                    self._cumulative_input_tokens += tokens
+                    input_tokens += tokens
+        if input_tokens <= 0:
+            return
+        with self._input_tokens_lock:
+            self._cumulative_input_tokens += input_tokens
 
     def run_workflow(
         self,

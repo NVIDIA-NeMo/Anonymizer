@@ -13,7 +13,7 @@ invocation. Telemetry is opt-out via:
 Related environment variables (read at runtime, not import time):
 
 - ``NEMO_TELEMETRY_ENABLED``: set to ``false`` / ``0`` / ``no`` to disable.
-- ``NEMO_DEPLOYMENT_TYPE``: ``cli``, ``sdk``, ``nmp``. Defaults to ``sdk``.
+- ``NEMO_DEPLOYMENT_TYPE``: ``cli``, ``sdk``, ``nmp``, ``nvidia-internal``. Defaults to ``sdk``.
 - ``NEMO_TELEMETRY_ENDPOINT``: override the destination URL.
 - ``NEMO_SESSION_PREFIX``: prepended to session IDs. Set to ``"anonymizer-"``
   automatically by ``Anonymizer.__init__`` for dashboard filtering.
