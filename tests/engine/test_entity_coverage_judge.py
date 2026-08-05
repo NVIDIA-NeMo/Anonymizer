@@ -10,8 +10,10 @@ import pytest
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
+    COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
     COL_ENTITY_COVERAGE_JUDGE,
+    COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_MISSED_ENTITIES,
     COL_TEXT,
 )
@@ -208,6 +210,9 @@ def test_coverage_prompt_extracts_independently_before_deterministic_filtering()
     assert "MINIMUM NECESSARY" not in prompt
     assert "benefit of the doubt" not in prompt
     assert "sensitivity disposition" not in prompt
+    assert "Return each literal value only once" in prompt
+    assert "missed entities" not in prompt
+    assert "as leaked" not in prompt
 
 
 def test_coverage_prompt_requires_systematic_structured_text_scan() -> None:
@@ -250,11 +255,34 @@ def test_column_config_builds_prompt_and_resolves_model() -> None:
     assert "sex, title" in config.prompt  # entity_labels scope threaded in
 
 
-def test_postprocess_coverage_uses_judge_anchored_recall() -> None:
-    """Coverage score is n_covered / n_candidates — recall over the judge's candidate set.
+def test_prepare_uses_one_entry_per_final_entity_value() -> None:
+    workflow = EntityCoverageWorkflow(adapter=Mock())
+    dataframe = pd.DataFrame(
+        {
+            COL_ENTITIES_BY_VALUE: [
+                {
+                    "entities_by_value": [
+                        {"value": "Alice", "labels": ["first_name", "user_name"]},
+                        {"value": "Acme", "labels": ["organization"]},
+                    ]
+                }
+            ]
+        }
+    )
 
-    False positives in the anonymizer's detections do not affect the score;
-    only the judge's candidates determine the numerator and denominator.
+    prepared = workflow.prepare(dataframe)
+
+    assert prepared[_FINAL_ENTITIES_FOR_COVERAGE_COL].iloc[0] == [
+        {"value": "Alice"},
+        {"value": "Acme"},
+    ]
+
+
+def test_postprocess_coverage_uses_judge_anchored_recall() -> None:
+    """Coverage is recall over the judge's unique candidate values.
+
+    Extra detections that do not match a candidate do not enter the score;
+    the judge's unique candidate values determine the numerator and denominator.
     """
     workflow = EntityCoverageWorkflow(adapter=Mock())
 
@@ -293,8 +321,35 @@ def test_postprocess_coverage_uses_judge_anchored_recall() -> None:
 
     # n_candidates=5, n_covered=4, n_missed=1 → 4/5 = 0.8
     assert result[COL_ENTITY_COVERAGE].iloc[0] == pytest.approx(0.8)
+    assert result[COL_ENTITY_COVERAGE_N_CANDIDATES].iloc[0] == 5
     assert len(result[COL_MISSED_ENTITIES].iloc[0]) == 1
     assert result[COL_MISSED_ENTITIES].iloc[0][0]["value"] == "MissedEntity"
+
+
+def test_postprocess_coverage_deduplicates_candidates_by_value_across_labels() -> None:
+    """One sensitive value counts once even when the judge assigns multiple labels."""
+    workflow = EntityCoverageWorkflow(adapter=Mock())
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice contacted Bob."],
+            COL_ENTITY_COVERAGE_JUDGE: [
+                {
+                    "candidate_entities": [
+                        {"value": "Alice", "label": "first_name", "reasoning": "name"},
+                        {"value": "Alice", "label": "user_name", "reasoning": "username"},
+                        {"value": "Bob", "label": "first_name", "reasoning": "name"},
+                    ]
+                }
+            ],
+            _FINAL_ENTITIES_FOR_COVERAGE_COL: [[{"value": "Alice"}]],
+        }
+    )
+
+    result = workflow.postprocess(dataframe)
+
+    assert result[COL_ENTITY_COVERAGE_N_CANDIDATES].iloc[0] == 2
+    assert result[COL_ENTITY_COVERAGE].iloc[0] == pytest.approx(0.5)
+    assert [entity["value"] for entity in result[COL_MISSED_ENTITIES].iloc[0]] == ["Bob"]
 
 
 def test_postprocess_coverage_is_1_when_judge_finds_no_candidates() -> None:

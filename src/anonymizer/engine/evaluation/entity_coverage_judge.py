@@ -56,6 +56,7 @@ class CandidateEntity(BaseModel):
 class EntityCoverageSchema(BaseModel):
     candidate_entities: list[CandidateEntity] = Field(
         description="All in-scope PII and sensitive entities found in the original text. "
+        "Return one entry per distinct literal value, using its most contextually appropriate label. "
         "Empty list when the original text contains no in-scope entity values.",
     )
 
@@ -72,8 +73,8 @@ def _entity_type_scope_block(entity_labels: list[str] | None) -> str:
     return (
         "<entity_type_scope>\n"
         f"Detection was configured to target ONLY these entity types: {labels_str}.\n"
-        "Only report missed entities that belong to one of these types. "
-        "Do NOT flag PII of other types as leaked — those were intentionally excluded from detection.\n"
+        "Only report candidate values that belong to one of these types. "
+        "Do NOT report PII of other types — those were intentionally excluded from detection.\n"
         "</entity_type_scope>"
     )
 
@@ -96,7 +97,7 @@ def _coverage_prompt(*, entity_labels: list[str] | None, data_summary: str | Non
     data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
 
     entity_scope_guidance = (
-        "- Respect the entity_type_scope: do not flag PII types outside the configured scope as leaked."
+        "- Respect the entity_type_scope: do not report candidate values outside the configured scope."
         if entity_labels is not None
         else ""
     )
@@ -112,7 +113,8 @@ without deciding whether another system already found or protected them. A deter
 postprocessing step will compare your candidates with the anonymizer final entities.
 
 Return structured JSON:
-- `candidate_entities`: every in-scope candidate with its `value`, `label`, and a short `reasoning`.
+- `candidate_entities`: every distinct in-scope candidate value with its most contextually appropriate \
+`label` and a short `reasoning`. Return each literal value only once.
 - Return an empty list only when the original text contains no in-scope entity values.
 </task>
 
@@ -193,13 +195,14 @@ Do flag:
 
 
 def _final_entities_for_coverage(parsed: EntitiesByValueSchema) -> list[dict[str, str]]:
-    """Flatten EntitiesByValueSchema into one entry per (value, label) pair.
+    """Flatten EntitiesByValueSchema into one entry per detected value.
 
     Used by the coverage filter to check which judge candidates were already
-    detected by the anonymizer. The (value, label) pair granularity keeps the
-    matching unit consistent with what the judge returns.
+    detected by the anonymizer. Labels are intentionally excluded because
+    entity coverage measures value/span recall; detection validity evaluates
+    whether detected value-label pairs are correct.
     """
-    return [{"value": e.value, "label": label} for e in parsed.entities_by_value for label in e.labels]
+    return [{"value": entity.value} for entity in parsed.entities_by_value]
 
 
 def _parse_candidate_entities(raw: object) -> list[dict[str, object]] | None:
@@ -379,19 +382,16 @@ def _filter_nonliteral_entities(
     ]
 
 
-def _deduplicate_judge_entities(entities: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Keep one judge entity per normalized (value, label) pair."""
+def _deduplicate_candidate_values(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Keep the first judge candidate for each unique normalized value."""
     deduplicated: list[dict[str, object]] = []
-    seen: set[tuple[str, str]] = set()
-    for entity in entities:
-        key = (
-            _normalize_literal_text(entity.get("value", "")),
-            _normalize_literal_text(entity.get("label", "")),
-        )
-        if not key[0] or key in seen:
+    seen: set[str] = set()
+    for candidate in candidates:
+        value = _normalize_literal_text(candidate.get("value", ""))
+        if not value or value in seen:
             continue
-        seen.add(key)
-        deduplicated.append(entity)
+        seen.add(value)
+        deduplicated.append(candidate)
     return deduplicated
 
 
@@ -407,7 +407,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     scope. Deterministic postprocessing removes nonliteral and already-covered findings.
 
     Output columns:
-      ``COL_ENTITY_COVERAGE`` (float|None) — n_covered / (n_covered + n_missed)
+      ``COL_ENTITY_COVERAGE`` (float|None) — covered / total unique candidate values
       ``COL_MISSED_ENTITIES`` (list)        — missed entities with value, label, reasoning
     """
 
@@ -491,7 +491,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             else:
                 candidates = _filter_out_of_scope_entities(candidates, self._entity_labels)
                 candidates = _filter_nonliteral_entities(candidates, out[COL_TEXT].loc[idx])
-                candidates = _deduplicate_judge_entities(candidates)
+                candidates = _deduplicate_candidate_values(candidates)
                 n_candidates = len(candidates)
                 final_entities = out[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx]
                 missed_entities = _find_missed_candidates(candidates, final_entities)

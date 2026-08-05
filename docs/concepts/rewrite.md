@@ -135,8 +135,8 @@ config = AnonymizerConfig(
 | `weighted_leakage_rate` | Always | Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass. |
 | `any_high_leaked` | Always | Whether any high-sensitivity entity leaked through. |
 | `needs_human_review` | Always | Flag for records that may need manual review. |
-| `entity_coverage` | After `evaluate()` | Fraction of the judge's PII candidates that the anonymizer detected (`n_covered / n_candidates`); `1.0` if no candidates were missed or the judge found no PII, `None` if judge unavailable. |
-| `missed_entities` | After `evaluate()` | Sensitive values not detected by the anonymizer, each with value, label, and reasoning. |
+| `entity_coverage` | After `evaluate()` | Fraction of the judge's unique, normalized PII candidate values that the anonymizer detected (`n_covered / n_candidates`); `1.0` if no candidates were missed or the judge found no PII, `None` if judge unavailable. |
+| `missed_entities` | After `evaluate()` | Unique candidate values not detected by the anonymizer, each with value, judge-assigned label, and reasoning. |
 | `judge_evaluation` | After `evaluate()` | Dict with `privacy`, `quality`, and `style` rubric scores and reasoning. |
 | `detection_valid` | After `evaluate(config=EvaluateConfig(compute_detection_validity=True))` | Fraction of detected entities that passed the detection judge (0.0--1.0); `None` if judge unavailable. Opt-in, off by default. |
 | `detection_invalid_entities` | After `evaluate(config=EvaluateConfig(compute_detection_validity=True))` | Flagged detections with value, label, and one-sentence reasoning. |

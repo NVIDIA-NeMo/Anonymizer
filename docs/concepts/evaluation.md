@@ -59,9 +59,9 @@ The active judges depend on the anonymization strategy and `EvaluateConfig`:
 
 > "Which sensitive values in the original text did the anonymizer fail to detect?"
 
-Entity coverage is the primary **judge-anchored recall** metric and **always runs**. The judge scans the original text independently to extract all in-scope PII candidates, without knowledge of what the anonymizer detected. A deterministic postprocessing step then classifies each candidate as covered (also detected by the anonymizer) or missed (not detected). The score is `n_covered / (n_covered + n_missed)` — pure recall over the judge's candidate set.
+Entity coverage is the primary **judge-anchored recall** metric and **always runs**. The judge scans the original text independently to extract all in-scope PII candidates, without knowledge of what the anonymizer detected. After scope and literal-span filtering, candidates are deduplicated by normalized value. A deterministic postprocessing step then classifies each unique candidate value as covered (also detected by the anonymizer) or missed (not detected). The score is `n_covered / (n_covered + n_missed)` — recall over the judge's unique candidate values.
 
-Note: the judge measures detection recall, not output leakage. A value detected but replaced with a poor substitute still scores as covered. False positives in the anonymizer's detections do not inflate the score — they are not part of the judge's candidate set and are the domain of detection validity.
+Note: the judge measures detection recall, not output leakage. A value detected but replaced with a poor substitute still scores as covered. Extra anonymizer detections do not directly enter the numerator or denominator, though a detection that matches a judge candidate under the value-matching rules classifies that candidate as covered. Matching is value-based; detection validity separately evaluates whether detected value-label pairs are correct.
 
 The judge is scoped and contextualized by the same signals used during anonymization:
 
@@ -70,8 +70,8 @@ The judge is scoped and contextualized by the same signals used during anonymiza
 
 | Output column | Type | Description |
 |---|---|---|
-| `entity_coverage` | `float \| None` | `n_covered / (n_covered + n_missed)` — fraction of the judge's candidates that the anonymizer detected. `1.0` means no missed entities; `None` if the judge was unavailable. |
-| `missed_entities` | `list` | Each entity not detected by the anonymizer, with its `value`, `label`, and one-sentence `reasoning`. Empty when no entities were missed. |
+| `entity_coverage` | `float \| None` | `n_covered / (n_covered + n_missed)` — fraction of the judge's unique candidate values that the anonymizer detected. `1.0` means no missed entities; `None` if the judge was unavailable. |
+| `missed_entities` | `list` | Each unique candidate value not detected by the anonymizer, with its `value`, judge-assigned `label`, and one-sentence `reasoning`. Empty when no entities were missed. |
 
 **Special values:**
 
