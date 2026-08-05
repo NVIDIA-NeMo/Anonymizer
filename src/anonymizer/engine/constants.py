@@ -65,10 +65,11 @@ COL_DETECTION_JUDGE = "_detection_judge"  # raw judge output, internal
 COL_DETECTION_VALID = "detection_valid"  # user-facing bool (None if judge unavailable)
 COL_DETECTION_INVALID_ENTITIES = "detection_invalid_entities"  # user-facing list of {value, label, reasoning}
 
-# Replace / rewrite evaluation: entity coverage judge (customer-facing recall metric)
+# Replace / rewrite evaluation: entity coverage judge (user-facing judge-anchored recall metric)
 COL_ENTITY_COVERAGE_JUDGE = "_entity_coverage_judge"  # raw judge output, internal
 COL_ENTITY_COVERAGE = "entity_coverage"  # user-facing float | None (0.0–1.0)
 COL_MISSED_ENTITIES = "missed_entities"  # user-facing list of {value, label, reasoning}
+COL_ENTITY_COVERAGE_N_CANDIDATES = "_entity_coverage_n_candidates"  # internal: judge candidate count for display
 
 # Replace evaluation: type-fidelity judge (Substitute only)
 COL_TYPE_FIDELITY_JUDGE = "_type_fidelity_judge"  # raw judge output, internal

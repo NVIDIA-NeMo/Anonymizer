@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
+    COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_MISSED_ENTITIES,
@@ -591,31 +592,34 @@ def _render_entity_coverage_section(row: pd.Series, *, is_rewrite: bool = False)
     if COL_ENTITY_COVERAGE not in row.index:
         return ""
     coverage = row.get(COL_ENTITY_COVERAGE)
-    leaked_entries = _normalize_invalid_entities(row.get(COL_MISSED_ENTITIES))
-    n_leaked = len(leaked_entries)
-    n_detected = _count_detected_entity_label_pairs(row)
-    total = n_detected + n_leaked
+    missed_entries = _normalize_invalid_entities(row.get(COL_MISSED_ENTITIES))
+    n_missed = len(missed_entries)
+    n_candidates_raw = row.get(COL_ENTITY_COVERAGE_N_CANDIDATES)
+    n_candidates = int(n_candidates_raw) if n_candidates_raw is not None and not pd.isna(n_candidates_raw) else None
+    n_covered = (n_candidates - n_missed) if n_candidates is not None else None
 
     if coverage is None or pd.isna(coverage):
         summary_html = "<span style='color:#888;font-weight:600'>Unavailable</span>"
+    elif n_candidates == 0:
+        summary_html = "<span style='color:#16a34a;font-weight:600'>Satisfied</span> — No candidates found by the judge"
     elif is_rewrite:
         pct = round(float(coverage) * 100)
-        covered = total - n_leaked
-        summary_html = f"<span style='font-weight:600'>{float(coverage):.2f}</span> — {covered}/{total} ({pct}%)"
+        fraction = f" — {n_covered}/{n_candidates} ({pct}%)" if n_candidates is not None else f" ({pct}%)"
+        summary_html = f"<span style='font-weight:600'>{float(coverage):.2f}</span>{fraction}"
     elif coverage >= 1.0:
-        pct = 100
-        summary_html = f"<span style='color:#16a34a;font-weight:600'>Satisfied</span> — {total}/{total} ({pct}%)"
+        fraction = f" — {n_candidates}/{n_candidates} (100%)" if n_candidates is not None else " (100%)"
+        summary_html = f"<span style='color:#16a34a;font-weight:600'>Satisfied</span>{fraction}"
     else:
-        covered = total - n_leaked
         pct = round(float(coverage) * 100)
-        summary_html = f"<span style='color:#dc2626;font-weight:600'>Not Satisfied</span> — {covered}/{total} ({pct}%)"
+        fraction = f" — {n_covered}/{n_candidates} ({pct}%)" if n_candidates is not None else f" ({pct}%)"
+        summary_html = f"<span style='color:#dc2626;font-weight:600'>Not Satisfied</span>{fraction}"
 
     header = f"<div style='font-size:0.9em;line-height:1.8'><strong>Entity Coverage:</strong> {summary_html}</div>"
 
     body = header
-    if leaked_entries:
+    if missed_entries:
         rows_html: list[str] = []
-        for entry in leaked_entries:
+        for entry in missed_entries:
             value = html.escape(str(entry.get("value", "")))
             label = html.escape(str(entry.get("label", "")))
             reasoning = html.escape(str(entry.get("reasoning", "")))
@@ -628,7 +632,7 @@ def _render_entity_coverage_section(row: pd.Series, *, is_rewrite: bool = False)
             )
         body += (
             "<details style='margin-top:8px'>"
-            f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {n_leaked} leaked "
+            f"<summary style='cursor:pointer;font-size:0.85em;opacity:0.8'>Show {n_missed} missed "
             "entity(ies)</summary>"
             "<table style='border-collapse:collapse;font-size:0.85em;margin-top:6px'>"
             "<thead><tr>"

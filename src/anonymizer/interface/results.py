@@ -66,8 +66,8 @@ class AnonymizerResult(_DisplayMixin):
             with ``replace_method``.
         strict_entity_protection: Whether the rewrite ran with strict entity
             protection. Set by ``run()`` / ``preview()``; consumed by
-            ``evaluate()`` so the entity-coverage judge scores in strict mode
-            (no benefit-of-the-doubt for missed quasi-identifiers).
+            ``evaluate()`` so the entity-coverage judge lowers the threshold
+            for borderline literal quasi-identifiers in strict mode.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.

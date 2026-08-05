@@ -59,9 +59,9 @@ The active judges depend on the anonymization strategy and `EvaluateConfig`:
 
 > "Which sensitive values in the original text did the anonymizer fail to detect?"
 
-Entity coverage is the primary detection-recall metric and **always runs**. The judge scans the original text independently and reports any in-scope sensitive values that were **not detected** by the anonymizer. A deterministic postprocessing step then drops candidates that are already accounted for by the Anonymizer's final entities (exact, sub-span, or composite matches), so only genuine misses remain.
+Entity coverage is the primary **judge-anchored recall** metric and **always runs**. The judge scans the original text independently to extract all in-scope PII candidates, without knowledge of what the anonymizer detected. A deterministic postprocessing step then classifies each candidate as covered (also detected by the anonymizer) or missed (not detected). The score is `n_covered / (n_covered + n_missed)` — pure recall over the judge's candidate set.
 
-Note: the judge measures detection coverage, not output leakage. A value that was detected but replaced with a poor substitute would still score as covered.
+Note: the judge measures detection recall, not output leakage. A value detected but replaced with a poor substitute still scores as covered. False positives in the anonymizer's detections do not inflate the score — they are not part of the judge's candidate set and are the domain of detection validity.
 
 The judge is scoped and contextualized by the same signals used during anonymization:
 
@@ -71,16 +71,16 @@ The judge is scoped and contextualized by the same signals used during anonymiza
 
 | Output column | Type | Description |
 |---|---|---|
-| `entity_coverage` | `float \| None` | `n_final / (n_final + n_missed)` — fraction of sensitive entities that were detected. `1.0` means no missed entities; `None` if the judge was unavailable. |
+| `entity_coverage` | `float \| None` | `n_covered / (n_covered + n_missed)` — fraction of the judge's candidates that the anonymizer detected. `1.0` means no missed entities; `None` if the judge was unavailable. |
 | `missed_entities` | `list` | Each entity not detected by the anonymizer, with its `value`, `label`, and one-sentence `reasoning`. Empty when no entities were missed. |
 
 **Special values:**
 
 | Scenario | `entity_coverage` | `missed_entities` |
 |---|---|---|
-| No sensitive values in the original text | `1.0` | `[]` |
-| Judge ran and found no missed entities | `1.0` | `[]` |
-| Judge ran and found missed entities | 0–1 fraction | populated |
+| Judge found no PII candidates in the text | `1.0` — No candidates found by the judge | `[]` |
+| Judge found candidates and anonymizer caught all | `1.0` | `[]` |
+| Judge found candidates and anonymizer missed some | 0–1 fraction | populated |
 | Judge call failed or returned a malformed response | `None` | `[]` |
 
 ---

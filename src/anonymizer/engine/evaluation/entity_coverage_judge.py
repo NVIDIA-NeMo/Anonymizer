@@ -17,6 +17,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
     COL_ENTITY_COVERAGE_JUDGE,
+    COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_MISSED_ENTITIES,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
@@ -37,7 +38,7 @@ _WORD_RE = re.compile(r"\w+", re.UNICODE)
 # like "the Nawabganj" still matches a detected entity "Nawabganj". Restricted to
 # leading position only — prepositions such as "of" and "at" are intentionally
 # excluded because they can be load-bearing in entity names (e.g. "Bank of America",
-# "AT&T") and stripping them from arbitrary positions would suppress real leaks.
+# "AT&T") and stripping them from arbitrary positions would suppress real misses.
 _LEADING_ARTICLES = frozenset({"a", "an", "the"})
 
 
@@ -222,18 +223,15 @@ Do flag:
 def _final_entities_for_coverage(parsed: EntitiesByValueSchema) -> list[dict[str, str]]:
     """Flatten EntitiesByValueSchema into one entry per (value, label) pair.
 
-    The coverage denominator counts (value, label) pairs rather than unique
-    values or source occurrences. This keeps the numerator and denominator in
-    the same unit — the judge also returns missed entities as (value, label)
-    pairs — so the score remains consistent. An entity detected under multiple
-    labels (e.g. "Alice" as both first_name and user_name) contributes one
-    entry per label, which is intentional: each detection deserves credit.
+    Used by the coverage filter to check which judge candidates were already
+    detected by the anonymizer. The (value, label) pair granularity keeps the
+    matching unit consistent with what the judge returns.
     """
     return [{"value": e.value, "label": label} for e in parsed.entities_by_value for label in e.labels]
 
 
-def _parse_missed_entities(raw: object) -> list[dict[str, object]] | None:
-    """Parse structured judge output into the leaked entity list.
+def _parse_candidate_entities(raw: object) -> list[dict[str, object]] | None:
+    """Parse structured judge output into the candidate entity list.
 
     Returns the list (possibly empty) on success, or None when the payload is
     malformed or missing so downstream display renders "judge unavailable".
@@ -260,21 +258,21 @@ def _coverage_token_list(value: object) -> list[str]:
     return _WORD_RE.findall(str(value).casefold())
 
 
-def _is_concatenation_of_whole_values(leaked_tokens: list[str], final_token_lists: list[list[str]]) -> bool:
-    """True when ``leaked_tokens`` segment exactly into a sequence of WHOLE final values.
+def _is_concatenation_of_whole_values(candidate_tokens: list[str], final_token_lists: list[list[str]]) -> bool:
+    """True when ``candidate_tokens`` segment exactly into a sequence of WHOLE final values.
 
-    This is the composite case: a leak that is the concatenation of adjacent detected
-    entities (e.g. ``"Nawabganj - 382210"`` == ``"Nawabganj"`` + ``"382210"``). Each
-    segment must equal a full final-entity value, so a leak whose pieces are only
+    This is the composite case: a candidate that is the concatenation of adjacent
+    detected entities (e.g. ``"Nawabganj - 382210"`` == ``"Nawabganj"`` + ``"382210"``).
+    Each segment must equal a full final-entity value, so a candidate whose pieces are only
     *partial* tokens of unrelated entities is NOT matched here.
     """
 
     def consume(start: int) -> bool:
-        if start == len(leaked_tokens):
+        if start == len(candidate_tokens):
             return True
         for final_tokens in final_token_lists:
             end = start + len(final_tokens)
-            if final_tokens and leaked_tokens[start:end] == final_tokens and consume(end):
+            if final_tokens and candidate_tokens[start:end] == final_tokens and consume(end):
                 return True
         return False
 
@@ -299,13 +297,13 @@ def _is_contiguous_sublist(needle: list[str], haystack: list[str]) -> bool:
     return any(haystack[i : i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1))
 
 
-def _is_leaked_value_covered(leaked_value: object, final_values: list[str]) -> bool:
-    """Return True when a judge-reported leak is already covered by final entities.
+def _is_candidate_value_covered(candidate_value: object, final_values: list[str]) -> bool:
+    """Return True when a judge-reported candidate is already covered by final entities.
 
     Coverage is decided **per final entity** — never against a pooled bag of tokens
-    from *all* final entities — so a leak whose pieces come from unrelated entities is
-    not wrongly suppressed (e.g. ``"John Smith"`` is NOT covered by ``"John Doe"`` +
-    ``"Jane Smith"``). A leak is covered when either:
+    from *all* final entities — so a candidate whose pieces come from unrelated entities
+    is not wrongly suppressed (e.g. ``"John Smith"`` is NOT covered by ``"John Doe"`` +
+    ``"Jane Smith"``). A candidate is covered when either:
 
     - **subspan** — its (stopword-stripped) tokens appear as a *contiguous, in-order run*
       within a single final entity's tokens (``"Mstr"`` in ``"Mstr Marzella"``,
@@ -316,15 +314,15 @@ def _is_leaked_value_covered(leaked_value: object, final_values: list[str]) -> b
       (``"Nawabganj - 382210"`` == ``"Nawabganj"`` + ``"382210"``).
 
     Matching is whole-token (``"m"`` != ``"mstr"``) and **value-only** — labels are not
-    compared. Known limitation: a single-token leak is covered whenever that token equals
+    compared. Known limitation: a single-token candidate is covered whenever that token equals
     a whole token in ANY final entity, regardless of type — e.g. a surname ``"Green"`` is
     treated as covered by a detected street ``"Bowling Green Road"``. This mirrors the
     intended "bare username covered by a file path that contains it" behavior; fixing it
     would require label-aware matching, which is deliberately avoided (judge labels are
     free-form), so it is accepted as a tradeoff.
     """
-    leaked_tokens = _coverage_token_list(leaked_value)
-    if not leaked_tokens:
+    candidate_tokens = _coverage_token_list(candidate_value)
+    if not candidate_tokens:
         return False
 
     final_token_lists = [tokens for tokens in (_coverage_token_list(value) for value in final_values) if tokens]
@@ -332,34 +330,34 @@ def _is_leaked_value_covered(leaked_value: object, final_values: list[str]) -> b
         return False
 
     # Exact match against a single final value.
-    if any(leaked_tokens == final_tokens for final_tokens in final_token_lists):
+    if any(candidate_tokens == final_tokens for final_tokens in final_token_lists):
         return True
 
-    # Subspan: the leak's core tokens appear as a contiguous, in-order run within a single
+    # Subspan: the candidate's core tokens appear as a contiguous, in-order run within a single
     # final entity (adjacency + order required, not merely a shared set of tokens).
-    leaked_core = _core_token_sequence(leaked_tokens)
-    if leaked_core and any(
-        _is_contiguous_sublist(leaked_core, _core_token_sequence(final_tokens)) for final_tokens in final_token_lists
+    candidate_core = _core_token_sequence(candidate_tokens)
+    if candidate_core and any(
+        _is_contiguous_sublist(candidate_core, _core_token_sequence(final_tokens)) for final_tokens in final_token_lists
     ):
         return True
 
     # Composite: concatenation of whole final-entity values.
-    return _is_concatenation_of_whole_values(leaked_tokens, final_token_lists)
+    return _is_concatenation_of_whole_values(candidate_tokens, final_token_lists)
 
 
-def _filter_covered_missed_entities(
-    missed_entities: list[dict[str, object]],
+def _find_missed_candidates(
+    candidates: list[dict[str, object]],
     final_entities: object,
 ) -> list[dict[str, object]]:
-    """Drop judge-reported leaks that are already covered by final entity values."""
+    """Return judge candidates that are not covered by final entity values."""
     if not isinstance(final_entities, list):
-        return missed_entities
+        return candidates
 
     final_values = [str(entity.get("value", "")) for entity in final_entities if isinstance(entity, dict)]
     if not final_values:
-        return missed_entities
+        return candidates
 
-    return [entity for entity in missed_entities if not _is_leaked_value_covered(entity.get("value", ""), final_values)]
+    return [entity for entity in candidates if not _is_candidate_value_covered(entity.get("value", ""), final_values)]
 
 
 def _normalize_literal_text(value: object) -> str:
@@ -437,13 +435,14 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     scope. Deterministic postprocessing removes nonliteral and already-covered findings.
 
     Output columns:
-      ``COL_ENTITY_COVERAGE`` (float|None) — n_final / (n_final + n_leaked)
+      ``COL_ENTITY_COVERAGE`` (float|None) — n_covered / (n_covered + n_missed)
       ``COL_MISSED_ENTITIES`` (list)        — missed entities with value, label, reasoning
     """
 
     RAW_COL: ClassVar[str] = COL_ENTITY_COVERAGE_JUDGE
     VALID_COL: ClassVar[str] = COL_ENTITY_COVERAGE
     INVALID_COL: ClassVar[str] = COL_MISSED_ENTITIES
+    N_CANDIDATES_COL: ClassVar[str] = COL_ENTITY_COVERAGE_N_CANDIDATES
     SCHEMA: ClassVar[type[BaseModel]] = EntityCoverageSchema
     VERDICT_FIELD: ClassVar[str] = "candidate_entities"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"candidate_entities": []}
@@ -506,32 +505,37 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         )
 
     def postprocess(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        """Validate judge-reported leaks and calculate coverage."""
+        """Validate judge candidates, classify them as covered or missed, and calculate coverage."""
         out = dataframe.copy()
 
         coverage_vals: list[float | None] = []
-        leaked_lists: list[list[dict]] = []
+        missed_entities_list: list[list[dict]] = []
+        n_candidates_list: list[int | None] = []
 
         for idx in out.index:
             raw = out[self.RAW_COL].loc[idx] if self.RAW_COL in out.columns else None
-            leaked = _parse_missed_entities(raw)
-            if leaked is None:
+            candidates = _parse_candidate_entities(raw)
+            if candidates is None:
                 coverage_vals.append(None)
-                leaked_lists.append([])
+                missed_entities_list.append([])
+                n_candidates_list.append(None)
             else:
-                leaked = _filter_out_of_scope_entities(leaked, self._entity_labels)
-                leaked = _filter_nonliteral_entities(leaked, out[COL_TEXT].loc[idx])
-                leaked = _deduplicate_judge_entities(leaked)
+                candidates = _filter_out_of_scope_entities(candidates, self._entity_labels)
+                candidates = _filter_nonliteral_entities(candidates, out[COL_TEXT].loc[idx])
+                candidates = _deduplicate_judge_entities(candidates)
+                n_candidates = len(candidates)
                 final_entities = out[_FINAL_ENTITIES_FOR_COVERAGE_COL].loc[idx]
-                leaked = _filter_covered_missed_entities(leaked, final_entities)
-                n_final = len(final_entities) if isinstance(final_entities, list) else 0
-                total = n_final + len(leaked)
-                coverage = 1.0 if total == 0 else n_final / total
+                missed_entities = _find_missed_candidates(candidates, final_entities)
+                n_missed = len(missed_entities)
+                n_covered = n_candidates - n_missed
+                coverage = 1.0 if n_candidates == 0 else n_covered / n_candidates
                 coverage_vals.append(coverage)
-                leaked_lists.append(leaked)
+                missed_entities_list.append(missed_entities)
+                n_candidates_list.append(n_candidates)
 
         out[self.VALID_COL] = coverage_vals
-        out[self.INVALID_COL] = leaked_lists
+        out[self.INVALID_COL] = missed_entities_list
+        out[self.N_CANDIDATES_COL] = n_candidates_list
         return out
 
     def run_non_critical(
@@ -561,7 +565,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 raise ValueError("Entity coverage output is missing record IDs required for row alignment.")
 
             score_cols = [
-                col for col in (self.RAW_COL, self.VALID_COL, self.INVALID_COL) if col in result.dataframe.columns
+                col
+                for col in (self.RAW_COL, self.VALID_COL, self.INVALID_COL, self.N_CANDIDATES_COL)
+                if col in result.dataframe.columns
             ]
             out = prepared.drop(columns=score_cols, errors="ignore").merge(
                 result.dataframe[[RECORD_ID_COLUMN, *score_cols]],
@@ -582,6 +588,11 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 out[self.INVALID_COL] = out[self.INVALID_COL].apply(
                     lambda value: value if isinstance(value, list) else []
                 )
+            if self.N_CANDIDATES_COL not in out.columns:
+                out[self.N_CANDIDATES_COL] = None
+            else:
+                out[self.N_CANDIDATES_COL] = out[self.N_CANDIDATES_COL].astype(object)
+                out.loc[out[self.N_CANDIDATES_COL].isna(), self.N_CANDIDATES_COL] = None
             if not had_record_ids:
                 out = out.drop(columns=[RECORD_ID_COLUMN])
             return out, result.failed_records
@@ -591,6 +602,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]
+            out[self.N_CANDIDATES_COL] = None
             return out, []
 
     def evaluate(
@@ -601,7 +613,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> JudgeResult:
-        """Run leak detection against the supplied final entities."""
+        """Extract independent judge candidates and compute coverage against final entities."""
         working_df = self.prepare(dataframe)
         working_df[ROW_ORDER_COL] = range(len(working_df))
         effective_preview = min(preview_num_records, len(working_df)) if preview_num_records is not None else None
