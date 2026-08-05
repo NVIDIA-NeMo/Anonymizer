@@ -368,6 +368,15 @@ def test_resolve_overlaps_empty_input() -> None:
     assert resolve_overlaps([]) == []
 
 
+def test_resolve_overlaps_same_span_keeps_highest_score() -> None:
+    """When multiple labels share the exact same span, the highest-scoring label wins."""
+    last_name = EntitySpan("last_name_120_123", "Mum", "last_name", 120, 123, 0.719, "detector")
+    relationship = EntitySpan("relationship_120_123", "Mum", "relationship", 120, 123, 0.941, "detector")
+    resolved = resolve_overlaps([last_name, relationship])
+    assert len(resolved) == 1
+    assert resolved[0].label == "relationship"
+
+
 def test_validation_decisions_from_json_string() -> None:
     """Validation output arrives as JSON string after parquet round-trip."""
     entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
