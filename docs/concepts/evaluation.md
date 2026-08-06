@@ -51,7 +51,7 @@ The active judges depend on the anonymization strategy and `EvaluateConfig`:
 |------------|------------|
 | Entity Coverage | All anonymization strategies |
 | Detection Validity | Optional; enable with EvaluateConfig(compute_detection_validity=True) |
-| Type Fidelity, Attribute Fidelity, Relational Consistency** | Substitute mode only |
+| Type Fidelity, Attribute Fidelity, Relational Consistency | Substitute mode only |
 
 ---
 
