@@ -719,6 +719,19 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
     assert call_kwargs["evaluation"] == config.rewrite.evaluation
 
 
+def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+    combined_runner = Mock(spec=RewriteWorkflow)
+    combined_runner.run.return_value = rewrite_runner.run.return_value
+    anonymizer._combined_rewrite_runner = combined_runner
+
+    anonymizer.run(config=config, data=stub_input)
+
+    rewrite_runner.run.assert_not_called()
+    combined_runner.run.assert_called_once()
+
+
 def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, _, _, _ = _make_anonymizer()

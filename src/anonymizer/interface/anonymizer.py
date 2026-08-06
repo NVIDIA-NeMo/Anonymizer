@@ -62,6 +62,7 @@ from anonymizer.engine.ndd.model_loader import (
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
+from anonymizer.engine.rewrite.combined_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
@@ -114,6 +115,7 @@ class Anonymizer:
         detection_workflow: EntityDetectionWorkflow | None = None,
         replace_runner: ReplacementWorkflow | None = None,
         rewrite_runner: RewriteWorkflow | None = None,
+        combined_rewrite_runner: CombinedRewriteWorkflow | None = None,
     ) -> None:
         """Create an Anonymizer instance.
 
@@ -134,6 +136,7 @@ class Anonymizer:
             detection_workflow: Custom detection workflow (advanced/testing).
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
+            combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
         """
         _initialize_logging()
         # Tag DataDesigner telemetry events so they're filterable as anonymizer traffic in
@@ -183,6 +186,7 @@ class Anonymizer:
             adapter=self._adapter,
         )
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
+        self._combined_rewrite_runner = combined_rewrite_runner or CombinedRewriteWorkflow(adapter=self._adapter)
 
     def run(
         self,
@@ -593,7 +597,10 @@ class Anonymizer:
         elif config.rewrite is not None:
             logger.info("✏️ Running rewrite pipeline")
             t0 = time.perf_counter()
-            rewrite_result = self._rewrite_runner.run(
+            rewrite_runner = (
+                self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
+            )
+            rewrite_result = rewrite_runner.run(
                 detection_result.dataframe,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.rewrite,

@@ -131,6 +131,10 @@ class Rewrite(BaseModel):
         ge=0,
         description="Maximum repair rounds. Set to 0 to disable repair.",
     )
+    use_combined_graph: bool = Field(
+        default=False,
+        description="Run rewrite and conditional repair iterations in one Data Designer graph.",
+    )
     strict_entity_protection: bool = Field(
         default=False,
         description="If True, requires every entity to receive a protective disposition during sensitivity analysis.",
