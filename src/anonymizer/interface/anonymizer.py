@@ -369,9 +369,6 @@ class Anonymizer:
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
                 entity_labels=config.detect.entity_labels,
-                strict_entity_protection=(
-                    config.rewrite.strict_entity_protection if config.rewrite is not None else False
-                ),
                 data_summary=result.data_summary,
             )
         except KeyboardInterrupt:
@@ -454,7 +451,6 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
         entity_labels = getattr(output, "entity_labels", None)
-        strict_entity_protection = getattr(output, "strict_entity_protection", False)
         data_summary = getattr(output, "data_summary", None)
         num_records = len(output.trace_dataframe)
         mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
@@ -549,7 +545,6 @@ class Anonymizer:
                 failed_records=all_failed,
                 rewrite_config=rewrite_config,
                 entity_labels=entity_labels,
-                strict_entity_protection=strict_entity_protection,
                 data_summary=data_summary,
             )
         else:
@@ -596,7 +591,6 @@ class Anonymizer:
                 failed_records=replace_result.failed_records,
                 replace_method=replace_method,
                 entity_labels=entity_labels,
-                strict_entity_protection=strict_entity_protection,
                 data_summary=data_summary,
             )
 
@@ -800,7 +794,6 @@ class Anonymizer:
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
-            strict_entity_protection=(config.rewrite.strict_entity_protection if config.rewrite is not None else False),
             data_summary=data.data_summary,
         )
 

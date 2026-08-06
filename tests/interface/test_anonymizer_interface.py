@@ -1028,33 +1028,6 @@ def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: An
         )
 
 
-# ---------------------------------------------------------------------------
-# Tests: strict_entity_protection flows config -> result
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("strict", [True, False])
-def test_run_persists_strict_entity_protection(stub_input: AnonymizerInput, strict: bool) -> None:
-    """run() must copy config.rewrite.strict_entity_protection onto the result."""
-    config = AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=strict))
-    anonymizer, _, _, _ = _make_anonymizer()
-
-    result = anonymizer.run(config=config, data=stub_input)
-
-    assert result.strict_entity_protection is strict
-
-
-@pytest.mark.parametrize("strict", [True, False])
-def test_preview_persists_strict_entity_protection(stub_input: AnonymizerInput, strict: bool) -> None:
-    """preview() must copy config.rewrite.strict_entity_protection onto the PreviewResult."""
-    config = AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=strict))
-    anonymizer, _, _, _ = _make_anonymizer()
-
-    preview = anonymizer.preview(config=config, data=stub_input, num_records=1)
-
-    assert preview.strict_entity_protection is strict
-
-
 def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> None:
     """run()/preview() must preserve input context for later evaluation."""
     data = stub_input.model_copy(update={"data_summary": "Customer support transcripts."})

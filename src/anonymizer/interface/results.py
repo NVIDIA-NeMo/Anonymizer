@@ -64,9 +64,6 @@ class AnonymizerResult(_DisplayMixin):
             mode was used. Set by ``run()`` / ``preview()``; consumed by
             ``evaluate()`` to dispatch the rewrite judges. Mutually exclusive
             with ``replace_method``.
-        strict_entity_protection: Whether the rewrite ran with strict entity
-            protection. Set by ``run()`` / ``preview()``; preserved on the
-            result for reference.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
@@ -79,7 +76,6 @@ class AnonymizerResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
-    strict_entity_protection: bool = False
     data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
@@ -114,9 +110,6 @@ class PreviewResult(_DisplayMixin):
         rewrite_config: The privacy goal that produced this preview when rewrite
             mode was used. Set by ``preview()``; consumed by ``evaluate()`` to
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
-        strict_entity_protection: Whether the rewrite ran with strict entity
-            protection. Set by ``preview()``; preserved on the result for
-            reference.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
@@ -130,7 +123,6 @@ class PreviewResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
-    strict_entity_protection: bool = False
     data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
