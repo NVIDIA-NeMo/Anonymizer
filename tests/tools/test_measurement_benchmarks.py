@@ -785,7 +785,7 @@ model_configs: |
       entity_validator: [validator]
       entity_augmenter: augmenter
     evaluate:
-      detection_validity_judge: missing-evaluator
+      entity_coverage_judge: missing-evaluator
   model_configs:
     - alias: detector
       model: test/detector
@@ -809,7 +809,7 @@ configs:
     )
     spec = tool.load_spec(spec_path)
 
-    with pytest.raises(ValueError, match="evaluate.detection_validity_judge='missing-evaluator'"):
+    with pytest.raises(ValueError, match="evaluate.entity_coverage_judge='missing-evaluator'"):
         tool.preflight_suite(spec, spec_path=spec_path)
 
 
