@@ -280,6 +280,18 @@ class NddAdapter:
         with self._input_tokens_lock:
             return self._cumulative_input_tokens if self._cumulative_input_tokens > 0 else 0
 
+    def consume_input_tokens(self) -> int:
+        """Atomically return and reset the cumulative input token count.
+
+        Callers (e.g. telemetry) should use this instead of ``total_input_tokens``
+        so that each telemetry event reports only its own invocation's tokens rather
+        than a lifetime total that grows across multiple ``run()`` / ``preview()`` calls.
+        """
+        with self._input_tokens_lock:
+            tokens = self._cumulative_input_tokens
+            self._cumulative_input_tokens = 0
+            return tokens
+
     def _add_input_tokens(self, model_usage: dict[str, Any] | None) -> None:
         input_tokens = 0
         for usage in (model_usage or {}).values():
@@ -400,7 +412,8 @@ class NddAdapter:
                 except Exception:
                     logger.warning("Failed to write DataDesigner private message trace records after workflow failure")
                 _error_model_usage = usage_probe.model_usage()
-                self._add_input_tokens(_error_model_usage)
+                with self._run_lock:
+                    self._add_input_tokens(_error_model_usage)
                 record_ndd_workflow(
                     workflow_name=workflow_name,
                     model_aliases=model_aliases,
@@ -440,7 +453,8 @@ class NddAdapter:
             output_df=output_df,
         )
         _success_model_usage = usage_probe.model_usage()
-        self._add_input_tokens(_success_model_usage)
+        with self._run_lock:
+            self._add_input_tokens(_success_model_usage)
         record_ndd_workflow(
             workflow_name=workflow_name,
             model_aliases=model_aliases,

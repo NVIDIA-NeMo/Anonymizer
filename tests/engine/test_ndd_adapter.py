@@ -84,6 +84,14 @@ def test_total_input_tokens_defaults_to_zero() -> None:
     assert adapter.total_input_tokens == 0
 
 
+def test_consume_input_tokens_returns_and_resets() -> None:
+    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
+    adapter._add_input_tokens({"m": {"token_usage": {"input_tokens": 42}}})
+
+    assert adapter.consume_input_tokens() == 42
+    assert adapter.consume_input_tokens() == 0
+
+
 def test_add_input_tokens_sums_positive_counts_under_counter_lock() -> None:
     class CountingLock:
         def __init__(self) -> None:
