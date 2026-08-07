@@ -58,6 +58,21 @@ class BenchmarkWandbFinalization:
 
 
 _PUBLISHER_WANDB_MODULE: Any | None = None
+_RESUMABLE_CONFIG_REFRESH_KEYS = frozenset(
+    {
+        "benchmark_identity",
+        "benchmark_role",
+        "benchmark_kind",
+        "suite_version",
+        "branch",
+        "commit_sha",
+        "commit_short",
+        "pr_number",
+        "release_version",
+        "anonymizer_config_id",
+        "anonymizer_mode",
+    }
+)
 
 
 def require_wandb() -> Any:
@@ -83,6 +98,7 @@ def require_wandb() -> Any:
 
 _WANDB_AMBIENT_ALLOWLIST = frozenset(
     {
+        "WANDB_API_KEY",
         "WANDB_HTTP_TIMEOUT",
         "WANDB_INIT_TIMEOUT",
         "WANDB__SERVICE_WAIT",
@@ -222,7 +238,9 @@ class WandbPublisher:
                     raise RuntimeError("wandb.init returned a different run identity")
                 already_complete = _publication_already_complete(run, payload)
                 publication_state = _publication_state(run, already_complete=already_complete)
-                if not already_complete:
+                if already_complete:
+                    _refresh_resumed_complete_config(run, payload)
+                else:
                     _define_benchmark_metrics(run)
                     run.config.update(payload.config.sdk_values(), allow_val_change=True)
                     tables = {
@@ -359,6 +377,22 @@ def _publication_already_complete(run: Any, payload: WandbPublishPayload) -> boo
     if observed_digest not in {None, expected_digest}:
         raise RuntimeError("resumed W&B run contains different sealed content")
     return False
+
+
+def _refresh_resumed_complete_config(run: Any, payload: WandbPublishPayload) -> None:
+    desired = {
+        key: value for key, value in payload.config.sdk_values().items() if key in _RESUMABLE_CONFIG_REFRESH_KEYS
+    }
+    if not desired:
+        return
+    config = getattr(run, "config", None)
+    get_config = getattr(config, "get", None)
+    update_config = getattr(config, "update", None)
+    if not callable(get_config) or not callable(update_config):
+        raise RuntimeError("resumed W&B run does not expose mutable publication config")
+    delta = {key: value for key, value in desired.items() if get_config(key) != value}
+    if delta:
+        update_config(delta, allow_val_change=True)
 
 
 def _publication_state(run: Any, *, already_complete: bool) -> WandbPublicationState:

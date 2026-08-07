@@ -12,8 +12,11 @@ import pytest
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_VALID,
+    COL_ENTITY_COVERAGE,
+    COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_MISSED_ENTITIES,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
 )
@@ -24,6 +27,7 @@ from anonymizer.interface.display import (
     _build_replaced_entities,
     _extract_judge_scores,
     _normalize_replacement_map,
+    _render_entity_coverage_section,
     _render_highlighted_text,
     _verdict_badge,
     render_record_html,
@@ -765,6 +769,53 @@ def test_render_record_html_rewrite_mode_no_detection_valid_column_omits_section
     )
     result = render_record_html(row, record_index=0)
     assert "Detection Validity" not in result
+
+
+def test_entity_coverage_display_uses_judge_candidate_count_not_anonymizer_detections() -> None:
+    """The fraction shown must be n_covered/n_candidates from the judge, not n_detected/total.
+
+    4 judge candidates, 3 covered, 1 missed → 3/4 (75%).
+    If the display used the anonymizer's final_entities count (10) it would show 9/10 instead.
+    """
+    row = pd.Series(
+        {
+            COL_ENTITY_COVERAGE: 0.75,
+            COL_MISSED_ENTITIES: [{"value": "MissedOrg", "label": "org", "reasoning": "org"}],
+            COL_ENTITY_COVERAGE_N_CANDIDATES: 4,
+        }
+    )
+    html = _render_entity_coverage_section(row)
+    assert "3/4" in html
+    assert "75" in html
+
+
+def test_entity_coverage_display_shows_unavailable_when_score_is_none() -> None:
+    row = pd.Series(
+        {
+            COL_ENTITY_COVERAGE: None,
+            COL_MISSED_ENTITIES: [],
+            COL_ENTITY_COVERAGE_N_CANDIDATES: None,
+        }
+    )
+    html = _render_entity_coverage_section(row)
+    assert "Unavailable" in html
+
+
+@pytest.mark.parametrize("is_rewrite", [False, True])
+def test_entity_coverage_display_explains_zero_candidate_success(is_rewrite: bool) -> None:
+    row = pd.Series(
+        {
+            COL_ENTITY_COVERAGE: 1.0,
+            COL_MISSED_ENTITIES: [],
+            COL_ENTITY_COVERAGE_N_CANDIDATES: 0,
+        }
+    )
+
+    html = _render_entity_coverage_section(row, is_rewrite=is_rewrite)
+
+    assert "Satisfied" in html
+    assert "No candidates found" in html
+    assert "0/0" not in html
 
 
 def test_rewrite_needs_human_review_label_is_rewrite_need_review() -> None:

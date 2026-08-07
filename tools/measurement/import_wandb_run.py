@@ -27,6 +27,7 @@ from measurement_tools.wandb_logging import build_outbound_measurements
 from measurement_tools.wandb_models import (
     PUBLICATION_COMPLETE_KEY,
     PUBLICATION_SEAL_DIGEST_KEY,
+    BenchmarkIdentityMetadata,
     BenchmarkMetadata,
     ConfigMetadata,
     ExecutionMetadata,
@@ -102,7 +103,11 @@ def stable_import_run_id(
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()[:32]
 
 
-def build_import_metadata(seal_snapshot: CompletionSealSnapshot) -> WandbRunMetadata:
+def build_import_metadata(
+    seal_snapshot: CompletionSealSnapshot,
+    *,
+    benchmark_identity: BenchmarkIdentityMetadata | None = None,
+) -> WandbRunMetadata:
     seal = seal_snapshot.seal
     return WandbRunMetadata(
         run_kind="imported_case",
@@ -127,6 +132,7 @@ def build_import_metadata(seal_snapshot: CompletionSealSnapshot) -> WandbRunMeta
             ),
         ),
         git=GitMetadata(commit=seal.producer.commit),
+        benchmark_identity=benchmark_identity,
         workloads=(WorkloadMetadata(id=seal.case.workload_id),),
         configs=(ConfigMetadata(id=seal.case.config_id),),
         matrix=(
@@ -153,10 +159,11 @@ def build_import_payload(
     snapshot: MeasurementSnapshot,
     seal_snapshot: CompletionSealSnapshot,
     staging_dir: Path,
+    benchmark_identity: BenchmarkIdentityMetadata | None = None,
 ) -> WandbPublishPayload:
     """Construct the complete SDK-bound payload before W&B initialization."""
     verify_completion_seal(snapshot, seal_snapshot.seal)
-    metadata = build_import_metadata(seal_snapshot)
+    metadata = build_import_metadata(seal_snapshot, benchmark_identity=benchmark_identity)
     terminal = snapshot.terminal_stage()
     history, summary, tables = build_outbound_measurements(
         snapshot,
@@ -201,6 +208,7 @@ def prepare_sealed_import(
     *,
     seal_path: Path,
     settings: ResolvedWandbConfig,
+    benchmark_identity: BenchmarkIdentityMetadata | None = None,
 ) -> PreparedWandbImport:
     """Capture and validate one sealed case without importing the W&B SDK."""
     if not settings.enabled:
@@ -221,6 +229,7 @@ def prepare_sealed_import(
             snapshot=snapshot,
             seal_snapshot=seal_snapshot,
             staging_dir=staging_dir,
+            benchmark_identity=benchmark_identity,
         )
     except (OSError, ValueError) as exc:
         raise ImportInputError(str(exc)) from None
@@ -236,14 +245,55 @@ def import_sealed_run(
     *,
     seal_path: Path,
     settings: ResolvedWandbConfig,
+    benchmark_identity: BenchmarkIdentityMetadata | None = None,
 ) -> WandbPublishResult:
     """Capture, verify, and strictly publish one sealed external case."""
-    prepared = prepare_sealed_import(measurement_path, seal_path=seal_path, settings=settings)
+    prepared = prepare_sealed_import(
+        measurement_path,
+        seal_path=seal_path,
+        settings=settings,
+        benchmark_identity=benchmark_identity,
+    )
     return WandbPublisher().publish_payload(
         settings,
         payload=prepared.payload,
         measurement_sha256=prepared.measurement_sha256,
         record_count=prepared.record_count,
+    )
+
+
+def build_benchmark_identity(
+    *,
+    benchmark_role: str | None = None,
+    benchmark_kind: str | None = None,
+    suite_version: str | None = None,
+    branch: str | None = None,
+    commit_sha: str | None = None,
+    commit_short: str | None = None,
+    pr_number: int | None = None,
+    release_version: str | None = None,
+    anonymizer_config_id: str | None = None,
+    anonymizer_mode: str | None = None,
+) -> BenchmarkIdentityMetadata | None:
+    if commit_sha is not None and commit_short is None:
+        commit_short = commit_sha[:12]
+    values = {
+        "role": benchmark_role,
+        "kind": benchmark_kind,
+        "suite_version": suite_version,
+        "branch": branch,
+        "commit_sha": commit_sha,
+        "commit_short": commit_short,
+        "pr_number": pr_number,
+        "release_version": release_version,
+        "anonymizer_config_id": anonymizer_config_id,
+        "anonymizer_mode": anonymizer_mode,
+    }
+    if all(value is None for value in values.values()):
+        return None
+    return BenchmarkIdentityMetadata.model_validate(
+        {key: value for key, value in values.items() if value is not None},
+        strict=True,
     )
 
 
@@ -261,6 +311,16 @@ def main(
     wandb_run_name: Annotated[str | None, cyclopts.Parameter("--wandb-run-name")] = None,
     wandb_tags: Annotated[str | None, cyclopts.Parameter("--wandb-tags")] = None,
     wandb_log_tables: Annotated[bool | None, cyclopts.Parameter("--wandb-log-tables")] = None,
+    benchmark_role: Annotated[str | None, cyclopts.Parameter("--benchmark-role")] = None,
+    benchmark_kind: Annotated[str | None, cyclopts.Parameter("--benchmark-kind")] = None,
+    suite_version: Annotated[str | None, cyclopts.Parameter("--suite-version")] = None,
+    branch: Annotated[str | None, cyclopts.Parameter("--branch")] = None,
+    commit_sha: Annotated[str | None, cyclopts.Parameter("--commit-sha")] = None,
+    commit_short: Annotated[str | None, cyclopts.Parameter("--commit-short")] = None,
+    pr_number: Annotated[int | None, cyclopts.Parameter("--pr-number")] = None,
+    release_version: Annotated[str | None, cyclopts.Parameter("--release-version")] = None,
+    anonymizer_config_id: Annotated[str | None, cyclopts.Parameter("--anonymizer-config-id")] = None,
+    anonymizer_mode: Annotated[str | None, cyclopts.Parameter("--anonymizer-mode")] = None,
     json_output: Annotated[bool, cyclopts.Parameter("--json")] = False,
     log_format: Annotated[LogFormat, cyclopts.Parameter("--log-format")] = LogFormat.plain,
 ) -> None:
@@ -279,7 +339,24 @@ def main(
             wandb_tags=wandb_tags,
             wandb_log_tables=wandb_log_tables,
         )
-        prepared = prepare_sealed_import(measurement_path, seal_path=resolved_seal_path, settings=settings)
+        benchmark_identity = build_benchmark_identity(
+            benchmark_role=benchmark_role,
+            benchmark_kind=benchmark_kind,
+            suite_version=suite_version,
+            branch=branch,
+            commit_sha=commit_sha,
+            commit_short=commit_short,
+            pr_number=pr_number,
+            release_version=release_version,
+            anonymizer_config_id=anonymizer_config_id,
+            anonymizer_mode=anonymizer_mode,
+        )
+        prepared = prepare_sealed_import(
+            measurement_path,
+            seal_path=resolved_seal_path,
+            settings=settings,
+            benchmark_identity=benchmark_identity,
+        )
     except ValidationError as exc:
         log_bad_input(logger, summarize_validation_error(exc))
         raise SystemExit(125) from exc

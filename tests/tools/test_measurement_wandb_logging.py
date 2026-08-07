@@ -306,25 +306,21 @@ def test_wandb_stage_summary_uses_only_terminal_stage_but_table_preserves_all(
 
 
 def test_wandb_scalar_registry_matches_package_field_catalog(wandb_logging_tool: ModuleType) -> None:
-    from measurement_tools.wandb_metric_schema import (
-        AGGREGATED_MEASUREMENT_FIELDS,
-        SCALAR_AGGREGATION_BY_FIELD,
-    )
-    from measurement_tools.wandb_models import WandbHistoryPayload
-
     from anonymizer.measurement.fields import (
         SCALAR_ADDITIVE_FIELDS,
         SCALAR_AVERAGED_FIELDS,
         SCALAR_LAST_VALUE_FIELDS,
     )
 
+    metric_schema = sys.modules["measurement_tools.wandb_metric_schema"]
+    models = sys.modules["measurement_tools.wandb_models"]
     field_groups = (SCALAR_LAST_VALUE_FIELDS, SCALAR_ADDITIVE_FIELDS, SCALAR_AVERAGED_FIELDS)
     expected_fields = frozenset().union(*field_groups)
 
     assert sum(map(len, field_groups)) == len(expected_fields)
-    assert frozenset(SCALAR_AGGREGATION_BY_FIELD) == expected_fields
-    for field_name in AGGREGATED_MEASUREMENT_FIELDS:
-        WandbHistoryPayload(metrics={f"measurement/record/{field_name}": 0})
+    assert frozenset(metric_schema.SCALAR_AGGREGATION_BY_FIELD) == expected_fields
+    for field_name in metric_schema.AGGREGATED_MEASUREMENT_FIELDS:
+        models.WandbHistoryPayload(metrics={f"measurement/record/{field_name}": 0})
 
 
 def test_wandb_aggregates_rat_bench_reidentification_record(
@@ -452,6 +448,38 @@ def test_wandb_config_projects_only_declared_metadata(wandb_setup_tool: ModuleTy
     assert config.sdk_values()["sweep_param_configs_all_detect_gliner_threshold"] == 0.3
 
 
+def test_wandb_benchmark_identity_requires_pr_for_candidate_branch(wandb_import_tool: ModuleType) -> None:
+    with pytest.raises(ValidationError, match="requires pr_number"):
+        wandb_import_tool.BenchmarkIdentityMetadata(kind="branch", branch="feature/candidate")
+
+
+def test_wandb_benchmark_identity_rejects_inconsistent_commit_identifiers(wandb_import_tool: ModuleType) -> None:
+    with pytest.raises(ValidationError, match="commit_short must match"):
+        wandb_import_tool.BenchmarkIdentityMetadata(
+            kind="experiment",
+            commit_sha="abcdef0123456789abcdef0123456789abcdef01",
+            commit_short="1234567",
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "kind"),
+    [
+        ("main-baseline", "pr"),
+        ("release-baseline", "main"),
+        ("candidate", "main"),
+        ("candidate", "release"),
+    ],
+)
+def test_wandb_benchmark_identity_rejects_incompatible_role_kind_pairs(
+    role: str, kind: str, wandb_import_tool: ModuleType
+) -> None:
+    with pytest.raises(ValidationError, match="incompatible"):
+        wandb_import_tool.BenchmarkIdentityMetadata(
+            role=role, kind=kind, pr_number=210 if kind in {"pr", "branch"} else None
+        )
+
+
 def test_wandb_run_tags_filter_sensitive_generated_values(wandb_setup_tool: ModuleType) -> None:
     metadata = wandb_setup_tool.WandbRunMetadata.model_validate(
         {
@@ -539,7 +567,7 @@ def test_wandb_environment_isolates_routing_and_restores_exactly(
     with wandb_setup_tool.WandbSdkEnvironment(settings):
         assert os.environ["WANDB_GROUP"] == "resolved-group"
         assert os.environ["WANDB_PROJECT"] == "resolved-project"
-        assert "WANDB_API_KEY" not in os.environ
+        assert os.environ["WANDB_API_KEY"] == "auth-token"
         assert os.environ["WANDB_ERROR_REPORTING"] == "false"
         assert "UNRELATED" not in os.environ
         with pytest.raises(RuntimeError, match="nested or concurrent"):
