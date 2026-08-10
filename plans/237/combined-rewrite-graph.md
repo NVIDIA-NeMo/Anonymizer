@@ -4,7 +4,7 @@
 # Combined Rewrite Graph
 
 Tracks the proof of concept for [GitHub issue #237](https://github.com/NVIDIA-NeMo/Anonymizer/issues/237).
-It extends the rewrite portion of [Anonymizer Workflow Columns](custom-column-plugins/anonymizer-workflow-columns.md).
+It extends the rewrite portion of [Anonymizer Workflow Columns](../custom-column-plugins/anonymizer-workflow-columns.md).
 
 ## Scope
 
