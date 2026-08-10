@@ -201,18 +201,15 @@ def _compile_vllm(
     tuple[Capability, ...],
     tuple[CompatibilityEvidence, ...],
 ]:
+    if not isinstance(intent.task, Generation):
+        _raise_unsupported_task_engine(intent.task.kind, engine.kind)
     command, runtime = _vllm_command(intent, engine)
     declared = ("chat-completions",)
-    outcome = "characterized" if isinstance(intent.task, Generation) else "runtime-probe-required"
     evidence = (
         CompatibilityEvidence(
             rule="vllm-openai-compatible-v1",
-            outcome=outcome,
-            detail=(
-                "vLLM exposes chat completions for generation"
-                if outcome == "characterized"
-                else "entity-detection capabilities must be established by the run probe"
-            ),
+            outcome="characterized",
+            detail="vLLM exposes chat completions for generation",
         ),
     )
     return command, runtime, declared, evidence
@@ -226,8 +223,8 @@ def _vllm_command(
     match intent.placement:
         case LocalProcessPlacement() as placement:
             argv = _literal_arguments(
-                engine.executable,
-                "serve",
+                engine.python_executable,
+                "tools/inference_service_compiler/vllm_server.py",
                 intent.model.model_id,
                 "--host",
                 placement.host,

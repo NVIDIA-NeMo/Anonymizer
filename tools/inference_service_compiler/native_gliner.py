@@ -36,10 +36,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, cast
 
-import structlog  # type: ignore[unresolved-import]
+import structlog  # ty: ignore[unresolved-import] -- optional PEP 723 server dependency
 import uvicorn
 from cyclopts import App
-from fastapi import FastAPI, HTTPException, Request  # type: ignore[unresolved-import]
+
+_fastapi = importlib.import_module("fastapi")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8001
@@ -133,23 +134,41 @@ class LocalRuntime(Protocol):
         """Detect normalized entities for each chunk."""
 
 
+class RequestLike(Protocol):
+    """Request surface consumed by the OpenAI-compatible endpoint."""
+
+    async def json(self) -> object:
+        """Decode the request body."""
+
+
+class NvidiaModel(Protocol):
+    """Local API consumed from the optional original GLiNER package."""
+
+    def inference(self, **kwargs: object) -> object:
+        """Run one original GLiNER batch."""
+
+
+class Gliner2Model(Protocol):
+    """Local API consumed from the optional GLiNER2 package."""
+
+    def batch_extract_entities(self, chunks: list[str], labels: list[str], **kwargs: object) -> object:
+        """Run one GLiNER2 batch."""
+
+
 class NvidiaGlinerRuntime:
     """Adapter for the original `gliner` local inference API."""
 
-    def __init__(self, model: object) -> None:
+    def __init__(self, model: NvidiaModel) -> None:
         self._model = model
 
     def infer(self, chunks: list[str], params: DetectParams) -> list[list[Entity]]:
-        raw = cast(
-            object,
-            self._model.inference(  # type: ignore[attr-defined]
-                texts=chunks,
-                labels=list(params.labels),
-                threshold=params.threshold,
-                flat_ner=params.flat_ner,
-                relations=[],
-                batch_size=params.inference_batch_size,
-            ),
+        raw = self._model.inference(
+            texts=chunks,
+            labels=list(params.labels),
+            threshold=params.threshold,
+            flat_ner=params.flat_ner,
+            relations=[],
+            batch_size=params.inference_batch_size,
         )
         return normalize_nvidia_output(raw)
 
@@ -157,20 +176,17 @@ class NvidiaGlinerRuntime:
 class Gliner2Runtime:
     """Adapter for GLiNER2's local batch extraction API."""
 
-    def __init__(self, model: object) -> None:
+    def __init__(self, model: Gliner2Model) -> None:
         self._model = model
 
     def infer(self, chunks: list[str], params: DetectParams) -> list[list[Entity]]:
-        raw = cast(
-            object,
-            self._model.batch_extract_entities(  # type: ignore[attr-defined]
-                chunks,
-                list(params.labels),
-                threshold=params.threshold,
-                include_confidence=True,
-                include_spans=True,
-                batch_size=params.inference_batch_size,
-            ),
+        raw = self._model.batch_extract_entities(
+            chunks,
+            list(params.labels),
+            threshold=params.threshold,
+            include_confidence=True,
+            include_spans=True,
+            batch_size=params.inference_batch_size,
         )
         return normalize_gliner2_output(raw)
 
@@ -572,7 +588,7 @@ def configure_logging(log_format: LogFormat) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_api: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_api: object) -> AsyncIterator[None]:
     """Own the local runtime and its single inference worker for API lifetime."""
     global runtime, detector
     if state is None:
@@ -589,7 +605,7 @@ async def lifespan(_api: FastAPI) -> AsyncIterator[None]:
             await detector.stop()
 
 
-api = FastAPI(lifespan=lifespan)
+api = _fastapi.FastAPI(lifespan=lifespan)
 app = api
 
 
@@ -601,16 +617,16 @@ def list_models() -> dict[str, object]:
 
 
 @api.post("/v1/chat/completions")
-async def chat_completions(request: Request) -> dict[str, object]:
+async def chat_completions(request: RequestLike) -> dict[str, object]:
     """Detect requested entity labels and return Anonymizer's JSON-string content."""
     if detector is None:
-        raise HTTPException(status_code=503, detail="GLiNER model is not loaded")
+        raise _fastapi.HTTPException(status_code=503, detail="GLiNER model is not loaded")
     try:
         body = require_mapping(await request.json(), "request")
         params = parse_detect_params(body)
         text = extract_text(body.get("messages", []))
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _fastapi.HTTPException(status_code=422, detail=str(exc)) from exc
     entities = await detector.detect(text, params)
     content = json.dumps({"entities": [entity.as_dict() for entity in entities]})
     return {
