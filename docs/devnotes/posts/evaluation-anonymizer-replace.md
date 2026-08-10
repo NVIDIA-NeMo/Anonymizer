@@ -23,7 +23,7 @@ This is Part 1 of a two-part series on evaluation in Anonymizer. It explores how
 
 <div style="text-align: center;" markdown>
 
-![Screenshot of display_record output for a Substitute result showing entity highlights, entity coverage, detection validity, three substitution-quality verdicts, and the replacement map.](assets/evaluate-substitute-display-record.png){ loading=lazy }
+![An illustration of anonymized records being evaluated for valid and inconsistent entity replacements by a privacy-focused detective.](assets/evaluation-replace-hero.png){ loading=lazy }
 
 </div>
 
