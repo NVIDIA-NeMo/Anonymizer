@@ -156,7 +156,8 @@ anonymizer --help         # CLI usage
 mise run install-pre-commit  # Install pre-commit hooks
 ```
 
-Run `mise tasks` to list the available developer commands. Tasks live in `.mise/tasks/` and are used by CI. The Makefile retains deprecated compatibility aliases for existing scripts.
+Run `mise tasks` to list the available developer commands. Tasks live in `.mise/tasks/` and are used by CI. The
+Makefile only exposes `help`, `install-mise`, and `setup`; run developer commands with Mise.
 
 ### Local endpoint credentials
 
