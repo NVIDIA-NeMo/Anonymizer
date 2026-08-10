@@ -202,7 +202,7 @@ Every Python file must include `from __future__ import annotations` after the li
 
 ## License Headers
 
-Every Python and Markdown file requires an SPDX header at the top (enforced by `tools/codestyle/copyright_fixer.py --check`, run via `make copyright-check`). Files listed in `.copyrightignore` are exempt.
+Every Python and Markdown file requires an SPDX header at the top (enforced by `tools/codestyle/copyright_fixer.py --check`, run via `mise run copyright-check`). Files listed in `.copyrightignore` are exempt.
 
 ---
 
