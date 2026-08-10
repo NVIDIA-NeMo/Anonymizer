@@ -2576,7 +2576,7 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None)
+            <td><code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None)
 
   
       dataclass
@@ -2588,7 +2588,7 @@
             </td>
           </tr>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None)
+            <td><code><a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None)
 
   
       dataclass
@@ -2623,7 +2623,7 @@
 
 
 <h3 id="anonymizer.interface.results.AnonymizerResult" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None)</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -2731,6 +2731,19 @@ with <code>replace_method</code>.</p>
               </div>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="anonymizer.interface.results.AnonymizerResult.data_summary">data_summary</span></code></td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional dataset context supplied with the original input.
+Preserved for <code>evaluate()</code> so entity-coverage judging uses the
+same context as detection.</p>
+              </div>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -2773,7 +2786,7 @@ with <code>replace_method</code>.</p>
 
 
 <h3 id="anonymizer.interface.results.PreviewResult" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None)</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -2888,6 +2901,19 @@ from a pre-strategy-tracking format.</p>
                 <p>The privacy goal that produced this preview when rewrite
 mode was used. Set by <code>preview()</code>; consumed by <code>evaluate()</code> to
 dispatch the rewrite judges. Mutually exclusive with <code>replace_method</code>.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="anonymizer.interface.results.PreviewResult.data_summary">data_summary</span></code></td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional dataset context supplied with the original input.
+Preserved for <code>evaluate()</code> so entity-coverage judging uses the
+same context as detection.</p>
               </div>
             </td>
           </tr>

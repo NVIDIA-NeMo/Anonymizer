@@ -576,6 +576,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#entity-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Coverage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#entity-detection-judge" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -691,6 +702,17 @@
   
     <nav class="md-nav" aria-label="Rewrite Evaluation">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entity-coverage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Coverage
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#entity-detection-judge_1" class="md-nav__link">
@@ -2605,6 +2627,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#entity-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Coverage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#entity-detection-judge" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2720,6 +2753,17 @@
   
     <nav class="md-nav" aria-label="Rewrite Evaluation">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entity-coverage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Coverage
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#entity-detection-judge_1" class="md-nav__link">
@@ -2925,14 +2969,101 @@ with open("/tmp/preview.pkl", "rb") as f:
     loaded = pickle.load(f)
 
 evaluated = anonymizer.evaluate(loaded)</code></pre>
-<p>Four LLM judges run per record: one that scores detection quality and three that score replacement quality (Substitute mode only).</p>
+<p>The active judges depend on the anonymization strategy and <code>EvaluateConfig</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Evaluation</th>
+<th>Applies to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Entity Coverage</td>
+<td>All anonymization strategies</td>
+</tr>
+<tr>
+<td>Detection Validity</td>
+<td>Optional; enable with EvaluateConfig(compute_detection_validity=True)</td>
+</tr>
+<tr>
+<td>Type Fidelity, Attribute Fidelity, Relational Consistency</td>
+<td>Substitute mode only</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="entity-coverage">Entity Coverage<a class="headerlink" href="#entity-coverage" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>"Which sensitive values in the original text did the anonymizer fail to detect?"</p>
+</blockquote>
+<p>Entity coverage is the primary <strong>judge-anchored recall</strong> metric and <strong>always runs</strong>. The judge scans the original text independently to extract all in-scope PII candidates, without knowledge of what the anonymizer detected. After scope and literal-span filtering, candidates are deduplicated by normalized value. A deterministic postprocessing step then classifies each unique candidate value as covered (also detected by the anonymizer) or missed (not detected). The score is <code>n_covered / (n_covered + n_missed)</code> — recall over the judge's unique candidate values.</p>
+<p>Note: the judge measures detection recall, not output leakage. A value detected but replaced with a poor substitute still scores as covered. Extra anonymizer detections do not directly enter the numerator or denominator, though a detection that matches a judge candidate under the value-matching rules classifies that candidate as covered. Matching is value-based; detection validity separately evaluates whether detected value-label pairs are correct.</p>
+<p>The judge is scoped and contextualized by the same signals used during anonymization:</p>
+<ul>
+<li><strong><code>entity_labels</code></strong> — the detection taxonomy in scope; the judge only reports values whose type falls within it.</li>
+<li><strong><code>data_summary</code></strong> — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Output column</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_coverage</code></td>
+<td><code>float \| None</code></td>
+<td><code>n_covered / (n_covered + n_missed)</code> — fraction of the judge's unique candidate values that the anonymizer detected. <code>1.0</code> means no missed entities; <code>None</code> if the judge was unavailable.</td>
+</tr>
+<tr>
+<td><code>missed_entities</code></td>
+<td><code>list</code></td>
+<td>Each unique candidate value not detected by the anonymizer, with its <code>value</code>, judge-assigned <code>label</code>, and one-sentence <code>reasoning</code>. Empty when no entities were missed.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Special values:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th><code>entity_coverage</code></th>
+<th><code>missed_entities</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Judge found no PII candidates in the text</td>
+<td><code>1.0</code> — No candidates found by the judge</td>
+<td><code>[]</code></td>
+</tr>
+<tr>
+<td>Judge found candidates and anonymizer caught all</td>
+<td><code>1.0</code></td>
+<td><code>[]</code></td>
+</tr>
+<tr>
+<td>Judge found candidates and anonymizer missed some</td>
+<td>0–1 fraction</td>
+<td>populated</td>
+</tr>
+<tr>
+<td>Judge call failed or returned a malformed response</td>
+<td><code>None</code></td>
+<td><code>[]</code></td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h3 id="entity-detection-judge">Entity Detection Judge<a class="headerlink" href="#entity-detection-judge" title="Permanent link">&para;</a></h3>
 <h4 id="detection-validity">Detection Validity<a class="headerlink" href="#detection-validity" title="Permanent link">&para;</a></h4>
 <blockquote>
 <p>"Are the detected entities actually correct (value, label) pairs in context?"</p>
 </blockquote>
-<p>This judge runs regardless of which replace mode was used. It looks at each detected span and flags:</p>
+<p>Detection validity is disabled by default. To enable it, set <code>compute_detection_validity=True</code> in <code>EvaluateConfig</code>. This metric is intended for internal model and threshold evaluation. It examines each detected span and flags:</p>
 <ul>
 <li><strong>false_positive</strong> — the span is not actually identifying or sensitive in this context (common word, generic phrase, boilerplate).</li>
 <li><strong>wrong_label</strong> — the span is sensitive but the label sits in a clearly different domain (e.g. a company name labeled <code>first_name</code>). Sibling labels within the same broad domain are treated as valid.</li>
@@ -3092,20 +3223,22 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
 <p>For a tabular overview across all records:</p>
 <pre class="highlight"><code class="language-python">evaluated.dataframe[
     [
-        "detection_valid",
+        "entity_coverage",
         "type_fidelity_valid",
         "attribute_fidelity_valid",
         "relational_consistency_valid",
+        # "detection_valid" — present only if compute_detection_validity=True
     ]
 ]</code></pre>
 <p>Use <code>trace_dataframe</code> for the full internal trace including raw judge outputs.</p>
 <hr />
 <h3 id="model-roles">Model roles<a class="headerlink" href="#model-roles" title="Permanent link">&para;</a></h3>
-<p>All four judges default to <code>gpt-oss-120b</code>. Defaults are defined in <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml"><code>evaluate.yaml</code></a>. Override them by passing a <code>model_configs</code> YAML to <code>Anonymizer(model_configs=...)</code> — see <a href="../models/">Models</a> for the full override pattern.</p>
-<p>The four roles are <code>detection_validity_judge</code>, <code>replace_type_fidelity_judge</code>, <code>replace_attribute_fidelity_judge</code>, and <code>replace_relational_consistency_judge</code>.</p>
+<p>The entity coverage judge defaults to <code>nemotron-super</code>; the other replace-evaluation judges default to <code>gpt-oss-120b</code>. Defaults are defined in <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml"><code>evaluate.yaml</code></a>. Override them by passing a <code>model_configs</code> YAML to <code>Anonymizer(model_configs=...)</code> — see <a href="../models/">Models</a> for the full override pattern.</p>
+<p>The roles are <code>entity_coverage_judge</code>, <code>detection_validity_judge</code>, <code>replace_type_fidelity_judge</code>, <code>replace_attribute_fidelity_judge</code>, and <code>replace_relational_consistency_judge</code>.</p>
 <pre class="highlight"><code class="language-yaml"># my_models.yaml
 selected_models:
   evaluate:
+    entity_coverage_judge: your-model-alias
     detection_validity_judge: your-model-alias
     replace_type_fidelity_judge: your-model-alias
     replace_attribute_fidelity_judge: your-model-alias
@@ -3118,7 +3251,7 @@ selected_models:
 <p><strong>Automatic (always runs)</strong> — leakage mass, utility score, weighted leakage rate, and <code>needs_human_review</code> are computed as part of every <code>run()</code> / <code>preview()</code> call. See <a href="../rewrite/">Rewrite</a> for the repair loop and output columns.</p>
 </li>
 <li>
-<p><strong>Post-hoc LLM judges (optional)</strong> — call <code>Anonymizer.evaluate()</code> on a completed rewrite result to add the entity detection judge and three holistic quality rubrics.</p>
+<p><strong>Post-hoc LLM judges (optional)</strong> — call <code>Anonymizer.evaluate()</code> on a completed rewrite result to add the entity coverage judge (always), three holistic quality rubrics (always), and the detection validity judge (only with <code>EvaluateConfig(compute_detection_validity=True)</code>).</p>
 </li>
 </ol>
 <pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
@@ -3144,8 +3277,11 @@ with open("/tmp/preview.pkl", "rb") as f:
 
 evaluated = anonymizer.evaluate(loaded)</code></pre>
 <hr />
+<h3 id="entity-coverage_1">Entity Coverage<a class="headerlink" href="#entity-coverage_1" title="Permanent link">&para;</a></h3>
+<p>Same judge as in replace mode — see <a href="#entity-coverage">Entity Coverage</a> above. It <strong>always runs</strong> and emits <code>entity_coverage</code> and <code>missed_entities</code>.</p>
+<hr />
 <h3 id="entity-detection-judge_1">Entity Detection Judge<a class="headerlink" href="#entity-detection-judge_1" title="Permanent link">&para;</a></h3>
-<p>Same judge as in replace mode — see <a href="#entity-detection-judge">Entity Detection Judge</a> above. In rewrite mode, <code>detection_valid</code> is returned as a <strong>0–1 fraction</strong> (the share of detected entities that passed), rather than a boolean. A value of <code>1.0</code> means all detections are valid; lower values mean more entities were flagged — the value itself is the fraction that passed.</p>
+<p>Same judge as in replace mode — see <a href="#entity-detection-judge">Entity Detection Judge</a> above, and like there it is <strong>opt-in</strong> via <code>EvaluateConfig(compute_detection_validity=True)</code> (off by default). In rewrite mode, <code>detection_valid</code> is returned as a <strong>0–1 fraction</strong> (the share of detected entities that passed), rather than a boolean. A value of <code>1.0</code> means all detections are valid; lower values mean more entities were flagged — the value itself is the fraction that passed.</p>
 <table>
 <thead>
 <tr>
@@ -3297,17 +3433,19 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
 }</code></pre>
 <hr />
 <h3 id="reading-rewrite-evaluation-results">Reading rewrite evaluation results<a class="headerlink" href="#reading-rewrite-evaluation-results" title="Permanent link">&para;</a></h3>
-<p><code>display_record()</code> renders a formatted per-record view that includes the detection validity fraction and all three judge rubrics alongside the rewritten text:</p>
+<p><code>display_record()</code> renders a formatted per-record view that includes entity coverage, all three judge rubrics, and (when enabled) the detection validity fraction alongside the rewritten text:</p>
 <pre class="highlight"><code class="language-python">evaluated.display_record(0)</code></pre>
 <p>For a tabular overview across all records:</p>
-<pre class="highlight"><code class="language-python">evaluated.dataframe[["detection_valid", "judge_evaluation"]]</code></pre>
+<pre class="highlight"><code class="language-python">evaluated.dataframe[["entity_coverage", "judge_evaluation"]]
+# add "detection_valid" if you evaluated with compute_detection_validity=True</code></pre>
 <p>Use <code>trace_dataframe</code> for the full internal trace including raw judge outputs.</p>
 <hr />
 <h3 id="model-roles_1">Model roles<a class="headerlink" href="#model-roles_1" title="Permanent link">&para;</a></h3>
-<p>The rewrite quality judge defaults to <code>nemotron-30b-thinking</code>. The detection validity judge shares the <code>detection_validity_judge</code> role used by replace evaluation. Defaults are defined in <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml"><code>evaluate.yaml</code></a>. Override them via <code>model_configs</code>:</p>
+<p>The rewrite quality judge defaults to <code>nemotron-30b-thinking</code> and the entity coverage judge to <code>nemotron-super</code>. The detection validity judge shares the <code>detection_validity_judge</code> role used by replace evaluation. Defaults are defined in <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml"><code>evaluate.yaml</code></a>. Override them via <code>model_configs</code>:</p>
 <pre class="highlight"><code class="language-yaml"># my_models.yaml
 selected_models:
   evaluate:
+    entity_coverage_judge: your-model-alias
     detection_validity_judge: your-model-alias
     rewrite_judge: your-model-alias</code></pre>
 

@@ -2636,7 +2636,7 @@ invocation. Telemetry is opt-out via:</p>
 <p>Related environment variables (read at runtime, not import time):</p>
 <ul>
 <li><code>NEMO_TELEMETRY_ENABLED</code>: set to <code>false</code> / <code>0</code> / <code>no</code> to disable.</li>
-<li><code>NEMO_DEPLOYMENT_TYPE</code>: <code>cli</code>, <code>sdk</code>, <code>nmp</code>. Defaults to <code>sdk</code>.</li>
+<li><code>NEMO_DEPLOYMENT_TYPE</code>: <code>cli</code>, <code>sdk</code>, <code>nmp</code>, <code>nvidia-internal</code>. Defaults to <code>sdk</code>.</li>
 <li><code>NEMO_TELEMETRY_ENDPOINT</code>: override the destination URL.</li>
 <li><code>NEMO_SESSION_PREFIX</code>: prepended to session IDs. Set to <code>"anonymizer-"</code>
   automatically by <code>Anonymizer.__init__</code> for dashboard filtering.</li>
@@ -2810,6 +2810,10 @@ invocation. Telemetry is opt-out via:</p>
             </li>
             <li>
               <code><span title="anonymizer.telemetry.AnonymizerEvent.avg_tokens_per_record">avg_tokens_per_record</span></code>
+                (<code><span title="int">int</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.telemetry.AnonymizerEvent.input_tokens">input_tokens</span></code>
                 (<code><span title="int">int</span></code>)
             </li>
             <li>
