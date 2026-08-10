@@ -53,7 +53,7 @@
     "expected_skill": "anonymizer",
     "should_trigger": true,
     "expected_script": null,
-    "ground_truth": "The agent loads the anonymizer skill and explains the self-hosted GLiNER path: run tools/serve_gliner.py from a source checkout, add an OpenAI-compatible provider at http://localhost:8001/v1, point the gliner-pii-detector/entity_detector alias at provider local-gliner with skip_health_check true, and keep model_configs as a complete model pool copied from defaults rather than a partial overlay.",
+    "ground_truth": "The agent loads the anonymizer skill and explains the self-hosted GLiNER path: use tools/inference_service.py from a source checkout to compile a native-GLiNER intent and launch its managed plan, add an OpenAI-compatible provider at the plan endpoint (normally http://localhost:8001/v1), point the gliner-pii-detector/entity_detector alias at provider local-gliner with skip_health_check true, and keep model_configs as a complete model pool copied from defaults rather than a partial overlay.",
     "expected_behavior": [
       "The agent read skills/anonymizer/SKILL.md before answering",
       "The answer says the reference GLiNER server comes from a source checkout, not pip-installed package files",
