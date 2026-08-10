@@ -45,7 +45,7 @@ repos:
       - id: check
         name: Check
         language: system
-        entry: make check
+        entry: mise run check
         pass_filenames: false
         stages: [pre-commit]
 
