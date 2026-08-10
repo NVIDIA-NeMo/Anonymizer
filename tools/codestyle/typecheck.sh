@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# typecheck.sh -- run ty type checks on Python files
+# typecheck.sh -- run ty type checks on Python files and notebooks
 #
 # Usage:
 #   ./typecheck.sh                        # configured repository paths
-#   ./typecheck.sh src/foo.py bar.py      # specific files
+#   ./typecheck.sh src/foo.py demo.ipynb  # specific files
 #
 
 set -euo pipefail
