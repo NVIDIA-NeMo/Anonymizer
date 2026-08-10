@@ -327,6 +327,30 @@ class TestFieldPopulation:
 
         assert captured_events[0].model_hosts == ["nvidia-build"]
 
+    def test_input_tokens_reflect_adapter_total(
+        self,
+        captured_events: list[AnonymizerEvent],
+        stub_input: AnonymizerInput,
+    ) -> None:
+        anonymizer, *_ = _make_anonymizer()
+        anonymizer._adapter._add_input_tokens({"detector": {"token_usage": {"input_tokens": 37}}})
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+        assert captured_events[0].input_tokens == 37
+
+    def test_input_tokens_reset_between_runs(
+        self,
+        captured_events: list[AnonymizerEvent],
+        stub_input: AnonymizerInput,
+    ) -> None:
+        anonymizer, *_ = _make_anonymizer()
+        anonymizer._adapter._add_input_tokens({"detector": {"token_usage": {"input_tokens": 37}}})
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+        assert captured_events[0].input_tokens == 37
+        assert captured_events[1].input_tokens == 0
+
 
 # =============================================================================
 # Failure-count aggregation
