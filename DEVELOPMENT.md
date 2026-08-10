@@ -155,6 +155,9 @@ mise run format
 mise run format-check
 ```
 
+Ruff formats and lints tracked Python files and rendered notebooks. The ty configuration includes `docs`, so the
+blocking type check also checks code cells in `docs/notebooks/*.ipynb`.
+
 Run all read-only checks:
 
 ```bash
