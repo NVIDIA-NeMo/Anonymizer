@@ -15,7 +15,8 @@ import cyclopts
 from pydantic import BaseModel, ValidationError
 
 from inference_service_compiler.compiler import CompilationError, compile_intent, load_plan
-from inference_service_compiler.models import InferenceIntent, LaunchReceipt, SecretEnvironmentVariable
+from inference_service_compiler.models import LaunchReceipt, SecretEnvironmentVariable
+from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
     RuntimeEffectError,
     cancel_run,
@@ -26,7 +27,7 @@ from inference_service_compiler.runtime import (
     probe_endpoint,
 )
 
-app = cyclopts.App(help="Compile and manage local inference services from typed intent.")
+app = cyclopts.App(help="Compile and manage local inference services from TOML profiles.")
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -50,12 +51,12 @@ def command_errors(function: Callable[P, R]) -> Callable[P, R]:
 @command_errors
 def compile_plan(
     *,
-    intent: Path,
+    profile: Path,
     source_revision: str,
     output: Path | None = None,
 ) -> None:
-    """Compile a v1 intent JSON document without performing runtime effects."""
-    parsed = InferenceIntent.model_validate_json(intent.read_text(encoding="utf-8"))
+    """Compile a v1 TOML profile without performing runtime effects."""
+    parsed = load_profile(profile)
     plan = compile_intent(parsed, source_revision=source_revision)
     write_json(plan, output)
 

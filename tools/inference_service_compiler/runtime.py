@@ -152,7 +152,7 @@ def _probe_or_cleanup(
     secret_values: Mapping[str, str],
 ) -> CapabilityProbeReceipt:
     try:
-        probe = wait_for_readiness(plan, secret_values=secret_values)
+        probe = wait_for_readiness(plan, secret_values=secret_values, handle=handle)
     except RuntimeEffectError as exc:
         cleanup_complete = _cleanup_handle(handle, plan.intent.lifecycle.shutdown_timeout_seconds)
         raise RuntimeEffectError(
@@ -290,11 +290,20 @@ def wait_for_readiness(
     plan: RunPlan,
     *,
     secret_values: Mapping[str, str] | None = None,
+    handle: LocalProcessHandle | DockerHandle | None = None,
 ) -> CapabilityProbeReceipt:
     """Poll the declared readiness contract until it passes or times out."""
     deadline = time.monotonic() + plan.readiness.timeout_seconds
     last_error: RuntimeEffectError | None = None
     while time.monotonic() < deadline:
+        if handle is not None and not is_handle_running(handle):
+            log_hint = f"; inspect {handle.stderr_path}" if isinstance(handle, LocalProcessHandle) else ""
+            raise RuntimeEffectError(
+                RuntimeDiagnostic(
+                    code="launch-exited",
+                    message=f"managed service exited before readiness{log_hint}",
+                )
+            )
         try:
             receipt = probe_endpoint(plan, secret_values=secret_values)
             if receipt.passed:
