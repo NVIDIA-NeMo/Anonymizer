@@ -31,19 +31,7 @@ This is Part 1 of a two-part series on evaluation in Anonymizer. It explores how
 
 ## Anonymization and Evaluation as Separate Steps
 
-Anonymizer deliberately separates anonymization from evaluation:
-
-```text
-source data
-    ↓
-preview() / run()          ← anonymization: detect + replace
-    ↓
-saved AnonymizerResult
-    ↓
-evaluate()                 ← quality check: LLM-as-a-judge scores
-    ↓
-per-record report
-```
+Anonymizer deliberately separates anonymization from evaluation.
 
 This has two practical consequences:
 
@@ -100,10 +88,11 @@ The judges that run depend on which Replace strategy was used.
 
 ```mermaid
 flowchart TD
-    P[Anonymizer.preview / run\nDetect entities and apply Replace strategy] --> A
-    A[Saved Replace result] --> B[Anonymizer.evaluate]
-    B --> C[All Replace strategies\nSubstitute, Redact, Annotate, Hash\n\nEntity coverage\nDetection validity — opt-in]
-    B --> D[Additional Substitute-only scores\n\nType fidelity\nAttribute fidelity\nRelational consistency]
+    S[Source data] --> P[Anonymizer.preview / run\nDetect entities and apply Replace strategy]
+    P --> A[Saved AnonymizerResult or PreviewResult]
+    A --> E[Anonymizer.evaluate]
+    E --> C[All Replace strategies\nSubstitute, Redact, Annotate, Hash\n\nEntity coverage\nDetection validity — opt-in]
+    E --> D[Substitute only\n\nType fidelity\nAttribute fidelity\nRelational consistency]
     C --> R[Per-record evaluation report]
     D --> R
 ```
