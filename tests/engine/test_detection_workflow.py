@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import Mock
 
 import pandas as pd
@@ -482,6 +483,13 @@ def test_resolve_detection_labels_denylist_on_defaults() -> None:
 def test_resolve_detection_labels_none_denylist_is_noop() -> None:
     labels = _resolve_detection_labels(["email", "city"], entity_label_denylist=None)
     assert labels == ["email", "city"]
+
+
+def test_resolve_detection_labels_empty_result_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.detection"):
+        labels = _resolve_detection_labels(["email"], entity_label_denylist={"email"})
+    assert labels == []
+    assert "No entities will be detected" in caplog.text
 
 
 def test_denylist_filters_entities_from_final_entities(

@@ -476,6 +476,11 @@ def _resolve_detection_labels(
     labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
     if entity_label_denylist:
         labels = [label for label in labels if label not in entity_label_denylist]
+    if not labels:
+        logger.warning(
+            "entity_label_denylist removed all labels from the effective detection set. "
+            "No entities will be detected."
+        )
     return labels
 
 
