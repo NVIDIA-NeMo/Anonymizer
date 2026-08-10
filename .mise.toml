@@ -3,12 +3,12 @@
 
 # Tool versions managed by mise (https://mise.jdx.dev/).
 # Run `mise install` to install all tools.
-min_version = "2026.5.15"
+min_version = "2026.8.3"
 
 [tools]
-uv = "0.9.30"
-ruff = "0.15.0"
-ty = "0.0.58"
+uv = "0.12.3"
+ruff = "0.16.2"
+ty = "0.0.69"
 
 [env]
 # Use the uv-managed environment in the project root unless a caller selects a

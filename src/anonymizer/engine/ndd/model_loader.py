@@ -10,7 +10,6 @@ from typing import Any, TypeVar, cast
 
 from data_designer.config.models import ModelConfig, ModelProvider, load_model_configs
 from data_designer.config.utils.io_helpers import load_config_file
-from pydantic import BaseModel
 
 from anonymizer.config.models import (
     DetectionModelSelection,
@@ -231,17 +230,7 @@ def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> Mode
     if not user_selections or not isinstance(user_selections, dict):
         return defaults
 
-    detection_overrides = user_selections.get(WorkflowName.detection.value, {})
-    replace_overrides = user_selections.get(WorkflowName.replace.value, {})
-    rewrite_overrides = user_selections.get(WorkflowName.rewrite.value, {})
-    evaluate_overrides = user_selections.get(WorkflowName.evaluate.value, {})
-
-    return ModelSelection(
-        detection=_merge_selection(defaults.detection, detection_overrides),
-        replace=_merge_selection(defaults.replace, replace_overrides),
-        rewrite=_merge_selection(defaults.rewrite, rewrite_overrides),
-        evaluate=_merge_selection(defaults.evaluate, evaluate_overrides),
-    )
+    return defaults.with_overrides(user_selections)
 
 
 def validate_model_configs_reference_providers(
