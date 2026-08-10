@@ -93,6 +93,57 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert "generator_params" not in serialized_text
 
 
+def _get_gliner_labels_from_builder(builder: DataDesignerConfigBuilder) -> list[str]:
+    serialized = json.loads(builder.get_builder_config().to_json())
+    model_configs = serialized["data_designer"]["model_configs"]
+    gliner = next(m for m in model_configs if m.get("alias") == "gliner-pii-detector")
+    return gliner["inference_parameters"]["extra_body"]["labels"]
+
+
+def test_build_detection_builder_for_seed_respects_entity_label_denylist(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    pd.DataFrame({COL_TEXT: ["Alice"]}).to_parquet(seed_path, index=False)
+
+    parsed_models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    builder = workflow.build_detection_builder_for_seed(
+        seed_path=seed_path,
+        model_configs=parsed_models.model_configs,
+        selected_models=parsed_models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=["first_name", "email", "city"],
+        entity_label_denylist=["email"],
+    )
+
+    labels = _get_gliner_labels_from_builder(builder)
+    assert "email" not in labels
+    assert "first_name" in labels
+    assert "city" in labels
+
+
+def test_build_detection_config_respects_entity_label_denylist(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    input_df = pd.DataFrame({COL_TEXT: ["Alice"]})
+    input_df.to_parquet(seed_path, index=False)
+
+    parsed_models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    builder = workflow.build_detection_config(
+        input_df,
+        seed_path=seed_path,
+        model_configs=parsed_models.model_configs,
+        selected_models=parsed_models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=["first_name", "email", "city"],
+        entity_label_denylist=["email"],
+    )
+
+    labels = _get_gliner_labels_from_builder(builder)
+    assert "email" not in labels
+    assert "first_name" in labels
+    assert "city" in labels
+
+
 def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Path) -> None:
     seed_path = tmp_path / "seed.parquet"
     pd.DataFrame({COL_TEXT: ["Alice"]}).to_parquet(seed_path, index=False)
