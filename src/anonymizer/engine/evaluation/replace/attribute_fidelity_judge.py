@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -184,7 +184,7 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
     """Flatten COL_REPLACEMENT_MAP into Jinja-friendly dicts."""
     if raw_map is None:
         return []
-    if hasattr(raw_map, "model_dump"):
+    if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
     if isinstance(raw_map, str):
         try:
@@ -238,4 +238,5 @@ class AttributeFidelityJudgeWorkflow(_BaseJudgeWorkflow):
 
     @classmethod
     def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
+        parsed = cast(AttributeFidelityJudgmentSchema, parsed)
         return [e.model_dump() for e in parsed.entities if not e.passes]

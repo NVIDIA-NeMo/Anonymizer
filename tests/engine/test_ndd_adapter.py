@@ -106,7 +106,7 @@ def test_add_input_tokens_sums_positive_counts_under_counter_lock() -> None:
 
     adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
     lock = CountingLock()
-    adapter._input_tokens_lock = lock  # type: ignore[assignment]
+    adapter._input_tokens_lock = lock  # ty: ignore[invalid-assignment]
 
     adapter._add_input_tokens(
         {

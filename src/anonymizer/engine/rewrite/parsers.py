@@ -25,7 +25,7 @@ from anonymizer.engine.schemas.rewrite import (
 logger = logging.getLogger("anonymizer.rewrite.parsers")
 
 
-def field(model: type, name: str) -> str:
+def field(model: type[BaseModel], name: str) -> str:
     """Return *name* after verifying it exists on *model* as a Pydantic field.
 
     Called at module import time so a renamed schema field raises

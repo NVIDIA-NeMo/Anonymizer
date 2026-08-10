@@ -8,6 +8,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import SupportsFloat, SupportsIndex, SupportsInt
 
 logger = logging.getLogger(__name__)
 
@@ -368,15 +369,19 @@ def _safe_json_loads(value: dict | str) -> dict:
 
 
 def _coerce_int(value: object) -> int | None:
+    if not isinstance(value, (str, bytes, bytearray, SupportsInt, SupportsIndex)):
+        return None
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(value)
     except (TypeError, ValueError):
         return None
 
 
 def _coerce_float(value: object, default: float) -> float:
+    if not isinstance(value, (str, bytes, bytearray, SupportsFloat, SupportsIndex)):
+        return default
     try:
-        return float(value)  # type: ignore[arg-type]
+        return float(value)
     except (TypeError, ValueError):
         return default
 

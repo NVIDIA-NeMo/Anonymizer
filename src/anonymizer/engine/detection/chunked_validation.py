@@ -22,11 +22,11 @@ the generator, DataDesigner drops the row, and
 ``NddAdapter._detect_missing_records`` surfaces it as a ``FailedRecord``.
 Raw text never silently leaks through as unscrubbed output.
 
-Concurrency. Plugin columns dispatch chunks with ``asyncio.gather`` and
-``facade.agenerate()``. The legacy custom-column wrapper still uses a
+Concurrency. Async plugin execution dispatches chunks with ``asyncio.gather``
+and ``facade.agenerate()``. The plugin's synchronous execution path uses a
 ``ThreadPoolExecutor`` and ``facade.generate()``. Per-alias concurrency is
-enforced downstream by DataDesigner's request-admission layer, so the
-optional row-level cap only bounds local fan-out pressure.
+enforced downstream by DataDesigner's request-admission layer, so the optional
+row-level cap only bounds local fan-out pressure.
 """
 
 from __future__ import annotations
@@ -100,8 +100,8 @@ class ChunkedValidationParams(BaseModel):
         excerpt_window_chars: Chars of surrounding raw text included in each
             chunk's excerpt on either side of the chunk span.
         max_parallel_chunks: Optional row-local cap on concurrently dispatched
-            chunks. Defaults to all chunks for the legacy custom-column path;
-            plugin generators derive a cap from validator model capacity.
+            chunks. Plugin generators derive a default cap from validator model
+            capacity.
         single_chunk_full_text: If True, a row with one validation chunk sees
             the full tagged document. If False, even a single chunk uses the
             excerpt window. The default preserves production parity with the
@@ -578,8 +578,8 @@ def chunked_validate_row(
 ) -> dict[str, Any]:
     """Run chunked validation for a single row and write ``COL_VALIDATION_DECISIONS``.
 
-    This sync path is kept for the legacy DataDesigner custom-column wrapper.
-    Plugin columns should call :func:`chunked_validate_row_async`.
+    The plugin's synchronous generator uses this path. Its asynchronous generator
+    calls :func:`chunked_validate_row_async`.
     """
     candidates, dispatch_kwargs_per_chunk = _build_dispatch_kwargs_per_chunk(row, params, models)
 
