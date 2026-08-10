@@ -30,6 +30,14 @@ def test_local_mise_installer_keeps_unsigned_fallback_opt_in() -> None:
     assert 'REQUIRE_SIGNED_INSTALL="${MISE_REQUIRE_SIGNED_INSTALL:-0}"' in installer
 
 
+def test_makefile_exposes_bootstrap_without_deprecated_task_aliases() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    phony_targets = [line.removeprefix(".PHONY: ") for line in makefile.splitlines() if line.startswith(".PHONY: ")]
+
+    assert phony_targets == ["help", "install-mise", "setup"]
+    assert "deprecated_target" not in makefile
+
+
 def test_mise_typecheck_preserves_blocking_repository_contract() -> None:
     quality_tasks = _read_toml(REPO_ROOT / ".mise/tasks/quality.toml")
     typecheck = quality_tasks["typecheck"]
