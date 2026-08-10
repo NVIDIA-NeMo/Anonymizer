@@ -133,16 +133,32 @@ The `CUDA_ROOT` path above is specific to the Brev B300 SXM6 environment used fo
 
 `--gpu-memory-utilization 0.45` was a conservative co-location setting, not a compute throttle. In vLLM it controls the GPU memory budget for model weights and KV cache. Qwen could use more memory if the run needed a larger KV cache, but this setting left headroom for the GLiNER server on the same GPU and still completed the measured batches with zero failures.
 
-GLiNER ran on the same machine. The command uses `tools/serve_gliner.py`, the reference GLiNER server from an Anonymizer source checkout; see [Self-hosting GLiNER](../../concepts/self-hosting-gliner.md) for the server contract and setup details.
+GLiNER ran on the same machine. Current reruns use the source-tree inference
+service compiler described in [Self-hosting GLiNER](../../concepts/self-hosting-gliner.md),
+which records the exact model, engine, placement, batch environment, endpoint,
+and process identity in versioned plans and receipts.
+
+```json title="gliner-b300-intent.json"
+{
+  "schema_version": "inference-service.intent/v1",
+  "task": {"kind": "entity-detection", "dynamic_labels": true, "offsets": true, "scores": true},
+  "model": {"kind": "hugging-face", "model_id": "nvidia/gliner-pii", "revision": "bd23e8ef4425fd04e34c5204ab49ffaa706eae79"},
+  "engine": {"kind": "native-gliner", "family": "nvidia-gliner", "device": "cuda", "max_batch_requests": 64, "batch_wait_ms": 10},
+  "placement": {"kind": "local-process", "host": "127.0.0.1", "port": 9000},
+  "access": {"kind": "direct"},
+  "lifecycle": {"kind": "managed", "startup_timeout_seconds": 300, "shutdown_timeout_seconds": 30}
+}
+```
 
 ```bash
-mkdir -p logs
-
-DEVICE=cuda \
-GLINER_MAX_BATCH_REQUESTS=64 \
-GLINER_BATCH_WAIT_MS=10 \
-nohup .venv/bin/python tools/serve_gliner.py --port 9000 \
-  > logs/gliner.log 2>&1 &
+uv run tools/inference_service.py compile \
+  --intent gliner-b300-intent.json \
+  --source-revision 3f68c145 \
+  --output gliner-b300-plan.json
+uv run tools/inference_service.py launch \
+  --plan gliner-b300-plan.json \
+  --output gliner-b300-launch.json \
+  --log-directory logs
 ```
 
 For archival reruns, pin the GLiNER model as well. The server default used here is `nvidia/gliner-pii`, which Hugging Face resolved as `nvidia/gliner-PII` revision `bd23e8ef4425fd04e34c5204ab49ffaa706eae79` as of this write-up; serving a newer detector snapshot can change entity counts.

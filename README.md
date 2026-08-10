@@ -154,20 +154,22 @@ anonymizer --help         # CLI usage
 make install-pre-commit   # Install pre-commit hooks
 ```
 
-### Local vLLM debugging
+### Local inference services
 
-On a Linux GPU host, install the optional local-model dependency group and use
-`tools/vllm_debug.py` to start or probe an OpenAI-compatible vLLM server:
+Use the source-tree inference service compiler to create immutable plans and
+managed launch receipts for native GLiNER or vLLM processes and containers:
 
 ```bash
-uv sync --group dev --group local-models
-uv run python tools/vllm_debug.py models --cached --json
-uv run python tools/vllm_debug.py serve /path/to/cached/snapshot --served-model-name anonymizer-local
-uv run python tools/vllm_debug.py models --endpoint http://127.0.0.1:8000/v1
+uv run tools/inference_service.py compile --intent intent.json --source-revision 3f68c145 --output plan.json
+uv run tools/inference_service.py launch --plan plan.json --output launch.json
+uv run tools/inference_service.py inspect --receipt launch.json
+uv run tools/inference_service.py cancel --receipt launch.json
 ```
 
-The helper does not prefetch model weights. Use `--vllm-python /path/to/python`
-when vLLM is installed in another virtual environment. The [local vLLM guide](docs/concepts/local-vllm.md) covers GPU-host requirements, Anonymizer configuration, verification, and internal-network access.
+The tool is not part of the wheel and does not attach to externally owned
+endpoints. The [local inference service guide](docs/concepts/inference-services.md)
+covers typed intents, GPU-host setup, Docker, model discovery, capability
+probes, and Anonymizer provider configuration.
 
 ---
 

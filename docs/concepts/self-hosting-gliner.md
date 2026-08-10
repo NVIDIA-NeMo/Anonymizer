@@ -5,9 +5,9 @@
 
 By default, Anonymizer's entity detection stage calls the hosted `nvidia/gliner-pii` model on `build.nvidia.com`. For PHI-sensitive workloads that cannot leave the host, or latency-critical setups, you can serve GLiNER locally instead.
 
-The model is small (~500 MB) and runs comfortably on CPU — making it a good fit to run alongside a local LLM without competing for GPU memory. It also runs on GPU if one is available, which cuts detection latency on long documents.
+The default NVIDIA GLiNER model is small (~500 MB) and runs comfortably on CPU — making it a good fit to run alongside a local LLM without competing for GPU memory. It also runs on GPU if one is available, which cuts detection latency on long documents. The optional GLiNER2 PII model is also fully local and supports GPU or CPU inference.
 
-The reference server script (`tools/serve_gliner.py`) is **not** installed with `pip install nemo-anonymizer` — get it from a source checkout of this repository (see **Running it** below).
+The characterized native server lives inside the source-tree [inference service compiler](inference-services.md). It is **not** installed with `pip install nemo-anonymizer`; compile and launch it from a source checkout.
 
 ---
 
@@ -52,24 +52,17 @@ Long inputs are split into overlapping chunks before inference. A self-hosted se
 
 ## Reference implementation
 
-A minimal FastAPI reference server at [`tools/serve_gliner.py`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/serve_gliner.py) in the Anonymizer GitHub repository implements the contract above. It loads `nvidia/gliner-pii`, exposes `POST /v1/chat/completions` (and `GET /v1/models`), and uses two levels of batching:
+The native GLiNER runtime compiled by `tools/inference_service.py` implements the contract above. Its internal server module defaults to `nvidia/gliner-pii`, also supports the local PII-capable `fastino/gliner2-privacy-filter-PII-multi` model, exposes `POST /v1/chat/completions` (and `GET /v1/models`), and uses two levels of batching:
 
-1. **Chunk batching** — long text is split into overlapping windows; all chunks are passed to one `model.inference(...)` call.
+1. **Chunk batching** — long text is split into overlapping windows; all chunks are passed to one runtime batch call.
 2. **Request coalescing** (optional, on by default) — concurrent HTTP requests from DataDesigner are grouped briefly, then all their chunks are inferred together.
 
-```python title="tools/serve_gliner.py (excerpt)"
-@app.post("/v1/chat/completions")
+```python title="tools/inference_service_compiler/native_gliner.py (excerpt)"
+@api.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    body = await request.json()
-    text = _extract_text(body.get("messages", []))
-    params = DetectParams(
-        labels=tuple(body.get("labels") or []),
-        threshold=float(body.get("threshold", 0.3)),
-        chunk_length=int(body.get("chunk_length", 384)),
-        overlap=int(body.get("overlap", 128)),
-        flat_ner=bool(body.get("flat_ner", False)),
-        inference_batch_size=int(body.get("batch_size", 8)),
-    )
+    body = require_mapping(await request.json(), "request")
+    params = parse_detect_params(body)
+    text = extract_text(body.get("messages", []))
     entities = await detector.detect(text, params)
     ...
 ```
@@ -91,42 +84,30 @@ Set `GLINER_BATCH_MODE=false` to disable request coalescing; chunk batching stil
 
 !!! note "Source checkout only"
 
-    `tools/serve_gliner.py` ships in the [Anonymizer GitHub repository](https://github.com/NVIDIA-NeMo/Anonymizer), not in the `nemo-anonymizer` wheel. Clone the repo or download the file, then run it from that tree:
-
-    ```bash
-    git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
-    cd Anonymizer
-    pip install fastapi uvicorn gliner
-    python tools/serve_gliner.py
-    ```
+    `tools/inference_service.py` ships in the [Anonymizer GitHub repository](https://github.com/NVIDIA-NeMo/Anonymizer), not in the `nemo-anonymizer` wheel. Clone the repository and run the compiler from its root.
 
 ### Dependencies
 
-```bash
-pip install fastapi uvicorn gliner
-# or with uv
-uv pip install fastapi uvicorn gliner
-```
+The managed native server is a [PEP 723](https://peps.python.org/pep-0723/) uv script and declares its own Python 3.13+ dependencies. Install [uv](https://docs.astral.sh/uv/); launch resolves the isolated environment for the selected local runtime. The first environment setup can be large because the runtime packages include Torch and its platform dependencies. No package installation in the Anonymizer environment is required.
 
-On first launch the `gliner` package will download `nvidia/gliner-pii` from HuggingFace and cache it under `~/.cache/huggingface/`. No HuggingFace token is required (public model).
+On first launch, the selected public checkpoint is downloaded from Hugging Face and cached under `~/.cache/huggingface/`. No Hugging Face token is required. Package and checkpoint setup use the network; inference stays local and the server does not call a remote inference service after setup.
 
 ### Start the server
 
-```bash
-python tools/serve_gliner.py
-# INFO     Uvicorn running on http://127.0.0.1:8001
+Create a native GLiNER intent, compile it, and launch the resulting plan as
+shown in [Run local inference services](inference-services.md#native-gliner).
+The intent keeps the model checkpoint, engine family, device, placement,
+access, and managed lifecycle separate. `nvidia-gliner` is the default engine
+family and `nvidia/gliner-pii` is the default model; GLiNER2 uses the
+`fastino/gliner2-privacy-filter-PII-multi` checkpoint.
 
-# Optional: override port (default: 8001)
-python tools/serve_gliner.py --port 9000
+Launch writes a versioned receipt only after the model-list and detection
+contract probes pass. Use that receipt with the compiler's `inspect` and
+`cancel` commands instead of supervising the internal server module directly.
 
-# Optional: listen on all interfaces — no auth; use only on trusted networks
-python tools/serve_gliner.py --host 0.0.0.0
+The model families do not use identical label vocabularies. The request example below targets the default NVIDIA model and uses `user_name`; the default GLiNER2 PII checkpoint uses `username` for that category.
 
-# Optional: pick device explicitly (auto prefers mps, then cuda, then cpu)
-DEVICE=cuda python tools/serve_gliner.py
-```
-
-The reference server has **no authentication**. The default bind address is `127.0.0.1` so detection traffic stays on localhost. Use `--host 0.0.0.0` only when Anonymizer runs on another host in a trusted environment.
+The reference server has **no authentication**. The default bind address is `127.0.0.1` so detection traffic stays on localhost. Use `--host 0.0.0.0` only when Anonymizer runs on another host in a trusted environment, ideally behind authentication and TLS termination.
 
 Verify the server is reachable:
 
@@ -195,7 +176,6 @@ model_configs:
   - alias: gliner-pii-detector
     model: nvidia/gliner-pii
     provider: local-gliner
-    skip_health_check: true   # the default health check sends no `labels`, which GLiNER can't handle
     inference_parameters:
       max_parallel_requests: 8   # send concurrent rows; the reference server batches them
       timeout: 120
@@ -229,8 +209,6 @@ anonymizer = Anonymizer(
     model_configs="models.yaml",
 )
 ```
-
-Set `skip_health_check: true` on the detector alias: Anonymizer's default probe sends `prompt="Hello!"` with no `labels` field, which is not a valid GLiNER request.
 
 ---
 
