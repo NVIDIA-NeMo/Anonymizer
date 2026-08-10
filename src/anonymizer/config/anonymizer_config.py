@@ -79,6 +79,14 @@ class Detect(BaseModel):
             "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
         ),
     )
+    entity_label_denylist: list[str] | None = Field(
+        default=None,
+        description=(
+            "Entity labels to never detect, even if present in entity_labels or the default set. "
+            "Denied labels are excluded before GLiNER and LLM prompts run, and are also filtered "
+            "from the final entity output as a safety net."
+        ),
+    )
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )
@@ -113,6 +121,30 @@ class Detect(BaseModel):
         if len(deduped) != len(cleaned):
             logger.warning("entity_labels contained duplicates, removed automatically.")
         return deduped
+
+    @field_validator("entity_label_denylist")
+    @classmethod
+    def validate_entity_label_denylist(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        cleaned = [label.strip().lower() for label in value if label.strip()]
+        if not cleaned:
+            raise ValueError("entity_label_denylist must not be empty. Use None to disable the deny list.")
+        deduped = sorted(set(cleaned))
+        if len(deduped) != len(cleaned):
+            logger.warning("entity_label_denylist contained duplicates, removed automatically.")
+        return deduped
+
+    @model_validator(mode="after")
+    def warn_on_allowlist_denylist_overlap(self) -> "Detect":
+        if self.entity_labels is not None and self.entity_label_denylist is not None:
+            overlap = sorted(set(self.entity_labels) & set(self.entity_label_denylist))
+            if overlap:
+                logger.warning(
+                    "entity_labels and entity_label_denylist share labels that will never be detected: %s",
+                    overlap,
+                )
+        return self
 
 
 class Rewrite(BaseModel):

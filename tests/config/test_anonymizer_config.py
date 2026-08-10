@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, infer_input_source_suffix
+import logging
+
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite, infer_input_source_suffix
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -147,3 +149,72 @@ def test_detect_validation_max_entities_per_call_must_be_positive() -> None:
 def test_detect_validation_excerpt_window_chars_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         AnonymizerConfig(detect={"validation_excerpt_window_chars": 0}, replace=Redact())
+
+
+# ── entity_label_denylist ─────────────────────────────────────────────────────
+
+
+def test_entity_label_denylist_defaults_to_none() -> None:
+    config = AnonymizerConfig(replace=Redact())
+    assert config.detect.entity_label_denylist is None
+
+
+def test_entity_label_denylist_accepts_list() -> None:
+    config = AnonymizerConfig(detect={"entity_label_denylist": ["EMAIL", "city"]}, replace=Redact())
+    assert config.detect.entity_label_denylist is not None
+    assert set(config.detect.entity_label_denylist) == {"email", "city"}
+
+
+def test_entity_label_denylist_strips_whitespace_and_lowercases() -> None:
+    config = AnonymizerConfig(detect={"entity_label_denylist": ["  FIRST_NAME ", "Email"]}, replace=Redact())
+    assert config.detect.entity_label_denylist is not None
+    assert "first_name" in config.detect.entity_label_denylist
+    assert "email" in config.detect.entity_label_denylist
+
+
+def test_entity_label_denylist_deduplicates(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        config = AnonymizerConfig(detect={"entity_label_denylist": ["email", "email"]}, replace=Redact())
+    assert config.detect.entity_label_denylist == ["email"]
+    assert "duplicates" in caplog.text
+
+
+def test_entity_label_denylist_empty_list_raises() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AnonymizerConfig(detect={"entity_label_denylist": []}, replace=Redact())
+
+
+def test_entity_label_denylist_whitespace_only_raises() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AnonymizerConfig(detect={"entity_label_denylist": ["  ", ""]}, replace=Redact())
+
+
+def test_entity_label_denylist_overlap_with_entity_labels_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "entity_label_denylist": ["email"]},
+            replace=Redact(),
+        )
+    assert "email" in caplog.text
+    assert "will never be detected" in caplog.text
+
+
+def test_entity_label_denylist_no_overlap_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "entity_label_denylist": ["first_name"]},
+            replace=Redact(),
+        )
+    assert "will never be detected" not in caplog.text
+
+
+def test_entity_label_denylist_overlap_warning_only_fires_when_allowlist_explicit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning when entity_labels=None (defaults) even if denylist is set."""
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_label_denylist": ["email"]},
+            replace=Redact(),
+        )
+    assert "will never be detected" not in caplog.text
