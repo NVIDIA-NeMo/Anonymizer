@@ -579,7 +579,7 @@ def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
     else:
         verdict, color = "Partially Satisfied", "#f59e0b"
     badge = f"<span style='color:{color};font-weight:600'>{verdict}</span>"
-    rate_html = f" (LLM alignment score: {correct}/{total})"
+    rate_html = f" (Judge Agreement: {correct}/{total})"
     return badge, rate_html
 
 
@@ -668,8 +668,8 @@ def _render_detection_judge_section(row: pd.Series) -> str:
         "<div style='font-size:0.9em;line-height:1.8'>"
         f"<strong>Detection Validity:</strong> {badge}{html.escape(rate_html)}"
         "<div style='font-size:0.8em;opacity:0.7;font-style:italic;margin-top:2px'>"
-        "LLM alignment score: The level of alignment between the detection and "
-        "evaluation LLMs across entity classification, attributes, and relationships."
+        "Judge Agreement: The number of entity-label pairs accepted by the evaluation "
+        "judge out of all pairs produced by detection."
         "</div>"
         "</div>"
     )
@@ -920,7 +920,7 @@ def _render_relational_consistency_section(row: pd.Series) -> str:
     all_relations = _extract_all_relations(row)
     invalid_count = sum(1 for r in all_relations if not bool(r.get("passes", False)))
     # Fall back to the invalid-relations column when the raw output is missing,
-    # so the LLM alignment score still surfaces "at least this many failures".
+    # so Judge Agreement still surfaces "at least this many failures".
     if not all_relations:
         fallback_invalid = _normalize_relations(row.get(COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS))
         invalid_count = len(fallback_invalid)
@@ -1051,7 +1051,7 @@ def _count_detected_entity_label_pairs(row: pd.Series) -> int:
     """Count (value, label) pairs the judge had a chance to evaluate.
 
     The judge schema flags entities at the (value, label) granularity, so the
-    denominator for the LLM alignment score is the total number of such pairs in the
+    denominator for Judge Agreement is the total number of such pairs in the
     deduped entity payload, not the number of unique values.
     """
     raw = row.get(COL_ENTITIES_BY_VALUE) if COL_ENTITIES_BY_VALUE in row.index else None

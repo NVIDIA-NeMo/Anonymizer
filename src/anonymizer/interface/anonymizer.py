@@ -235,7 +235,7 @@ class Anonymizer:
         """Run the full anonymization pipeline (detection + replacement).
 
         No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the LLM alignment scores.
+        result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -345,7 +345,7 @@ class Anonymizer:
         """Run the pipeline on a subset of records for quick inspection.
 
         No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the LLM alignment scores.
+        result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.

@@ -73,7 +73,7 @@ class ReplacementWorkflow:
         """Apply the replacement strategy (no LLM judges).
 
         Evaluation is a separate concern — call ``evaluate()`` on the resulting
-        dataframe when you want the LLM alignment scores.
+        dataframe when you want the Judge Agreement scores.
         """
         strategy = type(replace_method).__name__
         with stage_timer(
