@@ -19,8 +19,9 @@ import math
 import re
 import sys
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Annotated, Iterable, Literal, Protocol, TypeGuard, cast
+from typing import Annotated, Literal, Protocol, TypeGuard, cast
 
 import cyclopts
 import pandas as pd

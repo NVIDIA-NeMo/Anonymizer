@@ -39,6 +39,21 @@ def test_mise_typecheck_preserves_blocking_repository_contract() -> None:
     assert typecheck["run"][1] == "tools/codestyle/typecheck.sh"
 
 
+def test_mise_dependency_install_tasks_require_current_lockfile() -> None:
+    setup_tasks = _read_toml(REPO_ROOT / ".mise/tasks/setup.toml")
+
+    for task_name in ("install", "bootstrap", "install-dev-notebooks", "install-dev-docs"):
+        sync_command = setup_tasks[task_name]["run"][1]
+        assert sync_command.startswith("uv sync --locked")
+
+
+def test_ruff_enables_audited_error_and_safe_fix_rules() -> None:
+    ruff = _read_toml(REPO_ROOT / "ruff.toml")
+
+    assert {"E9", "RUF100", "UP015", "UP017", "UP035", "UP037"} <= set(ruff["lint"]["select"])
+    assert "docs/notebooks/*.ipynb" in ruff["exclude"]
+
+
 def test_mise_python_tool_versions_match_project_versions() -> None:
     mise = _read_toml(REPO_ROOT / ".mise.toml")
     project = _read_toml(REPO_ROOT / "pyproject.toml")
