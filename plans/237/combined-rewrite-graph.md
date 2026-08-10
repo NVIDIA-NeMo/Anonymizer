@@ -1,14 +1,15 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Combined Rewrite Graph
+# Combined Rewrite Integration
 
 Tracks the proof of concept for [GitHub issue #237](https://github.com/NVIDIA-NeMo/Anonymizer/issues/237).
 It extends the rewrite portion of [Anonymizer Workflow Columns](../custom-column-plugins/anonymizer-workflow-columns.md).
 
-## Scope
+## Goal
 
-Collapse the post-detection rewrite path into one DataDesigner execution:
+Replace the Python-controlled post-detection rewrite loop with one DataDesigner
+execution:
 
 ```text
 replacement map
@@ -22,12 +23,16 @@ replacement map
 
 The repair count is static at graph-build time. Each configured round gets unique
 columns and uses `SkipConfig` to bypass repair and downstream re-evaluation for
-rows that already pass.
+rows that already pass. The legacy workflow remains the default until Data
+Designer exposes terminal failure provenance. After that compatibility gate,
+the combined graph can become the only production rewrite path.
 
-## Current Proof
+## Current Status
 
-`CombinedRewriteWorkflow` is an opt-in `RewriteWorkflow` subclass. The production
-`RewriteWorkflow.run()` path remains unchanged.
+`CombinedRewriteWorkflow` remains an opt-in `RewriteWorkflow` subclass while the
+legacy path serves as the default and parity oracle. This avoids losing precise
+failure-stage attribution before Data Designer exposes the failed column and
+seed-row identity through its result API.
 
 The graph currently:
 
@@ -41,6 +46,13 @@ The graph currently:
 With two repair rounds, the graph has 36 columns and DataDesigner 0.8 validates it
 without duplicate producers, missing dependencies, or cycles.
 
+Tests execute real Data Designer conditional scheduling for mixed rows requiring
+zero, one, two, and more-than-allowed repairs. They also cover no-entity
+passthrough, mixed-row ordering, final state selection, repair counts, exhausted
+review flags, malformed initial rewrites, coarse combined-boundary failures, and
+graph validation with up to ten repair rounds. Local 64-row batches cover both
+mostly-skipped and mostly-repaired scheduling.
+
 ## Expected Execution Change
 
 For a rewrite run with entity rows:
@@ -53,22 +65,43 @@ For a rewrite run with entity rows:
 The totals include the two existing detection runs. This proof combines only the
 post-detection rewrite work, so a full detection-plus-rewrite graph remains a later step.
 
-## Gaps Before Production Use
+## Benchmark Result
 
-1. **Failure attribution**: a dropped row is currently reported as `rewrite-combined`
-   instead of the precise replacement, evaluation, or repair stage.
-2. **Measurements**: the existing per-workflow measurement boundaries become one
-   workflow. Column/task traces need to provide equivalent stage reporting.
-3. **Portable configs**: the proof remaps existing custom generators with closures.
-   Stage 2 of the workflow-column plan should replace these with serializable
-   Anonymizer plugin configs before exporting the graph to distributed runtimes.
-4. **Behavioral equivalence**: run the legacy and combined paths against the same
-   deterministic provider responses, including partial failures and malformed outputs.
-5. **Performance evidence**: benchmark both paths with identical inputs, providers,
-   concurrency, repair decisions, and tracing settings.
+The authoritative paired run completed 30 pairs without failures. The combined
+path reduced median Data Designer workflows from five to three, but did not show
+a latency improvement: paired wall time was 1.81% slower and rewrite time was
+1.58% slower. Quality and leakage were comparable. The run was confounded by
+more repairs, more output tokens, and fixed variant ordering, so it establishes
+neither an intrinsic slowdown nor a speedup.
 
-## Next Experiment
+Performance is therefore a regression guardrail, not the integration rationale.
 
-Implement namespaced rewrite evaluator and repair plugin configs, then add a private
-opt-in in the Anonymizer facade so the legacy and combined paths can be benchmarked
-without constructing internal adapters manually.
+## Production Gates
+
+1. [x] **Conditional behavior**: verify row-local skipping, multiple repairs,
+   exhausted repairs, passthrough defaults, row order, and graph validation.
+2. [ ] **Failure attribution and default rollout**: add a Data Designer result API
+   exposing the failed column and seed-row identity. Until then, keep the legacy
+   workflow as the default. Data Designer 0.8 task traces expose the column and
+   row position only when full tracing is enabled, which is not a scalable
+   production mechanism and does not include Anonymizer's record id.
+3. [x] **Measurements**: record one physical `rewrite-combined` Data Designer
+   workflow while preserving aggregate model usage, repair counts, review flags,
+   and runner-level row counts. Precise failure-stage measurements remain part of
+   the failure-attribution gate.
+4. [x] **Behavioral equivalence**: compare legacy and combined public outputs with
+   deterministic repaired results, and cover partial row loss and malformed
+   initial rewrites.
+5. [ ] **Scale validation**: local mostly-skipped and mostly-repaired mixed batches
+   pass. Peak memory, artifact size, and tail latency still need remote comparison.
+6. [ ] **Consolidation**: after failure attribution is available, fold the graph
+   into `RewriteWorkflow`, remove `use_combined_graph`, remove the duplicate
+   runner, and delete the legacy loop.
+7. [ ] **Performance guardrail**: rerun the corrected paired benchmark with
+   balanced ordering and equivalent repair decisions.
+
+## Portability
+
+The current closure-based custom columns are sufficient for the local in-process
+path. Serializable plugin configs remain part of the broader workflow-column plan
+and become a prerequisite when distributed rewrite graph export is supported.
