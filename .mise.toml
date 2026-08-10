@@ -3,7 +3,7 @@
 
 # Tool versions managed by mise (https://mise.jdx.dev/).
 # Run `mise install` to install all tools.
-min_version = "2026.8.3"
+min_version = "2026.7.6"
 
 [tools]
 uv = "0.12.3"
