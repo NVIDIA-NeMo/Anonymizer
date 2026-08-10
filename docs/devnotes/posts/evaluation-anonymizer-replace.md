@@ -3,7 +3,7 @@ date:
   created: 2026-07-28
 readtime: 10
 authors:
-  - memadi2026
+  - memadi-nv
 ---
 
 # **After Anonymization — Part I: Evaluating Replace Mode**
