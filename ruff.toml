@@ -3,8 +3,7 @@
 
 exclude = [".bzr", ".direnv", ".eggs", ".git", ".hg", ".ipynb_checkpoints",
            ".mypy_cache", ".nox", ".pytest_cache", ".ruff_cache", ".tox",
-           ".venv", ".vscode", "__pypackages__", "_build", "dist",
-           "docs/notebooks/*.ipynb", "venv"]
+           ".venv", ".vscode", "__pypackages__", "_build", "dist", "venv"]
 
 line-length = 120
 indent-width = 4
