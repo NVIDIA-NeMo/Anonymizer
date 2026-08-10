@@ -192,7 +192,7 @@ mise run install-pre-commit
 ```
 
 Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers,
-verify `uv.lock` when `pyproject.toml` changes, and run the repository-wide `make check`. The commit-message hook
+verify `uv.lock` when `pyproject.toml` changes, and run the repository-wide `mise run check`. The commit-message hook
 rejects commits without a DCO `Signed-off-by` line.
 
 If a hook changes a file, review the change, stage it again, and retry the commit. In particular, the uv-lock hook may
