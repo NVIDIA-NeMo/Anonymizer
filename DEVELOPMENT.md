@@ -70,7 +70,7 @@ mise run convert-notebooks      # regenerate tutorial notebooks
 Dependency-install tasks use `uv sync --locked` and fail when `uv.lock` does not match the project metadata. After
 changing dependencies in `pyproject.toml`, run `uv lock` before running the install tasks.
 
-The Makefile retains compatibility targets for existing scripts. New development commands belong in `.mise/tasks/`.
+The Makefile only exposes `help`, `install-mise`, and `setup`. Developer commands belong in `.mise/tasks/`.
 
 ## Validation Before Opening a PR
 
