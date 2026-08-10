@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import ClassVar, Mapping, TypeVar, cast
+from collections.abc import Mapping
+from typing import ClassVar, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig

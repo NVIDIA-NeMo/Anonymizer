@@ -11,11 +11,11 @@ run = [
 
 [install]
 description = "Install project dependencies into the configured virtual environment."
-run = [{ task = "setup" }, "uv sync"]
+run = [{ task = "setup" }, "uv sync --locked"]
 
 [bootstrap]
 description = "Install project and development dependencies."
-run = [{ task = "setup" }, "uv sync --group dev"]
+run = [{ task = "setup" }, "uv sync --locked --group dev"]
 
 ["install-dev"]
 description = "Install project and development dependencies."
@@ -23,11 +23,11 @@ run = [{ task = "bootstrap" }]
 
 ["install-dev-notebooks"]
 description = "Install project, development, and notebook dependencies."
-run = [{ task = "setup" }, "uv sync --group dev --group notebooks"]
+run = [{ task = "setup" }, "uv sync --locked --group dev --group notebooks"]
 
 ["install-dev-docs"]
 description = "Install project, development, and documentation dependencies."
-run = [{ task = "setup" }, "uv sync --group dev --group docs"]
+run = [{ task = "setup" }, "uv sync --locked --group dev --group docs"]
 
 ["install-pre-commit"]
 description = "Install the repository pre-commit hooks."

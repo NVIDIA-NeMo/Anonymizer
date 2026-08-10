@@ -10,10 +10,10 @@ import secrets
 import stat
 import sys
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
 
 from measurement_tools.wandb_ingress import read_measurement_snapshot
@@ -77,7 +77,7 @@ _RESUMABLE_CONFIG_REFRESH_KEYS = frozenset(
 
 def require_wandb() -> Any:
     """Import wandb inside the publisher's guarded SDK environment."""
-    global _PUBLISHER_WANDB_MODULE  # noqa: PLW0603
+    global _PUBLISHER_WANDB_MODULE
 
     if _WANDB_ENVIRONMENT_OWNER != threading.get_ident():
         raise RuntimeError("wandb must be imported inside the guarded SDK environment")
@@ -129,7 +129,7 @@ class WandbSdkEnvironment:
         self._snapshot: dict[str, str] | None = None
 
     def __enter__(self) -> WandbSdkEnvironment:
-        global _WANDB_ENVIRONMENT_OWNER  # noqa: PLW0603
+        global _WANDB_ENVIRONMENT_OWNER
 
         if not _WANDB_ENVIRONMENT_LOCK.acquire(blocking=False):
             raise RuntimeError("nested or concurrent W&B publisher use is not allowed")
@@ -153,7 +153,7 @@ class WandbSdkEnvironment:
         self._restore()
 
     def _restore(self) -> None:
-        global _WANDB_ENVIRONMENT_OWNER  # noqa: PLW0603
+        global _WANDB_ENVIRONMENT_OWNER
 
         if self._snapshot is None:
             return
@@ -301,7 +301,8 @@ def publish_benchmark_wandb_best_effort(
             finalization=finalization,
             metadata=resolved_metadata,
         )
-    except Exception as exc:  # noqa: BLE001 -- native observability is explicitly best-effort
+    # Native observability is explicitly best-effort.
+    except Exception as exc:
         logger.warning("Failed to publish benchmark measurements to W&B (%s)", type(exc).__name__)
         return WandbPublishResult(published=False)
 
@@ -314,7 +315,7 @@ def _build_publish_payload(
     finalization: BenchmarkWandbFinalization,
     metadata: WandbRunMetadata | None,
 ) -> tuple[WandbPublishPayload, str, int]:
-    from measurement_tools.wandb_logging import build_outbound_measurements  # noqa: PLC0415
+    from measurement_tools.wandb_logging import build_outbound_measurements
 
     cases = list(finalization.cases)
     expected_statuses = {str(case.case_id): str(case.status.value) for case in cases}
@@ -558,5 +559,6 @@ def _define_benchmark_metrics(run: Any) -> None:
     for metric_name in ("benchmark/*", "measurement/*"):
         try:
             define_metric(metric_name, summary="last")
-        except Exception as exc:  # noqa: BLE001 -- presentation polish is best-effort
+        # Metric definitions are presentation polish and must not block publishing.
+        except Exception as exc:
             logger.warning("Failed to define W&B metric %s (%s)", metric_name, type(exc).__name__)
