@@ -39,11 +39,14 @@ def test_mise_typecheck_preserves_blocking_repository_contract() -> None:
     assert typecheck["run"][1] == "tools/codestyle/typecheck.sh"
 
 
-def test_mise_ty_version_matches_project_typecheck_version() -> None:
+def test_mise_python_tool_versions_match_project_versions() -> None:
     mise = _read_toml(REPO_ROOT / ".mise.toml")
     project = _read_toml(REPO_ROOT / "pyproject.toml")
-    ty_requirement = next(
-        requirement for requirement in project["dependency-groups"]["dev"] if requirement.startswith("ty==")
-    )
 
-    assert mise["tools"]["ty"] == ty_requirement.removeprefix("ty==")
+    for tool in ("ruff", "ty"):
+        requirement = next(
+            requirement for requirement in project["dependency-groups"]["dev"] if requirement.startswith(f"{tool}==")
+        )
+        assert requirement == f"{tool}=={mise['tools'][tool]}"
+
+    assert project["tool"]["uv"]["required-version"] == f">={mise['tools']['uv']}"
