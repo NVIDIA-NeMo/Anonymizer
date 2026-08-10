@@ -3,7 +3,8 @@
 
 exclude = [".bzr", ".direnv", ".eggs", ".git", ".hg", ".ipynb_checkpoints",
            ".mypy_cache", ".nox", ".pytest_cache", ".ruff_cache", ".tox",
-           ".venv", ".vscode", "__pypackages__", "_build", "dist", "venv"]
+           ".venv", ".vscode", "__pypackages__", "_build", "dist",
+           "docs/notebooks/*.ipynb", "venv"]
 
 line-length = 120
 indent-width = 4
@@ -16,17 +17,22 @@ select = [
     "I",     # isort
     "ICN",   # flake8-import-conventions
     "PIE",   # flake8-pie
+    "RUF100", # unused noqa directives
     "TID",   # flake8-tidy-imports (bans relative imports)
     "UP006", # List[A] -> list[A]
     "UP007", # Union[A, B] -> A | B
+    "UP015", # redundant open modes
+    "UP017", # datetime.timezone.utc -> datetime.UTC
+    "UP035", # deprecated imports
+    "UP037", # quoted annotations
     "UP045", # Optional[A] -> A | None
+    "E9",    # pycodestyle file I/O errors
     # TODO: enable these rules:
     # "B006",  # mutable default argument
     # "T201",  # no print() in non-test code
     # "D",     # pydocstyle -- Google-style docstrings (add convention = "google" under [lint.pydocstyle])
     # "E4",    # pycodestyle import errors
     # "E7",    # pycodestyle statement errors
-    # "E9",    # pycodestyle runtime errors
 ]
 ignore = []
 
