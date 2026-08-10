@@ -50,6 +50,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    WindowedLatentConfig,
 )
 
 
@@ -134,7 +135,10 @@ def test_run_with_latent_detection_calls_second_workflow(
     assert adapter.run_workflow.call_count == 2
     second_columns = adapter.run_workflow.call_args_list[1].kwargs["columns"]
     assert len(second_columns) == 1
-    assert isinstance(second_columns[0], LLMStructuredColumnConfig)
+    # Latent detection is windowed (chunks long docs) so it is the serializable
+    # windowed-latent plugin column rather than an LLMStructuredColumnConfig.
+    assert isinstance(second_columns[0], WindowedLatentConfig)
+    assert not isinstance(second_columns[0], LLMStructuredColumnConfig)
     assert second_columns[0].name == COL_LATENT_ENTITIES
     assert COL_LATENT_ENTITIES in result.dataframe.columns
     assert COL_FINAL_ENTITIES in result.dataframe.columns
@@ -482,7 +486,13 @@ def test_detection_workflow_plugins_are_discoverable() -> None:
             for plugin in PluginRegistry().get_plugins(PluginType.COLUMN_GENERATOR)
             if plugin.name.startswith("anonymizer-")
         }
-        assert names == {"anonymizer-detection-transform", "anonymizer-chunked-validation"}
+        assert names == {
+            "anonymizer-detection-transform",
+            "anonymizer-chunked-validation",
+            "anonymizer-windowed-detection",
+            "anonymizer-windowed-augmentation",
+            "anonymizer-windowed-latent",
+        }
     finally:
         PluginRegistry.reset()
 

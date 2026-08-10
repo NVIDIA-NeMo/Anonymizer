@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
@@ -31,13 +31,28 @@ def test_columns_returns_exactly_three_in_order(
 ) -> None:
     cols = DomainClassificationWorkflow().columns(selected_models=stub_rewrite_model_selection)
     assert len(cols) == 3
-    assert isinstance(cols[0], LLMStructuredColumnConfig)
+    # COL_DOMAIN is now a windowed custom generator (first-chunk classification)
+    # instead of an LLMStructuredColumnConfig, so it can bypass the render cap.
+    assert isinstance(cols[0], CustomColumnConfig)
     assert isinstance(cols[1], CustomColumnConfig)
     assert isinstance(cols[2], CustomColumnConfig)
     assert cols[0].name == COL_DOMAIN
     assert cols[1].name == COL_DOMAIN_SUPPLEMENT
     assert cols[2].name == COL_DOMAIN_SUPPLEMENT_PRIVACY
-    assert cols[0].model_alias == stub_rewrite_model_selection.domain_classifier
+    assert cols[0].generator_params.alias == stub_rewrite_model_selection.domain_classifier
+    assert cols[0].generator_params.first_only is True
+
+
+def test_columns_threads_window_sizing(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    cols = DomainClassificationWorkflow().columns(
+        selected_models=stub_rewrite_model_selection,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    assert cols[0].generator_params.max_render_chars == 12_345
+    assert cols[0].generator_params.safety_margin_chars == 678
 
 
 def test_enrich_domain_populates_supplement_for_known_domain() -> None:

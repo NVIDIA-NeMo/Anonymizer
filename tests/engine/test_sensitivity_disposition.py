@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -34,9 +34,24 @@ def test_columns_uses_disposition_analyzer_alias(
         privacy_goal=_STUB_PRIVACY_GOAL,
     )
     assert len(cols) == 1
-    assert isinstance(cols[0], LLMStructuredColumnConfig)
-    assert cols[0].model_alias == stub_rewrite_model_selection.disposition_analyzer
+    # Disposition is now a windowed custom generator (chunks the tagged text,
+    # unions per-entity decisions) so it can bypass the render cap.
+    assert isinstance(cols[0], CustomColumnConfig)
+    assert cols[0].generator_params.alias == stub_rewrite_model_selection.disposition_analyzer
     assert cols[0].name == COL_SENSITIVITY_DISPOSITION
+
+
+def test_columns_threads_window_sizing(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    cols = SensitivityDispositionWorkflow().columns(
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_STUB_PRIVACY_GOAL,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    assert cols[0].generator_params.max_render_chars == 12_345
+    assert cols[0].generator_params.safety_margin_chars == 678
 
 
 def test_privacy_goal_interpolated_into_prompt() -> None:

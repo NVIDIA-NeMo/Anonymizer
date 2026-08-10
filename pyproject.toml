@@ -23,6 +23,9 @@ anonymizer = "anonymizer.interface.cli.main:main"
 [project.entry-points."data_designer.plugins"]
 anonymizer-detection-transform = "anonymizer.engine.workflow_columns.detection.plugins:detection_transform_plugin"
 anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.plugins:chunked_validation_plugin"
+anonymizer-windowed-detection = "anonymizer.engine.workflow_columns.detection.plugins:windowed_detection_plugin"
+anonymizer-windowed-augmentation = "anonymizer.engine.workflow_columns.detection.plugins:windowed_augmentation_plugin"
+anonymizer-windowed-latent = "anonymizer.engine.workflow_columns.detection.plugins:windowed_latent_plugin"
 
 [dependency-groups]
 dev = [

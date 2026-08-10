@@ -22,6 +22,9 @@ Replace mode replaces each [detected entity](detection.md) with an alternative t
 
 Replaces entities with LLM-generated synthetic values that are contextually plausible. This is the only replacement strategy that requires an LLM call.
 
+!!! info "Long records"
+    For records too large to fit in a single LLM call, Substitute builds its replacement map in sequential windows, threading the map and a rolling summary through each so the same entity maps to the same synthetic value throughout. See [Long-context handling](long-context.md#3-substitute-map-sequential-windows-rolling-state).
+
 ```python
 from anonymizer import AnonymizerConfig, Substitute
 

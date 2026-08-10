@@ -10,8 +10,11 @@ from data_designer.config.base import SingleColumnConfig
 from pydantic import Field
 
 from anonymizer.engine.constants import (
+    COL_AUGMENTATION_FAILED_WINDOWS,
     COL_AUGMENTED_ENTITIES,
+    COL_DETECTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
+    COL_LATENT_FAILED_WINDOWS,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
@@ -123,3 +126,105 @@ class ChunkedValidationConfig(SingleColumnConfig):
 
     def get_model_aliases(self) -> list[str]:
         return list(self.pool)
+
+
+class WindowedDetectionConfig(SingleColumnConfig):
+    """Serializable config for the windowed GLiNER detection column.
+
+    Long documents are tiled into overlapping windows so each detector call
+    stays under the render cap; spans are merged with boundary dedup. See
+    ``anonymizer.engine.detection.chunked_detection``.
+    """
+
+    column_type: Literal["anonymizer-windowed-detection"] = "anonymizer-windowed-detection"
+    alias: str = Field(min_length=1)
+    max_render_chars: int = Field(gt=0)
+    safety_margin_chars: int = Field(default=8000, ge=0)
+    overlap_chars: int = Field(default=1000, ge=0)
+    system_prompt: str | None = Field(default=None, repr=False)
+
+    @staticmethod
+    def get_column_emoji() -> str:
+        return "A"
+
+    @property
+    def required_columns(self) -> list[str]:
+        return [COL_TEXT]
+
+    @property
+    def side_effect_columns(self) -> list[str]:
+        return []
+
+    def get_model_aliases(self) -> list[str]:
+        return [self.alias]
+
+
+class WindowedAugmentationConfig(SingleColumnConfig):
+    """Serializable config for the windowed LLM augmentation column.
+
+    See ``anonymizer.engine.detection.chunked_augmentation``.
+    """
+
+    column_type: Literal["anonymizer-windowed-augmentation"] = "anonymizer-windowed-augmentation"
+    alias: str = Field(min_length=1)
+    prompt_template: str = Field(repr=False)
+    max_render_chars: int = Field(gt=0)
+    safety_margin_chars: int = Field(default=8000, ge=0)
+    overlap_chars: int = Field(default=1000, ge=0)
+    system_prompt: str | None = Field(default=None, repr=False)
+
+    @staticmethod
+    def get_column_emoji() -> str:
+        return "A"
+
+    @property
+    def required_columns(self) -> list[str]:
+        return [
+            COL_TEXT,
+            COL_INITIAL_TAGGED_TEXT,
+            COL_SEED_ENTITIES_JSON,
+            COL_VALIDATED_SEED_ENTITIES,
+            COL_TAG_NOTATION,
+        ]
+
+    @property
+    def side_effect_columns(self) -> list[str]:
+        return [COL_AUGMENTATION_FAILED_WINDOWS]
+
+    def get_model_aliases(self) -> list[str]:
+        return [self.alias]
+
+
+class WindowedLatentConfig(SingleColumnConfig):
+    """Serializable config for the windowed latent-entity detection column.
+
+    See ``anonymizer.engine.detection.chunked_latent``.
+    """
+
+    column_type: Literal["anonymizer-windowed-latent"] = "anonymizer-windowed-latent"
+    alias: str = Field(min_length=1)
+    prompt_template: str = Field(repr=False)
+    max_render_chars: int = Field(gt=0)
+    safety_margin_chars: int = Field(default=8000, ge=0)
+    overlap_chars: int = Field(default=1000, ge=0)
+    system_prompt: str | None = Field(default=None, repr=False)
+
+    @staticmethod
+    def get_column_emoji() -> str:
+        return "A"
+
+    @property
+    def required_columns(self) -> list[str]:
+        return [
+            COL_TEXT,
+            COL_TAGGED_TEXT,
+            COL_DETECTED_ENTITIES,
+            COL_TAG_NOTATION,
+        ]
+
+    @property
+    def side_effect_columns(self) -> list[str]:
+        return [COL_LATENT_FAILED_WINDOWS]
+
+    def get_model_aliases(self) -> list[str]:
+        return [self.alias]

@@ -3,14 +3,12 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMJudgeColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_JUDGE_EVALUATION,
-    COL_REWRITTEN_TEXT,
-    COL_TEXT,
 )
 from anonymizer.engine.rewrite.final_judge import (
     PRIVACY_RUBRIC,
@@ -49,10 +47,15 @@ def test_judge_prompt_uses_xml_sections() -> None:
     assert "</task>" in prompt
 
 
-def test_judge_prompt_references_required_columns() -> None:
+def test_judge_prompt_has_window_placeholders_and_scales() -> None:
     prompt = _judge_prompt(_STUB_PRIVACY_GOAL)
-    assert COL_TEXT in prompt
-    assert COL_REWRITTEN_TEXT in prompt
+    # Per-window slices are injected via these Jinja placeholders (not DD column refs).
+    assert "{{ original_text }}" in prompt
+    assert "{{ rewritten_text }}" in prompt
+    # The categorical rubric scales must be embedded in the prompt for the direct model call.
+    for name in ("privacy", "quality", "style"):
+        assert name in prompt
+    assert "<output_format>" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -79,12 +82,12 @@ def test_judge_column_uses_rewrite_judge_alias(
         selected_models=stub_evaluate_model_selection,
         privacy_goal=_STUB_PRIVACY_GOAL,
     )
-    judge_cols = [c for c in cols if isinstance(c, LLMJudgeColumnConfig)]
-    assert len(judge_cols) == 1
-    assert judge_cols[0].model_alias == stub_evaluate_model_selection.rewrite_judge
+    judge_col = next(c for c in cols if c.name == COL_JUDGE_EVALUATION)
+    assert isinstance(judge_col, CustomColumnConfig)
+    assert judge_col.generator_params.alias == stub_evaluate_model_selection.rewrite_judge
 
 
-def test_judge_column_has_three_rubrics(
+def test_judge_column_is_windowed_generator_with_three_rubrics(
     stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
     wf = FinalJudgeWorkflow()
@@ -92,25 +95,34 @@ def test_judge_column_has_three_rubrics(
         selected_models=stub_evaluate_model_selection,
         privacy_goal=_STUB_PRIVACY_GOAL,
     )
-    judge_col = next(c for c in cols if isinstance(c, LLMJudgeColumnConfig))
-    assert judge_col.name == COL_JUDGE_EVALUATION
-    score_names = {s.name for s in judge_col.scores}
-    assert score_names == {"privacy", "quality", "style"}
+    judge_col = next(c for c in cols if c.name == COL_JUDGE_EVALUATION)
+    assert isinstance(judge_col, CustomColumnConfig)
+    template = judge_col.generator_params.prompt_template
+    for name in ("privacy", "quality", "style"):
+        assert name in template
+    assert judge_col.generator_params.max_render_chars > 0
 
 
-def test_judge_rubrics_use_categorical_scores(
-    stub_evaluate_model_selection: EvaluateModelSelection,
-) -> None:
-    wf = FinalJudgeWorkflow()
-    cols = wf.columns(
-        selected_models=stub_evaluate_model_selection,
-        privacy_goal=_STUB_PRIVACY_GOAL,
-    )
-    judge_col = next(c for c in cols if isinstance(c, LLMJudgeColumnConfig))
-    for score in judge_col.scores:
+def test_judge_rubrics_use_categorical_scores() -> None:
+    for score in (PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC):
         assert "low" in score.options
         assert "medium" in score.options
         assert "high" in score.options
+
+
+def test_columns_threads_window_sizing(
+    stub_evaluate_model_selection: EvaluateModelSelection,
+) -> None:
+    wf = FinalJudgeWorkflow()
+    cols = wf.columns(
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_STUB_PRIVACY_GOAL,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    judge_col = next(c for c in cols if c.name == COL_JUDGE_EVALUATION)
+    assert judge_col.generator_params.max_render_chars == 12_345
+    assert judge_col.generator_params.safety_margin_chars == 678
 
 
 def test_rubric_names_match_constants() -> None:

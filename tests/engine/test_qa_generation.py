@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
@@ -94,10 +94,12 @@ def test_columns_returns_exactly_five_in_order(
 ) -> None:
     cols = QAGenerationWorkflow().columns(selected_models=stub_rewrite_model_selection)
     assert len(cols) == 5
+    # Meaning-unit extraction (cols[1]) and quality-QA (cols[3]) are now windowed
+    # custom generators (chunk text / batch units) so they bypass the render cap.
     assert isinstance(cols[0], CustomColumnConfig)
-    assert isinstance(cols[1], LLMStructuredColumnConfig)
+    assert isinstance(cols[1], CustomColumnConfig)
     assert isinstance(cols[2], CustomColumnConfig)
-    assert isinstance(cols[3], LLMStructuredColumnConfig)
+    assert isinstance(cols[3], CustomColumnConfig)
     assert isinstance(cols[4], CustomColumnConfig)
     assert cols[0].name == COL_SENSITIVITY_DISPOSITION_BLOCK
     assert cols[1].name == COL_MEANING_UNITS
@@ -110,14 +112,29 @@ def test_meaning_extractor_alias_used(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
     cols = QAGenerationWorkflow().columns(selected_models=stub_rewrite_model_selection)
-    assert cols[1].model_alias == stub_rewrite_model_selection.meaning_extractor
+    assert cols[1].generator_params.alias == stub_rewrite_model_selection.meaning_extractor
 
 
 def test_qa_generator_alias_used(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
     cols = QAGenerationWorkflow().columns(selected_models=stub_rewrite_model_selection)
-    assert cols[3].model_alias == stub_rewrite_model_selection.qa_generator
+    metadata = cols[3].generator_function.custom_column_metadata
+    assert metadata["model_aliases"] == [stub_rewrite_model_selection.qa_generator]
+
+
+def test_columns_threads_window_sizing(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    cols = QAGenerationWorkflow().columns(
+        selected_models=stub_rewrite_model_selection,
+        window_max_render_chars=12_345,
+        window_safety_margin_chars=678,
+    )
+    # Meaning-unit extraction (cols[1]) is the windowed metadata generator; its
+    # params carry the same sizing also passed to the quality-QA batcher.
+    assert cols[1].generator_params.max_render_chars == 12_345
+    assert cols[1].generator_params.safety_margin_chars == 678
 
 
 def test_format_disposition_block_produces_valid_json() -> None:

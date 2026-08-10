@@ -3,19 +3,22 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMJudgeColumnConfig, Score
+from data_designer.config.column_configs import CustomColumnConfig, Score
 from data_designer.config.column_types import ColumnConfigT
 
+from anonymizer.config.anonymizer_config import Detect as _DetectConfig
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_JUDGE_EVALUATION,
-    COL_REWRITTEN_TEXT,
-    COL_TEXT,
-    _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.rewrite.chunked_final_judge import WindowedJudgeParams, make_windowed_judge_generator
+
+# Long-context window defaults, shared with detection (single source of truth).
+_DEFAULT_MAX_RENDER_CHARS: int = _DetectConfig.model_fields["detection_window_max_render_chars"].default
+_DEFAULT_SAFETY_MARGIN_CHARS: int = _DetectConfig.model_fields["detection_window_safety_margin_chars"].default
 
 # ---------------------------------------------------------------------------
 # Prompt
@@ -115,15 +118,37 @@ Score each dimension independently.
       * medium — mostly readable; isolated awkward phrasing or stiff transitions
       * low    — noticeably unnatural; broken grammar, placeholder-like language, or machine-generated feel
 </style_scoring_instructions>
+
+<score_scales>
+<<SCORE_SCALES>>
+</score_scales>
+
+<output_format>
+Score each dimension as "high", "medium", or "low" using the scales above, then return your
+evaluation as JSON with keys "privacy", "quality", and "style" — each an object with a "score"
+(one of "high", "medium", "low") and a brief "reasoning".
+</output_format>
 """
     return substitute_placeholders(
         prompt,
         {
             "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
-            "<<COL_TEXT>>": _jinja(COL_TEXT),
-            "<<COL_REWRITTEN_TEXT>>": _jinja(COL_REWRITTEN_TEXT),
+            "<<COL_TEXT>>": "{{ original_text }}",
+            "<<COL_REWRITTEN_TEXT>>": "{{ rewritten_text }}",
+            "<<SCORE_SCALES>>": _rubric_scale_block(),
         },
     )
+
+
+def _rubric_scale_block() -> str:
+    """Render the three rubrics' high/medium/low scales into prompt text (the windowed
+    judge calls the model directly, so the scales must live in the prompt rather than
+    being passed as DataDesigner ``Score`` objects)."""
+    blocks = []
+    for rubric in (PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC):
+        lines = "\n".join(f"  {score}: {rubric.options[score]}" for score in ("high", "medium", "low"))
+        blocks.append(f"{rubric.name} — {rubric.description}\n{lines}")
+    return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -179,14 +204,29 @@ class FinalJudgeWorkflow:
         *,
         selected_models: EvaluateModelSelection,
         privacy_goal: PrivacyGoal,
+        window_max_render_chars: int | None = None,
+        window_safety_margin_chars: int | None = None,
     ) -> list[ColumnConfigT]:
         judge_alias = resolve_model_alias("rewrite_judge", selected_models)
+        # Honor caller-provided (Detect-config-derived) window sizing; fall back
+        # to the shared defaults so a lowered detection cap also bounds this stage.
+        max_render_chars = window_max_render_chars if window_max_render_chars is not None else _DEFAULT_MAX_RENDER_CHARS
+        safety_margin_chars = (
+            window_safety_margin_chars if window_safety_margin_chars is not None else _DEFAULT_SAFETY_MARGIN_CHARS
+        )
 
         return [
-            LLMJudgeColumnConfig(
+            # Windowed final judge: long documents are split into parallel, independent
+            # windows (the rubric scales live in the prompt and scores are parsed via
+            # structured output), bypassing NDD's single-render cap. See chunked_final_judge.
+            CustomColumnConfig(
                 name=COL_JUDGE_EVALUATION,
-                prompt=_judge_prompt(privacy_goal),
-                model_alias=judge_alias,
-                scores=[PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC],
+                generator_function=make_windowed_judge_generator(judge_alias),
+                generator_params=WindowedJudgeParams(
+                    alias=judge_alias,
+                    prompt_template=_judge_prompt(privacy_goal),
+                    max_render_chars=max_render_chars,
+                    safety_margin_chars=safety_margin_chars,
+                ),
             ),
         ]
