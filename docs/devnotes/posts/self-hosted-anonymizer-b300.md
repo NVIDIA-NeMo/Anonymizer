@@ -138,21 +138,44 @@ service compiler described in [Self-hosting GLiNER](../../concepts/self-hosting-
 which records the exact model, engine, placement, batch environment, endpoint,
 and process identity in versioned plans and receipts.
 
-```json title="gliner-b300-intent.json"
-{
-  "schema_version": "inference-service.intent/v1",
-  "task": {"kind": "entity-detection", "dynamic_labels": true, "offsets": true, "scores": true},
-  "model": {"kind": "hugging-face", "model_id": "nvidia/gliner-pii", "revision": "bd23e8ef4425fd04e34c5204ab49ffaa706eae79"},
-  "engine": {"kind": "native-gliner", "family": "nvidia-gliner", "device": "cuda", "max_batch_requests": 64, "batch_wait_ms": 10},
-  "placement": {"kind": "local-process", "host": "127.0.0.1", "port": 9000},
-  "access": {"kind": "direct"},
-  "lifecycle": {"kind": "managed", "startup_timeout_seconds": 300, "shutdown_timeout_seconds": 30}
-}
+```toml title="gliner-b300.toml"
+schema_version = "inference-service.intent/v1"
+
+[task]
+kind = "entity-detection"
+dynamic_labels = true
+offsets = true
+scores = true
+
+[model]
+kind = "hugging-face"
+model_id = "nvidia/gliner-pii"
+revision = "bd23e8ef4425fd04e34c5204ab49ffaa706eae79"
+
+[engine]
+kind = "native-gliner"
+family = "nvidia-gliner"
+device = "cuda"
+max_batch_requests = 64
+batch_wait_ms = 10
+
+[placement]
+kind = "local-process"
+host = "127.0.0.1"
+port = 9000
+
+[access]
+kind = "direct"
+
+[lifecycle]
+kind = "managed"
+startup_timeout_seconds = 300
+shutdown_timeout_seconds = 30
 ```
 
 ```bash
 uv run tools/inference_service.py compile \
-  --intent gliner-b300-intent.json \
+  --profile gliner-b300.toml \
   --source-revision 3f68c145 \
   --output gliner-b300-plan.json
 uv run tools/inference_service.py launch \

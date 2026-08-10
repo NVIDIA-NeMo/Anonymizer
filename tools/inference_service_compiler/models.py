@@ -94,7 +94,7 @@ class VllmEngine(FrozenModel):
     """vLLM's OpenAI-compatible server with bounded common options."""
 
     kind: Literal["vllm"] = "vllm"
-    executable: str = Field(default="vllm", min_length=1)
+    python_executable: str = Field(default=".venv/bin/python", min_length=1)
     served_model_name: str | None = Field(default=None, min_length=1)
     api_key_env: str | None = Field(default=None, min_length=1)
     tensor_parallel_size: int | None = Field(default=None, ge=1)

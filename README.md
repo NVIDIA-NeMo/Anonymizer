@@ -160,7 +160,7 @@ Use the source-tree inference service compiler to create immutable plans and
 managed launch receipts for native GLiNER or vLLM processes and containers:
 
 ```bash
-uv run tools/inference_service.py compile --intent intent.json --source-revision 3f68c145 --output plan.json
+uv run tools/inference_service.py compile --profile tools/inference_service_profiles/nvidia-gliner.toml --source-revision 3f68c145 --output plan.json
 uv run tools/inference_service.py launch --plan plan.json --output launch.json
 uv run tools/inference_service.py inspect --receipt launch.json
 uv run tools/inference_service.py cancel --receipt launch.json
@@ -168,7 +168,7 @@ uv run tools/inference_service.py cancel --receipt launch.json
 
 The tool is not part of the wheel and does not attach to externally owned
 endpoints. The [local inference service guide](docs/concepts/inference-services.md)
-covers typed intents, GPU-host setup, Docker, model discovery, capability
+covers typed TOML profiles, GPU-host setup, Docker, model discovery, capability
 probes, and Anonymizer provider configuration.
 
 ---

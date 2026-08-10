@@ -94,9 +94,9 @@ On first launch, the selected public checkpoint is downloaded from Hugging Face 
 
 ### Start the server
 
-Create a native GLiNER intent, compile it, and launch the resulting plan as
+Compile the pinned native GLiNER TOML profile and launch the resulting plan as
 shown in [Run local inference services](inference-services.md#native-gliner).
-The intent keeps the model checkpoint, engine family, device, placement,
+The profile keeps the model checkpoint, engine family, device, placement,
 access, and managed lifecycle separate. `nvidia-gliner` is the default engine
 family and `nvidia/gliner-pii` is the default model; GLiNER2 uses the
 `fastino/gliner2-privacy-filter-PII-multi` checkpoint.

@@ -1,0 +1,30 @@
+schema_version = "inference-service.intent/v1"
+
+[task]
+kind = "entity-detection"
+dynamic_labels = true
+offsets = true
+scores = true
+
+[model]
+kind = "hugging-face"
+model_id = "fastino/gliner2-privacy-filter-PII-multi"
+revision = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
+
+[engine]
+kind = "native-gliner"
+family = "gliner2"
+device = "auto"
+
+[placement]
+kind = "local-process"
+host = "127.0.0.1"
+port = 8002
+
+[access]
+kind = "direct"
+
+[lifecycle]
+kind = "managed"
+startup_timeout_seconds = 300
+shutdown_timeout_seconds = 30

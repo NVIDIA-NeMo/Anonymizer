@@ -15,11 +15,14 @@ from unittest import mock
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "tools" / "inference_service.py"
 TOOLS_ROOT = REPO_ROOT / "tools"
 NATIVE_GLINER_PATH = TOOLS_ROOT / "inference_service_compiler" / "native_gliner.py"
+VLLM_SERVER_PATH = TOOLS_ROOT / "inference_service_compiler" / "vllm_server.py"
+PROFILE_ROOT = TOOLS_ROOT / "inference_service_profiles"
 REMOVED_GLINER_PATH = TOOLS_ROOT / "serve_gliner.py"
 
 
@@ -68,7 +71,7 @@ def build_generation_plan(
             models.DockerPlacement(
                 host="127.0.0.1",
                 port=8000,
-                image="vllm/vllm-openai:v0.20.0",
+                image="vllm/vllm-openai:v0.26.0",
                 gpus="all",
             )
             if docker
@@ -151,7 +154,7 @@ def test_compile_vllm_docker_plan_keeps_secrets_symbolic() -> None:
         placement=models.DockerPlacement(
             host="127.0.0.1",
             port=8000,
-            image="vllm/vllm-openai:v0.20.0",
+            image="vllm/vllm-openai:v0.26.0",
             gpus="all",
         ),
         access=models.DirectAccess(),
@@ -162,7 +165,7 @@ def test_compile_vllm_docker_plan_keeps_secrets_symbolic() -> None:
     rendered = plan.model_dump_json()
 
     assert plan.runtime.kind == "docker"
-    assert plan.runtime.image == "vllm/vllm-openai:v0.20.0"
+    assert plan.runtime.image == "vllm/vllm-openai:v0.26.0"
     assert plan.endpoint.url == "http://127.0.0.1:8000/v1"
     assert plan.expected_model == "anonymizer-local"
     assert plan.required_capabilities == ("chat-completions",)
@@ -191,6 +194,51 @@ def test_compile_vllm_docker_plan_keeps_secrets_symbolic() -> None:
         "--tokenizer-revision",
         "abcdef0123456789",
     )
+
+
+def test_compile_local_vllm_plan_uses_the_python_server_factory() -> None:
+    """Local vLLM runs through the source-owned Python factory, not its CLI binary."""
+    models, compiler = load_compiler_modules()
+    intent = models.InferenceIntent(
+        task=models.Generation(chat=True),
+        model=models.HuggingFaceModel(model_id="openai/gpt-oss-20b", revision="abcdef0123456789"),
+        engine=models.VllmEngine(python_executable=".venv/bin/python"),
+        placement=models.LocalProcessPlacement(host="127.0.0.1", port=8000),
+        access=models.DirectAccess(),
+        lifecycle=models.ManagedLifecycle(),
+    )
+
+    plan = compiler.compile_intent(intent, source_revision="3f68c145")
+
+    assert plan.command.render_argv()[:3] == (
+        ".venv/bin/python",
+        "tools/inference_service_compiler/vllm_server.py",
+        "openai/gpt-oss-20b",
+    )
+    assert "serve" not in plan.command.render_argv()
+    assert VLLM_SERVER_PATH.is_file()
+
+
+def test_compiler_rejects_gliner_through_vllm() -> None:
+    """GLiNER models stay on their characterized native runtime."""
+    models, compiler = load_compiler_modules()
+    intent = models.InferenceIntent(
+        task=models.EntityDetection(dynamic_labels=True, offsets=True, scores=True),
+        model=models.HuggingFaceModel(model_id="nvidia/gliner-pii"),
+        engine=models.VllmEngine(),
+        placement=models.LocalProcessPlacement(),
+        access=models.DirectAccess(),
+        lifecycle=models.ManagedLifecycle(),
+    )
+
+    with pytest.raises(compiler.CompilationError) as exc_info:
+        compiler.compile_intent(intent, source_revision="3f68c145")
+
+    assert exc_info.value.diagnostic.code == "unsupported-task-engine"
+    assert exc_info.value.diagnostic.details == {
+        "engine": "vllm",
+        "task": "entity-detection",
+    }
 
 
 def test_compiler_rejects_unsupported_native_generation() -> None:
@@ -255,23 +303,37 @@ def test_plan_digest_detects_transport_mutation() -> None:
         compiler.load_plan(json.dumps(payload))
 
 
-def test_compile_command_writes_the_versioned_plan(tmp_path: Path) -> None:
-    """The CLI is a thin JSON transport over the same pure compiler."""
+def test_compile_command_accepts_toml_profile_and_writes_json_plan(tmp_path: Path) -> None:
+    """Operators author TOML while generated plans retain the JSON transport."""
     cli = load_cli_module()
-    intent_path = tmp_path / "intent.json"
+    profile_path = tmp_path / "generation.toml"
     plan_path = tmp_path / "plan.json"
-    intent_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "inference-service.intent/v1",
-                "task": {"kind": "generation", "chat": True},
-                "model": {"kind": "hugging-face", "model_id": "openai/gpt-oss-20b"},
-                "engine": {"kind": "vllm"},
-                "placement": {"kind": "local-process", "host": "127.0.0.1", "port": 8000},
-                "access": {"kind": "direct"},
-                "lifecycle": {"kind": "managed"},
-            }
-        ),
+    profile_path.write_text(
+        """\
+schema_version = "inference-service.intent/v1"
+
+[task]
+kind = "generation"
+chat = true
+
+[model]
+kind = "hugging-face"
+model_id = "openai/gpt-oss-20b"
+
+[engine]
+kind = "vllm"
+
+[placement]
+kind = "local-process"
+host = "127.0.0.1"
+port = 8000
+
+[access]
+kind = "direct"
+
+[lifecycle]
+kind = "managed"
+""",
         encoding="utf-8",
     )
 
@@ -280,8 +342,8 @@ def test_compile_command_writes_the_versioned_plan(tmp_path: Path) -> None:
             cli.app(
                 [
                     "compile",
-                    "--intent",
-                    str(intent_path),
+                    "--profile",
+                    str(profile_path),
                     "--source-revision",
                     "3f68c145",
                     "--output",
@@ -294,6 +356,112 @@ def test_compile_command_writes_the_versioned_plan(tmp_path: Path) -> None:
     assert payload["schema_version"] == "inference-service.run-plan/v1"
     assert payload["source_revision"] == "3f68c145"
     assert payload["plan_digest"]
+
+
+def test_equivalent_toml_profiles_compile_to_the_same_plan(tmp_path: Path) -> None:
+    """TOML comments and table order do not change semantic plan identity."""
+    cli = load_cli_module()
+    _models, compiler = load_compiler_modules()
+    first_path = tmp_path / "first.toml"
+    second_path = tmp_path / "second.toml"
+    first_path.write_text(
+        """\
+schema_version = "inference-service.intent/v1"
+[task]
+kind = "generation"
+chat = true
+[model]
+kind = "hugging-face"
+model_id = "openai/gpt-oss-20b"
+[engine]
+kind = "vllm"
+[placement]
+kind = "local-process"
+host = "127.0.0.1"
+port = 8000
+[access]
+kind = "direct"
+[lifecycle]
+kind = "managed"
+""",
+        encoding="utf-8",
+    )
+    second_path.write_text(
+        """\
+# The order and formatting are for humans; the compiler sees one typed value.
+schema_version = "inference-service.intent/v1"
+[lifecycle]
+kind = "managed"
+[access]
+kind = "direct"
+[placement]
+port = 8000
+host = "127.0.0.1"
+kind = "local-process"
+[engine]
+kind = "vllm"
+[model]
+model_id = "openai/gpt-oss-20b"
+kind = "hugging-face"
+[task]
+chat = true
+kind = "generation"
+""",
+        encoding="utf-8",
+    )
+
+    first = compiler.compile_intent(cli.load_profile(first_path), source_revision="3f68c145")
+    second = compiler.compile_intent(cli.load_profile(second_path), source_revision="3f68c145")
+
+    assert first == second
+
+
+def test_toml_profile_rejects_unknown_engine_fields(tmp_path: Path) -> None:
+    """Closed profile tables reject unknown settings before compilation."""
+    cli = load_cli_module()
+    profile_path = tmp_path / "invalid.toml"
+    profile_path.write_text(
+        """\
+schema_version = "inference-service.intent/v1"
+[task]
+kind = "generation"
+chat = true
+[model]
+kind = "hugging-face"
+model_id = "openai/gpt-oss-20b"
+[engine]
+kind = "vllm"
+unknown = true
+[placement]
+kind = "local-process"
+[access]
+kind = "direct"
+[lifecycle]
+kind = "managed"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError):
+        cli.load_profile(profile_path)
+
+
+def test_reference_toml_profiles_are_pinned_and_compile() -> None:
+    """Bundled operator profiles stay parseable, pinned, and compatible."""
+    cli = load_cli_module()
+    _models, compiler = load_compiler_modules()
+
+    profile_paths = tuple(sorted(PROFILE_ROOT.glob("*.toml")))
+
+    assert {path.name for path in profile_paths} == {
+        "gliner2.toml",
+        "nvidia-gliner.toml",
+        "vllm-local.toml",
+    }
+    for path in profile_paths:
+        intent = cli.load_profile(path)
+        assert intent.model.revision is not None
+        assert compiler.compile_intent(intent, source_revision="3f68c145")
 
 
 def test_probe_records_generation_capabilities() -> None:
@@ -400,6 +568,7 @@ def test_launch_local_process_returns_reconnectable_handle(tmp_path: Path) -> No
         mock.patch.object(runtime.subprocess, "Popen", return_value=process) as popen,
         mock.patch.object(runtime, "probe_endpoint", return_value=probe),
         mock.patch.object(runtime, "read_process_start_marker", return_value="100"),
+        mock.patch.object(runtime, "is_handle_running", return_value=True),
     ):
         receipt = runtime.launch_plan(
             plan,
@@ -467,6 +636,7 @@ def test_launch_docker_returns_container_identity(tmp_path: Path) -> None:
     with (
         mock.patch.object(runtime.subprocess, "run", return_value=completed) as run,
         mock.patch.object(runtime, "probe_endpoint", return_value=probe),
+        mock.patch.object(runtime, "is_handle_running", return_value=True),
     ):
         receipt = runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
 
@@ -658,3 +828,29 @@ def test_failed_readiness_cleans_up_the_launched_process(tmp_path: Path) -> None
     assert exc_info.value.diagnostic.known_effects == ("4242:100",)
     assert exc_info.value.diagnostic.cleanup_complete is True
     killpg.assert_called_once_with(4242, runtime.signal.SIGTERM)
+
+
+def test_readiness_stops_polling_when_the_managed_process_exits(tmp_path: Path) -> None:
+    """A crashed server fails immediately and points the operator to its stderr log."""
+    models, compiler = load_compiler_modules()
+    runtime = load_runtime_module()
+    plan = build_generation_plan(models, compiler)
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path=str(tmp_path / "stdout.log"),
+        stderr_path=str(tmp_path / "stderr.log"),
+    )
+
+    with (
+        mock.patch.object(runtime, "is_handle_running", return_value=False),
+        mock.patch.object(runtime, "probe_endpoint") as probe,
+        pytest.raises(runtime.RuntimeEffectError) as exc_info,
+    ):
+        runtime.wait_for_readiness(plan, handle=handle)
+
+    assert exc_info.value.diagnostic.code == "launch-exited"
+    assert str(tmp_path / "stderr.log") in exc_info.value.diagnostic.message
+    probe.assert_not_called()

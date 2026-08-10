@@ -54,7 +54,7 @@ notebooks = [
     "pillow>=12.0.0,<13",
 ]
 local-models = [
-    "vllm==0.20.0; sys_platform == 'linux'",
+    "vllm==0.26.0; sys_platform == 'linux'",
 ]
 
 [build-system]
