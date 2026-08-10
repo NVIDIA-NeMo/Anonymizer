@@ -51,7 +51,16 @@ def test_ruff_enables_audited_error_and_safe_fix_rules() -> None:
     ruff = _read_toml(REPO_ROOT / "ruff.toml")
 
     assert {"E9", "RUF100", "UP015", "UP017", "UP035", "UP037"} <= set(ruff["lint"]["select"])
-    assert "docs/notebooks/*.ipynb" in ruff["exclude"]
+
+
+def test_ruff_and_ty_check_rendered_notebooks() -> None:
+    ruff = _read_toml(REPO_ROOT / "ruff.toml")
+    project = _read_toml(REPO_ROOT / "pyproject.toml")
+    file_collector = (REPO_ROOT / "tools/codestyle/_lib.sh").read_text(encoding="utf-8")
+
+    assert "docs/notebooks/*.ipynb" not in ruff["exclude"]
+    assert "git ls-files '*.py' '*.ipynb'" in file_collector
+    assert "docs" in project["tool"]["ty"]["src"]["include"]
 
 
 def test_mise_python_tool_versions_match_project_versions() -> None:
