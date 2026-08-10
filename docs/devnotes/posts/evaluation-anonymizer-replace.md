@@ -11,11 +11,13 @@ authors:
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-In Replace mode, Anonymizer detects entities and transforms them according to the chosen strategy — substitute, redact, annotate, or hash. 
+You need to share a dataset of customer biographies for model development without exposing personal information, so you run it through NeMo Anonymizer's Replace mode. At first glance, the result looks right: the obvious identifiers have changed, the text reads naturally, and nothing appears broken.
 
-This leaves two open questions: did detection catch everything sensitive in the first place, and if Substitute was used, do the synthetic values hold together as a type-compatible, demographically coherent, internally consistent set? A record can pass a surface read and still have a synthetic name that no longer matches an email local-part, a city paired with the wrong postal code, or an age quietly shifted from adult to child.
+Look closer, though. One sensitive value was never detected. The synthetic name no longer matches the email local-part. The city and postal code belong to different regions. An age of 38 became 8, quietly turning an adult into a child. The record looks anonymized, but it may still expose private information or distort the original meaning.
 
-This is Part 1 of a two-part series on evaluation in Anonymizer. It covers **Replace mode**: what the evaluation pipeline checks, what each score means, and how to use the results. In the upcoming part 2, we will cover Rewrite mode, where the evaluation questions are different.
+`Anonymizer.evaluate()` provides a second pass over these results. It checks whether detection covered the sensitive values in the original text and, for Substitute mode, whether the generated replacements preserve their types, important attributes, and relationships.
+
+This is Part 1 of a two-part series on evaluation in Anonymizer. It explores how Replace-mode evaluation surfaces problems that a quick review can miss, what each score means, and how to interpret the results. Part 2 will cover Rewrite mode, where the evaluation questions are different.
 
 <!-- more -->
 
