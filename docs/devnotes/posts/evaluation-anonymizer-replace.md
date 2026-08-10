@@ -21,6 +21,12 @@ This is Part 1 of a two-part series on evaluation in Anonymizer. It explores how
 
 <!-- more -->
 
+<div style="text-align: center;" markdown>
+
+![Screenshot of display_record output for a Substitute result showing entity highlights, entity coverage, detection validity, three substitution-quality verdicts, and the replacement map.](assets/evaluate-substitute-display-record.png){ loading=lazy }
+
+</div>
+
 ---
 
 ## Anonymization and Evaluation as Separate Steps
@@ -200,7 +206,7 @@ For Substitute, `display_record` shows the original text with final detected ent
 
 <div style="text-align: center;" markdown>
 
-![Screenshot of display_record output for a Substitute result showing entity highlights, entity coverage, detection validity, three substitution-quality verdicts, and the replacement map.](assets/evaluate-substitute-display-record.png)
+![Screenshot of display_record output for a Substitute result showing entity highlights, entity coverage, detection validity, three substitution-quality verdicts, and the replacement map.](assets/evaluate-substitute-display-record.png){ loading=lazy }
 
 </div>
 
