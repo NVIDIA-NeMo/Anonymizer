@@ -32,20 +32,21 @@ preview() / run()          ← anonymization: detect + replace
     ↓
 saved AnonymizerResult
     ↓
-evaluate()                 ← quality check: LLM-as-judge scores
+evaluate()                 ← quality check: LLM-as-a-judge scores
     ↓
 per-record report
 ```
 
-This boundary is a feature, not a limitation. It means:
+This has two practical consequences:
 
 - **Evaluation is optional.** Not every run needs a judge pass. Large batches can run without evaluation, while results produced from a sample can be evaluated for audits. `evaluate()` scores every row in the result.
 - **The result is reusable.** The same original, unevaluated output can be evaluated with different judge models or at a different time without re-running entity detection and replacement.
 
-Preserve the complete `AnonymizerResult` or `PreviewResult`, for example by pickling it. Saving only its public `dataframe` is not enough: `evaluate()` also needs the trace and the stored strategy, entity scope, and dataset context.
-
+**Important:** To evaluate in a later session, pickle the complete `AnonymizerResult` or `PreviewResult`. Saving the entire result returned by `run()` or `preview()` is required; saving only its public `dataframe` is not enough because `evaluate()` also needs the trace and the stored strategy, entity scope, and dataset context.
 
 ```python
+import pickle
+
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Substitute
 
 anonymizer = Anonymizer()
@@ -55,8 +56,18 @@ result = anonymizer.run(
     data=AnonymizerInput(source="records.csv", text_column="text"),
 )
 
-# Evaluation is a separate call on the saved result.
-evaluated = anonymizer.evaluate(result)
+# To evaluate immediately after anonymization, use:
+# evaluated = anonymizer.evaluate(result)
+
+# To evaluate in a later session, save the complete result.
+with open("anonymizer-result.pkl", "wb") as f:
+    pickle.dump(result, f)
+
+# In the later session, reload the complete result before evaluating it.
+with open("anonymizer-result.pkl", "rb") as f:
+    saved_result = pickle.load(f)
+
+evaluated = anonymizer.evaluate(saved_result)
 
 # Select the evaluation output columns you want to inspect.
 output_columns = ["entity_coverage", "missed_entities"]
@@ -91,7 +102,7 @@ flowchart TD
 
 ---
 
-## Entity Coverage: Were All In-Scope Entities Detected?
+### Entity Coverage: Were All In-Scope Entities Detected?
 
 Entity coverage measures how many unique, in-scope candidate values identified by the judge were also detected by Anonymizer.
 
@@ -114,7 +125,7 @@ Entity coverage always runs. No extra configuration is needed. The judge respect
 
 ---
 
-## Detection Validity: Were the Detected Entities Valid in Context?
+### Detection Validity: Were the Detected Entities Valid in Context?
 
 Detection validity is the precision-side complement to entity coverage. It checks whether each detected `(value, label)` pair is valid in the context of the original text.
 
@@ -124,6 +135,8 @@ It surfaces:
 - **Wrong labels** — a real entity assigned to a clearly incompatible category.
 - **Wrong boundaries** — a partial span or one that absorbs surrounding text it should not.
 - **Contextual mismatches** — a token that could be an entity elsewhere but isn't one in this sentence. The word `"Apple"` in a grocery note is different from `"Apple"` in an employment record.
+
+***Note:*** Detection-validity judgments are particularly sensitive to entity label names and wording. Ambiguous, overlapping, or domain-specific labels can change how the judge interprets the same detected value, so review flagged wrong-label cases against your configured taxonomy.
 
 | Output column | Meaning |
 |---|---|
@@ -140,11 +153,11 @@ evaluated = anonymizer.evaluate(result, config=EvaluateConfig(compute_detection_
 
 ---
 
-## Substitute-Only Scores
+### Substitute-Only Scores
 
 The three judges below only run when the Replace strategy is `Substitute`, because Substitute generates synthetic entity values. Redact, Annotate, and Hash transform detected spans but do not generate synthetic replacements to which these checks apply.
 
-### Type Fidelity: Did Each Replacement Preserve Its Type and Format?
+#### Type Fidelity: Did Each Replacement Preserve Its Type and Format?
 
 A phone number should stay phone-shaped. An email should stay email-shaped. A city should not become a country. Type fidelity works at the individual replacement level and anchors its decision in the original value — not whether the synthetic value is merely plausible in isolation.
 
@@ -153,7 +166,7 @@ A phone number should stay phone-shaped. An email should stay email-shaped. A ci
 | `type_fidelity_valid` | Whether every replacement has compatible type and format |
 | `type_fidelity_invalid_replacements` | Original, synthetic, label, and reasoning for each failure |
 
-### Attribute Fidelity: Were Salient Attributes Preserved?
+#### Attribute Fidelity: Were Salient Attributes Preserved?
 
 An age of `38` and an age of `8` are both valid ages. But replacing one with the other changes an adult into a child, which makes surrounding pronouns and context incoherent. Attribute fidelity currently focuses on clearly implied gender for names and age buckets for ages and dates of birth. Adjacent or ambiguous cases receive the benefit of the doubt — the judge catches clear semantic drift, not uncertain demographic assumptions.
 
@@ -162,7 +175,7 @@ An age of `38` and an age of `8` are both valid ages. But replacing one with the
 | `attribute_fidelity_valid` | Whether all applicable attributes were preserved |
 | `attribute_fidelity_invalid_entities` | Entities, attributes checked, and explanations for clear failures |
 
-### Relational Consistency: Did the Replacements Remain Coherent?
+#### Relational Consistency: Did the Replacements Remain Coherent?
 
 Individual replacements can each pass while the record fails as a whole. A synthetic set with Portland as the city, Texas as the state, and 97205 as the postal code contains three individually plausible values that are geographically impossible together. Supported checks include geographic, temporal, identity, organizational, employment, demographic, and communication relationships—for example, city ↔ state, date of birth ↔ age, and person name ↔ email local-part.
 
