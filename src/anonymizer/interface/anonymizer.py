@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypeGuard
+from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
 
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
@@ -23,7 +23,8 @@ from anonymizer.config.anonymizer_config import (
     EvaluateConfig,
     Rewrite,
 )
-from anonymizer.config.replace_strategies import Substitute
+from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
@@ -428,8 +429,8 @@ class Anonymizer:
                 per-judge model/prompt overrides, etc.).
         """
         evaluate_config = config or EvaluateConfig()
-        rewrite_config = getattr(output, "rewrite_config", None)
-        replace_method = getattr(output, "replace_method", None)
+        rewrite_config = cast(PrivacyGoal | None, getattr(output, "rewrite_config", None))
+        replace_method = cast(ReplaceMethod | None, getattr(output, "replace_method", None))
         text_column = output.resolved_text_column
         is_rewrite = rewrite_config is not None
 
@@ -551,6 +552,8 @@ class Anonymizer:
                 data_summary=data_summary,
             )
         else:
+            if replace_method is None:
+                raise ValueError("Replace evaluation requires an associated replace method.")
             logger.info(LOG_INDENT + "⚖️ Running replace judges")
             stage_start = time.perf_counter()
             replace_result = self._replace_runner.evaluate(
@@ -752,7 +755,8 @@ class Anonymizer:
             logger.info("✏️ Running rewrite pipeline")
             t0 = time.perf_counter()
             privacy_goal = config.rewrite.privacy_goal
-            assert privacy_goal is not None  # populated by Rewrite's model validator
+            if privacy_goal is None:
+                raise InvalidConfigError("rewrite.privacy_goal must not be None")
             rewrite_result = self._rewrite_runner.run(
                 detection_result.dataframe,
                 model_configs=self._model_configs,
@@ -804,6 +808,8 @@ class Anonymizer:
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""
+        if config.rewrite is not None and config.rewrite.privacy_goal is None:
+            raise InvalidConfigError("rewrite.privacy_goal must not be None")
         try:
             validate_model_alias_references(
                 self._model_configs,

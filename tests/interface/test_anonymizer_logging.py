@@ -37,8 +37,12 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWor
 from anonymizer.interface.anonymizer import Anonymizer
 
 
+def _mock_method(method: object) -> Mock:
+    return cast(Mock, method)
+
+
 def _call_kwargs(method: object) -> dict[str, Any]:
-    return dict(cast(Mock, method).call_args.kwargs)
+    return dict(_mock_method(method).call_args.kwargs)
 
 
 @pytest.fixture
@@ -226,7 +230,7 @@ def test_evaluate_rewrite_logs_stages(stub_input: AnonymizerInput, caplog: pytes
         caplog.at_level(logging.INFO, logger="anonymizer"),
     ):
         coverage_workflow.return_value.run_non_critical.return_value = (
-            anonymizer._rewrite_runner.evaluate.return_value.dataframe,
+            _mock_method(anonymizer._rewrite_runner.evaluate).return_value.dataframe,
             [],
         )
         anonymizer.evaluate(run_result)
@@ -247,7 +251,7 @@ def test_evaluate_rewrite_logs_unavailable_entity_coverage(
 ) -> None:
     anonymizer = _make_logging_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
-    coverage_df = anonymizer._rewrite_runner.evaluate.return_value.dataframe.copy()
+    coverage_df = _mock_method(anonymizer._rewrite_runner.evaluate).return_value.dataframe.copy()
     coverage_df[COL_ENTITY_COVERAGE] = None
     caplog.clear()
 
@@ -270,8 +274,9 @@ def test_evaluate_debug_logs_config_and_failures_without_sensitive_context(
     anonymizer = _make_logging_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
     run_result.data_summary = "confidential dataset description"
-    anonymizer._replace_runner.evaluate.return_value = ReplacementResult(
-        dataframe=anonymizer._replace_runner.evaluate.return_value.dataframe,
+    replace_evaluate = _mock_method(anonymizer._replace_runner.evaluate)
+    replace_evaluate.return_value = ReplacementResult(
+        dataframe=replace_evaluate.return_value.dataframe,
         failed_records=[FailedRecord(record_id="r1", step="entity-coverage-judge", reason="timeout")],
     )
     caplog.clear()
@@ -294,7 +299,8 @@ def test_evaluate_logs_unavailable_scores_for_all_active_replace_judges(
 ) -> None:
     anonymizer = _make_logging_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
-    unavailable_df = anonymizer._replace_runner.evaluate.return_value.dataframe.copy()
+    replace_evaluate = _mock_method(anonymizer._replace_runner.evaluate)
+    unavailable_df = replace_evaluate.return_value.dataframe.copy()
     for column in (
         COL_ENTITY_COVERAGE,
         COL_DETECTION_VALID,
@@ -303,7 +309,7 @@ def test_evaluate_logs_unavailable_scores_for_all_active_replace_judges(
         COL_ATTRIBUTE_FIDELITY_VALID,
     ):
         unavailable_df[column] = None
-    anonymizer._replace_runner.evaluate.return_value = ReplacementResult(
+    replace_evaluate.return_value = ReplacementResult(
         dataframe=unavailable_df,
         failed_records=[],
     )
@@ -326,9 +332,10 @@ def test_evaluate_rewrite_warns_when_rewrite_judge_is_unavailable_but_coverage_s
 ) -> None:
     anonymizer = _make_logging_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
-    evaluation_df = anonymizer._rewrite_runner.evaluate.return_value.dataframe.copy()
+    rewrite_evaluate = _mock_method(anonymizer._rewrite_runner.evaluate)
+    evaluation_df = rewrite_evaluate.return_value.dataframe.copy()
     evaluation_df[COL_JUDGE_EVALUATION] = [{"privacy": {"score": "high"}}, None]
-    anonymizer._rewrite_runner.evaluate.return_value = RewriteResult(
+    rewrite_evaluate.return_value = RewriteResult(
         dataframe=evaluation_df,
         failed_records=[FailedRecord(record_id="r2", step="rewrite-final-judge", reason="timeout")],
     )
@@ -351,13 +358,14 @@ def test_evaluate_rewrite_does_not_warn_for_expected_no_entity_passthrough(
 ) -> None:
     anonymizer = _make_logging_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
-    evaluation_df = anonymizer._rewrite_runner.evaluate.return_value.dataframe.copy()
+    rewrite_evaluate = _mock_method(anonymizer._rewrite_runner.evaluate)
+    evaluation_df = rewrite_evaluate.return_value.dataframe.copy()
     evaluation_df[COL_ENTITIES_BY_VALUE] = [
         {"entities_by_value": []},
         {"entities_by_value": [{"value": "Bob", "labels": ["first_name"]}]},
     ]
     evaluation_df[COL_JUDGE_EVALUATION] = [None, {"privacy": {"score": "high"}}]
-    anonymizer._rewrite_runner.evaluate.return_value = RewriteResult(dataframe=evaluation_df, failed_records=[])
+    rewrite_evaluate.return_value = RewriteResult(dataframe=evaluation_df, failed_records=[])
     caplog.clear()
 
     with (
@@ -375,11 +383,12 @@ def test_evaluate_substitute_warns_only_for_the_unavailable_judge(
 ) -> None:
     anonymizer = _make_logging_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
-    evaluation_df = anonymizer._replace_runner.evaluate.return_value.dataframe.copy()
+    replace_evaluate = _mock_method(anonymizer._replace_runner.evaluate)
+    evaluation_df = replace_evaluate.return_value.dataframe.copy()
     evaluation_df[COL_TYPE_FIDELITY_VALID] = [True, None]
     evaluation_df[COL_RELATIONAL_CONSISTENCY_VALID] = [True, True]
     evaluation_df[COL_ATTRIBUTE_FIDELITY_VALID] = [True, True]
-    anonymizer._replace_runner.evaluate.return_value = ReplacementResult(dataframe=evaluation_df, failed_records=[])
+    replace_evaluate.return_value = ReplacementResult(dataframe=evaluation_df, failed_records=[])
     caplog.clear()
 
     with caplog.at_level(logging.INFO, logger="anonymizer"):

@@ -721,6 +721,19 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
     assert call_kwargs["evaluation"] == config.rewrite.evaluation
 
 
+def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(rewrite=Rewrite())
+    assert config.rewrite is not None
+    config.rewrite.privacy_goal = None
+    anonymizer, detection_workflow, _, rewrite_runner = _make_anonymizer()
+
+    with pytest.raises(InvalidConfigError, match="privacy_goal"):
+        anonymizer.run(config=config, data=stub_input)
+
+    detection_workflow.run.assert_not_called()
+    rewrite_runner.run.assert_not_called()
+
+
 def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, _, _, _ = _make_anonymizer()
