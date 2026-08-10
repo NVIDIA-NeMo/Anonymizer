@@ -94,6 +94,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        entity_label_denylist: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
@@ -113,6 +114,7 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            entity_label_denylist=entity_label_denylist,
             data_summary=data_summary,
         )
         detection_result = self._adapter.run_workflow(
@@ -135,6 +137,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        entity_label_denylist: list[str] | None = None,
         data_summary: str | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
         """Build the (model_configs, columns) for the core detection workflow.
@@ -143,7 +146,7 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
-        labels = _resolve_detection_labels(entity_labels)
+        labels = _resolve_detection_labels(entity_labels, set(entity_label_denylist) if entity_label_denylist else None)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -240,6 +243,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        entity_label_denylist: list[str] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
@@ -255,6 +259,7 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            entity_label_denylist=entity_label_denylist,
             data_summary=data_summary,
         )
         return self._adapter.build_config(
@@ -275,6 +280,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        entity_label_denylist: list[str] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
@@ -295,6 +301,7 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            entity_label_denylist=entity_label_denylist,
             data_summary=data_summary,
         )
         return self._adapter.build_config_for_seed(
@@ -313,6 +320,7 @@ class EntityDetectionWorkflow:
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
+        entity_label_denylist: list[str] | None = None,
         privacy_goal: PrivacyGoal | None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
@@ -322,7 +330,7 @@ class EntityDetectionWorkflow:
         Runs after ``detect_and_validate_entities`` when rewrite mode is
         enabled. Uses an LLM to identify entities inferable from context.
         """
-        labels = _resolve_detection_labels(entity_labels)
+        labels = _resolve_detection_labels(entity_labels, set(entity_label_denylist) if entity_label_denylist else None)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -360,6 +368,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        entity_label_denylist: list[str] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -390,6 +399,7 @@ class EntityDetectionWorkflow:
                 validation_excerpt_window_chars=validation_excerpt_window_chars,
                 validation_single_chunk_full_text=validation_single_chunk_full_text,
                 entity_labels=entity_labels,
+                entity_label_denylist=entity_label_denylist,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
             )
@@ -401,6 +411,7 @@ class EntityDetectionWorkflow:
                     selected_models=selected_models,
                     gliner_detection_threshold=gliner_detection_threshold,
                     entity_labels=entity_labels,
+                    entity_label_denylist=entity_label_denylist,
                     privacy_goal=privacy_goal,
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
@@ -417,8 +428,11 @@ class EntityDetectionWorkflow:
             # TODO(docs): document this None-vs-explicit contract in user-facing docs.
             if COL_DETECTED_ENTITIES in final_df.columns:
                 allowed = set(entity_labels) if entity_labels is not None else None
+                entity_label_denylist_set = set(entity_label_denylist) if entity_label_denylist else None
                 final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                    lambda raw: _materialize_final_entities(raw, allowed_labels=allowed)
+                    lambda raw: _materialize_final_entities(
+                        raw, allowed_labels=allowed, entity_label_denylist=entity_label_denylist_set
+                    )
                 )
                 if compute_grouped:
                     final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
@@ -455,18 +469,29 @@ class EntityDetectionWorkflow:
         return resolved
 
 
-def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
-    if entity_labels is None:
-        return list(DEFAULT_ENTITY_LABELS)
-    return list(entity_labels)
+def _resolve_detection_labels(
+    entity_labels: list[str] | None,
+    entity_label_denylist: set[str] | None = None,
+) -> list[str]:
+    labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
+    if entity_label_denylist:
+        labels = [label for label in labels if label not in entity_label_denylist]
+    return labels
 
 
-def _materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:
-    """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels*."""
+def _materialize_final_entities(
+    raw: object,
+    *,
+    allowed_labels: set[str] | None,
+    entity_label_denylist: set[str] | None,
+) -> dict:
+    """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels* and excluding *entity_label_denylist*."""
     parsed = EntitiesSchema.from_raw(raw)
-    if allowed_labels is None:
-        return parsed.model_dump()
-    kept = [e for e in parsed.entities if e.label in allowed_labels]
+    kept = [
+        e for e in parsed.entities
+        if (allowed_labels is None or e.label in allowed_labels)
+        and (entity_label_denylist is None or e.label not in entity_label_denylist)
+    ]
     return EntitiesSchema(entities=kept).model_dump()
 
 

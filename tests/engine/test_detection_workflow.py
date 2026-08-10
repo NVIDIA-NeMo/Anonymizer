@@ -462,6 +462,170 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     assert "ipv4" in final_labels
 
 
+# ── entity_label_denylist ─────────────────────────────────────────────────────
+
+
+def test_resolve_detection_labels_denylist_removes_labels() -> None:
+    labels = _resolve_detection_labels(["first_name", "email", "city"], entity_label_denylist={"email"})
+    assert "email" not in labels
+    assert "first_name" in labels
+    assert "city" in labels
+
+
+def test_resolve_detection_labels_denylist_on_defaults() -> None:
+    labels = _resolve_detection_labels(None, entity_label_denylist={"ssn", "first_name"})
+    assert "ssn" not in labels
+    assert "first_name" not in labels
+    assert "email" in labels
+
+
+def test_resolve_detection_labels_none_denylist_is_noop() -> None:
+    labels = _resolve_detection_labels(["email", "city"], entity_label_denylist=None)
+    assert labels == ["email", "city"]
+
+
+def test_denylist_filters_entities_from_final_entities(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme, her email is alice@example.com"],
+                COL_DETECTED_ENTITIES: [
+                    {
+                        "entities": [
+                            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                            {"value": "alice@example.com", "label": "email", "start_position": 33, "end_position": 50},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme, her email is alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_label_denylist=["email"],
+        tag_latent_entities=False,
+    )
+
+    final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
+    final_labels = {e.label for e in final.entities}
+    assert "email" not in final_labels
+    assert "first_name" in final_labels
+
+
+def test_denylist_does_not_affect_col_detected_entities(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """COL_DETECTED_ENTITIES is the raw pre-filter output and must be untouched."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice, alice@example.com"],
+                COL_DETECTED_ENTITIES: [
+                    {
+                        "entities": [
+                            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                            {"value": "alice@example.com", "label": "email", "start_position": 7, "end_position": 24},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice, alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_label_denylist=["email"],
+        tag_latent_entities=False,
+    )
+
+    detected = EntitiesSchema.from_raw(result.dataframe[COL_DETECTED_ENTITIES].iloc[0])
+    assert "email" in {e.label for e in detected.entities}
+
+
+def test_denylist_combined_with_allowlist_allowlist_wins_for_non_denied(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """entity_labels restricts to an allowlist; denylist further removes from that set."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice in Houston, alice@example.com"],
+                COL_DETECTED_ENTITIES: [
+                    {
+                        "entities": [
+                            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                            {"value": "Houston", "label": "city", "start_position": 9, "end_position": 16},
+                            {"value": "alice@example.com", "label": "email", "start_position": 18, "end_position": 35},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice in Houston, alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["first_name", "city", "email"],
+        entity_label_denylist=["email"],
+        tag_latent_entities=False,
+    )
+
+    final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
+    final_labels = {e.label for e in final.entities}
+    assert final_labels == {"first_name", "city"}
+
+
+def test_denylist_passed_to_gliner_via_labels(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """Denied labels must be absent from the label list injected into GLiNER."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[]
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["first_name", "email", "city"],
+        entity_label_denylist=["email"],
+        tag_latent_entities=False,
+    )
+
+    injected_configs = adapter.run_workflow.call_args.kwargs["model_configs"]
+    gliner_labels = injected_configs[0].inference_parameters.extra_body["labels"]
+    assert "email" not in gliner_labels
+    assert "first_name" in gliner_labels
+    assert "city" in gliner_labels
+
 # ---------------------------------------------------------------------------
 # Workflow column wiring
 # ---------------------------------------------------------------------------
