@@ -12,7 +12,10 @@ and known effects of the operation.
 The tool is source-owned under `tools/` and is not included in the
 `nemo-anonymizer` wheel. It currently supports:
 
-- entity detection with the native NVIDIA GLiNER or GLiNER2 runtime;
+- entity detection with NVIDIA GLiNER or GLiNER2 through the external
+  [vLLM Factory](https://github.com/latenceainew/vllm-factory) project;
+- entity detection with the source-owned native runtime when a GPU vLLM stack
+  is not appropriate;
 - generation through a vLLM-compatible model;
 - managed local processes and managed local Docker containers; and
 - direct HTTP access to the resulting OpenAI-compatible endpoint.
@@ -37,11 +40,26 @@ binds each plan to its exact intent, command, endpoint contract, compatibility
 evidence, and source revision. Runtime commands reject a changed plan before
 performing effects.
 
-## Native GLiNER
+## GLiNER through vLLM Factory
 
-The source tree includes pinned profiles for NVIDIA GLiNER and GLiNER2 under
-`tools/inference_service_profiles/`. Compile and launch one from the repository
-root. Replace the example source revision with the revision of your checkout:
+The pinned NVIDIA GLiNER and GLiNER2 profiles under
+`tools/inference_service_profiles/` use vLLM Factory. Install the local model
+group on a Linux GPU host:
+
+```bash
+uv sync --group dev --group local-models
+python -m vllm_factory.compat.doctor
+nvidia-smi
+```
+
+The dependency group pins vLLM 0.26.0 and an exact vLLM Factory source commit.
+The compiled plan records both dependencies. The runtime calls vLLM Factory's
+model-preparation Python API with the profile's pinned Hugging Face revision,
+loads its GLiNER model plugin and IOProcessor, then constructs the vLLM server
+through vLLM's Python API. It does not invoke either project's CLI.
+
+Compile and launch the NVIDIA profile from the repository root. Replace the
+example source revision with the revision of your checkout:
 
 ```bash
 uv run tools/inference_service.py compile \
@@ -54,14 +72,41 @@ uv run tools/inference_service.py launch \
   --output gliner-launch.json
 ```
 
-The launch returns only after `/v1/models` and an entity-detection contract
-probe succeed. The receipt records the process ID plus its Linux start marker
+The service keeps vLLM Factory's native `POST /pooling` endpoint. A thin
+in-process adapter also exposes Anonymizer's `POST /v1/chat/completions`
+detector contract. The adapter preserves dynamic labels, character offsets,
+scores, overlapping character chunks, and label-free DataDesigner health
+checks. Model preparation, scheduling, batching, inference, and decoding stay
+inside vLLM Factory and vLLM.
+
+Launch returns only after `/v1/models` and a positive entity-detection contract
+probe succeed. The receipt records the process ID plus its Linux start marker,
 when available, which lets a later invocation guard against PID reuse.
 
 Use `tools/inference_service_profiles/gliner2.toml` for the pinned GLiNER2
-checkpoint. Entity detection is intentionally native. The compiler rejects a
-GLiNER profile paired with vLLM because vLLM 0.26 does not expose GLiNER's
-dynamic-label, offset, and score contract.
+checkpoint and the `deberta_gliner2` plugin. The NVIDIA profile uses
+`deberta_gliner`. Stock vLLM remains invalid for entity detection unless the
+intent selects one of these characterized factory integrations.
+
+vLLM Factory detection is characterized as a managed local process. The
+compiler rejects its use with the stock vLLM Docker image because that image
+does not contain the pinned external project or Anonymizer's protocol adapter.
+
+## Native GLiNER fallback
+
+The source-owned native runtime remains available for CPU, MPS, and local GPU
+use. Select `kind = "native-gliner"` and choose the family in a custom profile:
+
+```toml
+[engine]
+kind = "native-gliner"
+family = "nvidia-gliner" # or "gliner2"
+device = "auto"
+```
+
+This path runs `tools/inference_service_compiler/native_gliner.py` as an
+isolated uv script. It preserves the same OpenAI-compatible detector contract
+but does not use vLLM Factory's scheduler or IOProcessor plugins.
 
 ## Local vLLM Process
 
@@ -72,7 +117,7 @@ uv sync --group dev --group local-models
 nvidia-smi
 ```
 
-The `local-models` group pins vLLM 0.26.0. The local plan starts
+The `local-models` group pins vLLM 0.26.0. The local generation plan starts
 `tools/inference_service_compiler/vllm_server.py`, which constructs vLLM's
 frontend and async engine through its Python API. It does not invoke `vllm
 serve` or inherit vLLM's full CLI surface.
@@ -108,7 +153,7 @@ name = "privacy"
 
 The compiler renders the corresponding vLLM `--lora-modules` arguments.
 
-## Docker vLLM
+## Docker vLLM generation
 
 Change the placement to Docker to use vLLM's official OpenAI-compatible image:
 
@@ -168,8 +213,8 @@ Use `launch --log-directory PATH` to select another location.
 
 ## Connect Anonymizer
 
-Both native GLiNER and vLLM expose OpenAI-compatible URLs. Add the compiled
-endpoint to a custom provider file:
+The factory-backed detector, native detector, and generation server expose
+OpenAI-compatible URLs. Add the compiled endpoint to a custom provider file:
 
 ```yaml title="providers.yaml"
 providers:

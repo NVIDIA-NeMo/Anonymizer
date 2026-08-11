@@ -12,9 +12,14 @@ model_id = "nvidia/gliner-pii"
 revision = "bd23e8ef4425fd04e34c5204ab49ffaa706eae79"
 
 [engine]
-kind = "native-gliner"
-family = "nvidia-gliner"
-device = "auto"
+kind = "vllm"
+python_executable = ".venv/bin/python"
+gpu_memory_utilization = 0.85
+max_model_len = 512
+
+[engine.factory]
+plugin = "deberta_gliner"
+prepared_model_root = "/tmp/anonymizer-vllm-factory"
 
 [placement]
 kind = "local-process"

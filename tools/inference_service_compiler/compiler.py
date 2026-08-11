@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from typing import Never
 
 from pydantic import BaseModel
 
@@ -31,6 +32,10 @@ from inference_service_compiler.models import (
     RunPlan,
     SecretEnvironmentVariable,
     VllmEngine,
+)
+from inference_service_compiler.vllm_factory_integration import (
+    VLLM_FACTORY_DEPENDENCY,
+    supports_model,
 )
 
 VLLM_API_KEY_ENV = "VLLM_API_KEY"
@@ -84,6 +89,7 @@ def compile_intent(intent: InferenceIntent, *, source_revision: str) -> RunPlan:
         required_capabilities=required,
         declared_capabilities=declared,
         compatibility_evidence=evidence,
+        dependencies=_plan_dependencies(intent),
         source_revision=source_revision,
     )
     return plan.model_copy(update={"plan_digest": digest_plan(plan)})
@@ -201,7 +207,65 @@ def _compile_vllm(
     tuple[Capability, ...],
     tuple[CompatibilityEvidence, ...],
 ]:
-    if not isinstance(intent.task, Generation):
+    if isinstance(intent.task, EntityDetection):
+        factory = engine.factory
+        if factory is None:
+            _raise_unsupported_task_engine(intent.task.kind, engine.kind)
+        if intent.model.revision is None:
+            raise CompilationError(
+                CompilerDiagnostic(
+                    code="unpinned-model-revision",
+                    message="vLLM Factory entity detection requires a pinned model revision",
+                    details={"model": intent.model.model_id},
+                )
+            )
+        if not supports_model(factory.plugin, intent.model.model_id):
+            raise CompilationError(
+                CompilerDiagnostic(
+                    code="unsupported-model-engine",
+                    message=(
+                        f"model {intent.model.model_id!r} is not characterized for "
+                        f"vLLM Factory plugin {factory.plugin!r}"
+                    ),
+                    details={
+                        "model": intent.model.model_id,
+                        "plugin": factory.plugin,
+                    },
+                )
+            )
+        if intent.model.adapter is not None:
+            raise CompilationError(
+                CompilerDiagnostic(
+                    code="unsupported-model-adapter",
+                    message="vLLM Factory entity detection does not support a model adapter",
+                    details={"engine": engine.kind, "task": intent.task.kind},
+                )
+            )
+        if isinstance(intent.placement, DockerPlacement):
+            raise CompilationError(
+                CompilerDiagnostic(
+                    code="unsupported-engine-placement",
+                    message="vLLM Factory entity detection is characterized only as a local process",
+                    details={"engine": engine.kind, "placement": intent.placement.kind},
+                )
+            )
+        command, runtime = _vllm_command(intent, engine)
+        return (
+            command,
+            runtime,
+            intent.task.required_capabilities(),
+            (
+                CompatibilityEvidence(
+                    rule="vllm-factory-entity-detection-v1",
+                    outcome="runtime-probe-required",
+                    detail=(
+                        "vLLM Factory supplies model preparation, pooling inference, and IO processing; "
+                        "the Anonymizer adapter preserves dynamic labels, offsets, and scores"
+                    ),
+                ),
+            ),
+        )
+    if not isinstance(intent.task, Generation) or engine.factory is not None:
         _raise_unsupported_task_engine(intent.task.kind, engine.kind)
     command, runtime = _vllm_command(intent, engine)
     declared = ("chat-completions",)
@@ -291,6 +355,15 @@ def _vllm_engine_arguments(intent: InferenceIntent, engine: VllmEngine) -> tuple
         arguments.extend(_literal_arguments("--max-model-len", str(engine.max_model_len)))
     if engine.eager:
         arguments.extend(_literal_arguments("--enforce-eager"))
+    if engine.factory is not None:
+        arguments.extend(
+            _literal_arguments(
+                "--vllm-factory-plugin",
+                engine.factory.plugin,
+                "--prepared-model-root",
+                engine.factory.prepared_model_root,
+            )
+        )
     if intent.model.adapter is not None:
         arguments.extend(
             _literal_arguments(
@@ -317,7 +390,16 @@ def _literal_arguments(*values: str) -> tuple[CommandArgument, ...]:
     return tuple(LiteralArgument(value=value) for value in values)
 
 
-def _raise_unsupported_task_engine(task: str, engine: str) -> None:
+def _plan_dependencies(intent: InferenceIntent) -> tuple[str, ...]:
+    if isinstance(intent.engine, VllmEngine):
+        dependencies = ["vllm==0.26.0"]
+        if intent.engine.factory is not None:
+            dependencies.append(VLLM_FACTORY_DEPENDENCY)
+        return tuple(dependencies)
+    return ()
+
+
+def _raise_unsupported_task_engine(task: str, engine: str) -> Never:
     raise CompilationError(
         CompilerDiagnostic(
             code="unsupported-task-engine",

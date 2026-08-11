@@ -55,6 +55,7 @@ notebooks = [
 ]
 local-models = [
     "vllm==0.26.0; sys_platform == 'linux'",
+    "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux'",
 ]
 
 [build-system]

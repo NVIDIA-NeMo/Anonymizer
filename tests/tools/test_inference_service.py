@@ -197,7 +197,7 @@ def test_compile_vllm_docker_plan_keeps_secrets_symbolic() -> None:
 
 
 def test_compile_local_vllm_plan_uses_the_python_server_factory() -> None:
-    """Local vLLM runs through the source-owned Python factory, not its CLI binary."""
+    """Local vLLM runs through the source-owned Python runtime, not its CLI binary."""
     models, compiler = load_compiler_modules()
     intent = models.InferenceIntent(
         task=models.Generation(chat=True),
@@ -219,8 +219,32 @@ def test_compile_local_vllm_plan_uses_the_python_server_factory() -> None:
     assert VLLM_SERVER_PATH.is_file()
 
 
-def test_compiler_rejects_gliner_through_vllm() -> None:
-    """GLiNER models stay on their characterized native runtime."""
+def test_compiler_accepts_gliner_through_external_vllm_factory() -> None:
+    """GLiNER compiles through the pinned factory plugin and Python vLLM runtime."""
+    models, compiler = load_compiler_modules()
+    intent = models.InferenceIntent(
+        task=models.EntityDetection(dynamic_labels=True, offsets=True, scores=True),
+        model=models.HuggingFaceModel(model_id="nvidia/gliner-pii", revision="bd23e8ef4425fd04"),
+        engine=models.VllmEngine(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")),
+        placement=models.LocalProcessPlacement(),
+        access=models.DirectAccess(),
+        lifecycle=models.ManagedLifecycle(),
+    )
+
+    plan = compiler.compile_intent(intent, source_revision="3f68c145")
+
+    assert plan.declared_capabilities == ("dynamic-labels", "offsets", "scores")
+    assert "vllm==0.26.0" in plan.dependencies
+    assert (
+        "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@"
+        "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0"
+    ) in plan.dependencies
+    assert "--vllm-factory-plugin" in plan.command.render_argv()
+    assert "deberta_gliner" in plan.command.render_argv()
+
+
+def test_compiler_rejects_gliner_through_stock_vllm() -> None:
+    """Entity detection requires an explicit vLLM Factory plugin."""
     models, compiler = load_compiler_modules()
     intent = models.InferenceIntent(
         task=models.EntityDetection(dynamic_labels=True, offsets=True, scores=True),
@@ -235,10 +259,32 @@ def test_compiler_rejects_gliner_through_vllm() -> None:
         compiler.compile_intent(intent, source_revision="3f68c145")
 
     assert exc_info.value.diagnostic.code == "unsupported-task-engine"
-    assert exc_info.value.diagnostic.details == {
-        "engine": "vllm",
-        "task": "entity-detection",
-    }
+
+
+def test_compiler_rejects_unpinned_or_uncharacterized_factory_models() -> None:
+    """Factory plans close both checkpoint provenance and plugin compatibility."""
+    models, compiler = load_compiler_modules()
+
+    def compile_model(model_id: str, revision: str | None):
+        return compiler.compile_intent(
+            models.InferenceIntent(
+                task=models.EntityDetection(dynamic_labels=True, offsets=True, scores=True),
+                model=models.HuggingFaceModel(model_id=model_id, revision=revision),
+                engine=models.VllmEngine(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")),
+                placement=models.LocalProcessPlacement(),
+                access=models.DirectAccess(),
+                lifecycle=models.ManagedLifecycle(),
+            ),
+            source_revision="3f68c145",
+        )
+
+    with pytest.raises(compiler.CompilationError) as unpinned:
+        compile_model("nvidia/gliner-pii", None)
+    assert unpinned.value.diagnostic.code == "unpinned-model-revision"
+
+    with pytest.raises(compiler.CompilationError) as unsupported:
+        compile_model("urchade/gliner_small-v2.1", "abcdef0123456789")
+    assert unsupported.value.diagnostic.code == "unsupported-model-engine"
 
 
 def test_compiler_rejects_unsupported_native_generation() -> None:

@@ -53,13 +53,13 @@
     "expected_skill": "anonymizer",
     "should_trigger": true,
     "expected_script": null,
-    "ground_truth": "The agent loads the anonymizer skill and explains the self-hosted GLiNER path: use tools/inference_service.py from a source checkout to compile the pinned tools/inference_service_profiles/nvidia-gliner.toml profile and launch its managed plan, add an OpenAI-compatible provider at the plan endpoint (normally http://localhost:8001/v1), point the gliner-pii-detector/entity_detector alias at provider local-gliner with skip_health_check true, and keep model_configs as a complete model pool copied from defaults rather than a partial overlay.",
+    "ground_truth": "The agent loads the anonymizer skill and explains the self-hosted GLiNER path: use tools/inference_service.py from a source checkout with the local-models dependency group to compile the pinned tools/inference_service_profiles/nvidia-gliner.toml vLLM Factory profile and launch its managed plan, add an OpenAI-compatible provider at the plan endpoint (normally http://localhost:8001/v1), point the gliner-pii-detector/entity_detector alias at provider local-gliner, retain the health check supported by the adapter, and keep model_configs as a complete model pool copied from defaults rather than a partial overlay.",
     "expected_behavior": [
       "The agent read skills/anonymizer/SKILL.md before answering",
-      "The answer says the reference GLiNER server comes from a source checkout, not pip-installed package files",
+      "The answer says the compiler and adapter come from a source checkout and require the local-models dependency group",
       "The answer includes the localhost OpenAI-compatible endpoint",
       "The answer routes entity_detector through the gliner-pii-detector alias using a local provider",
-      "The answer sets or mentions skip_health_check for the local GLiNER provider",
+      "The answer identifies the pinned external vLLM Factory integration and keeps the supported health check enabled",
       "The answer warns that model_configs must include the full default model pool",
       "The answer cites the self-hosting GLiNER docs with the published Anonymizer docs fallback"
     ]

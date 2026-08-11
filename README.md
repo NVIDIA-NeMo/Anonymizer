@@ -157,7 +157,8 @@ make install-pre-commit   # Install pre-commit hooks
 ### Local inference services
 
 Use the source-tree inference service compiler to create immutable plans and
-managed launch receipts for native GLiNER or vLLM processes and containers:
+managed launch receipts for GLiNER or GLiNER2 through the pinned external vLLM
+Factory project, the native detector fallback, and vLLM generation:
 
 ```bash
 uv run tools/inference_service.py compile --profile tools/inference_service_profiles/nvidia-gliner.toml --source-revision 3f68c145 --output plan.json
