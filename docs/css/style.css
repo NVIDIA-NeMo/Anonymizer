@@ -121,3 +121,12 @@ div.output_subarea pre,
     max-width: none !important;
     height: auto !important;
 }
+
+/* Keep output column identifiers intact in evaluation tables. */
+.md-typeset .output-columns-table th:first-child,
+.md-typeset .output-columns-table td:first-child,
+.md-typeset .output-columns-table td:first-child code {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
+}
