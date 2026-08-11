@@ -309,6 +309,7 @@ def test_columns_full_rewrite_uses_rewrite_output_schema(
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
     full_rewrite_col = next(c for c in cols if c.name == COL_FULL_REWRITE)
+    assert isinstance(full_rewrite_col, LLMStructuredColumnConfig)
     assert full_rewrite_col.output_format == RewriteOutputSchema.model_json_schema()
 
 

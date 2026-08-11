@@ -158,7 +158,7 @@ def test_normalize_replacement_map_non_dict_returns_empty() -> None:
 def test_verdict_badge_satisfied_when_all_correct_and_valid_true() -> None:
     badge, rate = _verdict_badge(valid=True, correct=10, total=10)
     assert "Satisfied" in badge and "Not" not in badge
-    assert "10/10" in rate
+    assert rate == " (Judge Agreement: 10/10)"
 
 
 def test_verdict_badge_partial_for_mixed_count() -> None:

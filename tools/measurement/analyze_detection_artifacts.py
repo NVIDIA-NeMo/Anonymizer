@@ -20,7 +20,7 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Annotated, Iterable
+from typing import Annotated, Iterable, Protocol, TypeGuard, cast
 
 import cyclopts
 import pandas as pd
@@ -102,7 +102,12 @@ def _analyze_parquet_file(parquet_file: Path, *, artifact_root: Path) -> list[De
     workflow_name = parquet_file.parents[1].name
     batch_file = str(parquet_file.relative_to(artifact_root))
     return [
-        _analyze_dataframe_row(row, workflow_name=workflow_name, batch_file=batch_file, row_index=row_index)
+        _analyze_dataframe_row(
+            row,
+            workflow_name=workflow_name,
+            batch_file=batch_file,
+            row_index=cast(int, row_index),
+        )
         for row_index, row in dataframe.iterrows()
     ]
 
@@ -199,10 +204,18 @@ def _extract_payload_list(raw: object, *, key: str) -> list[object]:
     return _coerce_list(payload)
 
 
+class _ListConvertible(Protocol):
+    def tolist(self) -> object: ...
+
+
+def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
+    return callable(getattr(value, "tolist", None))
+
+
 def _coerce_payload(raw: object) -> object:
     if _is_missing(raw):
         return {}
-    if hasattr(raw, "tolist"):
+    if _is_list_convertible(raw):
         raw = raw.tolist()
     if not isinstance(raw, str):
         return raw
@@ -221,7 +234,7 @@ def _coerce_payload(raw: object) -> object:
 def _coerce_list(value: object) -> list[object]:
     value = _coerce_payload(value)
     if isinstance(value, list):
-        return value
+        return cast(list[object], value)
     return []
 
 
@@ -244,7 +257,7 @@ def _entity_signature_labels(entities: list[EntitySchema], *, row_index: int) ->
 
 
 def _entity_signature_details(entities: list[EntitySchema], *, row_index: int) -> dict[str, dict[str, object]]:
-    details = {
+    details: dict[str, dict[str, object]] = {
         _entity_signature_hash(entity, row_index=row_index): {
             "label": entity.label,
             "source": entity.source,

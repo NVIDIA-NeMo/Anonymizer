@@ -170,6 +170,8 @@ def _build_replace_strategy(opts: CliOpts) -> Substitute | Redact | Hash | Annot
 
     Only passes non-default kwargs so Pydantic field defaults are preserved.
     """
+    if opts.replace is None:
+        raise ValueError("A replacement strategy is required in replace mode.")
     cls = _STRATEGY_CLS[opts.replace]
     kw: dict = {}
     if opts.format_template is not None and "format_template" in cls.model_fields:

@@ -110,6 +110,7 @@ def test_meaning_extractor_alias_used(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
     cols = QAGenerationWorkflow().columns(selected_models=stub_rewrite_model_selection)
+    assert isinstance(cols[1], LLMStructuredColumnConfig)
     assert cols[1].model_alias == stub_rewrite_model_selection.meaning_extractor
 
 
@@ -117,6 +118,7 @@ def test_qa_generator_alias_used(
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
     cols = QAGenerationWorkflow().columns(selected_models=stub_rewrite_model_selection)
+    assert isinstance(cols[3], LLMStructuredColumnConfig)
     assert cols[3].model_alias == stub_rewrite_model_selection.qa_generator
 
 

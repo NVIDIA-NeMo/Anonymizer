@@ -18,7 +18,7 @@ import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Protocol, TypeGuard, cast
 
 import cyclopts
 import pandas as pd
@@ -505,7 +505,10 @@ def _build_case_row(
         repetition=_first_int([measurement_rows, artifact_rows, trace_rows], ["run_tags.repetition", "repetition"]),
         case_id=case_id,
         run_id=_first_value([measurement_rows, artifact_rows, trace_rows], ["run_id"]) or case_id,
-        **_case_failure_metrics(stage_rows=stage_rows, ndd_rows=ndd_rows, model_rows=model_rows),
+        **cast(
+            dict[str, Any],
+            _case_failure_metrics(stage_rows=stage_rows, ndd_rows=ndd_rows, model_rows=model_rows),
+        ),
         pipeline_elapsed_sec=pipeline_elapsed_sec,
         ndd_workflow_count=len(ndd_rows),
         ndd_elapsed_sec_total=ndd_elapsed_sec_total,
@@ -785,7 +788,7 @@ def _case_artifact_metrics(
     artifact_rows: pd.DataFrame,
     *,
     validation_max_entities_per_call: int | None,
-) -> dict[str, int | float | list[str] | dict[str, str] | None]:
+) -> dict[str, int | float | list[str] | dict[str, str] | dict[str, dict[str, Any]] | None]:
     signature_hashes = _artifact_signature_hashes(artifact_rows)
     return {
         "detection_artifact_rows": len(artifact_rows),
@@ -900,7 +903,7 @@ def build_model_usage_rows(measurements: pd.DataFrame) -> list[ModelUsageAnalysi
                     model_name=metadata.get("model_name") or model_usage_key,
                     model_provider_name=metadata.get("model_provider_name"),
                     ndd_elapsed_sec=_float_from_row(data, ["elapsed_sec"]),
-                    **usage,
+                    **cast(dict[str, Any], usage),
                 )
             )
     return rows
@@ -1077,8 +1080,16 @@ def _coerce_detail_map(raw: object) -> dict[str, dict[str, Any]]:
     return details
 
 
+class _ScalarConvertible(Protocol):
+    def item(self) -> object: ...
+
+
+def _is_scalar_convertible(value: object) -> TypeGuard[_ScalarConvertible]:
+    return callable(getattr(value, "item", None))
+
+
 def _json_scalar(value: object) -> Any:
-    if hasattr(value, "item"):
+    if _is_scalar_convertible(value):
         try:
             return value.item()
         except ValueError:
@@ -1179,7 +1190,7 @@ def build_group_rows(cases: list[CaseAnalysisRow]) -> list[GroupAnalysisRow]:
         "gliner_threshold",
     ]
     for keys, group in table.groupby(group_columns, dropna=False):
-        rows.append(_build_group_row(keys, group))
+        rows.append(_build_group_row(cast(tuple[Any, ...], keys), group))
     return rows
 
 
@@ -1200,7 +1211,7 @@ def build_model_usage_group_rows(model_usage: list[ModelUsageAnalysisRow]) -> li
         "model_provider_name",
     ]
     for keys, group in table.groupby(group_columns, dropna=False):
-        rows.append(_build_model_usage_group_row(keys, group))
+        rows.append(_build_model_usage_group_row(cast(tuple[Any, ...], keys), group))
     return rows
 
 
@@ -1379,7 +1390,7 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
         sum_original_value_leak_count=_sum_or_none(group, "original_value_leak_count"),
         leaking_case_count=_positive_count(group, "original_value_leak_count"),
         median_original_value_leak_count=_median_or_none(group, "original_value_leak_count"),
-        **evaluation_metrics,
+        **cast(dict[str, Any], evaluation_metrics),
         median_seed_entity_count=_median_or_none(group, "seed_entity_count"),
         median_seed_validation_candidate_count=_median_or_none(group, "seed_validation_candidate_count"),
         median_estimated_seed_validation_chunk_count=_median_or_none(group, "estimated_seed_validation_chunk_count"),
@@ -1467,7 +1478,7 @@ def _f1(precision: float | None, recall: float | None) -> float | None:
 def _optional_number(value: object) -> float | None:
     if value is None or pd.isna(value):
         return None
-    return float(value)
+    return float(cast(Any, value))
 
 
 def _estimated_validation_chunk_count(

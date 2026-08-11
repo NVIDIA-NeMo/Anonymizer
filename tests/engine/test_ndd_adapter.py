@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock
 
 import pandas as pd
@@ -74,6 +76,130 @@ def test_attach_record_ids_adds_deterministic_ids() -> None:
 
     assert RECORD_ID_COLUMN in output_a.columns
     assert output_a[RECORD_ID_COLUMN].tolist() == output_b[RECORD_ID_COLUMN].tolist()
+
+
+def test_total_input_tokens_defaults_to_zero() -> None:
+    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
+
+    assert adapter.total_input_tokens == 0
+
+
+def test_consume_input_tokens_returns_and_resets() -> None:
+    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
+    adapter._add_input_tokens({"m": {"token_usage": {"input_tokens": 42}}})
+
+    assert adapter.consume_input_tokens() == 42
+    assert adapter.consume_input_tokens() == 0
+
+
+def test_add_input_tokens_sums_positive_counts_under_counter_lock() -> None:
+    class CountingLock:
+        def __init__(self) -> None:
+            self.enter_count = 0
+
+        def __enter__(self) -> CountingLock:
+            self.enter_count += 1
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            pass
+
+    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
+    lock = CountingLock()
+    adapter._input_tokens_lock = lock  # ty: ignore[invalid-assignment]
+
+    adapter._add_input_tokens(
+        {
+            "detector": {"token_usage": {"input_tokens": 12}},
+            "validator": {"token_usage": {"input_tokens": 6}},
+            "missing": {"token_usage": {}},
+            "negative": {"token_usage": {"input_tokens": -1}},
+            "invalid": object(),
+        }
+    )
+
+    assert adapter.total_input_tokens == 18
+    assert lock.enter_count == 2
+
+
+def test_run_workflow_accumulates_input_tokens_without_measurement_collector() -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+
+    class UsageStats:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "token_usage": {
+                    "input_tokens": 12,
+                    "output_tokens": 4,
+                    "total_tokens": 16,
+                },
+            }
+
+    class ModelRegistry:
+        def get_model_usage_snapshot(self) -> dict[str, UsageStats]:
+            return {"dummy-model": UsageStats()}
+
+    class UsageDataDesigner:
+        def _create_resource_provider(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(model_registry=ModelRegistry())
+
+        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+            self._create_resource_provider("preview-dataset", _config_builder)
+            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
+
+    adapter.run_workflow(
+        input_df,
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="detect-workflow",
+        preview_num_records=1,
+    )
+
+    assert adapter.total_input_tokens == 12
+
+
+def test_run_workflow_accumulates_input_tokens_on_error() -> None:
+    input_df = pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
+
+    class UsageStats:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "token_usage": {
+                    "input_tokens": 7,
+                    "output_tokens": 0,
+                    "total_tokens": 7,
+                },
+            }
+
+    class ModelRegistry:
+        def get_model_usage_snapshot(self) -> dict[str, UsageStats]:
+            return {"dummy-model": UsageStats()}
+
+    class UsageDataDesigner:
+        def _create_resource_provider(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(model_registry=ModelRegistry())
+
+        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+            _ = num_records
+            self._create_resource_provider("preview-dataset", _config_builder)
+            raise RuntimeError("boom")
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
+
+    with pytest.raises(AnonymizerWorkflowError, match="boom"):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="detect-workflow",
+            preview_num_records=1,
+        )
+
+    assert adapter.total_input_tokens == 7
 
 
 def test_detect_missing_records_returns_missing_ids() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import cast
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -23,6 +24,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
+from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
@@ -73,7 +75,7 @@ class ReplacementWorkflow:
         """Apply the replacement strategy (no LLM judges).
 
         Evaluation is a separate concern — call ``evaluate()`` on the resulting
-        dataframe when you want the LLM alignment scores.
+        dataframe when you want the Judge Agreement scores.
         """
         strategy = type(replace_method).__name__
         with stage_timer(
@@ -187,7 +189,7 @@ class ReplacementWorkflow:
         + apply passthrough defaults). The adapter sees one workflow with N
         columns and lets DD schedule them in parallel.
         """
-        active = [entity_coverage_judge]
+        active: list[_BaseJudgeWorkflow] = [entity_coverage_judge]
         if compute_detection_validity and self._detection_judge is not None:
             active.append(self._detection_judge)
         if is_substitute:
@@ -211,10 +213,11 @@ class ReplacementWorkflow:
         # these itself; doing it here lets us treat evaluation as non-critical:
         # rows the LLM drops still appear in the result with "Unavailable"
         # verdicts instead of disappearing from a previously successful run.
-        prepared = self._adapter._attach_record_ids(prepared)  # type: ignore[union-attr]
+        adapter = cast(NddAdapter, self._adapter)
+        prepared = adapter._attach_record_ids(prepared)
 
         try:
-            run_result = self._adapter.run_workflow(  # type: ignore[union-attr]
+            run_result = adapter.run_workflow(
                 prepared,
                 model_configs=model_configs,
                 columns=[judge.column_config(selected_models) for judge in active],

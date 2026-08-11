@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import ClassVar
+from typing import ClassVar, Mapping, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -31,6 +31,8 @@ from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
 from anonymizer.engine.schemas import EntitiesByValueSchema
 
 logger = logging.getLogger("anonymizer.evaluation.entity_coverage_judge")
+
+_CandidateT = TypeVar("_CandidateT", bound=Mapping[str, object])
 
 _FINAL_ENTITIES_FOR_COVERAGE_COL = "_final_entities_for_coverage_judge"
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
@@ -321,9 +323,9 @@ def _is_candidate_value_covered(candidate_value: object, final_values: list[str]
 
 
 def _find_missed_candidates(
-    candidates: list[dict[str, object]],
+    candidates: list[_CandidateT],
     final_entities: object,
-) -> list[dict[str, object]]:
+) -> list[_CandidateT]:
     """Return judge candidates that are not covered by final entity values."""
     if not isinstance(final_entities, list):
         return candidates
@@ -341,9 +343,9 @@ def _normalize_literal_text(value: object) -> str:
 
 
 def _filter_out_of_scope_entities(
-    entities: list[dict[str, object]],
+    entities: list[_CandidateT],
     entity_labels: list[str] | None,
-) -> list[dict[str, object]]:
+) -> list[_CandidateT]:
     """Drop entities with empty labels or labels outside the configured scope.
 
     When ``entity_labels`` is None all labels are in scope; only empty labels
@@ -457,6 +459,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     @classmethod
     def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
+        parsed = cast(EntityCoverageSchema, parsed)
         return [e.model_dump() for e in parsed.candidate_entities]
 
     # ----------------------------------------------------------------- overrides
@@ -523,7 +526,8 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         """
         try:
             had_record_ids = RECORD_ID_COLUMN in dataframe.columns
-            prepared = self._adapter._attach_record_ids(dataframe)
+            adapter = cast(NddAdapter, self._adapter)
+            prepared = adapter._attach_record_ids(dataframe)
             result = self.evaluate(
                 prepared,
                 model_configs=model_configs,

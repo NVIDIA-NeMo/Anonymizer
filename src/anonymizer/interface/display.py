@@ -8,8 +8,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from typing import Protocol, TypeGuard, cast
 
 import pandas as pd
+from pydantic import BaseModel
 
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
@@ -40,6 +42,15 @@ from anonymizer.engine.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _ListConvertible(Protocol):
+    def tolist(self) -> object: ...
+
+
+def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
+    return callable(getattr(value, "tolist", None))
+
 
 ENTITY_COLORS: list[str] = [
     "#dbeafe",  # blue
@@ -392,7 +403,7 @@ def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]
     """
     if raw is None:
         return []
-    if hasattr(raw, "model_dump"):
+    if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
     if isinstance(raw, str):
         try:
@@ -407,16 +418,16 @@ def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]
     except Exception:
         pass
     replacements = raw.get("replacements", [])
-    if hasattr(replacements, "tolist"):
+    if _is_list_convertible(replacements):
         replacements = replacements.tolist()
     if not isinstance(replacements, list):
         return []
     result: list[dict[str, str]] = []
     for r in replacements:
-        if hasattr(r, "model_dump"):
+        if isinstance(r, BaseModel):
             r = r.model_dump()
         if isinstance(r, dict):
-            result.append(r)
+            result.append(cast(dict[str, str], r))
     return result
 
 
@@ -542,8 +553,8 @@ def _extract_judge_scores(raw: object) -> list[tuple[str, int | str]]:
     for name, value in raw.items():
         if not isinstance(value, dict) or "score" not in value:
             continue
-        score = value["score"]
-        if score is None:
+        score = cast(dict[str, object], value)["score"]
+        if not isinstance(score, (int, str)):
             continue
         result.append((str(name), score))
     return result
@@ -579,7 +590,7 @@ def _verdict_badge(valid: object, correct: int, total: int) -> tuple[str, str]:
     else:
         verdict, color = "Partially Satisfied", "#f59e0b"
     badge = f"<span style='color:{color};font-weight:600'>{verdict}</span>"
-    rate_html = f" (LLM alignment score: {correct}/{total})"
+    rate_html = f" (Judge Agreement: {correct}/{total})"
     return badge, rate_html
 
 
@@ -668,8 +679,8 @@ def _render_detection_judge_section(row: pd.Series) -> str:
         "<div style='font-size:0.9em;line-height:1.8'>"
         f"<strong>Detection Validity:</strong> {badge}{html.escape(rate_html)}"
         "<div style='font-size:0.8em;opacity:0.7;font-style:italic;margin-top:2px'>"
-        "LLM alignment score: The level of alignment between the detection and "
-        "evaluation LLMs across entity classification, attributes, and relationships."
+        "Judge Agreement: The number of entity-label pairs accepted by the evaluation "
+        "judge out of all pairs produced by the Anonymizer."
         "</div>"
         "</div>"
     )
@@ -818,7 +829,7 @@ def _render_attribute_entries_table(entries: list[dict[str, object]]) -> str:
         label = html.escape(str(entry.get("label", "")))
         synthetic = html.escape(str(entry.get("synthetic", "")))
         attrs = entry.get("attributes_checked", [])
-        if hasattr(attrs, "tolist"):
+        if _is_list_convertible(attrs):
             attrs = attrs.tolist()
         if not isinstance(attrs, list):
             attrs = []
@@ -862,7 +873,7 @@ def _extract_all_attribute_entries(row: pd.Series) -> list[dict[str, object]]:
     raw = row.get(COL_ATTRIBUTE_FIDELITY_JUDGE) if COL_ATTRIBUTE_FIDELITY_JUDGE in row.index else None
     if raw is None:
         return []
-    if hasattr(raw, "model_dump"):
+    if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
     if isinstance(raw, str):
         try:
@@ -872,16 +883,16 @@ def _extract_all_attribute_entries(row: pd.Series) -> list[dict[str, object]]:
     if not isinstance(raw, dict):
         return []
     entities = raw.get("entities", [])
-    if hasattr(entities, "tolist"):
+    if _is_list_convertible(entities):
         entities = entities.tolist()
     if not isinstance(entities, list):
         return []
     out: list[dict[str, object]] = []
     for entry in entities:
-        if hasattr(entry, "model_dump"):
+        if isinstance(entry, BaseModel):
             entry = entry.model_dump()
         if isinstance(entry, dict):
-            out.append(entry)
+            out.append(cast(dict[str, object], entry))
     return out
 
 
@@ -894,16 +905,16 @@ def _normalize_attribute_entries(raw: object) -> list[dict[str, object]]:
             raw = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             return []
-    if hasattr(raw, "tolist"):
+    if _is_list_convertible(raw):
         raw = raw.tolist()
     if not isinstance(raw, list):
         return []
     out: list[dict[str, object]] = []
     for entry in raw:
-        if hasattr(entry, "model_dump"):
+        if isinstance(entry, BaseModel):
             entry = entry.model_dump()
         if isinstance(entry, dict):
-            out.append(entry)
+            out.append(cast(dict[str, object], entry))
     return out
 
 
@@ -920,7 +931,7 @@ def _render_relational_consistency_section(row: pd.Series) -> str:
     all_relations = _extract_all_relations(row)
     invalid_count = sum(1 for r in all_relations if not bool(r.get("passes", False)))
     # Fall back to the invalid-relations column when the raw output is missing,
-    # so the LLM alignment score still surfaces "at least this many failures".
+    # so Judge Agreement still surfaces "at least this many failures".
     if not all_relations:
         fallback_invalid = _normalize_relations(row.get(COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS))
         invalid_count = len(fallback_invalid)
@@ -954,7 +965,7 @@ def _render_relations_table(relations: list[dict[str, object]]) -> str:
     for entry in relations:
         description = html.escape(str(entry.get("description", "")))
         entities = entry.get("entities", [])
-        if hasattr(entities, "tolist"):
+        if _is_list_convertible(entities):
             entities = entities.tolist()
         if not isinstance(entities, list):
             entities = []
@@ -1002,7 +1013,7 @@ def _extract_all_relations(row: pd.Series) -> list[dict[str, object]]:
     raw = row.get(COL_RELATIONAL_CONSISTENCY_JUDGE) if COL_RELATIONAL_CONSISTENCY_JUDGE in row.index else None
     if raw is None:
         return []
-    if hasattr(raw, "model_dump"):
+    if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
     if isinstance(raw, str):
         try:
@@ -1012,16 +1023,16 @@ def _extract_all_relations(row: pd.Series) -> list[dict[str, object]]:
     if not isinstance(raw, dict):
         return []
     relations = raw.get("relations", [])
-    if hasattr(relations, "tolist"):
+    if _is_list_convertible(relations):
         relations = relations.tolist()
     if not isinstance(relations, list):
         return []
     out: list[dict[str, object]] = []
     for entry in relations:
-        if hasattr(entry, "model_dump"):
+        if isinstance(entry, BaseModel):
             entry = entry.model_dump()
         if isinstance(entry, dict):
-            out.append(entry)
+            out.append(cast(dict[str, object], entry))
     return out
 
 
@@ -1034,16 +1045,16 @@ def _normalize_relations(raw: object) -> list[dict[str, object]]:
             raw = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             return []
-    if hasattr(raw, "tolist"):
+    if _is_list_convertible(raw):
         raw = raw.tolist()
     if not isinstance(raw, list):
         return []
     out: list[dict[str, object]] = []
     for entry in raw:
-        if hasattr(entry, "model_dump"):
+        if isinstance(entry, BaseModel):
             entry = entry.model_dump()
         if isinstance(entry, dict):
-            out.append(entry)
+            out.append(cast(dict[str, object], entry))
     return out
 
 
@@ -1051,7 +1062,7 @@ def _count_detected_entity_label_pairs(row: pd.Series) -> int:
     """Count (value, label) pairs the judge had a chance to evaluate.
 
     The judge schema flags entities at the (value, label) granularity, so the
-    denominator for the LLM alignment score is the total number of such pairs in the
+    denominator for Judge Agreement is the total number of such pairs in the
     deduped entity payload, not the number of unique values.
     """
     raw = row.get(COL_ENTITIES_BY_VALUE) if COL_ENTITIES_BY_VALUE in row.index else None
@@ -1074,7 +1085,7 @@ def _count_replacement_triples(row: pd.Series, *, fallback: list[dict[str, str]]
     """
     raw = row.get(COL_REPLACEMENT_MAP) if COL_REPLACEMENT_MAP in row.index else None
     if raw is not None:
-        if hasattr(raw, "model_dump"):
+        if isinstance(raw, BaseModel):
             raw = raw.model_dump(mode="python")
         if isinstance(raw, str):
             try:
@@ -1098,16 +1109,16 @@ def _normalize_invalid_entities(raw: object) -> list[dict[str, str]]:
             raw = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             return []
-    if hasattr(raw, "tolist"):
+    if _is_list_convertible(raw):
         raw = raw.tolist()
     if not isinstance(raw, list):
         return []
     out: list[dict[str, str]] = []
     for entry in raw:
-        if hasattr(entry, "model_dump"):
+        if isinstance(entry, BaseModel):
             entry = entry.model_dump()
         if isinstance(entry, dict):
-            out.append(entry)
+            out.append(cast(dict[str, str], entry))
     return out
 
 
@@ -1158,7 +1169,7 @@ def _normalize_disposition(raw: object) -> list[dict[str, str]]:
     entries = raw.get("sensitivity_disposition", [])
     if not isinstance(entries, list):
         return []
-    return [e for e in entries if isinstance(e, dict)]
+    return [cast(dict[str, str], e) for e in entries if isinstance(e, dict)]
 
 
 # ---------------------------------------------------------------------------
