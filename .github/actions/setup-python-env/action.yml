@@ -32,6 +32,10 @@ inputs:
     description: "Whether to checkout the repository before setting up the environment"
     required: false
     default: "true"
+  dependency-profile:
+    description: "Locked dependency profile to sync: runtime, dev, docs, or notebooks"
+    required: false
+    default: "dev"
 
 outputs:
   merge-base:
@@ -85,5 +89,7 @@ runs:
         export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
         echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
-        MISE_YES=1 mise trust
-        MISE_YES=1 mise run setup
+        if [ -n "${{ inputs.python-version }}" ]; then
+          export UV_PYTHON="${{ inputs.python-version }}"
+        fi
+        MISE_YES=1 mise run setup "${{ inputs.dependency-profile }}" --no-hooks

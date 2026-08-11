@@ -19,6 +19,7 @@ jobs:
         with:
           checkout: "false"
           python-version: "3.11"
+          dependency-profile: "notebooks"
       - name: Cache pinned GLiNER2 model
         uses: actions/cache@v6
         with:
@@ -27,13 +28,13 @@ jobs:
             ~/.cache/nemo-anonymizer
           key: gliner2-59894c087cb2923b01f337d4ee72f6ff84d5bdd6-${{ hashFiles('uv.lock', 'src/anonymizer/notebooks/_runtime.py') }}
       - name: Build notebook wheel
-        run: mise run build-wheel
+        run: mise run build:wheel
       - name: Convert and execute notebooks
         shell: bash
         run: |
           wheel=$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)
           test -n "$wheel"
-          ANONYMIZER_NOTEBOOK_PACKAGE="${wheel}[notebooks]" mise run convert-notebooks
+          ANONYMIZER_NOTEBOOK_PACKAGE="${wheel}[notebooks]" mise run notebooks:execute
       - name: Upload notebooks as artifacts
         uses: actions/upload-artifact@v7
         with:
