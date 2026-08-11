@@ -12,6 +12,7 @@ import stat
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import get_type_hints
 
 import pytest
 
@@ -218,6 +219,13 @@ def test_fastapi_app_alias_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None
     """Existing uvicorn module imports continue to resolve `app`."""
     server = load_server(monkeypatch)
     assert server.app is server.api
+
+
+def test_fastapi_route_uses_concrete_request_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FastAPI resolves the endpoint parameter to its runtime Request class."""
+    server = load_server(monkeypatch)
+
+    assert get_type_hints(server.chat_completions)["request"] is object
 
 
 def test_chat_completion_uses_anonymizer_json_string_contract(monkeypatch: pytest.MonkeyPatch) -> None:

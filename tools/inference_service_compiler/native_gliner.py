@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import structlog  # ty: ignore[unresolved-import] -- optional PEP 723 server dependency
 import uvicorn
@@ -134,11 +134,16 @@ class LocalRuntime(Protocol):
         """Detect normalized entities for each chunk."""
 
 
-class RequestLike(Protocol):
-    """Request surface consumed by the OpenAI-compatible endpoint."""
+if TYPE_CHECKING:
 
-    async def json(self) -> object:
-        """Decode the request body."""
+    class FastAPIRequest(Protocol):
+        """Request surface consumed by the OpenAI-compatible endpoint."""
+
+        async def json(self) -> object:
+            """Decode the request body."""
+
+else:
+    FastAPIRequest = _fastapi.Request
 
 
 class NvidiaModel(Protocol):
@@ -617,7 +622,7 @@ def list_models() -> dict[str, object]:
 
 
 @api.post("/v1/chat/completions")
-async def chat_completions(request: RequestLike) -> dict[str, object]:
+async def chat_completions(request: FastAPIRequest) -> dict[str, object]:
     """Detect requested entity labels and return Anonymizer's JSON-string content."""
     if detector is None:
         raise _fastapi.HTTPException(status_code=503, detail="GLiNER model is not loaded")
