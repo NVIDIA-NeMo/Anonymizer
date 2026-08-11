@@ -9,6 +9,7 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_FINAL_ENTITIES,
     COL_FULL_REWRITE,
     COL_PREREPLACE_TAGGED_TEXT,
     COL_PREREPLACE_TEXT,
@@ -167,8 +168,9 @@ def test_apply_direct_replacements_raises_on_unmatched_replace_entity(
         COL_REPLACEMENT_MAP: {"replacements": [{"original": "Bob", "label": "first_name", "synthetic": "Carlos"}]},
         COL_TEXT: "Alice works here.",
         COL_TAGGED_TEXT: "[[Alice|first_name]] works here.",
+        COL_TAG_NOTATION: "bracket",
     }
-    with pytest.raises(RuntimeError, match="Alice"):
+    with pytest.raises(RuntimeError, match="unmatched"):
         _apply_direct_replacements(row)
 
 
@@ -202,7 +204,7 @@ def test_get_replace_pairs_matches_unicode_whitespace_variant(caplog: pytest.Log
     }
     with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.generation"):
         pairs, replace_values = _get_replace_pairs(row)
-    assert pairs == [(f"204{narrow_nbsp}Bluegrass", "500 Oak Lane")]
+    assert pairs == [(f"204{narrow_nbsp}Bluegrass", "500 Oak Lane", "street_address")]
     assert replace_values == {f"204{narrow_nbsp}Bluegrass"}
     assert "unprotected" not in caplog.text
 
@@ -221,8 +223,9 @@ def test_apply_direct_replacements_raises_when_replacement_map_missing(
         COL_REPLACEMENT_MAP: None,
         COL_TEXT: "Alice works here.",
         COL_TAGGED_TEXT: "[[Alice|first_name]] works here.",
+        COL_TAG_NOTATION: "bracket",
     }
-    with pytest.raises(RuntimeError, match="Alice"):
+    with pytest.raises(RuntimeError, match="unmatched"):
         _apply_direct_replacements(row)
 
 
@@ -235,6 +238,7 @@ def test_apply_direct_replacements_substitutes_in_plain_and_tagged_text(
         COL_REPLACEMENT_MAP: stub_replacement_map,
         COL_TEXT: "Alice works at TechCorp.",
         COL_TAGGED_TEXT: "[[Alice|first_name]] works at TechCorp.",
+        COL_TAG_NOTATION: "bracket",
     }
     result = _apply_direct_replacements(row)
     assert result[COL_PREREPLACE_TEXT] == "Maria works at TechCorp."
@@ -250,6 +254,7 @@ def test_apply_direct_replacements_replaces_all_occurrences(
         COL_REPLACEMENT_MAP: stub_replacement_map,
         COL_TEXT: "Alice told Alice's manager that Alice would be late.",
         COL_TAGGED_TEXT: "[[Alice|first_name]] told [[Alice|first_name]]'s manager.",
+        COL_TAG_NOTATION: "bracket",
     }
     result = _apply_direct_replacements(row)
     assert "Alice" not in result[COL_PREREPLACE_TEXT]
@@ -293,9 +298,77 @@ def test_apply_direct_replacements_accepts_schema_instance(
         COL_REPLACEMENT_MAP: schema,
         COL_TEXT: "Alice works here.",
         COL_TAGGED_TEXT: "[[Alice|first_name]] works here.",
+        COL_TAG_NOTATION: "bracket",
     }
     result = _apply_direct_replacements(row)
     assert result[COL_PREREPLACE_TEXT] == "Maria works here."
+
+
+def test_apply_direct_replacements_span_aware_prevents_substring_corruption() -> None:
+    """Replacing 'Ann' must not corrupt 'Anna' — only the detected span is substituted."""
+    disposition = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "entity_label": "first_name",
+                "entity_value": "Ann",
+                "protection_reason": "Direct identifier.",
+                "protection_method_suggestion": "replace",
+                "combined_risk_level": "high",
+            }
+        ]
+    }
+    row = {
+        COL_SENSITIVITY_DISPOSITION: disposition,
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Ann", "label": "first_name", "synthetic": "Maria"}]},
+        COL_TEXT: "Ann met Anna.",
+        COL_TAGGED_TEXT: "<first_name>Ann</first_name> met Anna.",
+        COL_FINAL_ENTITIES: {
+            "entities": [{"label": "first_name", "value": "Ann", "start_position": 0, "end_position": 3}]
+        },
+        COL_TAG_NOTATION: "xml",
+    }
+    result = _apply_direct_replacements(row)
+    assert result[COL_PREREPLACE_TEXT] == "Maria met Anna."
+    assert result[COL_PREREPLACE_TAGGED_TEXT] == "<first_name>Maria</first_name> met Anna."
+
+
+def test_apply_direct_replacements_all_replace_spans_transformed() -> None:
+    """Every detected span selected for replace must be transformed in the output."""
+    disposition = {
+        "sensitivity_disposition": [
+            {
+                "id": 1,
+                "source": "tagged",
+                "category": "direct_identifier",
+                "sensitivity": "high",
+                "entity_label": "first_name",
+                "entity_value": "Alice",
+                "protection_reason": "Direct identifier.",
+                "protection_method_suggestion": "replace",
+                "combined_risk_level": "high",
+            }
+        ]
+    }
+    row = {
+        COL_SENSITIVITY_DISPOSITION: disposition,
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_TEXT: "Alice works. Alice lives here.",
+        COL_TAGGED_TEXT: "<first_name>Alice</first_name> works. <first_name>Alice</first_name> lives here.",
+        COL_FINAL_ENTITIES: {
+            "entities": [
+                {"label": "first_name", "value": "Alice", "start_position": 0, "end_position": 5},
+                {"label": "first_name", "value": "Alice", "start_position": 13, "end_position": 18},
+            ]
+        },
+        COL_TAG_NOTATION: "xml",
+    }
+    result = _apply_direct_replacements(row)
+    assert "Alice" not in result[COL_PREREPLACE_TEXT]
+    assert "Alice" not in result[COL_PREREPLACE_TAGGED_TEXT]
 
 
 def test_apply_direct_replacements_no_cascade_when_synthetic_matches_another_original() -> None:
