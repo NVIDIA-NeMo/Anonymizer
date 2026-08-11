@@ -2,11 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ["docs:serve"]
-description = "Serve the MkDocs site locally at http://127.0.0.1:8000."
-alias = "docs-serve"
-run = "uv run --group docs mkdocs serve"
+description = "Serve the MkDocs site locally at http://127.0.0.1:8000 and watch source files."
+run = "uv run --locked --group docs mkdocs serve"
 
 ["docs:build"]
-description = "Build the documentation site in strict mode."
-alias = "docs-build"
-run = "uv run --group docs mkdocs build --strict"
+description = "Build the documentation site in strict mode. Writes the ignored site/ directory."
+run = "uv run --locked --group docs mkdocs build --strict"
