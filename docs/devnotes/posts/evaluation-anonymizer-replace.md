@@ -115,10 +115,14 @@ A score of `1.0` means no judge candidates were missed, or the judge found no ca
 
 A score below `1.0` is a review signal, not definitive evidence of a privacy failure. Perform a human review of the `missed_entities` entries in context: judge candidates can be ambiguous, and whether broad values require protection depends on your privacy policy. For example, `"teenager"` conveys an age range but may be abstract enough to retain in some contexts.
 
+<div class="output-columns-table" markdown>
+
 | Output column | Meaning |
 |---|---|
 | `entity_coverage` | Float in `[0.0, 1.0]`, or `None` if the judge was unavailable |
 | `missed_entities` | List of `{value, label, reasoning}` for each entity the judge found that Anonymizer missed |
+
+</div>
 
 Entity coverage always runs. No extra configuration is needed. The judge respects the entity scope configured for the run — if `entity_labels` was set, only entities of those types are considered in scope. If a `data_summary` was provided, it is passed to the judge to help interpret domain-specific values in context.
 
@@ -137,10 +141,14 @@ It surfaces:
 
 ***Note:*** Detection-validity judgments are particularly sensitive to entity label names and wording. Ambiguous, overlapping, or domain-specific labels can change how the judge interprets the same detected value, so review flagged wrong-label cases against your configured taxonomy.
 
+<div class="output-columns-table" markdown>
+
 | Output column | Meaning |
 |---|---|
 | `detection_valid` | `True` — all checked entities passed; `False` — one or more failed; `None` — judge unavailable |
 | `detection_invalid_entities` | Flagged `{value, label, reasoning}` pairs |
+
+</div>
 
 Detection validity is **opt-in** and is intended primarily for model and threshold evaluation. What counts as an acceptable sensitive-entity detection can depend on the dataset, privacy policy, and desired label granularity. To enable it:
 
@@ -160,28 +168,40 @@ The three judges below only run when the Replace strategy is `Substitute`, becau
 
 A phone number should stay phone-shaped. An email should stay email-shaped. A city should not become a country. Type fidelity works at the individual replacement level and anchors its decision in the original value — not whether the synthetic value is merely plausible in isolation.
 
+<div class="output-columns-table" markdown>
+
 | Output column | Meaning |
 |---|---|
 | `type_fidelity_valid` | Whether every replacement has compatible type and format |
 | `type_fidelity_invalid_replacements` | Original, synthetic, label, and reasoning for each failure |
 
+</div>
+
 #### Attribute Fidelity: Were Salient Attributes Preserved?
 
 An age of `38` and an age of `8` are both valid ages. But replacing one with the other changes an adult into a child, which makes surrounding pronouns and context incoherent. Attribute fidelity currently focuses on clearly implied gender for names and age buckets for ages and dates of birth. Adjacent or ambiguous cases receive the benefit of the doubt — the judge catches clear semantic drift, not uncertain demographic assumptions.
+
+<div class="output-columns-table" markdown>
 
 | Output column | Meaning |
 |---|---|
 | `attribute_fidelity_valid` | Whether all applicable attributes were preserved |
 | `attribute_fidelity_invalid_entities` | Entities, attributes checked, and explanations for clear failures |
 
+</div>
+
 #### Relational Consistency: Did the Replacements Remain Coherent?
 
 Individual replacements can each pass while the record fails as a whole. A synthetic set with Portland as the city, Texas as the state, and 97205 as the postal code contains three individually plausible values that are geographically impossible together. Supported checks include geographic, temporal, identity, organizational, employment, demographic, and communication relationships—for example, city ↔ state, date of birth ↔ age, and person name ↔ email address.
+
+<div class="output-columns-table" markdown>
 
 | Output column | Meaning |
 |---|---|
 | `relational_consistency_valid` | Whether all checkable cross-entity relationships remain coherent |
 | `relational_consistency_invalid_relations` | Participants and reasoning for each broken relationship |
+
+</div>
 
 ---
 
