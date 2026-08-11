@@ -633,6 +633,18 @@ def test_expand_resolves_overlaps_with_longer_span() -> None:
     assert johns[0].start_position == 13
 
 
+def test_expand_preserves_detector_provenance_at_original_position() -> None:
+    """Expansion must not replace a detector span with a propagation copy at the same position."""
+    text = "Alice works here. Alice volunteers too."
+    entities = [EntitySpan("e1", "Alice", "first_name", 0, 5, 0.85, "detector")]
+    expanded = expand_entity_occurrences(text=text, entities=entities)
+    at_origin = next(e for e in expanded if e.start_position == 0)
+    at_second = next(e for e in expanded if e.start_position == 18)
+    assert at_origin.source == "detector"
+    assert at_origin.score == 0.85
+    assert at_second.source == "propagation"
+
+
 def test_expand_handles_empty_entities() -> None:
     assert expand_entity_occurrences(text="hello world", entities=[]) == []
 

@@ -319,10 +319,13 @@ def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[Ent
         if key not in entity_map:
             entity_map[key] = entity.label
 
+    original_positions: set[tuple[int, int]] = {(e.start_position, e.end_position) for e in entities}
     expanded: list[EntitySpan] = []
     for idx, (key, label) in enumerate(entity_map.items()):
         original_value = next(e.value for e in entities if e.value.lower() == key)
         for start, end in _find_all_occurrences(text=text, needle=original_value):
+            if (start, end) in original_positions:
+                continue  # already covered by a detector span; skip to preserve its provenance
             entity_id = _build_entity_id(label=label, start=start, end=end)
             expanded.append(
                 EntitySpan(
