@@ -34,6 +34,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
+    _filter_denied_latent_entities,
     _format_label_examples,
     _get_augment_prompt,
     _get_latent_prompt,
@@ -157,6 +158,66 @@ def test_latent_prompt_includes_summary_and_goal() -> None:
     assert "PRESERVE: Clinical utility and semantic meaning of the original text." in prompt
     assert "Every latent entity MUST include 1-2 short quotes from the text as evidence." in prompt
     assert COL_TAGGED_TEXT in prompt
+
+
+def test_latent_prompt_excludes_denied_labels() -> None:
+    prompt = _get_latent_prompt(
+        data_summary=None,
+        privacy_goal=None,
+        entity_label_denylist=["Health_Condition", "occupation"],
+    )
+    assert "Do NOT return latent entities with these labels: health_condition, occupation." in prompt
+
+
+def test_filter_denied_latent_entities_is_case_insensitive() -> None:
+    raw = {
+        "latent_entities": [
+            {"label": "Health_Condition", "value": "diabetes"},
+            {"label": "employer", "value": "Acme"},
+        ]
+    }
+    result = _filter_denied_latent_entities(raw, ["health_condition"])
+    assert result == {"latent_entities": [{"label": "employer", "value": "Acme"}]}
+
+
+def test_identify_latent_entities_filters_denied_labels(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["The patient works at Acme."],
+                COL_LATENT_ENTITIES: [
+                    {
+                        "latent_entities": [
+                            {"label": "Health_Condition", "value": "diabetes"},
+                            {"label": "employer", "value": "Acme"},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.identify_latent_entities(
+        pd.DataFrame({COL_TEXT: ["The patient works at Acme."]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_label_denylist=["health_condition"],
+        privacy_goal=PrivacyGoal(
+            protect="Protect inferred sensitive attributes.",
+            preserve="Preserve non-sensitive facts.",
+        ),
+    )
+
+    assert result.dataframe[COL_LATENT_ENTITIES].iloc[0] == {
+        "latent_entities": [{"label": "employer", "value": "Acme"}]
+    }
 
 
 def test_run_without_latent_detection_materializes_final_entities(

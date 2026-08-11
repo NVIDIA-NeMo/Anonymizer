@@ -347,6 +347,7 @@ class EntityDetectionWorkflow:
                     prompt=_get_latent_prompt(
                         data_summary=data_summary,
                         privacy_goal=privacy_goal,
+                        entity_label_denylist=entity_label_denylist,
                     ),
                     model_alias=latent_alias,
                     output_format=LatentEntitiesSchema,
@@ -355,7 +356,12 @@ class EntityDetectionWorkflow:
             workflow_name="latent-entity-detection",
             preview_num_records=preview_num_records,
         )
-        return EntityDetectionResult(dataframe=latent_result.dataframe, failed_records=latent_result.failed_records)
+        latent_df = latent_result.dataframe.copy()
+        if COL_LATENT_ENTITIES in latent_df.columns:
+            latent_df[COL_LATENT_ENTITIES] = latent_df[COL_LATENT_ENTITIES].apply(
+                lambda raw: _filter_denied_latent_entities(raw, entity_label_denylist)
+            )
+        return EntityDetectionResult(dataframe=latent_df, failed_records=latent_result.failed_records)
 
     def run(
         self,
@@ -500,6 +506,40 @@ def _materialize_final_entities(
         if (allowed is None or e.label.casefold() in allowed) and e.label.casefold() not in denied
     ]
     return EntitiesSchema(entities=kept).model_dump()
+
+
+def _filter_denied_latent_entities(raw: object, entity_label_denylist: list[str] | None) -> object:
+    """Remove denied latent labels while preserving the structured payload shape."""
+    denied = {label.casefold() for label in entity_label_denylist or []}
+    if not denied:
+        return raw
+
+    if isinstance(raw, LatentEntitiesSchema):
+        kept = [entity for entity in raw.latent_entities if entity.label.strip().casefold() not in denied]
+        return LatentEntitiesSchema(latent_entities=kept).model_dump(mode="json")
+
+    if isinstance(raw, dict):
+        entities = raw.get("latent_entities")
+        if not isinstance(entities, list):
+            return raw
+        return {
+            **raw,
+            "latent_entities": [
+                entity
+                for entity in entities
+                if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in denied
+            ],
+        }
+
+    # Retain support for legacy list-shaped traces.
+    if isinstance(raw, list):
+        return [
+            entity
+            for entity in raw
+            if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in denied
+        ]
+
+    return raw
 
 
 def _build_entities_by_value(final_entities_raw: object) -> dict:
@@ -727,12 +767,26 @@ Already-detected entities: <<SEED_ENTITIES>>
     )
 
 
-def _get_latent_prompt(*, data_summary: str | None, privacy_goal: PrivacyGoal | None) -> str:
+def _get_latent_prompt(
+    *,
+    data_summary: str | None,
+    privacy_goal: PrivacyGoal | None,
+    entity_label_denylist: list[str] | None = None,
+) -> str:
     summary_line = data_summary.strip() if data_summary else "Not provided"
     privacy_goal_text = _format_privacy_goal(privacy_goal)
+    denied_labels = sorted({label.strip().casefold() for label in entity_label_denylist or [] if label.strip()})
+    denylist_block = (
+        "\n<excluded_entity_labels>\n"
+        f"Do NOT return latent entities with these labels: {', '.join(denied_labels)}.\n"
+        "</excluded_entity_labels>\n"
+        if denied_labels
+        else ""
+    )
     prompt = """You are performing: LATENT ENTITY & INFERENCE ANALYSIS for privacy protection.
 
 The text will be rewritten according to this privacy goal: <<PRIVACY_GOAL>>
+<<DENYLIST_BLOCK>>
 
 Goal: Identify sensitive information that is NOT explicitly stated in the text, \
 but is reasonably inferable from context and could materially increase re-identification \
@@ -820,6 +874,7 @@ Now produce the JSON for the input.
             "<<PRIVACY_GOAL>>": privacy_goal_text,
             "<<DATA_SUMMARY>>": summary_line,
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+            "<<DENYLIST_BLOCK>>": denylist_block,
         },
     )
 
