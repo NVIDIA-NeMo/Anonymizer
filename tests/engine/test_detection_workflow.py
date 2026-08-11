@@ -634,6 +634,7 @@ def test_denylist_passed_to_gliner_via_labels(
     assert "first_name" in gliner_labels
     assert "city" in gliner_labels
 
+
 # ---------------------------------------------------------------------------
 # Workflow column wiring
 # ---------------------------------------------------------------------------

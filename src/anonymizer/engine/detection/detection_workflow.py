@@ -478,8 +478,7 @@ def _resolve_detection_labels(
         labels = [label for label in labels if label not in entity_label_denylist]
     if not labels:
         logger.warning(
-            "entity_label_denylist removed all labels from the effective detection set. "
-            "No entities will be detected."
+            "entity_label_denylist removed all labels from the effective detection set. No entities will be detected."
         )
     return labels
 
@@ -493,7 +492,8 @@ def _materialize_final_entities(
     """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels* and excluding *entity_label_denylist*."""
     parsed = EntitiesSchema.from_raw(raw)
     kept = [
-        e for e in parsed.entities
+        e
+        for e in parsed.entities
         if (allowed_labels is None or e.label in allowed_labels)
         and (entity_label_denylist is None or e.label not in entity_label_denylist)
     ]

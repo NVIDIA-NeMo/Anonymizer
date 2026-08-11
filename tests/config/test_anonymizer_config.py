@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-import logging
-
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite, infer_input_source_suffix
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    Rewrite,
+    infer_input_source_suffix,
+)
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,

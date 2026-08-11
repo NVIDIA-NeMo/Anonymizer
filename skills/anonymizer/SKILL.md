@@ -43,6 +43,7 @@ regulatory and business context.
 # Usage Tips and Common Pitfalls
 
 - **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected. To add domain labels, *extend* the default, don't replace it: `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", ...]` (`DEFAULT_ENTITY_LABELS` is a tuple, so unpack it into a list). Match the snake_case convention of `DEFAULT_ENTITY_LABELS`.
+- **`Detect.entity_label_denylist`** excludes specific label types from detection entirely — denied labels are removed before GLiNER runs and are never detected, augmented, or penalised in evaluation scores. Use it when a label type is systematically noisy for your data or should never be anonymized (e.g. `Detect(entity_label_denylist=["occupation", "gender"])`). The denylist takes precedence over `entity_labels` — a label in both is never detected.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
