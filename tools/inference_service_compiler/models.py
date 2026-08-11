@@ -90,6 +90,13 @@ class NativeGlinerEngine(FrozenModel):
     log_format: Literal["plain", "json"] = "plain"
 
 
+class VllmFactoryIntegration(FrozenModel):
+    """A supported vLLM Factory structured-prediction plugin."""
+
+    plugin: Literal["deberta_gliner", "deberta_gliner2"]
+    prepared_model_root: str = Field(default="/tmp/anonymizer-vllm-factory", min_length=1)
+
+
 class VllmEngine(FrozenModel):
     """vLLM's OpenAI-compatible server with bounded common options."""
 
@@ -101,6 +108,7 @@ class VllmEngine(FrozenModel):
     gpu_memory_utilization: float | None = Field(default=None, gt=0, le=1)
     max_model_len: int | None = Field(default=None, ge=1)
     eager: bool = False
+    factory: VllmFactoryIntegration | None = None
 
 
 EngineSpec = Annotated[NativeGlinerEngine | VllmEngine, Field(discriminator="kind")]
