@@ -107,7 +107,14 @@ class VllmEngine(FrozenModel):
     tensor_parallel_size: int | None = Field(default=None, ge=1)
     gpu_memory_utilization: float | None = Field(default=None, gt=0, le=1)
     max_model_len: int | None = Field(default=None, ge=1)
+    max_num_seqs: int | None = Field(default=None, ge=1)
     eager: bool = False
+    enable_prefix_caching: bool = False
+    async_scheduling: bool = False
+    mamba_backend: Literal["triton", "flashinfer"] | None = None
+    mamba_ssm_cache_dtype: Literal["auto", "float32", "float16", "bfloat16"] = "auto"
+    enable_mamba_cache_stochastic_rounding: bool = False
+    mamba_cache_philox_rounds: int = Field(default=0, ge=0)
     factory: VllmFactoryIntegration | None = None
 
 
