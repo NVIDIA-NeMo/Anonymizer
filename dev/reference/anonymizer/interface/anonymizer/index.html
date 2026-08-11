@@ -3046,7 +3046,7 @@ instance. Use this for DataDesigner execution knobs such as
 
         <p>Run the full anonymization pipeline (detection + replacement).</p>
 <p>No LLM evaluation judges run here — call :meth:<code>evaluate</code> on the
-result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p>
+result's <code>trace_dataframe</code> when you want the Judge Agreement scores.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -3117,7 +3117,7 @@ result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p
     """Run the full anonymization pipeline (detection + replacement).
 
     No LLM evaluation judges run here — call :meth:`evaluate` on the
-    result's ``trace_dataframe`` when you want the LLM alignment scores.
+    result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -3364,7 +3364,7 @@ the config. Runtime model providers remain external to the serialized config.</p
 
         <p>Run the pipeline on a subset of records for quick inspection.</p>
 <p>No LLM evaluation judges run here — call :meth:<code>evaluate</code> on the
-result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p>
+result's <code>trace_dataframe</code> when you want the Judge Agreement scores.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -3452,7 +3452,7 @@ result's <code>trace_dataframe</code> when you want the LLM alignment scores.</p
     """Run the pipeline on a subset of records for quick inspection.
 
     No LLM evaluation judges run here — call :meth:`evaluate` on the
-    result's ``trace_dataframe`` when you want the LLM alignment scores.
+    result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
