@@ -94,7 +94,9 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
 
 
 def _get_gliner_labels_from_builder(builder: DataDesignerConfigBuilder) -> list[str]:
-    serialized = json.loads(builder.get_builder_config().to_json())
+    payload = builder.get_builder_config().to_json()
+    assert payload is not None
+    serialized = json.loads(payload)
     model_configs = serialized["data_designer"]["model_configs"]
     gliner = next(m for m in model_configs if m.get("alias") == "gliner-pii-detector")
     return gliner["inference_parameters"]["extra_body"]["labels"]
