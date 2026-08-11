@@ -16,7 +16,7 @@
         <link rel="prev" href="../reference/anonymizer/telemetry/">
       
       
-        <link rel="next" href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/">
+        <link rel="next" href="after-anonymization--part-i-evaluating-replace-mode/">
       
       
         
@@ -2071,6 +2071,8 @@
       
         
       
+        
+      
     
     
     
@@ -2118,6 +2120,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    After Anonymization — Part I: Evaluating Replace Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -2195,10 +2225,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
         
           
-          <label class="md-nav__link" for="__nav_7_4" id="__nav_7_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
             
   
   
@@ -2216,8 +2246,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_7_4">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2299,6 +2329,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#after-anonymization-part-i-evaluating-replace-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        After Anonymization — Part I: Evaluating Replace Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#running-nemo-anonymizer-fully-self-hosted-on-one-b300" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2338,6 +2379,56 @@
 <h1 id="developer-notes">Developer Notes<a class="headerlink" href="#developer-notes" title="Permanent link">&para;</a></h1>
 <p>Updates and notes from the NeMo Anonymizer team.</p>
       </header>
+      
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://avatars.githubusercontent.com/u/259195479?v=4" alt="Marjan Emadi">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-07-28 00:00:00+00:00">July 28, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              10 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="after-anonymization-part-i-evaluating-replace-mode"><a class="toclink" href="after-anonymization--part-i-evaluating-replace-mode/"><strong>After Anonymization — Part I: Evaluating Replace Mode</strong></a></h2>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<p>You need to share a dataset of customer biographies for model development without exposing personal information, so you run it through NeMo Anonymizer's Replace mode. At first glance, the result looks right: the obvious identifiers have changed, the text reads naturally, and nothing appears broken.</p>
+<p>Look closer, though. One sensitive value was never detected. The synthetic name no longer matches the email address. The city and postal code belong to different regions. An age of 38 became 8, quietly turning an adult into a child. The record looks anonymized, but it may still expose private information or distort the original meaning.</p>
+<p><code>Anonymizer.evaluate()</code> provides a second pass over these results. It checks whether detection covered the sensitive values in the original text and, for Substitute mode, whether the generated replacements preserve their types, important attributes, and relationships.</p>
+<p>This is Part 1 of a two-part series on evaluation in Anonymizer. It explores how Replace-mode evaluation surfaces problems that a quick review can miss, what each score means, and how to interpret the results. Part 2 will cover Rewrite mode, where the evaluation questions are different.</p>
+
+    
+      <nav class="md-post__action">
+        <a href="after-anonymization--part-i-evaluating-replace-mode/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
       
         <article class="md-post md-post--excerpt">
   <header class="md-post__header">
@@ -2494,13 +2585,13 @@
         
         
           
-          <a href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-footer__link md-footer__link--next" aria-label="Next: Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era">
+          <a href="after-anonymization--part-i-evaluating-replace-mode/" class="md-footer__link md-footer__link--next" aria-label="Next: After Anonymization — Part I: Evaluating Replace Mode">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+                After Anonymization — Part I: Evaluating Replace Mode
               </div>
             </div>
             <div class="md-footer__button md-icon">
