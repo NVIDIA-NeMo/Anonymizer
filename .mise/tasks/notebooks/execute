@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#MISE description="Execute tutorial sources and replace generated files in docs/notebooks/. May require model-provider credentials."
+
+set -euo pipefail
+
+mise run deps:sync notebooks
+mkdir -p docs/notebooks
+uv run --locked --group notebooks python -m ipykernel install --user --name anonymizer-venv
+uv run --locked --group notebooks jupytext --to ipynb --set-kernel anonymizer-venv --execute docs/notebook_source/*.py
+mv docs/notebook_source/*.ipynb docs/notebooks/

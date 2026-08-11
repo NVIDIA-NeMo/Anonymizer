@@ -58,9 +58,7 @@ jobs:
         with:
           checkout: "false"
           fetch-depth: "0"
-
-      - name: Install docs dependencies
-        run: mise run install-dev-docs
+          dependency-profile: "docs"
 
       - name: Configure git for mike
         run: |
@@ -72,7 +70,7 @@ jobs:
 
       - name: Deploy docs with mike
         if: github.event_name == 'push'
-        run: uv run --group docs mike deploy --push --update-aliases dev
+        run: uv run --locked --group docs mike deploy --push --update-aliases dev
 
   deploy-release:
     if: github.event_name == 'release'
@@ -89,9 +87,7 @@ jobs:
         with:
           checkout: "false"
           fetch-depth: "0"
-
-      - name: Install docs dependencies
-        run: mise run install-dev-docs
+          dependency-profile: "docs"
 
       - name: Download notebook artifacts
         uses: actions/download-artifact@v5
@@ -110,4 +106,4 @@ jobs:
       - name: Deploy release docs with mike
         run: |
           VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//' | sed 's/ .*$//')
-          uv run --group docs mike deploy --push --update-aliases "$VERSION" latest
+          uv run --locked --group docs mike deploy --push --update-aliases "$VERSION" latest

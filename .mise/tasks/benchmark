@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#MISE description="Run a benchmark profile: smoke or smoke-traces. Pass runner options after --."
+#MISE description="Run a benchmark profile and write results under benchmark-runs/ or BENCHMARK_OUTPUT_DIR. May require provider credentials."
 #USAGE arg "<profile>" help="Benchmark profile: smoke or smoke-traces" {
 #USAGE   choices "smoke" "smoke-traces"
 #USAGE }
@@ -26,7 +26,7 @@ case "$profile" in
     ;;
 esac
 
-uv run --group dev python tools/measurement/run_benchmarks.py \
+uv run --locked --group dev python tools/measurement/run_benchmarks.py \
   "$suite" \
   --output "$output_dir" \
   "${trace_args[@]}" \

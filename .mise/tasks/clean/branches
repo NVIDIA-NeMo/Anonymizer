@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#MISE description="Prune remote refs and delete local branches already merged into origin/main without switching branches. Deleted branches are recoverable through Git reflogs."
+
+set -euo pipefail
+
+git fetch --prune
+current_branch="$(git branch --show-current)"
+while IFS= read -r branch; do
+  if [[ "$branch" == "main" || "$branch" == "$current_branch" ]]; then
+    continue
+  fi
+  git branch -d -- "$branch" || true
+done < <(git branch --format='%(refname:short)' --merged origin/main)

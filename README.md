@@ -26,7 +26,6 @@ Or install from source:
 git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
 cd Anonymizer
 make setup
-mise run install
 ```
 
 ### 2. Set up model providers
@@ -147,13 +146,12 @@ After installation, invoke it with `/anonymizer` in an agent that supports slash
 ## Development
 
 ```bash
-make setup                # Install the pinned Mise toolchain and create .venv
-mise run bootstrap        # Install development dependencies
-mise run test             # Run tests
-mise run coverage         # Run with coverage report
-mise run format-check     # Lint + format check (read-only)
-anonymizer --help         # CLI usage
-mise run install-pre-commit  # Install pre-commit hooks
+make setup                  # Install pinned tools, dev dependencies, and hooks
+mise run test               # Run tests
+mise run test:coverage      # Run with coverage report
+mise run check              # Run all read-only static checks
+anonymizer --help           # CLI usage
+mise run hooks:install      # Reinstall repository hooks
 ```
 
 Run `mise tasks` to list the available developer commands. Tasks live in `.mise/tasks/` and are used by CI. The

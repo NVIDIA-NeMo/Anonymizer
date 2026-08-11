@@ -2,40 +2,50 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [format]
-description = "Format and fix Python code."
+description = "Format and safely fix tracked Python files and rendered notebooks. Modifies files in place."
 run = "tools/codestyle/format.sh"
 
-["format-check"]
-description = "Check formatting and lint rules without modifying files."
-run = [
-  "tools/codestyle/format.sh --check",
-  "tools/codestyle/ruff_check.sh",
-]
+["check:format"]
+description = "Check formatting of tracked Python files and rendered notebooks without modifying them."
+run = "tools/codestyle/format.sh --check"
 
-[typecheck]
-description = "Run blocking ty type checks."
+["check:lint"]
+description = "Check Ruff rules for tracked Python files and rendered notebooks without modifying them."
+run = "tools/codestyle/ruff_check.sh"
+
+["check:type"]
+description = "Run blocking ty checks across source, tests, tools, docs, and rendered notebooks."
 run = [
-  { task = "install-dev-docs" },
+  { task = "deps:sync", args = ["docs"] },
   "tools/codestyle/typecheck.sh",
 ]
 
-[copyright]
-description = "Add missing SPDX headers to source files."
+["license:headers:fix"]
+description = "Add missing SPDX headers to repository files. Modifies files in place."
 run = "uv run tools/codestyle/copyright_fixer.py ."
 
-["copyright-check"]
+["check:license:headers"]
 description = "Check SPDX headers without modifying files."
 run = "uv run tools/codestyle/copyright_fixer.py --check ."
 
-["lock-check"]
+["check:lock"]
 description = "Verify that uv.lock matches pyproject.toml."
 run = "uv lock --check"
+
+["lock:update"]
+description = "Regenerate uv.lock from project dependency metadata. Modifies uv.lock."
+run = "uv lock"
 
 [check]
 description = "Run the repository read-only quality checks."
 run = [
-  { task = "format-check" },
-  { task = "typecheck" },
-  { task = "lock-check" },
-  { task = "copyright-check" },
+  { task = "check:format" },
+  { task = "check:lint" },
+  { task = "check:type" },
+  { task = "check:lock" },
+  { task = "check:license:headers" },
 ]
+
+[validate]
+description = "Run the read-only repository checks and unit tests required before opening a pull request."
+run = [{ task = "check" }, { task = "test" }]

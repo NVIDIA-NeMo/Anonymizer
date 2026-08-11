@@ -54,11 +54,12 @@ jobs:
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
+          dependency-profile: "runtime"
 
       - name: Build wheel
         id: build
         run: |
-          mise run build-wheel
+          mise run build:wheel
           WHEEL=$(ls dist/*.whl)
           VERSION=$(echo "$WHEEL" | sed -n 's/.*-\([0-9][^-]*\)-.*/\1/p')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -146,9 +147,7 @@ jobs:
           checkout: "false"
           ref: ${{ inputs.release-ref }}
           fetch-depth: "0"
-
-      - name: Install docs dependencies
-        run: mise run install-dev-docs
+          dependency-profile: "docs"
 
       - name: Configure git for mike
         run: |
@@ -161,4 +160,4 @@ jobs:
       - name: Deploy release docs with mike
         env:
           VERSION: ${{ needs.publish-wheel.outputs.version }}
-        run: uv run --group docs mike deploy --push --update-aliases "$VERSION" latest
+        run: uv run --locked --group docs mike deploy --push --update-aliases "$VERSION" latest

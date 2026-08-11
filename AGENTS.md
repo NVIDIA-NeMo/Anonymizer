@@ -113,11 +113,11 @@ One pipeline-specific fact worth knowing: `COL_TEXT` is the internal name for th
 ## Development
 
 ```bash
-mise run test          # run all tests
-mise run bootstrap     # install dev dependencies
-mise run format        # ruff format + sort imports
-mise run format-check  # read-only lint check (used in CI)
-mise run typecheck     # blocking ty type check (warnings fail too)
+mise run setup         # install pinned tools, dev dependencies, and hooks
+mise run test          # run all unit tests
+mise run format        # format and safely fix Python files and notebooks
+mise run check         # run all read-only static checks
+mise run validate      # run checks and unit tests before opening a PR
 mise run docs:serve    # local MkDocs server at http://127.0.0.1:8000
 ```
 

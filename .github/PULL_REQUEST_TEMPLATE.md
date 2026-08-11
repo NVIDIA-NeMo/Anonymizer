@@ -26,12 +26,12 @@
 
 ## Validation
 <!-- Choose from the relevant commands below and list what you actually ran. If a relevant check was skipped, explain why. -->
-<!-- Common options: mise run check, mise run test, mise run coverage, mise run test:e2e, mise run docs:build, mise run convert-notebooks -->
+<!-- Common options: mise run validate, mise run test:coverage, mise run test:e2e, mise run docs:build, mise run notebooks:execute -->
 - Commands run:
 - Skipped checks or known failures:
 
 ## Documentation and Artifacts
 - [ ] Docs updated, or not needed
 - [ ] If docs changed: `mise run docs:build` passes locally
-- [ ] If tutorial sources changed: notebooks regenerated with `mise run convert-notebooks`
+- [ ] If tutorial sources changed: notebooks regenerated with `mise run notebooks:execute`
 - [ ] If e2e, benchmark, or model-provider behavior changed: relevant validation is listed above

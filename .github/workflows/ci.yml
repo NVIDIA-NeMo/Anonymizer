@@ -36,11 +36,8 @@ jobs:
           fetch-depth: "0"
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: mise run bootstrap
-
       - name: Run tests with coverage
-        run: mise run coverage
+        run: mise run test:coverage
 
   check:
     name: Check
@@ -58,17 +55,17 @@ jobs:
           fetch-depth: "0"
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: mise run bootstrap
+      - name: Check formatting
+        run: mise run check:format
 
-      - name: Check format and lint
-        run: mise run format-check
+      - name: Check lint rules
+        run: mise run check:lint
 
       - name: Run type checks
-        run: mise run typecheck
+        run: mise run check:type
 
       - name: Check uv.lock is up to date
-        run: mise run lock-check
+        run: mise run check:lock
 
       - name: Check copyright headers
-        run: mise run copyright-check
+        run: mise run check:license:headers

@@ -2,33 +2,42 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [setup]
-description = "Install pinned mise tools and create the project virtual environment."
+description = "Install pinned tools and sync a dependency profile. Developer profiles also install repository hooks; modifies the Mise cache, .venv, and .git/hooks."
+usage = '''
+arg "[profile]" help="Dependency profile to install (default: dev)" {
+  choices "runtime" "dev" "docs" "notebooks"
+}
+flag "--no-hooks" help="Skip hook installation in ephemeral CI environments"
+'''
 run = [
   "MISE_YES=1 mise trust",
   "MISE_YES=1 mise install",
-  "uv venv --allow-existing --python \"$(tr -d '[:space:]' < .python-version)\" \"$VIRTUAL_ENV\"",
+  "uv venv --allow-existing --python \"${UV_PYTHON:-$(tr -d '[:space:]' < .python-version)}\" \"$VIRTUAL_ENV\"",
+  '''
+profile="${usage_profile:-dev}"
+mise run deps:sync "$profile"
+if [ "$profile" != "runtime" ] && [ "${usage_no_hooks:-false}" != "true" ]; then
+  mise run hooks:install
+fi
+''',
 ]
 
-[install]
-description = "Install project dependencies into the configured virtual environment."
-run = [{ task = "setup" }, "uv sync --locked"]
+["deps:sync"]
+description = "Synchronize one locked dependency profile into .venv or UV_PROJECT_ENVIRONMENT."
+usage = '''
+arg "[profile]" help="Dependency profile to install (default: dev)" {
+  choices "runtime" "dev" "docs" "notebooks"
+}
+'''
+run = '''
+case "${usage_profile:-dev}" in
+  runtime) uv sync --locked --no-default-groups ;;
+  dev) uv sync --locked --group dev ;;
+  docs) uv sync --locked --group dev --group docs ;;
+  notebooks) uv sync --locked --group dev --group notebooks ;;
+esac
+'''
 
-[bootstrap]
-description = "Install project and development dependencies."
-run = [{ task = "setup" }, "uv sync --locked --group dev"]
-
-["install-dev"]
-description = "Install project and development dependencies."
-run = [{ task = "bootstrap" }]
-
-["install-dev-notebooks"]
-description = "Install project, development, and notebook dependencies."
-run = [{ task = "setup" }, "uv sync --locked --group dev --group notebooks"]
-
-["install-dev-docs"]
-description = "Install project, development, and documentation dependencies."
-run = [{ task = "setup" }, "uv sync --locked --group dev --group docs"]
-
-["install-pre-commit"]
-description = "Install the repository pre-commit hooks."
-run = "uv run pre-commit install"
+["hooks:install"]
+description = "Install the repository-managed pre-commit and commit-message hooks into .git/hooks."
+run = "uv run --locked --group dev pre-commit install"

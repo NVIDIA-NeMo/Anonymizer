@@ -2,9 +2,33 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ["publish:pypi"]
-description = "Build and publish the wheel to PyPI. Requires TWINE_USERNAME and TWINE_PASSWORD."
-alias = "publish-pypi"
-run = [
-  { task = "build-wheel" },
-  "uvx twine upload --username \"$TWINE_USERNAME\" --password \"$TWINE_PASSWORD\" --non-interactive dist/*.whl",
-]
+description = "Build and publish an explicit version to PyPI. Requires TWINE_USERNAME and TWINE_PASSWORD; --dry-run performs no upload."
+usage = '''
+arg "<version>" help="Expected Python package version"
+flag "--dry-run" help="Build and validate without uploading"
+'''
+run = '''
+if [ "${usage_dry_run:-false}" != "true" ]; then
+  : "${TWINE_USERNAME:?TWINE_USERNAME is required}"
+  : "${TWINE_PASSWORD:?TWINE_PASSWORD is required}"
+fi
+
+mise run build:wheel
+wheel="$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
+case "$(basename "$wheel")" in
+  *"-${usage_version?}-"*) ;;
+  *)
+    echo "Built wheel does not match requested version ${usage_version?}: ${wheel:-none}" >&2
+    exit 1
+    ;;
+esac
+
+echo "Destination: PyPI"
+echo "Version: ${usage_version?}"
+if [ "${usage_dry_run:-false}" = "true" ]; then
+  echo "Dry run: upload skipped"
+  exit 0
+fi
+
+uvx twine upload --non-interactive "$wheel"
+'''
