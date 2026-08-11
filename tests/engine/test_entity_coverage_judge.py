@@ -21,6 +21,7 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
     _FINAL_ENTITIES_FOR_COVERAGE_COL,
     EntityCoverageWorkflow,
     _coverage_prompt,
+    _effective_entity_labels,
     _filter_out_of_scope_entities,
     _find_missed_candidates,
     _is_candidate_value_covered,
@@ -445,45 +446,41 @@ def test_filter_out_of_scope_entities_is_case_insensitive() -> None:
 # ── entity_label_denylist ─────────────────────────────────────────────────────
 
 
-def test_filter_out_of_scope_entities_denylist_excludes_denied_label() -> None:
-    entities = [
-        {"value": "Alice", "label": "first_name", "reasoning": "..."},
-        {"value": "alice@example.com", "label": "email", "reasoning": "..."},
-    ]
-    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=["email"])
-    assert result == [{"value": "Alice", "label": "first_name", "reasoning": "..."}]
+def test_effective_entity_labels_no_denylist_returns_entity_labels_unchanged() -> None:
+    assert _effective_entity_labels(["email", "city"], None) == ["email", "city"]
 
 
-def test_filter_out_of_scope_entities_denylist_combined_with_allowlist() -> None:
-    entities = [
-        {"value": "Alice", "label": "first_name", "reasoning": "..."},
-        {"value": "alice@example.com", "label": "email", "reasoning": "..."},
-        {"value": "Houston", "label": "city", "reasoning": "..."},
-    ]
-    result = _filter_out_of_scope_entities(
-        entities,
-        entity_labels=["first_name", "email", "city"],
-        entity_label_denylist=["email"],
-    )
-    assert {e["label"] for e in result} == {"first_name", "city"}
+def test_effective_entity_labels_none_labels_none_denylist_returns_none() -> None:
+    assert _effective_entity_labels(None, None) is None
 
 
-def test_filter_out_of_scope_entities_denylist_is_case_insensitive() -> None:
-    entities = [{"value": "alice@example.com", "label": "Email", "reasoning": "..."}]
-    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=["email"])
-    assert result == []
+def test_effective_entity_labels_subtracts_denylist_from_explicit_labels() -> None:
+    result = _effective_entity_labels(["first_name", "email", "city"], ["email"])
+    assert result == ["first_name", "city"]
 
 
-def test_filter_out_of_scope_entities_none_denylist_is_noop() -> None:
-    entities = [
-        {"value": "Alice", "label": "first_name", "reasoning": "..."},
-        {"value": "alice@example.com", "label": "email", "reasoning": "..."},
-    ]
-    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=None)
-    assert result == entities
+def test_effective_entity_labels_subtracts_denylist_from_defaults() -> None:
+    result = _effective_entity_labels(None, ["ssn", "first_name"])
+    assert result is not None
+    assert "ssn" not in result
+    assert "first_name" not in result
+    assert "email" in result
 
 
-def test_entity_coverage_workflow_passes_denylist_to_filter() -> None:
+def test_effective_entity_labels_is_case_insensitive() -> None:
+    result = _effective_entity_labels(["first_name", "Email"], ["email"])
+    assert result == ["first_name"]
+
+
+def test_coverage_prompt_excludes_denied_labels_from_scope() -> None:
+    effective = _effective_entity_labels(["first_name", "email", "city"], ["email"])
+    prompt = _coverage_prompt(entity_labels=effective)
+    assert "email" not in prompt
+    assert "first_name" in prompt
+    assert "city" in prompt
+
+
+def test_entity_coverage_workflow_excludes_denied_labels_from_postprocess() -> None:
     """Denied labels must be excluded from candidate entities in postprocess."""
     raw_judge_output = [
         {"value": "Alice", "label": "first_name", "reasoning": "not replaced"},

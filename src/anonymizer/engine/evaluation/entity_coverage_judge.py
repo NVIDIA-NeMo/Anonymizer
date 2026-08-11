@@ -68,6 +68,24 @@ class EntityCoverageSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _effective_entity_labels(
+    entity_labels: list[str] | None,
+    entity_label_denylist: list[str] | None,
+) -> list[str] | None:
+    """Return the effective label set for prompt and filter scope.
+
+    Subtracts denied labels from entity_labels (or the full default set when
+    entity_labels is None). Returns None only when entity_labels is None and
+    no denylist is set, preserving the "evaluate all PII types" prompt path.
+    """
+    if not entity_label_denylist:
+        return entity_labels
+    denied = {label.casefold() for label in entity_label_denylist}
+    base = entity_labels if entity_labels is not None else list(DEFAULT_ENTITY_LABELS)
+    effective = [label for label in base if label.casefold() not in denied]
+    return effective
+
+
 def _entity_type_scope_block(entity_labels: list[str] | None) -> str:
     if entity_labels is None:
         return "<entity_type_scope>\nEvaluate for all PII and sensitive entity types.\n</entity_type_scope>"
@@ -345,14 +363,12 @@ def _normalize_literal_text(value: object) -> str:
 def _filter_out_of_scope_entities(
     entities: list[_CandidateT],
     entity_labels: list[str] | None,
-    entity_label_denylist: list[str] | None = None,
 ) -> list[_CandidateT]:
     """Drop entities with empty labels or labels outside the configured scope.
 
     When ``entity_labels`` is None all labels are in scope; only empty labels
-    are dropped. Labels present in ``entity_label_denylist`` are always excluded
-    regardless of ``entity_labels``. This mirrors the detection-time scope so the
-    judge does not penalise the output for not anonymizing denied labels.
+    are dropped. This mirrors the prompt's scope instruction deterministically
+    so a model that returns out-of-scope labels does not lower the coverage score.
 
     Label drift (e.g. the model returning ``"given_name"`` instead of
     ``"first_name"``) is unlikely in practice — the prompt explicitly instructs
@@ -362,15 +378,12 @@ def _filter_out_of_scope_entities(
     meaningfully risking false negatives on well-formed responses.
     """
     allowed = {label.casefold() for label in entity_labels} if entity_labels is not None else None
-    denied = {label.casefold() for label in entity_label_denylist} if entity_label_denylist is not None else None
     result = []
     for entity in entities:
         label = str(entity.get("label", "")).strip()
         if not label:
             continue
         if allowed is not None and label.casefold() not in allowed:
-            continue
-        if denied is not None and label.casefold() in denied:
             continue
         result.append(entity)
     return result
@@ -473,10 +486,11 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
         """Override to inject instance-specific entity_labels and data_summary."""
+        effective_labels = _effective_entity_labels(self._entity_labels, self._entity_label_denylist)
         return LLMStructuredColumnConfig(
             name=self.RAW_COL,
             prompt=_coverage_prompt(
-                entity_labels=self._entity_labels,
+                entity_labels=effective_labels,
                 data_summary=self._data_summary,
             ),
             model_alias=resolve_model_alias(self.MODEL_ROLE, selected_models),
@@ -499,7 +513,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 missed_entities_list.append([])
                 n_candidates_list.append(None)
             else:
-                candidates = _filter_out_of_scope_entities(candidates, self._entity_labels, self._entity_label_denylist)
+                candidates = _filter_out_of_scope_entities(
+                    candidates, _effective_entity_labels(self._entity_labels, self._entity_label_denylist)
+                )
                 candidates = _filter_nonliteral_entities(candidates, out[COL_TEXT].loc[idx])
                 candidates = _deduplicate_candidate_values(candidates)
                 n_candidates = len(candidates)
