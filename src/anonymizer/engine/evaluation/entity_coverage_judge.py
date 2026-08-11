@@ -426,6 +426,11 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     The judge independently extracts candidates from the original text and entity-type
     scope. Deterministic postprocessing removes nonliteral and already-covered findings.
 
+    ``entity_labels`` scopes evaluation to a specific allowlist of labels (``None`` means
+    all default labels). ``entity_label_denylist`` further excludes specific labels from
+    scope regardless of ``entity_labels``. Both are applied to the LLM prompt and the
+    postprocess filter so denied labels are never penalised in the coverage score.
+
     Output columns:
       ``COL_ENTITY_COVERAGE`` (float|None) — covered / total unique candidate values
       ``COL_MISSED_ENTITIES`` (list)        — missed entities with value, label, reasoning

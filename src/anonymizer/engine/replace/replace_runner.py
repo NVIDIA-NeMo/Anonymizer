@@ -130,6 +130,10 @@ class ReplacementWorkflow:
         Detection validity runs only when ``compute_detection_validity=True``.
         All active judges are submitted as columns of one DataDesigner workflow.
 
+        ``entity_labels`` and ``entity_label_denylist`` together define the label
+        scope passed to the coverage judge — only entities whose labels were in
+        scope during detection are evaluated.
+
         Raises ``ValueError`` if the workflow has no adapter wired up or if the
         dataframe is missing the columns the judges read.
         """
