@@ -604,7 +604,19 @@ Template: <<VALIDATION_SKELETON>>
     )
 
 
+_NUMBER_DISGUISE_LABELS: frozenset[str] = frozenset(
+    {"phone_number", "ssn", "social_security_number", "credit_card", "credit_card_number"}
+)
+_NAME_DISGUISE_LABELS: frozenset[str] = frozenset(
+    {"first_name", "last_name", "name", "full_name", "person_name"}
+)
+
+
 def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool = False) -> str:
+    label_set = set(labels)
+    include_number_hint = not strict_labels or bool(label_set & _NUMBER_DISGUISE_LABELS)
+    include_name_hint = not strict_labels or bool(label_set & _NAME_DISGUISE_LABELS)
+
     if strict_labels:
         label_block = (
             "Here are the allowed entity classes. Use ONLY labels from this list:\n"
@@ -645,7 +657,47 @@ Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. 
 Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
 Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
 
-    prompt = """Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
+    if include_number_hint:
+        example_block += """
+
+Example (disguised identifier — digit words):
+Input text: Reach me at nine o two, five five five, one two three four.
+Already-detected entities: []
+Output: {"entities": [{"value": "nine o two, five five five, one two three four", "label": "phone_number", "reason": "phone number written as digit words with 'o' for zero"}]}"""
+
+    if include_name_hint:
+        example_block += """
+
+Example (disguised identifier — letter spelling):
+Input text: My name is J-O-H-N D-O-E.
+Already-detected entities: []
+Output: {"entities": [{"value": "J-O-H-N", "label": "first_name", "reason": "first name spelled out letter by letter"}, {"value": "D-O-E", "label": "last_name", "reason": "last name spelled out letter by letter"}]}"""
+
+    disguised_hints: list[str] = []
+    if include_number_hint:
+        disguised_hints.append(
+            '  - Phone numbers, SSNs, and credit card numbers spoken as digit words,\n'
+            '    including "o" or "oh" used in place of zero:\n'
+            '    "nine o two, five five five, one two three four"'
+        )
+    if include_name_hint:
+        disguised_hints.append(
+            '  - Names spelled out letter by letter with hyphens or commas:\n'
+            '    "J-O-H-N", "M, A, R, Y"'
+        )
+
+    disguised_hints_block = ""
+    if disguised_hints:
+        disguised_hints_block = (
+            "- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,\n"
+            "  spaced out, mixed with punctuation, or written in words instead of digits.\n"
+            "  Detect the identifier and extract the exact text as written.\n"
+            "  Examples of disguised identifiers to detect:\n"
+            + "\n".join(disguised_hints)
+            + "\n"
+        )
+
+    prompt = f"""Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
 - Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
 - Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
@@ -668,8 +720,6 @@ Other information:
 - Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports (e.g., .pdf, .xlsx, .csv, .txt).
 - Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. Treat these extensions as non-sensitive system identifiers.
 
-<<EXAMPLE_BLOCK>>
-
 Additional extraction requirements:
 - The "value" field must be the EXACT verbatim span from the input text.
   Copy the text character-for-character exactly as it appears.
@@ -678,15 +728,8 @@ Additional extraction requirements:
   the extracted span.
 - Extract only text that is explicitly present in the input.
   Never reconstruct, guess, or generate a value that does not appear verbatim.
-- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,
-  spaced out, mixed with punctuation, or written in words instead of digits.
-  Detect the identifier and extract the exact text as written.
-  Examples of disguised identifiers to detect:
-  - Phone numbers, SSNs, and credit card numbers spoken as digit words,
-    including "o" or "oh" used in place of zero:
-    "nine o two, five five five, one two three four"
-  - Names spelled out letter by letter with hyphens or commas:
-    "J-O-H-N", "M, A, R, Y"
+{disguised_hints_block}
+<<EXAMPLE_BLOCK>>
 
 ---
 Input text: <<TAGGED_TEXT>>
