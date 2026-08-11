@@ -13,7 +13,7 @@ authors:
 
 You need to share a dataset of customer biographies for model development without exposing personal information, so you run it through NeMo Anonymizer's Replace mode. At first glance, the result looks right: the obvious identifiers have changed, the text reads naturally, and nothing appears broken.
 
-Look closer, though. One sensitive value was never detected. The synthetic name no longer matches the email local-part. The city and postal code belong to different regions. An age of 38 became 8, quietly turning an adult into a child. The record looks anonymized, but it may still expose private information or distort the original meaning.
+Look closer, though. One sensitive value was never detected. The synthetic name no longer matches the email address. The city and postal code belong to different regions. An age of 38 became 8, quietly turning an adult into a child. The record looks anonymized, but it may still expose private information or distort the original meaning.
 
 `Anonymizer.evaluate()` provides a second pass over these results. It checks whether detection covered the sensitive values in the original text and, for Substitute mode, whether the generated replacements preserve their types, important attributes, and relationships.
 
@@ -33,12 +33,12 @@ This is Part 1 of a two-part series on evaluation in Anonymizer. It explores how
 
 Anonymizer deliberately separates anonymization from evaluation.
 
-This has two practical consequences:
+This separation has two practical benefits:
 
-- **Evaluation is optional.** Not every run needs a judge pass. Large batches can run without evaluation, while results produced from a sample can be evaluated for audits. `evaluate()` scores every row in the result.
+- **Evaluation is optional.** Large batches can skip evaluation for faster results and lower compute cost. For audits or iteration before a full run, evaluate a smaller `preview()` result instead. `evaluate()` scores every row in the result.
 - **The result is reusable.** The same original, unevaluated output can be evaluated with different judge models or at a different time without re-running entity detection and replacement.
 
-**Important:** To evaluate in a later session, pickle the complete `AnonymizerResult` or `PreviewResult`. Saving the entire result returned by `run()` or `preview()` is required; saving only its public `dataframe` is not enough because `evaluate()` also needs the trace and the stored strategy, entity scope, and dataset context.
+**Important:** To evaluate in a later session, save the complete `AnonymizerResult` or `PreviewResult` using Python's `pickle` module—not just its `dataframe`.
 
 ```python
 import pickle
@@ -113,6 +113,8 @@ entity_coverage = n_covered / n_candidates
 
 A score of `1.0` means no judge candidates were missed, or the judge found no candidates. A lower score means the judge found candidate values not covered by Anonymizer's detected entities. Entity coverage measures entity detection recall, not final replacement quality or leakage in the replaced text.
 
+A score below `1.0` is a review signal, not definitive evidence of a privacy failure. Perform a human review of the `missed_entities` entries in context: judge candidates can be ambiguous, and whether broad values require protection depends on your privacy policy. For example, `"teenager"` conveys an age range but may be abstract enough to retain in some contexts.
+
 | Output column | Meaning |
 |---|---|
 | `entity_coverage` | Float in `[0.0, 1.0]`, or `None` if the judge was unavailable |
@@ -174,7 +176,7 @@ An age of `38` and an age of `8` are both valid ages. But replacing one with the
 
 #### Relational Consistency: Did the Replacements Remain Coherent?
 
-Individual replacements can each pass while the record fails as a whole. A synthetic set with Portland as the city, Texas as the state, and 97205 as the postal code contains three individually plausible values that are geographically impossible together. Supported checks include geographic, temporal, identity, organizational, employment, demographic, and communication relationships—for example, city ↔ state, date of birth ↔ age, and person name ↔ email local-part.
+Individual replacements can each pass while the record fails as a whole. A synthetic set with Portland as the city, Texas as the state, and 97205 as the postal code contains three individually plausible values that are geographically impossible together. Supported checks include geographic, temporal, identity, organizational, employment, demographic, and communication relationships—for example, city ↔ state, date of birth ↔ age, and person name ↔ email address.
 
 | Output column | Meaning |
 |---|---|
