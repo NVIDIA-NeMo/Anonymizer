@@ -459,12 +459,9 @@ def test_effective_entity_labels_subtracts_denylist_from_explicit_labels() -> No
     assert result == ["first_name", "city"]
 
 
-def test_effective_entity_labels_subtracts_denylist_from_defaults() -> None:
+def test_effective_entity_labels_preserves_permissive_scope_with_denylist() -> None:
     result = _effective_entity_labels(None, ["ssn", "first_name"])
-    assert result is not None
-    assert "ssn" not in result
-    assert "first_name" not in result
-    assert "email" in result
+    assert result is None
 
 
 def test_effective_entity_labels_is_case_insensitive() -> None:
@@ -480,18 +477,38 @@ def test_coverage_prompt_excludes_denied_labels_from_scope() -> None:
     assert "city" in prompt
 
 
+def test_coverage_prompt_keeps_permissive_scope_and_names_denied_labels() -> None:
+    prompt = _coverage_prompt(entity_labels=None, entity_label_denylist=["email"])
+    assert "Evaluate for all PII and sensitive entity types." in prompt
+    assert "explicitly excluded entity labels: email" in prompt
+    assert "This list is not exhaustive." in prompt
+    assert "other direct or quasi-identifier types" in prompt
+    assert "Use a concise snake_case label" in prompt
+    assert "Return labels exactly as they appear" not in prompt
+
+
+def test_filter_out_of_scope_entities_keeps_novel_non_denied_labels() -> None:
+    entities = [
+        {"value": "Example Clinic", "label": "clinic_name", "reasoning": "clinic"},
+        {"value": "alice@example.com", "label": "Email", "reasoning": "email"},
+    ]
+    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=["email"])
+    assert result == [entities[0]]
+
+
 def test_entity_coverage_workflow_excludes_denied_labels_from_postprocess() -> None:
-    """Denied labels must be excluded from candidate entities in postprocess."""
+    """Permissive postprocessing keeps novel labels while excluding denied labels."""
     raw_judge_output = [
         {"value": "Alice", "label": "first_name", "reasoning": "not replaced"},
+        {"value": "Example Clinic", "label": "clinic_name", "reasoning": "not replaced"},
         {"value": "alice@example.com", "label": "email", "reasoning": "not replaced"},
     ]
-    entities_by_value = {"entities_by_value": [{"value": "Alice", "label": "first_name", "mentions": []}]}
+    entities_by_value = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
     input_df = pd.DataFrame(
         {
-            COL_TEXT: ["Alice alice@example.com"],
+            COL_TEXT: ["Alice visited Example Clinic and used alice@example.com"],
             COL_ENTITIES_BY_VALUE: [entities_by_value],
-            "_raw_entity_coverage_judge": [{"candidate_entities": raw_judge_output}],
+            COL_ENTITY_COVERAGE_JUDGE: [{"candidate_entities": raw_judge_output}],
         }
     )
 
@@ -503,4 +520,5 @@ def test_entity_coverage_workflow_excludes_denied_labels_from_postprocess() -> N
     result_df = workflow.postprocess(workflow.prepare(input_df))
     missed = result_df[COL_MISSED_ENTITIES].iloc[0]
     missed_labels = {e["label"] for e in missed}
+    assert "clinic_name" in missed_labels
     assert "email" not in missed_labels

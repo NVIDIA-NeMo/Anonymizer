@@ -72,23 +72,33 @@ def _effective_entity_labels(
     entity_labels: list[str] | None,
     entity_label_denylist: list[str] | None,
 ) -> list[str] | None:
-    """Return the effective label set for prompt and filter scope.
+    """Return the effective allowlist for prompt and filter scope.
 
-    Subtracts denied labels from entity_labels (or the full default set when
-    entity_labels is None). Returns None only when entity_labels is None and
-    no denylist is set, preserving the "evaluate all PII types" prompt path.
+    ``None`` remains permissive so coverage includes novel labels introduced by
+    augmentation. Denied labels are applied independently by the prompt and
+    postprocessing filter.
     """
+    if entity_labels is None:
+        return None
     if not entity_label_denylist:
         return entity_labels
     denied = {label.casefold() for label in entity_label_denylist}
-    base = entity_labels if entity_labels is not None else list(DEFAULT_ENTITY_LABELS)
-    effective = [label for label in base if label.casefold() not in denied]
+    effective = [label for label in entity_labels if label.casefold() not in denied]
     return effective
 
 
-def _entity_type_scope_block(entity_labels: list[str] | None) -> str:
+def _entity_type_scope_block(
+    entity_labels: list[str] | None,
+    entity_label_denylist: list[str] | None = None,
+) -> str:
     if entity_labels is None:
-        return "<entity_type_scope>\nEvaluate for all PII and sensitive entity types.\n</entity_type_scope>"
+        denied = sorted({label.strip().casefold() for label in entity_label_denylist or [] if label.strip()})
+        exclusion = (
+            f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(denied)}."
+            if denied
+            else ""
+        )
+        return f"<entity_type_scope>\nEvaluate for all PII and sensitive entity types.{exclusion}\n</entity_type_scope>"
     labels_str = ", ".join(entity_labels)
     return (
         "<entity_type_scope>\n"
@@ -112,18 +122,39 @@ def _data_summary_block(data_summary: str | None) -> str:
     )
 
 
-def _coverage_prompt(*, entity_labels: list[str] | None, data_summary: str | None = None) -> str:
-    entity_scope_block = _entity_type_scope_block(entity_labels)
+def _coverage_prompt(
+    *,
+    entity_labels: list[str] | None,
+    entity_label_denylist: list[str] | None = None,
+    data_summary: str | None = None,
+) -> str:
+    entity_scope_block = _entity_type_scope_block(entity_labels, entity_label_denylist)
     data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
-
-    entity_scope_guidance = (
-        "- Respect the entity_type_scope: do not report candidate values outside the configured scope."
-        if entity_labels is not None
-        else ""
-    )
 
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
     labels_str = ", ".join(active_labels)
+    if entity_labels is None:
+        taxonomy_guidance = (
+            f"Common entity types include: {labels_str}. This list is not exhaustive. "
+            "Also report other direct or quasi-identifier types supported by the original-text context."
+        )
+        label_interpretation = (
+            "Use a concise snake_case label that describes each candidate's semantic entity category. "
+            "Do not use an explicitly excluded label."
+        )
+        entity_scope_guidance = (
+            "- Respect the entity_type_scope: report any supported sensitive entity type except explicit exclusions."
+        )
+    else:
+        taxonomy_guidance = f"These entity types are in scope: {labels_str}."
+        label_interpretation = (
+            "Treat each configured label as a semantic entity category. Labels may use compact, compound, "
+            "or abbreviated names; interpret their intended meaning from the label and the original-text "
+            "context. Return labels exactly as they appear in the entity_type_scope."
+        )
+        entity_scope_guidance = (
+            "- Respect the entity_type_scope: do not report candidate values outside the configured scope."
+        )
 
     prompt = f"""You are a privacy-entity span extractor. Your task is defined below.
 
@@ -139,7 +170,7 @@ Return structured JSON:
 </task>
 
 <identifier_taxonomy>
-These entity types are in scope: {labels_str}.
+{taxonomy_guidance}
 Quasi-identifiers: combinations of values that together re-identify someone \
 (e.g. job title + employer + city appearing together). Time values (specific timestamps, \
 times of day, schedules) can act as quasi-identifiers when combined with other attributes \
@@ -149,9 +180,7 @@ in the same text — flag them if they appear alongside other identifying inform
 {entity_scope_block}
 
 <label_interpretation>
-Treat each configured label as a semantic entity category. Labels may use compact, compound, \
-or abbreviated names; interpret their intended meaning from the label and the original-text \
-context. Return labels exactly as they appear in the entity_type_scope.
+{label_interpretation}
 </label_interpretation>
 
 <systematic_scan>
@@ -186,7 +215,7 @@ Do NOT flag:
 
 Do flag:
 - `reasoning` MUST be one sentence explaining which in-scope semantic type the value represents.
-- A value that fills the role of a listed sensitive type in context, even when it is
+- A value that fills the role of an in-scope sensitive type in context, even when it is
   short, a single token, an unfamiliar or foreign-looking word, or resembles an ordinary
   word or number. Decide by the value's role in the surrounding text, not by its length,
   rarity, or familiarity. (This still excludes pronouns and generic references that only
@@ -363,12 +392,14 @@ def _normalize_literal_text(value: object) -> str:
 def _filter_out_of_scope_entities(
     entities: list[_CandidateT],
     entity_labels: list[str] | None,
+    entity_label_denylist: list[str] | None = None,
 ) -> list[_CandidateT]:
     """Drop entities with empty labels or labels outside the configured scope.
 
     When ``entity_labels`` is None all labels are in scope; only empty labels
-    are dropped. This mirrors the prompt's scope instruction deterministically
-    so a model that returns out-of-scope labels does not lower the coverage score.
+    and explicitly denied labels are dropped. This mirrors the prompt's scope
+    instruction deterministically so a model that returns out-of-scope labels
+    does not lower the coverage score.
 
     Label drift (e.g. the model returning ``"given_name"`` instead of
     ``"first_name"``) is unlikely in practice — the prompt explicitly instructs
@@ -378,12 +409,14 @@ def _filter_out_of_scope_entities(
     meaningfully risking false negatives on well-formed responses.
     """
     allowed = {label.casefold() for label in entity_labels} if entity_labels is not None else None
+    denied = {label.casefold() for label in entity_label_denylist or []}
     result = []
     for entity in entities:
         label = str(entity.get("label", "")).strip()
         if not label:
             continue
-        if allowed is not None and label.casefold() not in allowed:
+        normalized_label = label.casefold()
+        if (allowed is not None and normalized_label not in allowed) or normalized_label in denied:
             continue
         result.append(entity)
     return result
@@ -427,7 +460,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     scope. Deterministic postprocessing removes nonliteral and already-covered findings.
 
     ``entity_labels`` scopes evaluation to a specific allowlist of labels (``None`` means
-    all default labels). ``entity_label_denylist`` further excludes specific labels from
+    all labels). ``entity_label_denylist`` further excludes specific labels from
     scope regardless of ``entity_labels``. Both are applied to the LLM prompt and the
     postprocess filter so denied labels are never penalised in the coverage score.
 
@@ -496,6 +529,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             name=self.RAW_COL,
             prompt=_coverage_prompt(
                 entity_labels=effective_labels,
+                entity_label_denylist=self._entity_label_denylist,
                 data_summary=self._data_summary,
             ),
             model_alias=resolve_model_alias(self.MODEL_ROLE, selected_models),
@@ -519,7 +553,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 n_candidates_list.append(None)
             else:
                 candidates = _filter_out_of_scope_entities(
-                    candidates, _effective_entity_labels(self._entity_labels, self._entity_label_denylist)
+                    candidates,
+                    _effective_entity_labels(self._entity_labels, self._entity_label_denylist),
+                    self._entity_label_denylist,
                 )
                 candidates = _filter_nonliteral_entities(candidates, out[COL_TEXT].loc[idx])
                 candidates = _deduplicate_candidate_values(candidates)

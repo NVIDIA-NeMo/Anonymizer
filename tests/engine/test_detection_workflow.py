@@ -38,6 +38,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_augment_prompt,
     _get_latent_prompt,
     _get_validation_prompt,
+    _materialize_final_entities,
     _resolve_detection_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -473,6 +474,11 @@ def test_resolve_detection_labels_denylist_removes_labels() -> None:
     assert "city" in labels
 
 
+def test_resolve_detection_labels_denylist_is_case_insensitive() -> None:
+    labels = _resolve_detection_labels(["first_name", "Email"], entity_label_denylist={"EMAIL"})
+    assert labels == ["first_name"]
+
+
 def test_resolve_detection_labels_denylist_on_defaults() -> None:
     labels = _resolve_detection_labels(None, entity_label_denylist={"ssn", "first_name"})
     assert "ssn" not in labels
@@ -490,6 +496,25 @@ def test_resolve_detection_labels_empty_result_warns(caplog: pytest.LogCaptureFi
         labels = _resolve_detection_labels(["email"], entity_label_denylist={"email"})
     assert labels == []
     assert "No entities will be detected" in caplog.text
+
+
+def test_materialize_final_entities_applies_label_filters_case_insensitively() -> None:
+    raw = {
+        "entities": [
+            {"value": "Alice", "label": "First_Name", "start_position": 0, "end_position": 5},
+            {"value": "alice@example.com", "label": "Email", "start_position": 7, "end_position": 24},
+            {"value": "Houston", "label": "City", "start_position": 28, "end_position": 35},
+        ]
+    }
+
+    result = _materialize_final_entities(
+        raw,
+        allowed_labels={"first_name", "email"},
+        entity_label_denylist={"EMAIL"},
+    )
+
+    final = EntitiesSchema.from_raw(result)
+    assert [entity.label for entity in final.entities] == ["First_Name"]
 
 
 def test_denylist_filters_entities_from_final_entities(

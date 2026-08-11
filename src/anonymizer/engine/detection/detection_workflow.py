@@ -475,7 +475,8 @@ def _resolve_detection_labels(
 ) -> list[str]:
     labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
     if entity_label_denylist:
-        labels = [label for label in labels if label not in entity_label_denylist]
+        denied = {label.casefold() for label in entity_label_denylist}
+        labels = [label for label in labels if label.casefold() not in denied]
     if not labels:
         logger.warning(
             "entity_label_denylist removed all labels from the effective detection set. No entities will be detected."
@@ -491,11 +492,12 @@ def _materialize_final_entities(
 ) -> dict:
     """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels* and excluding *entity_label_denylist*."""
     parsed = EntitiesSchema.from_raw(raw)
+    allowed = {label.casefold() for label in allowed_labels} if allowed_labels is not None else None
+    denied = {label.casefold() for label in entity_label_denylist or []}
     kept = [
         e
         for e in parsed.entities
-        if (allowed_labels is None or e.label in allowed_labels)
-        and (entity_label_denylist is None or e.label not in entity_label_denylist)
+        if (allowed is None or e.label.casefold() in allowed) and e.label.casefold() not in denied
     ]
     return EntitiesSchema(entities=kept).model_dump()
 
