@@ -440,3 +440,70 @@ def test_filter_out_of_scope_entities_is_case_insensitive() -> None:
     entities = [{"value": "Alice", "label": "First_Name", "reasoning": "..."}]
     result = _filter_out_of_scope_entities(entities, entity_labels=["first_name"])
     assert result == entities
+
+
+# ── entity_label_denylist ─────────────────────────────────────────────────────
+
+
+def test_filter_out_of_scope_entities_denylist_excludes_denied_label() -> None:
+    entities = [
+        {"value": "Alice", "label": "first_name", "reasoning": "..."},
+        {"value": "alice@example.com", "label": "email", "reasoning": "..."},
+    ]
+    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=["email"])
+    assert result == [{"value": "Alice", "label": "first_name", "reasoning": "..."}]
+
+
+def test_filter_out_of_scope_entities_denylist_combined_with_allowlist() -> None:
+    entities = [
+        {"value": "Alice", "label": "first_name", "reasoning": "..."},
+        {"value": "alice@example.com", "label": "email", "reasoning": "..."},
+        {"value": "Houston", "label": "city", "reasoning": "..."},
+    ]
+    result = _filter_out_of_scope_entities(
+        entities,
+        entity_labels=["first_name", "email", "city"],
+        entity_label_denylist=["email"],
+    )
+    assert {e["label"] for e in result} == {"first_name", "city"}
+
+
+def test_filter_out_of_scope_entities_denylist_is_case_insensitive() -> None:
+    entities = [{"value": "alice@example.com", "label": "Email", "reasoning": "..."}]
+    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=["email"])
+    assert result == []
+
+
+def test_filter_out_of_scope_entities_none_denylist_is_noop() -> None:
+    entities = [
+        {"value": "Alice", "label": "first_name", "reasoning": "..."},
+        {"value": "alice@example.com", "label": "email", "reasoning": "..."},
+    ]
+    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=None)
+    assert result == entities
+
+
+def test_entity_coverage_workflow_passes_denylist_to_filter() -> None:
+    """Denied labels must be excluded from candidate entities in postprocess."""
+    raw_judge_output = [
+        {"value": "Alice", "label": "first_name", "reasoning": "not replaced"},
+        {"value": "alice@example.com", "label": "email", "reasoning": "not replaced"},
+    ]
+    entities_by_value = {"entities_by_value": [{"value": "Alice", "label": "first_name", "mentions": []}]}
+    input_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice alice@example.com"],
+            COL_ENTITIES_BY_VALUE: [entities_by_value],
+            "_raw_entity_coverage_judge": [{"candidate_entities": raw_judge_output}],
+        }
+    )
+
+    workflow = EntityCoverageWorkflow(
+        adapter=Mock(),
+        entity_labels=None,
+        entity_label_denylist=["email"],
+    )
+    result_df = workflow.postprocess(workflow.prepare(input_df))
+    missed = result_df[COL_MISSED_ENTITIES].iloc[0]
+    missed_labels = {e["label"] for e in missed}
+    assert "email" not in missed_labels

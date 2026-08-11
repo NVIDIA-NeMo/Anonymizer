@@ -379,6 +379,7 @@ class Anonymizer:
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
                 entity_labels=config.detect.entity_labels,
+                entity_label_denylist=config.detect.entity_label_denylist,
                 data_summary=result.data_summary,
             )
         except KeyboardInterrupt:
@@ -461,6 +462,7 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
         entity_labels = getattr(output, "entity_labels", None)
+        entity_label_denylist = getattr(output, "entity_label_denylist", None)
         data_summary = getattr(output, "data_summary", None)
         num_records = len(output.trace_dataframe)
         mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
@@ -524,6 +526,7 @@ class Anonymizer:
             coverage_wf = EntityCoverageWorkflow(
                 adapter=self._adapter,
                 entity_labels=entity_labels,
+                entity_label_denylist=entity_label_denylist,
                 data_summary=data_summary,
             )
             logger.info(LOG_INDENT + "🔎 Running entity coverage")
@@ -555,6 +558,7 @@ class Anonymizer:
                 failed_records=all_failed,
                 rewrite_config=rewrite_config,
                 entity_labels=entity_labels,
+                entity_label_denylist=entity_label_denylist,
                 data_summary=data_summary,
             )
         else:
@@ -568,6 +572,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.evaluate,
                 entity_labels=entity_labels,
+                entity_label_denylist=entity_label_denylist,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
                 data_summary=data_summary,
             )
@@ -603,6 +608,7 @@ class Anonymizer:
                 failed_records=replace_result.failed_records,
                 replace_method=replace_method,
                 entity_labels=entity_labels,
+                entity_label_denylist=entity_label_denylist,
                 data_summary=data_summary,
             )
 
@@ -813,6 +819,7 @@ class Anonymizer:
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
+            entity_label_denylist=config.detect.entity_label_denylist,
             data_summary=data.data_summary,
         )
 

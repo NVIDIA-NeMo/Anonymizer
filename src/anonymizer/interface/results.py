@@ -76,6 +76,7 @@ class AnonymizerResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
+    entity_label_denylist: list[str] | None = None
     data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
@@ -123,6 +124,7 @@ class PreviewResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
+    entity_label_denylist: list[str] | None = None
     data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 

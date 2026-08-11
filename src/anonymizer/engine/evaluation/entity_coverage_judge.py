@@ -345,12 +345,14 @@ def _normalize_literal_text(value: object) -> str:
 def _filter_out_of_scope_entities(
     entities: list[_CandidateT],
     entity_labels: list[str] | None,
+    entity_label_denylist: list[str] | None = None,
 ) -> list[_CandidateT]:
     """Drop entities with empty labels or labels outside the configured scope.
 
     When ``entity_labels`` is None all labels are in scope; only empty labels
-    are dropped. This mirrors the prompt's scope instruction deterministically
-    so a model that returns out-of-scope labels does not lower the coverage score.
+    are dropped. Labels present in ``entity_label_denylist`` are always excluded
+    regardless of ``entity_labels``. This mirrors the detection-time scope so the
+    judge does not penalise the output for not anonymizing denied labels.
 
     Label drift (e.g. the model returning ``"given_name"`` instead of
     ``"first_name"``) is unlikely in practice — the prompt explicitly instructs
@@ -360,12 +362,15 @@ def _filter_out_of_scope_entities(
     meaningfully risking false negatives on well-formed responses.
     """
     allowed = {label.casefold() for label in entity_labels} if entity_labels is not None else None
+    denied = {label.casefold() for label in entity_label_denylist} if entity_label_denylist is not None else None
     result = []
     for entity in entities:
         label = str(entity.get("label", "")).strip()
         if not label:
             continue
         if allowed is not None and label.casefold() not in allowed:
+            continue
+        if denied is not None and label.casefold() in denied:
             continue
         result.append(entity)
     return result
@@ -428,10 +433,12 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         adapter: NddAdapter,
         *,
         entity_labels: list[str] | None = None,
+        entity_label_denylist: list[str] | None = None,
         data_summary: str | None = None,
     ) -> None:
         super().__init__(adapter)
         self._entity_labels = entity_labels
+        self._entity_label_denylist = entity_label_denylist
         self._data_summary = data_summary
 
     # ------------------------------------------------------------------ hooks
@@ -492,7 +499,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 missed_entities_list.append([])
                 n_candidates_list.append(None)
             else:
-                candidates = _filter_out_of_scope_entities(candidates, self._entity_labels)
+                candidates = _filter_out_of_scope_entities(candidates, self._entity_labels, self._entity_label_denylist)
                 candidates = _filter_nonliteral_entities(candidates, out[COL_TEXT].loc[idx])
                 candidates = _deduplicate_candidate_values(candidates)
                 n_candidates = len(candidates)
