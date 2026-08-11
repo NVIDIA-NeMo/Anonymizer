@@ -54,8 +54,11 @@ notebooks = [
     "pillow>=12.0.0,<13",
 ]
 local-models = [
-    "vllm==0.26.0; sys_platform == 'linux'",
-    "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux'",
+    "vllm==0.27.1; sys_platform == 'linux' and python_version >= '3.12'",
+    "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux' and python_version >= '3.12'",
+    "nvidia-cuda-nvcc==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
+    "nvidia-cuda-crt==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
+    "nvidia-nvvm==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
 ]
 
 [build-system]

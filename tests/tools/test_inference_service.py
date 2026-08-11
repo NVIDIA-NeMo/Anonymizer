@@ -71,7 +71,7 @@ def build_generation_plan(
             models.DockerPlacement(
                 host="127.0.0.1",
                 port=8000,
-                image="vllm/vllm-openai:v0.26.0",
+                image="vllm/vllm-openai:v0.27.1",
                 gpus="all",
             )
             if docker
@@ -154,7 +154,7 @@ def test_compile_vllm_docker_plan_keeps_secrets_symbolic() -> None:
         placement=models.DockerPlacement(
             host="127.0.0.1",
             port=8000,
-            image="vllm/vllm-openai:v0.26.0",
+            image="vllm/vllm-openai:v0.27.1",
             gpus="all",
         ),
         access=models.DirectAccess(),
@@ -165,7 +165,7 @@ def test_compile_vllm_docker_plan_keeps_secrets_symbolic() -> None:
     rendered = plan.model_dump_json()
 
     assert plan.runtime.kind == "docker"
-    assert plan.runtime.image == "vllm/vllm-openai:v0.26.0"
+    assert plan.runtime.image == "vllm/vllm-openai:v0.27.1"
     assert plan.endpoint.url == "http://127.0.0.1:8000/v1"
     assert plan.expected_model == "anonymizer-local"
     assert plan.required_capabilities == ("chat-completions",)
@@ -234,7 +234,7 @@ def test_compiler_accepts_gliner_through_external_vllm_factory() -> None:
     plan = compiler.compile_intent(intent, source_revision="3f68c145")
 
     assert plan.declared_capabilities == ("dynamic-labels", "offsets", "scores")
-    assert "vllm==0.26.0" in plan.dependencies
+    assert "vllm==0.27.1" in plan.dependencies
     assert (
         "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@"
         "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0"
@@ -501,13 +501,22 @@ def test_reference_toml_profiles_are_pinned_and_compile() -> None:
 
     assert {path.name for path in profile_paths} == {
         "gliner2.toml",
+        "nemotron-3.5-lightning.toml",
         "nvidia-gliner.toml",
         "vllm-local.toml",
     }
     for path in profile_paths:
         intent = cli.load_profile(path)
         assert intent.model.revision is not None
-        assert compiler.compile_intent(intent, source_revision="3f68c145")
+        plan = compiler.compile_intent(intent, source_revision="3f68c145")
+        assert plan
+        if path.name == "nemotron-3.5-lightning.toml":
+            assert plan.dependencies == (
+                "vllm==0.27.1",
+                "nvidia-cuda-nvcc==13.0.88",
+                "nvidia-cuda-crt==13.0.88",
+                "nvidia-nvvm==13.0.88",
+            )
 
 
 def test_probe_records_generation_capabilities() -> None:

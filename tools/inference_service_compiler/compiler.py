@@ -39,6 +39,12 @@ from inference_service_compiler.vllm_factory_integration import (
 )
 
 VLLM_API_KEY_ENV = "VLLM_API_KEY"
+VLLM_DEPENDENCY = "vllm==0.27.1"
+FLASHINFER_CUDA_TOOLCHAIN_DEPENDENCIES = (
+    "nvidia-cuda-nvcc==13.0.88",
+    "nvidia-cuda-crt==13.0.88",
+    "nvidia-nvvm==13.0.88",
+)
 
 
 class CompilerDiagnostic(FrozenModel):
@@ -353,8 +359,22 @@ def _vllm_engine_arguments(intent: InferenceIntent, engine: VllmEngine) -> tuple
         arguments.extend(_literal_arguments("--gpu-memory-utilization", str(engine.gpu_memory_utilization)))
     if engine.max_model_len is not None:
         arguments.extend(_literal_arguments("--max-model-len", str(engine.max_model_len)))
+    if engine.max_num_seqs is not None:
+        arguments.extend(_literal_arguments("--max-num-seqs", str(engine.max_num_seqs)))
     if engine.eager:
         arguments.extend(_literal_arguments("--enforce-eager"))
+    if engine.enable_prefix_caching:
+        arguments.extend(_literal_arguments("--enable-prefix-caching"))
+    if engine.async_scheduling:
+        arguments.extend(_literal_arguments("--async-scheduling"))
+    if engine.mamba_backend is not None:
+        arguments.extend(_literal_arguments("--mamba-backend", engine.mamba_backend))
+    if engine.mamba_ssm_cache_dtype != "auto":
+        arguments.extend(_literal_arguments("--mamba-ssm-cache-dtype", engine.mamba_ssm_cache_dtype))
+    if engine.enable_mamba_cache_stochastic_rounding:
+        arguments.extend(_literal_arguments("--enable-mamba-cache-stochastic-rounding"))
+    if engine.mamba_cache_philox_rounds:
+        arguments.extend(_literal_arguments("--mamba-cache-philox-rounds", str(engine.mamba_cache_philox_rounds)))
     if engine.factory is not None:
         arguments.extend(
             _literal_arguments(
@@ -392,9 +412,11 @@ def _literal_arguments(*values: str) -> tuple[CommandArgument, ...]:
 
 def _plan_dependencies(intent: InferenceIntent) -> tuple[str, ...]:
     if isinstance(intent.engine, VllmEngine):
-        dependencies = ["vllm==0.26.0"]
+        dependencies = [VLLM_DEPENDENCY]
         if intent.engine.factory is not None:
             dependencies.append(VLLM_FACTORY_DEPENDENCY)
+        if intent.engine.mamba_backend == "flashinfer":
+            dependencies.extend(FLASHINFER_CUDA_TOOLCHAIN_DEPENDENCIES)
         return tuple(dependencies)
     return ()
 

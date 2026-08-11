@@ -22,11 +22,15 @@ def test_local_models_group_pins_vllm_and_external_factory_source() -> None:
     project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert project["dependency-groups"]["local-models"] == [
-        "vllm==0.26.0; sys_platform == 'linux'",
+        "vllm==0.27.1; sys_platform == 'linux' and python_version >= '3.12'",
         (
             "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@"
-            "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux'"
+            "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux' "
+            "and python_version >= '3.12'"
         ),
+        "nvidia-cuda-nvcc==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
+        "nvidia-cuda-crt==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
+        "nvidia-nvvm==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
     ]
 
 
@@ -62,7 +66,18 @@ def test_parse_server_parameters_accepts_only_the_compiler_contract() -> None:
             "0.8",
             "--max-model-len",
             "2048",
+            "--max-num-seqs",
+            "16",
             "--enforce-eager",
+            "--enable-prefix-caching",
+            "--async-scheduling",
+            "--mamba-backend",
+            "flashinfer",
+            "--mamba-ssm-cache-dtype",
+            "float16",
+            "--enable-mamba-cache-stochastic-rounding",
+            "--mamba-cache-philox-rounds",
+            "5",
             "--vllm-factory-plugin",
             "deberta_gliner",
         ]
@@ -72,7 +87,14 @@ def test_parse_server_parameters_accepts_only_the_compiler_contract() -> None:
     assert parameters.port == 8123
     assert parameters.tensor_parallel_size == 2
     assert parameters.gpu_memory_utilization == 0.8
+    assert parameters.max_num_seqs == 16
     assert parameters.enforce_eager is True
+    assert parameters.enable_prefix_caching is True
+    assert parameters.async_scheduling is True
+    assert parameters.mamba_backend == "flashinfer"
+    assert parameters.mamba_ssm_cache_dtype == "float16"
+    assert parameters.enable_mamba_cache_stochastic_rounding is True
+    assert parameters.mamba_cache_philox_rounds == 5
     assert parameters.vllm_factory_plugin == "deberta_gliner"
 
 
@@ -90,7 +112,14 @@ def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
         tensor_parallel_size=2,
         gpu_memory_utilization=0.8,
         max_model_len=2048,
+        max_num_seqs=16,
         enforce_eager=True,
+        enable_prefix_caching=True,
+        async_scheduling=True,
+        mamba_backend="flashinfer",
+        mamba_ssm_cache_dtype="float16",
+        enable_mamba_cache_stochastic_rounding=True,
+        mamba_cache_philox_rounds=5,
         lora_module="privacy=/models/privacy-adapter",
     )
 
@@ -105,7 +134,14 @@ def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
     assert arguments.tensor_parallel_size == 2
     assert arguments.gpu_memory_utilization == 0.8
     assert arguments.max_model_len == 2048
+    assert arguments.max_num_seqs == 16
     assert arguments.enforce_eager is True
+    assert arguments.enable_prefix_caching is True
+    assert arguments.async_scheduling is True
+    assert arguments.mamba_backend.value == "flashinfer"
+    assert arguments.mamba_ssm_cache_dtype == "float16"
+    assert arguments.enable_mamba_cache_stochastic_rounding is True
+    assert arguments.mamba_cache_philox_rounds == 5
     assert arguments.enable_lora is True
     assert [(module.name, module.path) for module in arguments.lora_modules] == [("privacy", "/models/privacy-adapter")]
 
@@ -132,8 +168,8 @@ def test_factory_constructs_pooling_server_for_external_gliner_plugin() -> None:
     assert arguments.middleware == [factory.ANONYMIZER_CHAT_MIDDLEWARE]
 
 
-def test_run_server_uses_the_vllm_0_26_lifecycle_boundary() -> None:
-    """The process runner imports and invokes vLLM 0.26's relocated setup API."""
+def test_run_server_uses_the_vllm_0_27_lifecycle_boundary() -> None:
+    """The process runner imports and invokes vLLM 0.27's lifecycle API."""
     pytest.importorskip("vllm")
     uvloop = importlib.import_module("uvloop")
     api_server = importlib.import_module("vllm.entrypoints.openai.api_server")
@@ -181,13 +217,54 @@ def test_factory_avoids_flashinfer_jit_without_overriding_operator_choice() -> N
     factory = load_factory_module()
     parameters = factory.VllmServerParameters(model="model", host="127.0.0.1", port=8000)
 
-    with mock.patch.dict(os.environ, {}, clear=True):
+    with (
+        mock.patch.object(factory.sys, "version_info", (3, 12)),
+        mock.patch.dict(os.environ, {}, clear=True),
+    ):
         assert factory.prepare_runtime_environment(parameters) == parameters
         assert os.environ["VLLM_USE_FLASHINFER_SAMPLER"] == "0"
 
-    with mock.patch.dict(os.environ, {"VLLM_USE_FLASHINFER_SAMPLER": "1"}, clear=True):
+    with (
+        mock.patch.object(factory.sys, "version_info", (3, 12)),
+        mock.patch.dict(os.environ, {"VLLM_USE_FLASHINFER_SAMPLER": "1"}, clear=True),
+    ):
         assert factory.prepare_runtime_environment(parameters) == parameters
         assert os.environ["VLLM_USE_FLASHINFER_SAMPLER"] == "1"
+
+
+def test_factory_rejects_python_3_11_before_importing_vllm() -> None:
+    """The server reports the local vLLM Python floor before vLLM starts."""
+    factory = load_factory_module()
+    parameters = factory.VllmServerParameters(model="model", host="127.0.0.1", port=8000)
+
+    with mock.patch.object(factory.sys, "version_info", (3, 11)):
+        with pytest.raises(RuntimeError, match="Python 3.12 or later"):
+            factory.prepare_runtime_environment(parameters)
+
+
+def test_factory_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None:
+    """The FlashInfer backend can JIT from the CUDA toolkit shipped as Python wheels."""
+    factory = load_factory_module()
+    cuda_root = tmp_path / "nvidia" / "cu13"
+    (cuda_root / "bin").mkdir(parents=True)
+    (cuda_root / "bin" / "nvcc").touch()
+    (cuda_root / "lib").mkdir()
+    runtime = cuda_root / "lib" / "libcudart.so.13"
+    runtime.touch()
+
+    with (
+        mock.patch.object(factory, "_packaged_cuda_root", return_value=cuda_root),
+        mock.patch.object(factory.Path, "home", return_value=tmp_path),
+        mock.patch.dict(os.environ, {}, clear=True),
+    ):
+        factory.configure_flashinfer_toolchain()
+
+        root_digest = factory.hashlib.sha256(os.fsencode(cuda_root.resolve())).hexdigest()[:16]
+        link_directory = tmp_path / ".cache" / "nemo-anonymizer" / "cuda-link" / root_digest
+        assert os.environ["CUDA_HOME"] == str(cuda_root)
+        assert os.environ["LIBRARY_PATH"] == str(link_directory)
+        assert os.environ["LD_LIBRARY_PATH"] == str(cuda_root / "lib")
+        assert (link_directory / "libcudart.so").resolve() == runtime
 
 
 def test_factory_selects_model_and_io_plugins_together() -> None:
@@ -203,6 +280,7 @@ def test_factory_selects_model_and_io_plugins_together() -> None:
 
     with (
         mock.patch.object(factory, "prepare_model", return_value="/tmp/prepared"),
+        mock.patch.object(factory.sys, "version_info", (3, 12)),
         mock.patch.dict(os.environ, {}, clear=True),
     ):
         factory.prepare_runtime_environment(parameters)

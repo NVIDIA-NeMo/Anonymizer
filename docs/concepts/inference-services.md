@@ -47,12 +47,14 @@ The pinned NVIDIA GLiNER and GLiNER2 profiles under
 group on a Linux GPU host:
 
 ```bash
-uv sync --group dev --group local-models
+uv sync --python 3.12 --group dev --group local-models
 python -m vllm_factory.compat.doctor
 nvidia-smi
 ```
 
-The dependency group pins vLLM 0.26.0 and an exact vLLM Factory source commit.
+The dependency group pins vLLM 0.27.1 and an exact vLLM Factory source commit.
+Local vLLM 0.27.1 serving requires Python 3.12 or later. The group also aligns
+the CUDA 13.0 compiler wheels used by FlashInfer's Mamba kernel JIT.
 The compiled plan records both dependencies. The runtime calls vLLM Factory's
 model-preparation Python API with the profile's pinned Hugging Face revision,
 loads its GLiNER model plugin and IOProcessor, then constructs the vLLM server
@@ -113,11 +115,11 @@ but does not use vLLM Factory's scheduler or IOProcessor plugins.
 On a Linux GPU host, install the optional source-tree dependency group:
 
 ```bash
-uv sync --group dev --group local-models
+uv sync --python 3.12 --group dev --group local-models
 nvidia-smi
 ```
 
-The `local-models` group pins vLLM 0.26.0. The local generation plan starts
+The `local-models` group pins vLLM 0.27.1. The local generation plan starts
 `tools/inference_service_compiler/vllm_server.py`, which constructs vLLM's
 frontend and async engine through its Python API. It does not invoke `vllm
 serve` or inherit vLLM's full CLI surface.
@@ -153,6 +155,32 @@ name = "privacy"
 
 The compiler renders the corresponding vLLM `--lora-modules` arguments.
 
+### Nemotron 3.5 Lightning
+
+`tools/inference_service_profiles/nemotron-3.5-lightning.toml` pins
+`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` and its immutable
+Hugging Face revision. The profile uses the model's recommended FlashInfer
+Mamba backend, float16 Mamba cache, stochastic cache rounding, asynchronous
+scheduling, and prefix caching. It bounds context to 8,192 tokens and
+concurrency to 16 so the BF16 model can share one 80 GB GPU with the GLiNER
+profile.
+
+```bash
+uv run tools/inference_service.py compile \
+  --profile tools/inference_service_profiles/nemotron-3.5-lightning.toml \
+  --source-revision 3f68c145 \
+  --output lightning-plan.json
+
+uv run tools/inference_service.py launch \
+  --plan lightning-plan.json \
+  --output lightning-launch.json
+```
+
+Lightning enables reasoning by default. For Anonymizer's structured LLM roles,
+set `inference_parameters.extra_body.chat_template_kwargs.enable_thinking` to
+`false`. Keep `max_tokens` within the profile's context bound; 1,024 tokens is
+enough for the detection and replace-evaluation schemas.
+
 ## Docker vLLM generation
 
 Change the placement to Docker to use vLLM's official OpenAI-compatible image:
@@ -162,7 +190,7 @@ Change the placement to Docker to use vLLM's official OpenAI-compatible image:
 kind = "docker"
 host = "127.0.0.1"
 port = 8000
-image = "vllm/vllm-openai:v0.26.0"
+image = "vllm/vllm-openai:v0.27.1"
 runtime = "docker"
 gpus = "all"
 hugging_face_cache = "/home/user/.cache/huggingface"

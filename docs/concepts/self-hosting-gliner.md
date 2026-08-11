@@ -7,7 +7,7 @@ By default, Anonymizer's entity detection stage calls the hosted `nvidia/gliner-
 
 The default NVIDIA GLiNER model is small enough to share a GPU with a local
 LLM. The optional GLiNER2 PII model is also fully local. The pinned reference
-profiles serve both models through vLLM 0.26 and the external
+profiles serve both models through vLLM 0.27.1 and the external
 [vLLM Factory](https://github.com/latenceainew/vllm-factory) project. A native
 CPU, MPS, or GPU fallback remains available for custom profiles.
 
@@ -106,13 +106,14 @@ Install [uv](https://docs.astral.sh/uv/) and sync the local model group on a
 Linux GPU host:
 
 ```bash
-uv sync --group dev --group local-models
+uv sync --python 3.12 --group dev --group local-models
 python -m vllm_factory.compat.doctor
 ```
 
-The group pins `vllm==0.26.0` and vLLM Factory at the exact source revision
+The group pins `vllm==0.27.1` and vLLM Factory at the exact source revision
 recorded in `pyproject.toml` and `uv.lock`. The doctor must report the general
-plugins group, IOProcessor plugins group, and native IO mode.
+plugins group, IOProcessor plugins group, and native IO mode. Local vLLM 0.27.1
+serving requires Python 3.12 or later.
 
 On first launch, the selected public checkpoint is downloaded from Hugging Face
 and cached under `~/.cache/huggingface/`. The integration supplies the TOML
