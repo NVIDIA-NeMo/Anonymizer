@@ -20,11 +20,13 @@ def _detect_config_metadata(detect: Any | None) -> dict[str, Any]:
         entity_label_count = len(DEFAULT_ENTITY_LABELS)
     else:
         entity_label_count = len(entity_labels)
+    entity_label_denylist = getattr(detect, "entity_label_denylist", None)
     return {
         "gliner_threshold": getattr(detect, "gliner_threshold", None),
         "entity_label_source": "custom" if entity_labels is not None else "default",
         "entity_label_count": entity_label_count,
         "entity_labels": list(entity_labels) if entity_labels is not None else None,
+        "entity_label_denylist": list(entity_label_denylist) if entity_label_denylist is not None else None,
         "validation_max_entities_per_call": getattr(detect, "validation_max_entities_per_call", None),
         "validation_excerpt_window_chars": getattr(detect, "validation_excerpt_window_chars", None),
     }
