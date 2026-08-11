@@ -669,7 +669,7 @@ def _render_detection_judge_section(row: pd.Series) -> str:
         f"<strong>Detection Validity:</strong> {badge}{html.escape(rate_html)}"
         "<div style='font-size:0.8em;opacity:0.7;font-style:italic;margin-top:2px'>"
         "Judge Agreement: The number of entity-label pairs accepted by the evaluation "
-        "judge out of all pairs produced by detection."
+        "judge out of all pairs produced by the Anonymizer."
         "</div>"
         "</div>"
     )
