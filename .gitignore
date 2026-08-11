@@ -60,6 +60,8 @@ uv.lock.bak
 .mise.local.toml
 mise.local.toml
 mise.*.local.toml
+!.mise/tasks/build/
+!.mise/tasks/build/**
 
 # Environments
 .env

@@ -73,9 +73,6 @@ jobs:
         id: target
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies
-        run: mise run bootstrap
-
       - name: Check NVIDIA API key
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -104,7 +101,7 @@ jobs:
             FAIL_FAST_ARGS+=(--fail-fast)
           fi
 
-          uv run python tools/measurement/run_benchmarks.py \
+          uv run --locked python tools/measurement/run_benchmarks.py \
             "$BENCHMARK_SUITE" \
             --output "$BENCHMARK_OUTPUT_DIR" \
             --overwrite \
