@@ -50,6 +50,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
+from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
@@ -351,9 +352,9 @@ def _finalization_column(
             states[0],
         )
         row[COL_REWRITTEN_TEXT] = row.get(state.rewritten_text)
-        row[COL_QUALITY_QA_REANSWER] = row.get(state.quality_reanswer)
-        row[COL_PRIVACY_QA_REANSWER] = row.get(state.privacy_reanswer)
-        row[COL_QUALITY_QA_COMPARE] = row.get(state.quality_compare)
+        row[COL_QUALITY_QA_REANSWER] = normalize_payload(row.get(state.quality_reanswer))
+        row[COL_PRIVACY_QA_REANSWER] = normalize_payload(row.get(state.privacy_reanswer))
+        row[COL_QUALITY_QA_COMPARE] = normalize_payload(row.get(state.quality_compare))
         row[COL_UTILITY_SCORE] = row.get(state.utility_score)
         row[COL_LEAKAGE_MASS] = row.get(state.leakage_mass)
         row[COL_WEIGHTED_LEAKAGE_RATE] = row.get(state.weighted_leakage_rate)

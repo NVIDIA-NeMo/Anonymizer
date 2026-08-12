@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
@@ -21,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -566,6 +569,10 @@ def test_only_failing_rows_sent_to_repair(
     eval_df[COL_UTILITY_SCORE] = [0.9, 0.9]
     eval_df[COL_LEAKAGE_MASS] = [2.0, 0.1]
     eval_df[COL_ANY_HIGH_LEAKED] = [True, False]
+    eval_df[COL_PRIVACY_QA_REANSWER] = [
+        {"answers": np.array([{"id": 0}], dtype=object)},
+        {"answers": []},
+    ]
 
     failing_row = eval_df[eval_df[COL_NEEDS_REPAIR]].copy()
     repaired_row = failing_row.copy()
@@ -605,6 +612,7 @@ def test_only_failing_rows_sent_to_repair(
     assert len(repair_calls) == 1
     repair_input_df = repair_calls[0].args[0]
     assert len(repair_input_df) == 1
+    assert json.loads(repair_input_df[COL_PRIVACY_QA_REANSWER].iloc[0]) == {"answers": [{"id": 0}]}
 
 
 def test_repair_iterations_tracked_per_row(

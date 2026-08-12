@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 from data_designer.config import SkipConfig, custom_column_generator
@@ -76,9 +77,10 @@ def _deterministic_evaluation_column(state: EvaluationState) -> CustomColumnConf
     )
     def evaluate(row: dict[str, Any]) -> dict[str, Any]:
         needs_repair = int(row[_REPAIRS_NEEDED]) > state.iteration
-        row[state.quality_reanswer] = {"answers": []}
-        row[state.privacy_reanswer] = {"answers": []}
-        row[state.quality_compare] = {"per_item": []}
+        items: list[Any] | np.ndarray = [] if state.iteration == 0 else np.array([], dtype=object)
+        row[state.quality_reanswer] = {"answers": items}
+        row[state.privacy_reanswer] = {"answers": items}
+        row[state.quality_compare] = {"per_item": items}
         row[state.utility_score] = 0.5 if needs_repair else 1.0
         row[state.leakage_mass] = 1.0 if needs_repair else 0.0
         row[state.weighted_leakage_rate] = 1.0 if needs_repair else 0.0
