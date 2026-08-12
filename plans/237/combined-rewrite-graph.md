@@ -23,16 +23,18 @@ replacement map
 
 The repair count is static at graph-build time. Each configured round gets unique
 columns and uses `SkipConfig` to bypass repair and downstream re-evaluation for
-rows that already pass. The legacy workflow remains the default until Data
-Designer exposes terminal failure provenance. After that compatibility gate,
-the combined graph can become the only production rewrite path.
+rows that already pass. This PR keeps the legacy workflow as the default. After
+[Data Designer #861](https://github.com/NVIDIA-NeMo/DataDesigner/pull/861) is
+merged and released, a small follow-up can consume its terminal-failure API,
+make the combined graph the default, and retain legacy as an explicit fallback.
 
 ## Current Status
 
 `CombinedRewriteWorkflow` remains an opt-in `RewriteWorkflow` subclass while the
 legacy path serves as the default and parity oracle. This avoids losing precise
-failure-stage attribution before Data Designer exposes the failed column and
-seed-row identity through its result API.
+failure-stage attribution before Data Designer #861 is available in a supported
+release and Anonymizer maps its failed column and seed-row position back to the
+existing `FailedRecord` contract.
 
 The graph currently:
 
@@ -84,17 +86,16 @@ a speedup.
 
 Performance is therefore a regression guardrail, not the integration rationale.
 
-## Production Gates
+## Completion and Follow-up
 
 1. [x] **Conditional behavior**: verify row-local skipping, multiple repairs,
    exhausted repairs, passthrough defaults, row order, and graph validation.
-2. [ ] **Failure attribution and default rollout**: add a Data Designer result API
-   exposing the failed column and seed-row identity, tracked in
-   [DataDesigner #860](https://github.com/NVIDIA-NeMo/DataDesigner/issues/860).
-   Until then, keep the legacy workflow as the default. Data Designer 0.8 task
-   traces expose the column and row position only when full tracing is enabled,
-   which is not a scalable production mechanism and does not include
-   Anonymizer's record id.
+2. [x] **Failure-attribution scope**: keep this implementation opt-in until the
+   terminal-failure API in
+   [Data Designer #861](https://github.com/NVIDIA-NeMo/DataDesigner/pull/861)
+   is merged, released, and integrated. Data Designer 0.8 task traces expose
+   column and row position only with full tracing, which is not an appropriate
+   production result contract.
 3. [x] **Measurements**: record one physical `rewrite-combined` Data Designer
    workflow while preserving aggregate model usage, repair counts, review flags,
    and runner-level row counts. Precise failure-stage measurements remain part of
@@ -102,11 +103,16 @@ Performance is therefore a regression guardrail, not the integration rationale.
 4. [x] **Behavioral equivalence**: compare legacy and combined public outputs with
    deterministic repaired results, and cover partial row loss and malformed
    initial rewrites.
-5. [ ] **Scale validation**: local mostly-skipped and mostly-repaired mixed batches
-   pass. Peak memory, artifact size, and tail latency still need remote comparison.
-6. [ ] **Consolidation**: after failure attribution is available, fold the graph
-   into `RewriteWorkflow`, remove `use_combined_graph`, remove the duplicate
-   runner, and delete the legacy loop.
+5. [x] **Scale guardrails**: local 64-row mostly-skipped and mostly-repaired
+   batches pass, an earlier Slurm suite completed 60 executions without workload
+   failures, and retained GB300 telemetry showed flat HBM use. Combined artifacts
+   were larger but remained below 230 KB in the controlled runs. The retained
+   telemetry cadence does not support tail-latency conclusions, which are not
+   required for this opt-in proof of concept.
+6. [x] **Default rollout deferred**: a follow-up after Data Designer #861 will
+   consume terminal failure provenance, make the combined graph the default, and
+   retain the legacy path as an explicit fallback. Legacy removal can follow
+   production rollout evidence.
 7. [x] **Performance guardrail**: rerun the corrected paired benchmark with
    balanced ordering and equivalent repair decisions.
 
