@@ -122,8 +122,8 @@ def test_mise_task_tree_uses_colon_delimited_vocabulary() -> None:
         "lock:update",
         "notebooks:execute",
         "test:coverage",
-        "validate",
     } <= task_names
+    assert "validate" not in task_names
 
 
 def test_github_setup_preserves_requested_python_and_dependency_profile() -> None:
