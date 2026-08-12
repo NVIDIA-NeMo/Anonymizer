@@ -376,10 +376,6 @@ def test_validate_model_alias_references_raises_on_unknown_replace_alias_when_en
         update={
             "replace": ReplaceModelSelection(
                 replacement_generator="bad-replace-alias",
-                detection_judge="known",
-                type_fidelity_judge="known",
-                relational_consistency_judge="known",
-                attribute_fidelity_judge="known",
             )
         }
     )
@@ -400,10 +396,6 @@ def test_validate_model_alias_references_skips_replace_alias_when_not_enabled(
         update={
             "replace": ReplaceModelSelection(
                 replacement_generator="bad-replace-alias",
-                detection_judge="known",
-                type_fidelity_judge="known",
-                relational_consistency_judge="known",
-                attribute_fidelity_judge="known",
             )
         }
     )
@@ -606,7 +598,7 @@ class TestEntityValidatorNormalization:
         with pytest.raises((ValueError, TypeError)):
             DetectionModelSelection(
                 entity_detector="d",
-                entity_validator=42,  # ty: ignore[invalid-argument-type]
+                entity_validator=42,
                 entity_augmenter="a",
                 latent_detector="l",
             )
