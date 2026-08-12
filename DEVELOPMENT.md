@@ -105,21 +105,20 @@ mise run test:e2e
 For docs changes:
 
 ```bash
-mise run deps:sync docs
 mise run docs:build
 ```
 
 For tutorial source changes:
 
 ```bash
-mise run deps:sync notebooks
 mise run notebooks:execute
-mise run deps:sync docs
 mise run docs:build
 ```
 
 `mise run notebooks:execute` executes `docs/notebook_source/*.py` and replaces generated notebooks in `docs/notebooks/`.
 It may require model-provider credentials. Review the generated notebook diffs before committing them.
+Tasks that use `uv run --locked --group <profile>` synchronize that locked profile before running. Use `deps:sync` when
+you want to prepare a profile without running another task.
 
 ## Testing
 

@@ -5,7 +5,6 @@
 
 set -euo pipefail
 
-mise run deps:sync notebooks
 mkdir -p docs/notebooks
 uv run --locked --group notebooks python -m ipykernel install --user --name anonymizer-venv
 uv run --locked --group notebooks jupytext --to ipynb --set-kernel anonymizer-venv --execute docs/notebook_source/*.py

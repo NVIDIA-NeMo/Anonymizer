@@ -11,9 +11,6 @@ ruff = "0.16.2"
 ty = "0.0.69"
 
 [env]
-# Use the uv-managed environment in the project root unless a caller selects a
-# different environment, for example when working in an isolated worktree.
-VIRTUAL_ENV = "{{ env.UV_PROJECT_ENVIRONMENT | default(value=config_root ~ '/.venv') }}"
 _.file = [".env", { path = ".env.local", redact = true }]
 
 [task_config]
@@ -24,3 +21,4 @@ lockfile = true
 install_before = "7d"
 lockfile_platforms = ["macos-arm64", "linux-x64", "linux-arm64"]
 idiomatic_version_file_enable_tools = []
+python.uv_venv_auto = "source"

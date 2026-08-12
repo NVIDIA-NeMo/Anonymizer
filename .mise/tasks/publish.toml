@@ -7,13 +7,15 @@ usage = '''
 arg "<version>" help="Expected Python package version"
 flag "--dry-run" help="Build and validate without uploading"
 '''
-run = '''
+run = [
+  '''
 if [ "${usage_dry_run:-false}" != "true" ]; then
   : "${TWINE_USERNAME:?TWINE_USERNAME is required}"
   : "${TWINE_PASSWORD:?TWINE_PASSWORD is required}"
 fi
-
-mise run build:wheel
+''',
+  { task = "build:wheel" },
+  '''
 wheel="$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
 case "$(basename "$wheel")" in
   *"-${usage_version?}-"*) ;;
@@ -31,4 +33,5 @@ if [ "${usage_dry_run:-false}" = "true" ]; then
 fi
 
 uvx twine upload --non-interactive "$wheel"
-'''
+''',
+]

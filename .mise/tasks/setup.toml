@@ -4,7 +4,7 @@
 [setup]
 description = "Install pinned tools and sync a dependency profile. Developer profiles also install repository hooks; modifies the Mise cache, .venv, and .git/hooks."
 usage = '''
-arg "[profile]" help="Dependency profile to install (default: dev)" {
+arg "[profile]" help="Dependency profile to install" default="dev" {
   choices "runtime" "dev" "docs" "notebooks"
 }
 flag "--no-hooks" help="Skip hook installation in ephemeral CI environments"
@@ -12,11 +12,9 @@ flag "--no-hooks" help="Skip hook installation in ephemeral CI environments"
 run = [
   "MISE_YES=1 mise trust",
   "MISE_YES=1 mise install",
-  "uv venv --allow-existing --python \"${UV_PYTHON:-$(tr -d '[:space:]' < .python-version)}\" \"$VIRTUAL_ENV\"",
+  { task = "deps:sync", args = ["{{usage.profile}}"] },
   '''
-profile="${usage_profile:-dev}"
-mise run deps:sync "$profile"
-if [ "$profile" != "runtime" ] && [ "${usage_no_hooks:-false}" != "true" ]; then
+if [ "${usage_profile?}" != "runtime" ] && [ "${usage_no_hooks:-false}" != "true" ]; then
   mise run hooks:install
 fi
 ''',
@@ -25,7 +23,7 @@ fi
 ["deps:sync"]
 description = "Synchronize one locked dependency profile into .venv or UV_PROJECT_ENVIRONMENT."
 usage = '''
-arg "[profile]" help="Dependency profile to install (default: dev)" {
+arg "[profile]" help="Dependency profile to install" default="dev" {
   choices "runtime" "dev" "docs" "notebooks"
 }
 '''

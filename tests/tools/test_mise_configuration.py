@@ -46,8 +46,35 @@ def test_mise_typecheck_preserves_blocking_repository_contract() -> None:
     typecheck = quality_tasks["check:type"]
 
     assert typecheck["description"].startswith("Run blocking ty checks")
-    assert typecheck["run"][0] == {"task": "deps:sync", "args": ["docs"]}
-    assert typecheck["run"][1] == "tools/codestyle/typecheck.sh"
+    assert typecheck["run"] == "uv run --locked --group docs tools/codestyle/typecheck.sh"
+
+
+def test_mise_sources_the_uv_managed_environment() -> None:
+    mise = _read_toml(REPO_ROOT / ".mise.toml")
+
+    assert "VIRTUAL_ENV" not in mise["env"]
+    assert mise["settings"]["python"]["uv_venv_auto"] == "source"
+
+
+def test_mise_uses_native_task_composition() -> None:
+    quality_tasks = _read_toml(REPO_ROOT / ".mise/tasks/quality.toml")
+    publish_tasks = _read_toml(REPO_ROOT / ".mise/tasks/publish.toml")
+    setup_tasks = _read_toml(REPO_ROOT / ".mise/tasks/setup.toml")
+    clean_task = (REPO_ROOT / ".mise/tasks/clean/_default").read_text(encoding="utf-8")
+    notebook_task = (REPO_ROOT / ".mise/tasks/notebooks/execute").read_text(encoding="utf-8")
+
+    assert set(quality_tasks["check"]["depends"]) == {
+        "check:format",
+        "check:license:headers",
+        "check:lint",
+        "check:lock",
+        "check:type",
+    }
+    assert {"task": "build:wheel"} in publish_tasks["publish:pypi"]["run"]
+    assert setup_tasks["setup"]["run"][2] == {"task": "deps:sync", "args": ["{{usage.profile}}"]}
+    assert '#MISE depends=["clean:pycache"]' in clean_task
+    assert "mise run clean:pycache" not in clean_task
+    assert "mise run deps:sync notebooks" not in notebook_task
 
 
 def test_mise_dependency_profiles_require_current_lockfile() -> None:
