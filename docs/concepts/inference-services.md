@@ -155,6 +155,52 @@ name = "privacy"
 
 The compiler renders the corresponding vLLM `--lora-modules` arguments.
 
+### Generation profile selection
+
+The bundled profiles pin model weights and conservative 8,192-token service
+bounds for Anonymizer's structured generation work:
+
+| Profile | Served model name | Intended use |
+| --- | --- | --- |
+| `vllm-local.toml` | `anonymizer-local` | Small endpoint and lifecycle smoke tests |
+| `gpt-oss-20b.toml` | `gpt-oss-20b-local` | GPT-OSS development on GPUs with at least 16 GB of model capacity |
+| `qwen3-30b-a3b-instruct.toml` | `qwen3-30b-a3b-instruct-local` | Multilingual, non-thinking structured generation |
+| `nemotron-3.5-lightning.toml` | `nemotron-3.5-lightning-local` | High-throughput structured generation on an 80 GB GPU |
+| `gpt-oss-120b.toml` | `gpt-oss-120b-local` | Higher-quality GPT-OSS generation on a dedicated 80 GB GPU |
+
+Treat these as reproducible starting points. Available memory also depends on
+the GPU architecture, driver, context length, concurrency, and other processes.
+Reduce `max_model_len` or `max_num_seqs` when vLLM cannot reserve its KV cache.
+
+### GPT-OSS
+
+The `gpt-oss-20b.toml` and `gpt-oss-120b.toml` profiles pin OpenAI's native
+MXFP4 checkpoints. The 120B profile reserves one 80 GB GPU for generation; do
+not co-host GLiNER on that GPU. Both profiles enable prefix caching and
+asynchronous scheduling for Anonymizer's repeated structured prompts.
+
+Compile either profile with the same workflow used for other generation
+models:
+
+```bash
+uv run tools/inference_service.py compile \
+  --profile tools/inference_service_profiles/gpt-oss-120b.toml \
+  --source-revision 3f68c145 \
+  --output gpt-oss-120b-plan.json
+```
+
+GPT-OSS defaults to medium reasoning. For Anonymizer's structured LLM roles,
+start with low reasoning by setting
+`inference_parameters.extra_body.chat_template_kwargs.reasoning_effort` to
+`low`. Keep `max_tokens` within the profile's context bound.
+
+### Qwen3 30B A3B Instruct
+
+`qwen3-30b-a3b-instruct.toml` pins the non-thinking July 2025 instruct
+checkpoint. It is a practical multilingual alternative when the input is not
+primarily English. The profile serves the BF16 checkpoint, so allow roughly
+the same single-GPU memory class as the Nemotron Lightning profile.
+
 ### Nemotron 3.5 Lightning
 
 `tools/inference_service_profiles/nemotron-3.5-lightning.toml` pins
