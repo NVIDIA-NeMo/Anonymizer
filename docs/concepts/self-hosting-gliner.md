@@ -86,11 +86,8 @@ subset spans before score-based deduplication across chunk overlaps. A request
 without `labels` returns an empty entity list so DataDesigner's generic model
 health check can validate the endpoint without running meaningless inference.
 
-The native fallback still lives at
-`tools/inference_service_compiler/native_gliner.py`. It has its own uv-managed
-dependencies and supports `DEVICE`, `GLINER_BATCH_MODE`,
-`GLINER_MAX_BATCH_REQUESTS`, and `GLINER_BATCH_WAIT_MS`. See
-[Native GLiNER fallback](inference-services.md#native-gliner-fallback).
+The pinned vLLM Factory profiles are the only supported local detector runtime.
+Native Transformers GLiNER fallback serving is intentionally not included.
 
 ---
 

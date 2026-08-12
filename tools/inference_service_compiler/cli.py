@@ -20,8 +20,6 @@ from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
     RuntimeEffectError,
     cancel_run,
-    default_cache_root,
-    discover_cached_models,
     inspect_run,
     launch_plan,
     probe_endpoint,
@@ -55,7 +53,7 @@ def compile_plan(
     source_revision: str,
     output: Path | None = None,
 ) -> None:
-    """Compile a v1 TOML profile without performing runtime effects."""
+    """Compile a v2 TOML profile without performing runtime effects."""
     parsed = load_profile(profile)
     plan = compile_intent(parsed, source_revision=source_revision)
     write_json(plan, output)
@@ -107,13 +105,6 @@ def cancel(*, receipt: Path, output: Path | None = None) -> None:
     """Cancel and clean up the managed identity in a launch receipt."""
     launch_receipt = LaunchReceipt.model_validate_json(receipt.read_text(encoding="utf-8"))
     write_json(cancel_run(launch_receipt), output)
-
-
-@app.command
-@command_errors
-def models(*, cache_root: Path | None = None, output: Path | None = None) -> None:
-    """List existing Hugging Face cache snapshots without downloading models."""
-    write_json(discover_cached_models(cache_root or default_cache_root()), output)
 
 
 def write_json(value: BaseModel, output: Path | None) -> None:

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Explicit local-process and Docker effects for immutable run plans."""
+"""Explicit local-process effects for immutable run plans."""
 
 from __future__ import annotations
 
@@ -18,18 +18,13 @@ import httpx
 
 from inference_service_compiler.compiler import verify_plan
 from inference_service_compiler.models import (
-    CachedModel,
-    CachedModels,
     CancellationReceipt,
     Capability,
     CapabilityProbeReceipt,
-    DockerHandle,
-    DockerRuntime,
     EntityDetection,
     Generation,
     LaunchReceipt,
     LocalProcessHandle,
-    LocalProcessRuntime,
     RunPlan,
     RuntimeDiagnostic,
     SecretEnvironmentVariable,
@@ -43,33 +38,6 @@ class RuntimeEffectError(RuntimeError):
     def __init__(self, diagnostic: RuntimeDiagnostic) -> None:
         super().__init__(diagnostic.message)
         self.diagnostic = diagnostic
-
-
-def discover_cached_models(cache_root: Path) -> CachedModels:
-    """List existing Hugging Face snapshots without creating or downloading files."""
-    discovered: list[CachedModel] = []
-    if cache_root.exists():
-        for model_directory in sorted(cache_root.glob("models--*")):
-            repository = model_directory.name.removeprefix("models--").replace("--", "/")
-            for snapshot in sorted((model_directory / "snapshots").glob("*")):
-                if snapshot.is_dir():
-                    discovered.append(
-                        CachedModel(
-                            repository=repository,
-                            revision=snapshot.name,
-                            snapshot_path=str(snapshot),
-                        )
-                    )
-    return CachedModels(cache_root=str(cache_root), models=tuple(discovered))
-
-
-def default_cache_root() -> Path:
-    """Resolve the Hugging Face cache location without creating it."""
-    if hub_cache := os.getenv("HF_HUB_CACHE"):
-        return Path(hub_cache)
-    if hf_home := os.getenv("HF_HOME"):
-        return Path(hf_home) / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
 
 
 def probe_endpoint(
@@ -127,7 +95,7 @@ def launch_plan(
     return LaunchReceipt(
         plan_digest=plan.plan_digest,
         launched_at=_now(),
-        shutdown_timeout_seconds=plan.intent.lifecycle.shutdown_timeout_seconds,
+        shutdown_timeout_seconds=plan.intent.local.shutdown_timeout_seconds,
         handle=handle,
         probe=probe,
     )
@@ -138,23 +106,19 @@ def _launch_handle(
     argv: tuple[str, ...],
     environment: dict[str, str],
     log_directory: Path,
-) -> LocalProcessHandle | DockerHandle:
-    match plan.runtime:
-        case LocalProcessRuntime():
-            return _launch_process(plan, argv, environment, log_directory)
-        case DockerRuntime():
-            return _launch_docker(argv, environment)
+) -> LocalProcessHandle:
+    return _launch_process(plan, argv, environment, log_directory)
 
 
 def _probe_or_cleanup(
     plan: RunPlan,
-    handle: LocalProcessHandle | DockerHandle,
+    handle: LocalProcessHandle,
     secret_values: Mapping[str, str],
 ) -> CapabilityProbeReceipt:
     try:
         probe = wait_for_readiness(plan, secret_values=secret_values, handle=handle)
     except RuntimeEffectError as exc:
-        cleanup_complete = _cleanup_handle(handle, plan.intent.lifecycle.shutdown_timeout_seconds)
+        cleanup_complete = _cleanup_handle(handle, plan.intent.local.shutdown_timeout_seconds)
         raise RuntimeEffectError(
             exc.diagnostic.model_copy(
                 update={
@@ -164,7 +128,7 @@ def _probe_or_cleanup(
             )
         ) from exc
     if not probe.passed:
-        cleanup_complete = _cleanup_handle(handle, plan.intent.lifecycle.shutdown_timeout_seconds)
+        cleanup_complete = _cleanup_handle(handle, plan.intent.local.shutdown_timeout_seconds)
         raise RuntimeEffectError(
             RuntimeDiagnostic(
                 code="capability-mismatch",
@@ -188,7 +152,7 @@ def inspect_run(launch: LaunchReceipt) -> StatusReceipt:
 
 
 def cancel_run(launch: LaunchReceipt) -> CancellationReceipt:
-    """Stop the exact process group or container recorded by a launch receipt."""
+    """Stop the exact process group recorded by a launch receipt."""
     handle = launch.handle
     if not is_handle_running(handle):
         return CancellationReceipt(
@@ -208,33 +172,23 @@ def cancel_run(launch: LaunchReceipt) -> CancellationReceipt:
     )
 
 
-def is_handle_running(handle: LocalProcessHandle | DockerHandle) -> bool:
+def is_handle_running(handle: LocalProcessHandle) -> bool:
     """Check the external identity while guarding against Linux PID reuse."""
-    match handle:
-        case LocalProcessHandle():
-            current_marker = read_process_start_marker(handle.pid)
-            if handle.start_marker is not None and current_marker != handle.start_marker:
-                return False
-            if read_process_state(handle.pid) == "Z":
-                return False
-            try:
-                os.kill(handle.pid, 0)
-            except ProcessLookupError:
-                return False
-            except PermissionError:
-                return True
-            return True
-        case DockerHandle():
-            completed = subprocess.run(
-                ["docker", "inspect", "--format", "{{.State.Running}}", handle.container_id],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            return completed.returncode == 0 and completed.stdout.strip().lower() == "true"
+    current_marker = read_process_start_marker(handle.pid)
+    if handle.start_marker is not None and current_marker != handle.start_marker:
+        return False
+    if read_process_state(handle.pid) == "Z":
+        return False
+    try:
+        os.kill(handle.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
-def _cleanup_handle(handle: LocalProcessHandle | DockerHandle, timeout_seconds: float) -> bool:
+def _cleanup_handle(handle: LocalProcessHandle, timeout_seconds: float) -> bool:
     if not is_handle_running(handle):
         return True
     _outcome, cleanup_complete = _stop_running_handle(handle, timeout_seconds)
@@ -242,62 +196,43 @@ def _cleanup_handle(handle: LocalProcessHandle | DockerHandle, timeout_seconds: 
 
 
 def _stop_running_handle(
-    handle: LocalProcessHandle | DockerHandle,
+    handle: LocalProcessHandle,
     timeout_seconds: float,
 ) -> tuple[Literal["terminated", "forced"], bool]:
-    match handle:
-        case LocalProcessHandle():
-            try:
-                os.killpg(handle.process_group_id, signal.SIGTERM)
-            except ProcessLookupError:
-                return "terminated", True
-            deadline = time.monotonic() + timeout_seconds
-            running = True
-            while time.monotonic() < deadline:
-                running = is_handle_running(handle)
-                if not running:
-                    break
-                time.sleep(0.1)
-            outcome: Literal["terminated", "forced"] = "terminated"
-            if running:
-                try:
-                    os.killpg(handle.process_group_id, signal.SIGKILL)
-                except ProcessLookupError:
-                    return "forced", True
-                running = is_handle_running(handle)
-                outcome = "forced"
-            return outcome, not running
-        case DockerHandle():
-            completed = subprocess.run(
-                ["docker", "stop", "--time", str(int(timeout_seconds)), handle.container_id],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if completed.returncode != 0:
-                raise RuntimeEffectError(
-                    RuntimeDiagnostic(
-                        code="docker-cancel-failed",
-                        message=completed.stderr.strip() or "docker stop failed",
-                        known_effects=(handle.external_id,),
-                        cleanup_complete=False,
-                    )
-                )
-            return "terminated", True
+    try:
+        os.killpg(handle.process_group_id, signal.SIGTERM)
+    except ProcessLookupError:
+        return "terminated", True
+    deadline = time.monotonic() + timeout_seconds
+    running = True
+    while time.monotonic() < deadline:
+        running = is_handle_running(handle)
+        if not running:
+            break
+        time.sleep(0.1)
+    outcome: Literal["terminated", "forced"] = "terminated"
+    if running:
+        try:
+            os.killpg(handle.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            return "forced", True
+        running = is_handle_running(handle)
+        outcome = "forced"
+    return outcome, not running
 
 
 def wait_for_readiness(
     plan: RunPlan,
     *,
     secret_values: Mapping[str, str] | None = None,
-    handle: LocalProcessHandle | DockerHandle | None = None,
+    handle: LocalProcessHandle | None = None,
 ) -> CapabilityProbeReceipt:
     """Poll the declared readiness contract until it passes or times out."""
     deadline = time.monotonic() + plan.readiness.timeout_seconds
     last_error: RuntimeEffectError | None = None
     while time.monotonic() < deadline:
         if handle is not None and not is_handle_running(handle):
-            log_hint = f"; inspect {handle.stderr_path}" if isinstance(handle, LocalProcessHandle) else ""
+            log_hint = f"; inspect {handle.stderr_path}"
             raise RuntimeEffectError(
                 RuntimeDiagnostic(
                     code="launch-exited",
@@ -465,20 +400,6 @@ def _launch_process(
         stdout_path=str(stdout_path),
         stderr_path=str(stderr_path),
     )
-
-
-def _launch_docker(argv: tuple[str, ...], environment: dict[str, str]) -> DockerHandle:
-    completed = subprocess.run(argv, env=environment, capture_output=True, text=True, check=False)
-    if completed.returncode != 0:
-        raise RuntimeEffectError(
-            RuntimeDiagnostic(code="docker-launch-failed", message=completed.stderr.strip() or "docker run failed")
-        )
-    container_id = completed.stdout.strip()
-    if not container_id:
-        raise RuntimeEffectError(
-            RuntimeDiagnostic(code="docker-launch-failed", message="docker run returned no container identity")
-        )
-    return DockerHandle(external_id=container_id, container_id=container_id)
 
 
 def _now() -> str:

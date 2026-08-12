@@ -9,8 +9,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-INTENT_SCHEMA_VERSION = "inference-service.intent/v1"
-PLAN_SCHEMA_VERSION = "inference-service.run-plan/v1"
+INTENT_SCHEMA_VERSION = "inference-service.intent/v2"
+PLAN_SCHEMA_VERSION = "inference-service.run-plan/v2"
 CAPABILITY_PROBE_RECEIPT_SCHEMA_VERSION = "inference-service.capability-probe-receipt/v1"
 LAUNCH_RECEIPT_SCHEMA_VERSION = "inference-service.launch-receipt/v1"
 STATUS_RECEIPT_SCHEMA_VERSION = "inference-service.status-receipt/v1"
@@ -69,25 +69,9 @@ class LoraAdapter(FrozenModel):
 class HuggingFaceModel(FrozenModel):
     """A Hugging Face model identifier and optional immutable revision."""
 
-    kind: Literal["hugging-face"] = "hugging-face"
     model_id: str = Field(min_length=1)
     revision: str | None = Field(default=None, min_length=1)
     adapter: LoraAdapter | None = None
-
-
-ModelSpec = Annotated[HuggingFaceModel, Field(discriminator="kind")]
-
-
-class NativeGlinerEngine(FrozenModel):
-    """The characterized local GLiNER or GLiNER2 Python runtime."""
-
-    kind: Literal["native-gliner"] = "native-gliner"
-    family: Literal["nvidia-gliner", "gliner2"] = "nvidia-gliner"
-    device: str = Field(default="auto", min_length=1)
-    batch_mode: bool = True
-    max_batch_requests: int = Field(default=32, ge=1)
-    batch_wait_ms: float = Field(default=10, ge=0)
-    log_format: Literal["plain", "json"] = "plain"
 
 
 class VllmFactoryIntegration(FrozenModel):
@@ -97,10 +81,9 @@ class VllmFactoryIntegration(FrozenModel):
     prepared_model_root: str = Field(default="/tmp/anonymizer-vllm-factory", min_length=1)
 
 
-class VllmEngine(FrozenModel):
+class Vllm(FrozenModel):
     """vLLM's OpenAI-compatible server with bounded common options."""
 
-    kind: Literal["vllm"] = "vllm"
     python_executable: str = Field(default=".venv/bin/python", min_length=1)
     served_model_name: str | None = Field(default=None, min_length=1)
     api_key_env: str | None = Field(default=None, min_length=1)
@@ -118,70 +101,32 @@ class VllmEngine(FrozenModel):
     factory: VllmFactoryIntegration | None = None
 
 
-EngineSpec = Annotated[NativeGlinerEngine | VllmEngine, Field(discriminator="kind")]
+class LocalProcess(FrozenModel):
+    """The only supported inference-host deployment domain."""
 
-
-class LocalProcessPlacement(FrozenModel):
-    """A process on the caller's host."""
-
-    kind: Literal["local-process"] = "local-process"
     host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=8000, ge=1, le=65535)
 
-
-class DockerPlacement(FrozenModel):
-    """A managed local Docker container with direct host access."""
-
-    kind: Literal["docker"] = "docker"
-    host: str = Field(default="127.0.0.1", min_length=1)
-    port: int = Field(default=8000, ge=1, le=65535)
-    image: str = Field(min_length=1)
-    runtime: Literal["docker"] = "docker"
-    gpus: str = Field(default="all", min_length=1)
-    hugging_face_cache: str | None = Field(default=None, min_length=1)
-
-
-PlacementSpec = Annotated[LocalProcessPlacement | DockerPlacement, Field(discriminator="kind")]
-
-
-class DirectAccess(FrozenModel):
-    """A direct HTTP endpoint exposed by the managed runtime."""
-
-    kind: Literal["direct"] = "direct"
-
-
-AccessSpec = Annotated[DirectAccess, Field(discriminator="kind")]
-
-
-class ManagedLifecycle(FrozenModel):
-    """The compiler owns launch, inspection, cancellation, and cleanup."""
-
-    kind: Literal["managed"] = "managed"
     startup_timeout_seconds: float = Field(default=120, gt=0)
     shutdown_timeout_seconds: float = Field(default=30, gt=0)
-
-
-LifecycleSpec = Annotated[ManagedLifecycle, Field(discriminator="kind")]
 
 
 class InferenceIntent(FrozenModel):
     """Complete semantic input to pure inference-service compilation."""
 
-    schema_version: Literal["inference-service.intent/v1"] = INTENT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.intent/v2"] = INTENT_SCHEMA_VERSION
     task: TaskSpec
-    model: ModelSpec
-    engine: EngineSpec
-    placement: PlacementSpec
-    access: AccessSpec
-    lifecycle: LifecycleSpec
+    model: HuggingFaceModel
+    vllm: Vllm
+    local: LocalProcess
 
     @property
     def expected_model(self) -> str:
         """Return the model ID that the compiled endpoint must serve."""
         if self.model.adapter is not None:
             return self.model.adapter.name
-        if isinstance(self.engine, VllmEngine) and self.engine.served_model_name is not None:
-            return self.engine.served_model_name
+        if self.vllm.served_model_name is not None:
+            return self.vllm.served_model_name
         return self.model.model_id
 
 
@@ -280,17 +225,6 @@ class LocalProcessRuntime(FrozenModel):
     cleanup: Literal["terminate-process-group"] = "terminate-process-group"
 
 
-class DockerRuntime(FrozenModel):
-    """Runtime facts needed to launch and remove a local container."""
-
-    kind: Literal["docker"] = "docker"
-    image: str
-    cleanup: Literal["remove-container"] = "remove-container"
-
-
-RuntimeSpec = Annotated[LocalProcessRuntime | DockerRuntime, Field(discriminator="kind")]
-
-
 class CompatibilityEvidence(FrozenModel):
     """One compiler rule supporting or qualifying the selected combination."""
 
@@ -302,12 +236,12 @@ class CompatibilityEvidence(FrozenModel):
 class RunPlan(FrozenModel):
     """Portable, immutable, effect-free instructions for one service run."""
 
-    schema_version: Literal["inference-service.run-plan/v1"] = PLAN_SCHEMA_VERSION
+    schema_version: Literal["inference-service.run-plan/v2"] = PLAN_SCHEMA_VERSION
     plan_digest: str
     intent_digest: str = Field(min_length=1)
     intent: InferenceIntent
     command: CommandSpec
-    runtime: RuntimeSpec
+    runtime: LocalProcessRuntime
     endpoint: EndpointContract
     readiness: HttpProbe
     expected_model: str = Field(min_length=1)
@@ -342,17 +276,6 @@ class LocalProcessHandle(FrozenModel):
     stderr_path: str
 
 
-class DockerHandle(FrozenModel):
-    """Reconnectable identity for a managed Docker container."""
-
-    kind: Literal["docker"] = "docker"
-    external_id: str
-    container_id: str
-
-
-HandleRecord = Annotated[LocalProcessHandle | DockerHandle, Field(discriminator="kind")]
-
-
 class LaunchReceipt(FrozenModel):
     """Known launch effects, reconnectable identity, and readiness evidence."""
 
@@ -360,7 +283,7 @@ class LaunchReceipt(FrozenModel):
     plan_digest: str
     launched_at: str
     shutdown_timeout_seconds: float = Field(gt=0)
-    handle: HandleRecord
+    handle: LocalProcessHandle
     probe: CapabilityProbeReceipt
 
 
@@ -370,7 +293,7 @@ class StatusReceipt(FrozenModel):
     schema_version: Literal["inference-service.status-receipt/v1"] = STATUS_RECEIPT_SCHEMA_VERSION
     plan_digest: str
     observed_at: str
-    handle: HandleRecord
+    handle: LocalProcessHandle
     state: Literal["running", "stopped"]
 
 
@@ -380,7 +303,7 @@ class CancellationReceipt(FrozenModel):
     schema_version: Literal["inference-service.cancellation-receipt/v1"] = CANCELLATION_RECEIPT_SCHEMA_VERSION
     plan_digest: str
     canceled_at: str
-    handle: HandleRecord
+    handle: LocalProcessHandle
     outcome: Literal["terminated", "already-stopped", "forced"]
     cleanup_complete: bool
 
@@ -392,19 +315,3 @@ class RuntimeDiagnostic(FrozenModel):
     message: str
     known_effects: tuple[str, ...] = ()
     cleanup_complete: bool | None = None
-
-
-class CachedModel(FrozenModel):
-    """One immutable Hugging Face cache snapshot available to local runtimes."""
-
-    repository: str
-    revision: str
-    snapshot_path: str
-
-
-class CachedModels(FrozenModel):
-    """Versioned discovery result that performs no model downloads."""
-
-    schema_version: Literal["inference-service.cached-models/v1"] = "inference-service.cached-models/v1"
-    cache_root: str
-    models: tuple[CachedModel, ...]

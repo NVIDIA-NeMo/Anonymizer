@@ -169,7 +169,7 @@ uv run tools/inference_service.py cancel --receipt launch.json
 
 The tool is not part of the wheel and does not attach to externally owned
 endpoints. The [local inference service guide](docs/concepts/inference-services.md)
-covers typed TOML profiles, GPU-host setup, Docker, model discovery, capability
+covers typed TOML profiles, GPU-host setup, and capability
 probes, and Anonymizer provider configuration.
 
 ---

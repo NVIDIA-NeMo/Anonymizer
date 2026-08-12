@@ -38,7 +38,7 @@ Pass `model_providers` when you need a non-default endpoint — for example Open
 
 For managed GLiNER through vLLM Factory, the native detector fallback, and
 vLLM generation endpoints, see [Run local inference services](inference-services.md).
-That guide covers immutable plans, local processes, Docker, capability
+That guide covers immutable plans, local processes, and capability
 receipts, and provider configuration.
 
 Set your API keys first:
