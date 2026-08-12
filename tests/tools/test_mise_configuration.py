@@ -27,6 +27,16 @@ def test_github_setup_requires_signed_mise_installer() -> None:
     assert install_step.get("env", {}).get("MISE_REQUIRE_SIGNED_INSTALL") == "1"
 
 
+def test_benchmark_workflow_checks_out_before_loading_local_action() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/benchmark-ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["benchmark"]["steps"]
+
+    assert steps[0]["uses"] == "actions/checkout@v6"
+    assert steps[0]["with"] == {"ref": "${{ env.BENCHMARK_REF }}", "fetch-depth": "0"}
+    assert steps[1]["uses"] == "./.github/actions/setup-python-env"
+    assert steps[1]["with"]["checkout"] == "false"
+
+
 def test_local_mise_installer_keeps_unsigned_fallback_opt_in() -> None:
     installer = (REPO_ROOT / "tools/install-mise.sh").read_text(encoding="utf-8")
 
