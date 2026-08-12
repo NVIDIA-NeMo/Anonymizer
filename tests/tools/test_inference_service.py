@@ -501,8 +501,11 @@ def test_reference_toml_profiles_are_pinned_and_compile() -> None:
 
     assert {path.name for path in profile_paths} == {
         "gliner2.toml",
+        "gpt-oss-120b.toml",
+        "gpt-oss-20b.toml",
         "nemotron-3.5-lightning.toml",
         "nvidia-gliner.toml",
+        "qwen3-30b-a3b-instruct.toml",
         "vllm-local.toml",
     }
     for path in profile_paths:
@@ -540,6 +543,29 @@ def test_probe_records_generation_capabilities() -> None:
     assert receipt.plan_digest == plan.plan_digest
     assert receipt.models == ("openai/gpt-oss-20b",)
     assert receipt.observed_capabilities == ("chat-completions",)
+    assert receipt.passed is True
+
+
+def test_probe_supports_reasoning_models() -> None:
+    """The capability probe obtains content from models that reason before answering."""
+    models, compiler = load_compiler_modules()
+    runtime = load_runtime_module()
+    plan = build_generation_plan(models, compiler)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "openai/gpt-oss-20b"}]})
+        if request.url.path == "/v1/chat/completions":
+            payload = json.loads(request.content)
+            enough_output = payload.get("max_tokens", 0) > 8
+            low_reasoning = payload.get("chat_template_kwargs", {}).get("reasoning_effort") == "low"
+            content = "ready" if enough_output and low_reasoning else None
+            return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        receipt = runtime.probe_endpoint(plan, client=client)
+
     assert receipt.passed is True
 
 
