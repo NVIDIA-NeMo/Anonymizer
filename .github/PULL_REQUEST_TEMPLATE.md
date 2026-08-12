@@ -26,7 +26,7 @@
 
 ## Validation
 <!-- Choose from the relevant commands below and list what you actually ran. If a relevant check was skipped, explain why. -->
-<!-- Common options: mise run validate, mise run test:coverage, mise run test:e2e, mise run docs:build, mise run notebooks:execute -->
+<!-- Common options: mise run check ::: test, mise run test:coverage, mise run test:e2e, mise run docs:build, mise run notebooks:execute -->
 - Commands run:
 - Skipped checks or known failures:
 
