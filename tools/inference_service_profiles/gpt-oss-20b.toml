@@ -1,16 +1,14 @@
-schema_version = "inference-service.intent/v1"
+schema_version = "inference-service.intent/v2"
 
 [task]
 kind = "generation"
 chat = true
 
 [model]
-kind = "hugging-face"
 model_id = "openai/gpt-oss-20b"
 revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
 
-[engine]
-kind = "vllm"
+[vllm]
 python_executable = ".venv/bin/python"
 served_model_name = "gpt-oss-20b-local"
 gpu_memory_utilization = 0.85
@@ -19,15 +17,9 @@ max_num_seqs = 16
 enable_prefix_caching = true
 async_scheduling = true
 
-[placement]
-kind = "local-process"
+[local]
 host = "127.0.0.1"
 port = 8000
 
-[access]
-kind = "direct"
-
-[lifecycle]
-kind = "managed"
 startup_timeout_seconds = 1200
 shutdown_timeout_seconds = 60

@@ -16,22 +16,17 @@ from inference_service_compiler.models import (
     CommandArgument,
     CommandSpec,
     CompatibilityEvidence,
-    DockerPlacement,
-    DockerRuntime,
     EndpointContract,
     EntityDetection,
-    EnvironmentVariable,
     FrozenModel,
     Generation,
     HttpProbe,
     InferenceIntent,
     LiteralArgument,
-    LocalProcessPlacement,
     LocalProcessRuntime,
-    NativeGlinerEngine,
     RunPlan,
     SecretEnvironmentVariable,
-    VllmEngine,
+    Vllm,
 )
 from inference_service_compiler.vllm_factory_integration import (
     VLLM_FACTORY_DEPENDENCY,
@@ -73,7 +68,7 @@ def compile_intent(intent: InferenceIntent, *, source_revision: str) -> RunPlan:
         raise ValueError("source_revision must not be empty")
     required = intent.task.required_capabilities()
     command, runtime, declared, evidence = _compile_service(intent)
-    placement = intent.placement
+    placement = intent.local
     endpoint = EndpointContract(host=placement.host, port=placement.port)
     plan = RunPlan(
         plan_digest="",
@@ -86,10 +81,8 @@ def compile_intent(intent: InferenceIntent, *, source_revision: str) -> RunPlan:
             host=placement.host,
             port=placement.port,
             path="/v1/models",
-            timeout_seconds=intent.lifecycle.startup_timeout_seconds,
-            bearer_token_environment_variable=(
-                intent.engine.api_key_env if isinstance(intent.engine, VllmEngine) else None
-            ),
+            timeout_seconds=intent.local.startup_timeout_seconds,
+            bearer_token_environment_variable=intent.vllm.api_key_env,
         ),
         expected_model=intent.expected_model,
         required_capabilities=required,
@@ -114,7 +107,7 @@ def digest_plan(plan: RunPlan) -> str:
 
 
 def load_plan(serialized: str | bytes) -> RunPlan:
-    """Parse a closed v1 plan and reject transport mutation."""
+    """Parse a closed v2 plan and reject transport mutation."""
     plan = RunPlan.model_validate_json(serialized)
     verify_plan(plan)
     return plan
@@ -133,90 +126,18 @@ def _canonical_json(value: object) -> bytes:
 
 def _compile_service(
     intent: InferenceIntent,
-) -> tuple[
-    CommandSpec,
-    LocalProcessRuntime | DockerRuntime,
-    tuple[Capability, ...],
-    tuple[CompatibilityEvidence, ...],
-]:
-    match intent.engine:
-        case NativeGlinerEngine() as engine:
-            if not isinstance(intent.task, EntityDetection):
-                _raise_unsupported_task_engine(intent.task.kind, engine.kind)
-            if not isinstance(intent.placement, LocalProcessPlacement):
-                raise CompilationError(
-                    CompilerDiagnostic(
-                        code="unsupported-engine-placement",
-                        message="native GLiNER is characterized only as a local process",
-                        details={"engine": engine.kind, "placement": intent.placement.kind},
-                    )
-                )
-            return _compile_native_gliner(intent, engine)
-        case VllmEngine() as engine:
-            return _compile_vllm(intent, engine)
-
-
-def _compile_native_gliner(
-    intent: InferenceIntent,
-    engine: NativeGlinerEngine,
 ) -> tuple[CommandSpec, LocalProcessRuntime, tuple[Capability, ...], tuple[CompatibilityEvidence, ...]]:
-    placement = intent.placement
-    if not isinstance(placement, LocalProcessPlacement):
-        raise TypeError(f"expected LocalProcessPlacement, got {type(placement)!r}")
-    argv = _literal_arguments(
-        "uv",
-        "run",
-        "--script",
-        "tools/inference_service_compiler/native_gliner.py",
-        "--host",
-        placement.host,
-        "--port",
-        str(placement.port),
-        "--model",
-        engine.family,
-        "--checkpoint",
-        intent.model.model_id,
-    )
-    if engine.log_format != "plain":
-        argv += _literal_arguments("--log-format", engine.log_format)
-    if intent.model.revision is not None:
-        argv += _literal_arguments("--revision", intent.model.revision)
-    return (
-        CommandSpec(argv=argv, environment=_native_environment(engine)),
-        LocalProcessRuntime(),
-        intent.task.required_capabilities(),
-        (
-            CompatibilityEvidence(
-                rule="native-gliner-entity-detection-v1",
-                outcome="characterized",
-                detail="Anonymizer chat-completion adapter preserves dynamic labels, offsets, and scores",
-            ),
-        ),
-    )
-
-
-def _native_environment(engine: NativeGlinerEngine) -> tuple[EnvironmentVariable, ...]:
-    return (
-        EnvironmentVariable(name="DEVICE", value=engine.device),
-        EnvironmentVariable(name="GLINER_BATCH_MODE", value=str(engine.batch_mode).lower()),
-        EnvironmentVariable(name="GLINER_MAX_BATCH_REQUESTS", value=str(engine.max_batch_requests)),
-        EnvironmentVariable(name="GLINER_BATCH_WAIT_MS", value=str(float(engine.batch_wait_ms))),
-    )
+    return _compile_vllm(intent, intent.vllm)
 
 
 def _compile_vllm(
     intent: InferenceIntent,
-    engine: VllmEngine,
-) -> tuple[
-    CommandSpec,
-    LocalProcessRuntime | DockerRuntime,
-    tuple[Capability, ...],
-    tuple[CompatibilityEvidence, ...],
-]:
+    engine: Vllm,
+) -> tuple[CommandSpec, LocalProcessRuntime, tuple[Capability, ...], tuple[CompatibilityEvidence, ...]]:
     if isinstance(intent.task, EntityDetection):
         factory = engine.factory
         if factory is None:
-            _raise_unsupported_task_engine(intent.task.kind, engine.kind)
+            _raise_unsupported_task_engine(intent.task.kind, "vllm")
         if intent.model.revision is None:
             raise CompilationError(
                 CompilerDiagnostic(
@@ -244,15 +165,7 @@ def _compile_vllm(
                 CompilerDiagnostic(
                     code="unsupported-model-adapter",
                     message="vLLM Factory entity detection does not support a model adapter",
-                    details={"engine": engine.kind, "task": intent.task.kind},
-                )
-            )
-        if isinstance(intent.placement, DockerPlacement):
-            raise CompilationError(
-                CompilerDiagnostic(
-                    code="unsupported-engine-placement",
-                    message="vLLM Factory entity detection is characterized only as a local process",
-                    details={"engine": engine.kind, "placement": intent.placement.kind},
+                    details={"engine": "vllm", "task": intent.task.kind},
                 )
             )
         command, runtime = _vllm_command(intent, engine)
@@ -272,7 +185,7 @@ def _compile_vllm(
             ),
         )
     if not isinstance(intent.task, Generation) or engine.factory is not None:
-        _raise_unsupported_task_engine(intent.task.kind, engine.kind)
+        _raise_unsupported_task_engine(intent.task.kind, "vllm")
     command, runtime = _vllm_command(intent, engine)
     declared = ("chat-completions",)
     evidence = (
@@ -287,60 +200,23 @@ def _compile_vllm(
 
 def _vllm_command(
     intent: InferenceIntent,
-    engine: VllmEngine,
-) -> tuple[CommandSpec, LocalProcessRuntime | DockerRuntime]:
+    engine: Vllm,
+) -> tuple[CommandSpec, LocalProcessRuntime]:
     engine_arguments = _vllm_engine_arguments(intent, engine)
-    match intent.placement:
-        case LocalProcessPlacement() as placement:
-            argv = _literal_arguments(
-                engine.python_executable,
-                "tools/inference_service_compiler/vllm_server.py",
-                intent.model.model_id,
-                "--host",
-                placement.host,
-                "--port",
-                str(placement.port),
-            )
-            return CommandSpec(
-                argv=argv + engine_arguments, environment=_vllm_environment(engine)
-            ), LocalProcessRuntime()
-        case DockerPlacement() as placement:
-            return _docker_vllm_command(intent, engine, placement, engine_arguments)
-
-
-def _docker_vllm_command(
-    intent: InferenceIntent,
-    engine: VllmEngine,
-    placement: DockerPlacement,
-    engine_arguments: tuple[CommandArgument, ...],
-) -> tuple[CommandSpec, DockerRuntime]:
-    values = [
-        placement.runtime,
-        "run",
-        "--detach",
-        "--rm",
-        "--gpus",
-        placement.gpus,
-        "--ipc",
-        "host",
-        "--publish",
-        f"{placement.host}:{placement.port}:8000",
-    ]
-    if placement.hugging_face_cache is not None:
-        values.extend(["--volume", f"{placement.hugging_face_cache}:/root/.cache/huggingface"])
-    if engine.api_key_env is not None:
-        values.extend(["--env", VLLM_API_KEY_ENV])
-    values.extend([placement.image, "--model", intent.model.model_id])
-    return (
-        CommandSpec(
-            argv=_literal_arguments(*values) + engine_arguments,
-            environment=_vllm_environment(engine),
-        ),
-        DockerRuntime(image=placement.image),
+    placement = intent.local
+    argv = _literal_arguments(
+        engine.python_executable,
+        "tools/inference_service_compiler/vllm_server.py",
+        intent.model.model_id,
+        "--host",
+        placement.host,
+        "--port",
+        str(placement.port),
     )
+    return CommandSpec(argv=argv + engine_arguments, environment=_vllm_environment(engine)), LocalProcessRuntime()
 
 
-def _vllm_engine_arguments(intent: InferenceIntent, engine: VllmEngine) -> tuple[CommandArgument, ...]:
+def _vllm_engine_arguments(intent: InferenceIntent, engine: Vllm) -> tuple[CommandArgument, ...]:
     arguments: list[CommandArgument] = []
     if intent.model.revision is not None:
         arguments.extend(
@@ -395,7 +271,7 @@ def _vllm_engine_arguments(intent: InferenceIntent, engine: VllmEngine) -> tuple
     return tuple(arguments)
 
 
-def _vllm_environment(engine: VllmEngine) -> tuple[SecretEnvironmentVariable, ...]:
+def _vllm_environment(engine: Vllm) -> tuple[SecretEnvironmentVariable, ...]:
     if engine.api_key_env is None:
         return ()
     return (
@@ -411,14 +287,12 @@ def _literal_arguments(*values: str) -> tuple[CommandArgument, ...]:
 
 
 def _plan_dependencies(intent: InferenceIntent) -> tuple[str, ...]:
-    if isinstance(intent.engine, VllmEngine):
-        dependencies = [VLLM_DEPENDENCY]
-        if intent.engine.factory is not None:
-            dependencies.append(VLLM_FACTORY_DEPENDENCY)
-        if intent.engine.mamba_backend == "flashinfer":
-            dependencies.extend(FLASHINFER_CUDA_TOOLCHAIN_DEPENDENCIES)
-        return tuple(dependencies)
-    return ()
+    dependencies = [VLLM_DEPENDENCY]
+    if intent.vllm.factory is not None:
+        dependencies.append(VLLM_FACTORY_DEPENDENCY)
+    if intent.vllm.mamba_backend == "flashinfer":
+        dependencies.extend(FLASHINFER_CUDA_TOOLCHAIN_DEPENDENCIES)
+    return tuple(dependencies)
 
 
 def _raise_unsupported_task_engine(task: str, engine: str) -> Never:

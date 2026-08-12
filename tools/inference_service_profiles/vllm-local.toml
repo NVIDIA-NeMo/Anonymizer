@@ -1,30 +1,22 @@
-schema_version = "inference-service.intent/v1"
+schema_version = "inference-service.intent/v2"
 
 [task]
 kind = "generation"
 chat = true
 
 [model]
-kind = "hugging-face"
 model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 revision = "fe8a4ea1ffedaf415f4da2f062534de366a451e6"
 
-[engine]
-kind = "vllm"
+[vllm]
 python_executable = ".venv/bin/python"
 served_model_name = "anonymizer-local"
 gpu_memory_utilization = 0.85
 max_model_len = 2048
 
-[placement]
-kind = "local-process"
+[local]
 host = "127.0.0.1"
 port = 8000
 
-[access]
-kind = "direct"
-
-[lifecycle]
-kind = "managed"
 startup_timeout_seconds = 600
 shutdown_timeout_seconds = 30
