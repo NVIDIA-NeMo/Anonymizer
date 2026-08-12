@@ -353,7 +353,11 @@ def _probe_task(plan: RunPlan, client: httpx.Client, headers: Mapping[str, str])
                 json={
                     "model": plan.expected_model,
                     "messages": [{"role": "user", "content": "Reply with the word ready."}],
-                    "max_tokens": 8,
+                    "max_tokens": 128,
+                    "chat_template_kwargs": {
+                        "enable_thinking": False,
+                        "reasoning_effort": "low",
+                    },
                 },
                 headers=headers,
             )
