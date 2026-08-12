@@ -562,10 +562,6 @@ def test_validate_config_raises_on_unknown_replace_alias_for_substitute(
         update={
             "replace": ReplaceModelSelection(
                 replacement_generator="bad-replace-alias",
-                detection_judge="known",
-                type_fidelity_judge="known",
-                relational_consistency_judge="known",
-                attribute_fidelity_judge="known",
             )
         }
     )
@@ -586,10 +582,6 @@ def test_validate_config_skips_replace_alias_for_non_substitute(
         update={
             "replace": ReplaceModelSelection(
                 replacement_generator="bad-replace-alias",
-                detection_judge="known",
-                type_fidelity_judge="known",
-                relational_consistency_judge="known",
-                attribute_fidelity_judge="known",
             )
         }
     )
@@ -669,10 +661,6 @@ def test_run_raises_invalid_config_before_workflows(
         update={
             "replace": ReplaceModelSelection(
                 replacement_generator="bad-replace-alias",
-                detection_judge="known",
-                type_fidelity_judge="known",
-                relational_consistency_judge="known",
-                attribute_fidelity_judge="known",
             )
         }
     )
@@ -825,10 +813,6 @@ def test_validate_config_raises_on_unknown_replace_alias_in_rewrite_mode(
         update={
             "replace": ReplaceModelSelection(
                 replacement_generator="bad-replace-alias",
-                detection_judge="known",
-                type_fidelity_judge="known",
-                relational_consistency_judge="known",
-                attribute_fidelity_judge="known",
             )
         }
     )

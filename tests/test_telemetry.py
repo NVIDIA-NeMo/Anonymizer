@@ -215,7 +215,7 @@ class TestAnonymizerEvent:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError):
-            AnonymizerEvent(  # ty: ignore[missing-argument]
+            AnonymizerEvent(
                 task=TaskEnum.BATCH,
                 task_status=TaskStatusEnum.COMPLETED,
                 entity_detector_model="x",
@@ -228,7 +228,7 @@ class TestAnonymizerEvent:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError):
-            AnonymizerEvent(  # ty: ignore[missing-argument]
+            AnonymizerEvent(
                 task=TaskEnum.BATCH,
                 task_status=TaskStatusEnum.COMPLETED,
                 transformation_type="redact",

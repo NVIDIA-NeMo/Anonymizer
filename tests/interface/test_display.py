@@ -630,7 +630,6 @@ def test_render_record_html_rewrite_mode_with_disposition() -> None:
                 sensitivity="high",
                 entity_label="first_name",
                 entity_value="Alice",
-                needs_protection=True,
                 protection_reason="Direct identifier that uniquely identifies the subject.",
                 protection_method_suggestion="replace",
                 combined_risk_level="high",

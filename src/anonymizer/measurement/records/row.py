@@ -285,9 +285,8 @@ def _llm_record_fields(
         repair_iterations=repair_iterations,
         replace_map_generation_uses_llm=replace_map_generation_uses_llm,
     )
-    total_estimated = (
-        sum(calls_by_stage.values()) if all(value is not None for value in calls_by_stage.values()) else None
-    )
+    known_call_counts = [value for value in calls_by_stage.values() if value is not None]
+    total_estimated = sum(known_call_counts) if len(known_call_counts) == len(calls_by_stage) else None
     return {
         "detected_candidate_count": detected_candidate_count,
         "validation_chunk_count": validation_chunk_count,
