@@ -27,20 +27,45 @@ def test_github_setup_requires_signed_mise_installer() -> None:
     assert install_step.get("env", {}).get("MISE_REQUIRE_SIGNED_INSTALL") == "1"
 
 
-def test_benchmark_workflow_checks_out_before_loading_local_action() -> None:
+def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/benchmark-ci.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["benchmark"]["steps"]
 
     assert steps[0]["uses"] == "actions/checkout@v6"
-    assert steps[0]["with"] == {"ref": "${{ env.BENCHMARK_REF }}", "fetch-depth": "0"}
     assert steps[1]["uses"] == "./.github/actions/setup-python-env"
     assert steps[1]["with"]["checkout"] == "false"
+    assert steps[2]["uses"] == "actions/checkout@v6"
+    assert steps[2]["with"] == {
+        "ref": "${{ env.BENCHMARK_REF }}",
+        "fetch-depth": "0",
+        "path": "benchmark-target",
+    }
+
+    target_steps = [
+        step
+        for step in steps
+        if step.get("id") == "target" or step.get("name") in {"Run benchmark suite", "Add benchmark summary"}
+    ]
+    assert target_steps
+    assert all(step["working-directory"] == "benchmark-target" for step in target_steps)
+
+    upload_step = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
+    assert upload_step["with"]["path"] == "benchmark-target/${{ env.BENCHMARK_OUTPUT_DIR }}/"
 
 
 def test_local_mise_installer_keeps_unsigned_fallback_opt_in() -> None:
     installer = (REPO_ROOT / "tools/install-mise.sh").read_text(encoding="utf-8")
 
     assert 'REQUIRE_SIGNED_INSTALL="${MISE_REQUIRE_SIGNED_INSTALL:-0}"' in installer
+
+
+def test_local_mise_installer_fetches_and_pins_release_key_over_https() -> None:
+    installer = (REPO_ROOT / "tools/install-mise.sh").read_text(encoding="utf-8")
+
+    assert 'MISE_GPG_KEY_URL="https://keys.openpgp.org/vks/v1/by-fingerprint"' in installer
+    assert '"${MISE_GPG_KEY_URL}/${MISE_GPG_KEY}"' in installer
+    assert 'grep -q "^fpr:::::::::${MISE_GPG_KEY}:"' in installer
+    assert '--recv-keys "$MISE_GPG_KEY"' not in installer
 
 
 def test_makefile_exposes_bootstrap_without_deprecated_task_aliases() -> None:

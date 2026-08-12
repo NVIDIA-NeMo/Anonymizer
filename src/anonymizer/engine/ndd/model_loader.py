@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from data_designer.config.models import ModelConfig, ModelProvider, load_model_configs
 from data_designer.config.utils.io_helpers import load_config_file
@@ -20,8 +20,6 @@ from anonymizer.config.models import (
 )
 
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config" / "default_model_configs"
-
-_ModelSelectionT = TypeVar("_ModelSelectionT", bound=BaseModel)
 
 
 class WorkflowName(str, Enum):
@@ -206,14 +204,6 @@ def resolve_model_aliases(
     if isinstance(value, str):
         return [value]
     raise TypeError(f"Role {role!r} does not contain a model alias.")
-
-
-def _merge_selection(section: _ModelSelectionT, overrides: dict[str, Any]) -> _ModelSelectionT:
-    """Merge overrides into a typed model-selection section and revalidate it."""
-    if not overrides:
-        return section
-    merged = {**section.model_dump(), **overrides}
-    return type(section).model_validate(merged)
 
 
 def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> ModelSelection:

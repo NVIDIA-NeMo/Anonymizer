@@ -4,7 +4,7 @@
 
 #
 # install-mise.sh -- install the pinned mise version, preferring the
-# GPG-verified path when the local toolchain supports it.
+# GPG-verified path when gpg is available.
 #
 # Version source:
 #   `.mise.toml` `min_version` is the single source of truth. Set MISE_VERSION
@@ -18,8 +18,8 @@
 #   MISE_REQUIRE_SIGNED_INSTALL=1  fail instead of falling back to the
 #                                  unsigned mise.run installer when the
 #                                  signed path can't be completed (missing
-#                                  toolchain or keyserver/CDN flake).
-#                                  Recommended for CI/release pipelines.
+#                                  gpg or CDN/network flake). Recommended
+#                                  for CI/release pipelines.
 #
 # Behaviour:
 #   - If mise is already on PATH at the pinned version, exit early.
@@ -27,11 +27,14 @@
 #     MISE_VERBOSE=1 and the binary path (broken/partial install).
 #   - If mise is already on PATH at a different version, abort with an
 #     actionable message (we don't silently clobber the user's install).
-#   - If the full gpg toolchain (gpg + gpg-agent + dirmngr) is available,
-#     fetch install.sh.sig, verify its GPG signature against a temporary
-#     GNUPGHOME (so we don't mutate the user's keyring), and run the
-#     embedded install script. Keyserver recv and curl fetch are bounded
-#     by timeouts and retried a few times on failure.
+#   - If gpg is available, fetch the release signing key over HTTPS
+#     (keys.openpgp.org VKS, not gpg --recv-keys / dirmngr -- dirmngr's
+#     bundled DNS resolver hangs indefinitely on some corporate networks
+#     and GnuPG 2.x ignores legacy keyserver timeout options), assert the
+#     imported key fingerprint matches MISE_GPG_KEY, fetch install.sh.sig,
+#     verify its GPG signature against a temporary GNUPGHOME (so we don't
+#     mutate the user's keyring), and run the embedded install script. All
+#     HTTP fetches are bounded by timeouts and retried a few times on failure.
 #   - If any of the above fails and MISE_REQUIRE_SIGNED_INSTALL != 1, fall
 #     back to https://mise.run (no signature verification; warn loudly).
 #   - In either install path, pass the pinned version through to the installer
@@ -70,56 +73,50 @@ MISE_VERSION="${MISE_VERSION:-$(read_pinned_mise_version)}"
 
 readonly MISE_SIG_URL="https://mise.jdx.dev/install.sh.sig"
 readonly MISE_RUN_URL="https://mise.run"
-readonly KEYSERVER="hkps://keys.openpgp.org"
+readonly MISE_GPG_KEY_URL="https://keys.openpgp.org/vks/v1/by-fingerprint"
 
-# Network knobs, applied to every keyserver/HTTP call so a flaky keyserver
-# or CDN doesn't wedge `make setup` indefinitely in CI/container contexts.
+# Network knobs, applied to every HTTP call so a flaky CDN doesn't wedge
+# `make setup` indefinitely in CI/container contexts.
 readonly CURL_CONNECT_TIMEOUT=10
 readonly CURL_MAX_TIME=60
 readonly CURL_RETRIES=3
 readonly CURL_RETRY_DELAY=2
-readonly GPG_RECV_TIMEOUT=30
-readonly GPG_RECV_RETRIES=3
-
 # Set MISE_REQUIRE_SIGNED_INSTALL=1 to fail hard when the signed path can't
-# be completed (missing toolchain or network failure fetching the key /
-# installer) instead of falling back to the unsigned `curl | sh` path.
-# Recommended for CI/release pipelines; default is off so local dev on slim
-# images still succeeds with a loud warning.
+# be completed (missing gpg or network failure fetching the key / installer)
+# instead of falling back to the unsigned `curl | sh` path. Recommended for
+# CI/release pipelines; default is off so local dev on slim images still
+# succeeds with a loud warning.
 REQUIRE_SIGNED_INSTALL="${MISE_REQUIRE_SIGNED_INSTALL:-0}"
 
 curl_fetch() {
+    # Fetch to a file (via -o) rather than a pipe when the consumer is gpg:
+    # curl --retry can emit partial bytes before retrying, which would leave
+    # gpg with a truncated then re-sent stream. --retry-all-errors covers
+    # transient HTTP 5xx as well as connection failures.
     curl -fsSL \
         --connect-timeout "$CURL_CONNECT_TIMEOUT" \
         --max-time "$CURL_MAX_TIME" \
         --retry "$CURL_RETRIES" \
         --retry-delay "$CURL_RETRY_DELAY" \
-        --retry-connrefused \
+        --retry-all-errors \
         "$@"
 }
 
-# `timeout(1)` is GNU coreutils; not in the default macOS/BSD userland.
-# When absent, rely on gpg's own `keyserver-options timeout=N` so we still
-# get a bounded wait.
-if command -v timeout >/dev/null 2>&1; then
-    gpg_timeout() { timeout "$GPG_RECV_TIMEOUT" "$@"; }
-else
-    gpg_timeout() { "$@"; }
-fi
-
-gpg_recv_key() {
-    local attempt
-    for attempt in $(seq 1 "$GPG_RECV_RETRIES"); do
-        if gpg_timeout gpg --batch --no-tty \
-                --keyserver "$KEYSERVER" \
-                --keyserver-options "timeout=${GPG_RECV_TIMEOUT}" \
-                --recv-keys "$MISE_GPG_KEY"; then
-            return 0
-        fi
-        echo "WARNING: gpg --recv-keys attempt ${attempt}/${GPG_RECV_RETRIES} failed" >&2
-        sleep "$CURL_RETRY_DELAY"
-    done
-    return 1
+# Retries live only in curl_fetch -- do not wrap this in another retry loop
+# (curl's --max-time resets per attempt, so nested retries can stretch for
+# many minutes before the unsigned fallback).
+gpg_import_release_key() {
+    local key_file="${GNUPGHOME}/mise-release-key.asc"
+    curl_fetch -H 'Accept: application/pgp-keys' \
+        -o "$key_file" \
+        "${MISE_GPG_KEY_URL}/${MISE_GPG_KEY}"
+    gpg --batch --no-tty --import "$key_file"
+    rm -f "$key_file"
+    # The URL is not a guarantee: a TLS-intercepting proxy could serve a
+    # substitute key. Verify the imported fingerprint matches the pin before
+    # trusting any signature it makes.
+    gpg --batch --no-tty --with-colons --list-keys "0x${MISE_GPG_KEY}" \
+        | grep -q "^fpr:::::::::${MISE_GPG_KEY}:"
 }
 
 unsigned_install_or_fail() {
@@ -189,19 +186,7 @@ fi
 
 echo "mise not found -- installing ${MISE_VERSION}..."
 
-# gpg's keyserver + decrypt flow needs all three of gpg, gpg-agent, and
-# dirmngr. Slim container images (e.g. debian:*-slim with
-# --no-install-recommends) commonly ship only a subset, so require the full
-# set before taking the signed path instead of tripping over a partial
-# toolchain mid-run.
-have_gpg_toolchain=false
-if command -v gpg >/dev/null 2>&1 \
-    && command -v gpg-agent >/dev/null 2>&1 \
-    && command -v dirmngr >/dev/null 2>&1; then
-    have_gpg_toolchain=true
-fi
-
-if [[ "$have_gpg_toolchain" == true ]]; then
+if command -v gpg >/dev/null 2>&1; then
     echo "Verifying installer signature..."
 
     # Isolate verification in an ephemeral GNUPGHOME so we don't mutate the
@@ -216,19 +201,21 @@ if [[ "$have_gpg_toolchain" == true ]]; then
     tmp_prefix="${TMPDIR:-/tmp}/mise-install"
     gnupg_home="$(mktemp -d "${tmp_prefix}.gnupg.XXXXXXXX")"
     tmpscript="$(mktemp "${tmp_prefix}.sh.XXXXXXXX")"
-    trap 'gpgconf --homedir "$gnupg_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gnupg_home" "$tmpscript"' EXIT
+    tmpsig="$(mktemp "${tmp_prefix}.sig.XXXXXXXX")"
+    trap 'gpgconf --homedir "$gnupg_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gnupg_home" "$tmpscript" "$tmpsig"' EXIT
     chmod 700 "$gnupg_home"
     export GNUPGHOME="$gnupg_home"
 
-    if ! gpg_recv_key; then
-        unsigned_install_or_fail "gpg --recv-keys from ${KEYSERVER} failed after ${GPG_RECV_RETRIES} attempts"
-    elif ! curl_fetch "$MISE_SIG_URL" | gpg --batch --no-tty --decrypt >"$tmpscript"; then
+    if ! gpg_import_release_key; then
+        unsigned_install_or_fail "failed to fetch/import/verify mise release key from ${MISE_GPG_KEY_URL}"
+    elif ! curl_fetch -o "$tmpsig" "$MISE_SIG_URL" \
+        || ! gpg --batch --no-tty --decrypt "$tmpsig" >"$tmpscript"; then
         unsigned_install_or_fail "failed to fetch/verify ${MISE_SIG_URL}"
     else
         MISE_VERSION="$MISE_VERSION" sh "$tmpscript"
     fi
 else
-    unsigned_install_or_fail "full gpg toolchain (gpg + gpg-agent + dirmngr) not available"
+    unsigned_install_or_fail "gpg not available"
 fi
 
 # Make the freshly-installed binary discoverable to this script's own
