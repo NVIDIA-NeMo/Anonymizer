@@ -63,10 +63,15 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - uses: ./.github/actions/setup-python-env
+      - name: Checkout benchmark target
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.BENCHMARK_REF }}
           fetch-depth: "0"
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          checkout: "false"
           python-version: "3.11"
 
       - name: Resolve benchmark target commit
