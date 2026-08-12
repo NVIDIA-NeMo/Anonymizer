@@ -63,7 +63,7 @@ mise run deps:sync docs         # synchronize dev + docs dependencies
 mise run deps:sync notebooks    # synchronize dev + notebook dependencies
 mise run hooks:install          # reinstall repository hooks
 mise run check                  # read-only format, lint, type, lock, and SPDX checks
-mise run validate               # read-only checks plus unit tests
+mise run check ::: test         # read-only checks plus unit tests
 mise run test                   # unit tests
 mise run test:coverage          # unit tests with coverage report
 mise run docs:build             # strict docs build
@@ -87,7 +87,7 @@ Run the smallest useful check while iterating, then run the full relevant set be
 For most code changes, run the local pre-PR gate:
 
 ```bash
-mise run validate
+mise run check ::: test
 ```
 
 For changes that affect coverage-sensitive code:

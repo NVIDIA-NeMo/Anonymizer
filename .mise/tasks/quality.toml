@@ -36,7 +36,3 @@ run = "uv lock"
 [check]
 description = "Run the repository read-only quality checks."
 depends = ["check:format", "check:lint", "check:type", "check:lock", "check:license:headers"]
-
-[validate]
-description = "Run the read-only repository checks and unit tests required before opening a pull request."
-run = [{ task = "check" }, { task = "test" }]
