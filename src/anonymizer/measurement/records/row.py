@@ -33,6 +33,7 @@ from anonymizer.measurement.metrics.entities import (
 )
 from anonymizer.measurement.metrics.llm_calls import _validation_chunk_count, estimate_llm_calls_by_stage
 from anonymizer.measurement.metrics.replacements import (
+    _replacement_application_metrics,
     _replacement_collision_metrics,
     _replacement_coverage_metrics,
     _replacement_map_metrics,
@@ -246,7 +247,7 @@ def _replacement_record_fields(
     columns: set[str],
     final_entities: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    from anonymizer.engine.constants import COL_REPLACEMENT_MAP
+    from anonymizer.engine.constants import COL_REPLACEMENT_APPLICATION, COL_REPLACEMENT_MAP
 
     if COL_REPLACEMENT_MAP not in columns:
         return {}
@@ -255,6 +256,11 @@ def _replacement_record_fields(
         **_replacement_map_metrics(raw_map),
         **_replacement_coverage_metrics(raw_map, final_entities),
         **_replacement_collision_metrics(raw_map, final_entities),
+        **(
+            _replacement_application_metrics(row.get(COL_REPLACEMENT_APPLICATION))
+            if COL_REPLACEMENT_APPLICATION in columns
+            else {}
+        ),
     }
 
 

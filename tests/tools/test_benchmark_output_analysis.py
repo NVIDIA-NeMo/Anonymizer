@@ -53,10 +53,11 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(
     assert bio.entity_recall == pytest.approx(10 / 22)
     assert bio.replacement_missing_final_entity_label_counts == {"date": 2}
     assert bio.replacement_synthetic_original_collision_label_counts == {"date": 1}
-    assert bio.artifact_final_detector_entity_count == 11
-    assert bio.artifact_final_augmenter_entity_count == 3
-    assert bio.artifact_final_entity_signature_hashes == ["bio-hash-a", "bio-hash-b"]
-    assert bio.artifact_final_entity_signature_details["bio-hash-a"] == {
+    assert bio.artifact_detected_detector_entity_count == 11
+    assert bio.artifact_detected_augmenter_entity_count == 3
+    assert bio.artifact_detected_entity_signature_hashes == ["bio-hash-a", "bio-hash-b"]
+    assert bio.artifact_final_entity_count is None
+    assert bio.artifact_detected_entity_signature_details["bio-hash-a"] == {
         "label": "person",
         "source": "detector",
         "row_index": 0,
@@ -68,7 +69,7 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(
     shell = cases["shell__native-local__r000"]
     assert shell.experimental_replacement_strategy == "custom_replacement_strategy"
     assert shell.original_value_leak_count == 1
-    assert shell.artifact_final_entity_signature_details["shell-hash-a"]["source"] == "native"
+    assert shell.artifact_detected_entity_signature_details["shell-hash-a"]["source"] == "native"
 
     model_rows = {row.model_name: row for row in result.model_usage}
     assert model_rows["nvidia/gliner-pii"].observed_total_tokens == 1100
@@ -334,10 +335,10 @@ def test_analyze_benchmark_output_accepts_detection_artifact_override(
     default_result = tool.analyze_benchmark_output(benchmark_dir)
     override_result = tool.analyze_benchmark_output(benchmark_dir, detection_artifacts=refreshed_artifacts)
 
-    assert default_result.cases[0].artifact_final_entity_signature_hashes == ["stale-hash"]
+    assert default_result.cases[0].artifact_detected_entity_signature_hashes == ["stale-hash"]
     assert override_result.detection_artifacts_path == str(refreshed_artifacts)
-    assert override_result.cases[0].artifact_final_entity_signature_hashes == ["fresh-hash-a", "fresh-hash-b"]
-    assert override_result.cases[0].artifact_final_entity_signature_labels == {
+    assert override_result.cases[0].artifact_detected_entity_signature_hashes == ["fresh-hash-a", "fresh-hash-b"]
+    assert override_result.cases[0].artifact_detected_entity_signature_labels == {
         "fresh-hash-a": "person",
         "fresh-hash-b": "email",
     }
@@ -365,6 +366,21 @@ def test_analyze_benchmark_output_requires_detection_artifact_override_path(
 
     with pytest.raises(ValueError, match="input path does not exist"):
         tool.analyze_benchmark_output(benchmark_dir, detection_artifacts=tmp_path / "missing.jsonl")
+
+
+def test_group_rows_partition_measurement_schema_versions(load_tool: Callable[..., ModuleType]) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_schema_groups",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    cases = [
+        tool.CaseAnalysisRow(case_id="case-v1", run_id="case-v1", measurement_schema_version=1),
+        tool.CaseAnalysisRow(case_id="case-v2", run_id="case-v2", measurement_schema_version=2),
+    ]
+
+    groups = tool.build_group_rows(cases)
+
+    assert {group.measurement_schema_version for group in groups} == {1, 2}
 
 
 def test_write_analysis_tables_exports_case_and_group_tables(
@@ -687,8 +703,9 @@ def test_analyze_benchmark_output_groups_artifact_contribution_metrics(
     assert group.median_seed_entity_count == 11
     assert group.median_seed_validation_candidate_count == 11
     assert group.median_augmented_entity_count == 6
-    assert group.median_augmented_new_final_value_count == 2
-    assert group.median_artifact_final_entity_count == 13
-    assert group.median_artifact_final_detector_entity_count == 11
-    assert group.median_artifact_final_augmenter_entity_count == 2
-    assert group.median_artifact_final_entity_signature_count == 3
+    assert group.median_augmented_new_detected_value_count == 2
+    assert group.median_artifact_detected_entity_count == 13
+    assert group.median_artifact_detected_detector_entity_count == 11
+    assert group.median_artifact_detected_augmenter_entity_count == 2
+    assert group.median_artifact_detected_entity_signature_count == 3
+    assert group.median_artifact_final_entity_count is None

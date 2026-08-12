@@ -41,7 +41,11 @@ def _original_value_leak_record_fields(
 ) -> dict[str, Any]:
     output_column = _output_text_column(columns)
     if output_column is None:
-        return {"original_value_leak_count": None, "original_value_leak_label_counts": {}}
+        return {
+            "original_value_leak_unique_value_count": None,
+            "original_value_leak_source_entity_occurrence_count": None,
+            "original_value_leak_source_entity_occurrence_label_counts": {},
+        }
     output_text = str(row.get(output_column, ""))
     leaked = [
         entity
@@ -49,21 +53,19 @@ def _original_value_leak_record_fields(
         if entity.get("value") and _output_contains_original_value(output_text, str(entity.get("value")))
     ]
     return {
-        "original_value_leak_count": len(leaked),
-        "original_value_leak_label_counts": dict(
+        # v2 names make the two cardinalities explicit. Label counts are source
+        # occurrence counts, so repeated spans remain visible.
+        "original_value_leak_unique_value_count": len({str(entity["value"]) for entity in leaked}),
+        "original_value_leak_source_entity_occurrence_count": len(leaked),
+        "original_value_leak_source_entity_occurrence_label_counts": dict(
             sorted(Counter(str(entity.get("label") or "") for entity in leaked if entity.get("label")).items())
         ),
     }
 
 
 def _output_contains_original_value(output_text: str, value: str) -> bool:
-    if _needs_boundary_sensitive_leak_match(value):
-        return _contains_with_alnum_boundaries(output_text, value)
-    return value in output_text
-
-
-def _needs_boundary_sensitive_leak_match(value: str) -> bool:
-    return len(value) <= 4 or value.isdigit()
+    """Find a literal value only as a standalone Unicode-alphanumeric token."""
+    return _contains_with_alnum_boundaries(output_text, value)
 
 
 def _contains_with_alnum_boundaries(output_text: str, value: str) -> bool:

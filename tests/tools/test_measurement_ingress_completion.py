@@ -173,6 +173,63 @@ def test_wandb_snapshot_uses_one_descriptor_and_enforces_limits(
         wandb_ingress_tool.read_measurement_snapshot(path, max_records=0)
 
 
+def test_wandb_snapshot_rejects_mixed_measurement_schema_versions(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    first = _strict_record_payload()
+    second = {**first, "schema_version": 2}
+    path.write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="mixed measurement schema versions"):
+        wandb_ingress_tool.read_measurement_snapshot(path)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _strict_record_payload(schema_version=1, replacement_map_entry_count=1),
+        _strict_record_payload(schema_version=2, replacement_count=1),
+    ],
+)
+def test_wandb_snapshot_rejects_metric_fields_from_another_schema(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    payload: dict[str, Any],
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema violation"):
+        wandb_ingress_tool.read_measurement_snapshot(path)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _strict_record_payload(schema_version=1, replacement_count=1, original_value_leak_count=0),
+        _strict_record_payload(
+            schema_version=2,
+            replacement_map_entry_count=1,
+            replacement_applied_span_count=2,
+            original_value_leak_unique_value_count=0,
+        ),
+    ],
+)
+def test_wandb_snapshot_accepts_metrics_for_matching_schema(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    payload: dict[str, Any],
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    snapshot = wandb_ingress_tool.read_measurement_snapshot(path)
+
+    assert snapshot.records[0].schema_version == payload["schema_version"]
+
+
 def test_wandb_snapshot_rejects_symlink_and_special_file(
     tmp_path: Path,
     wandb_ingress_tool: ModuleType,

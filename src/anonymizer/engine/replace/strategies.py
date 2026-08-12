@@ -11,7 +11,13 @@ from dataclasses import dataclass
 import pandas as pd
 
 from anonymizer.config.replace_strategies import LocalReplaceMethod
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
+from anonymizer.engine.constants import (
+    COL_FINAL_ENTITIES,
+    COL_REPLACED_TEXT,
+    COL_REPLACEMENT_APPLICATION,
+    COL_REPLACEMENT_MAP,
+    COL_TEXT,
+)
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.logging import ProgressTracker
 
@@ -23,6 +29,24 @@ class ReplacementEntry:
     original: str
     label: str
     synthetic: str
+
+
+@dataclass(frozen=True)
+class ReplacementApplication:
+    """Sanitized facts about an offset replacement attempt."""
+
+    targeted_span_count: int
+    applied_span_count: int
+    skipped_span_count: int
+    skipped_span_label_counts: dict[str, int]
+
+    def to_metrics(self) -> dict[str, int | dict[str, int]]:
+        return {
+            "targeted_span_count": self.targeted_span_count,
+            "applied_span_count": self.applied_span_count,
+            "skipped_span_count": self.skipped_span_count,
+            "skipped_span_label_counts": self.skipped_span_label_counts,
+        }
 
 
 def apply_local_replace_strategy(
@@ -62,15 +86,18 @@ def apply_local_replace_strategy(
         logger.debug("replacement stats: %d unique entities replaced (%s)", total, summary)
 
     replaced_texts = []
+    applications = []
     for _, row in output_df.iterrows():
-        replaced_texts.append(
-            _apply_replacement_map_to_text(
-                text=str(row.get(text_column, "")),
-                entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
-                replacements=_parse_replacements(row[COL_REPLACEMENT_MAP]),
-            )
+        replaced_text, application = apply_replacements_to_spans(
+            text=str(row.get(text_column, "")),
+            entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
+            replacements=_parse_replacements(row[COL_REPLACEMENT_MAP]),
+            allow_value_fallback=True,
         )
+        replaced_texts.append(replaced_text)
+        applications.append(application.to_metrics())
     output_df[COL_REPLACED_TEXT] = replaced_texts
+    output_df[COL_REPLACEMENT_APPLICATION] = applications
 
     tracker.log_final()
     return output_df
@@ -85,14 +112,19 @@ def apply_replacement_map(
 ) -> pd.DataFrame:
     """Apply pre-generated replacement map to text."""
     output_df = dataframe.copy()
-    output_df[COL_REPLACED_TEXT] = output_df.apply(
-        lambda row: _apply_replacement_map_to_text(
+    replaced_texts = []
+    applications = []
+    for _, row in output_df.iterrows():
+        replaced_text, application = apply_replacements_to_spans(
             text=str(row.get(text_column, "")),
             entities=EntitiesSchema.from_raw(row.get(entities_column, {})),
             replacements=_parse_replacements(row.get(replacement_map_column, {"replacements": []})),
-        ),
-        axis=1,
-    )
+            allow_value_fallback=True,
+        )
+        replaced_texts.append(replaced_text)
+        applications.append(application.to_metrics())
+    output_df[COL_REPLACED_TEXT] = replaced_texts
+    output_df[COL_REPLACEMENT_APPLICATION] = applications
     return output_df
 
 
@@ -116,36 +148,117 @@ def _build_local_replacement_map(
 
 
 def _apply_replacement_map_to_text(text: str, entities: EntitiesSchema, replacements: list[ReplacementEntry]) -> str:
-    if not entities.entities or not replacements:
-        return text
+    """Compatibility wrapper around the canonical offset replacement primitive."""
+    return apply_replacements_to_spans(text, entities, replacements, allow_value_fallback=True)[0]
 
-    by_value_label: dict[tuple[str, str], str] = {}
-    by_value: dict[str, str] = {}
-    for replacement in replacements:
-        by_value_label[(replacement.original, replacement.label)] = replacement.synthetic
-        by_value[replacement.original] = replacement.synthetic
+
+def apply_replacements_to_spans(
+    text: str,
+    entities: EntitiesSchema,
+    replacements: list[ReplacementEntry],
+    *,
+    allow_value_fallback: bool,
+) -> tuple[str, ReplacementApplication]:
+    """Apply replacements once per admitted source span, without cascade matching.
+
+    Every admitted span must be in range, non-overlapping, and exactly match the
+    entity value.  Tuple matches are label-aware.  The legacy value-only fallback
+    is available only when the value has one unambiguous synthetic value.
+    """
+    targeted = len(entities.entities)
+    if not entities.entities:
+        return text, ReplacementApplication(0, 0, 0, {})
+
+    by_value_label, by_value = _index_replacements(replacements)
 
     spans = sorted(
         ((entity.start_position, entity.end_position, entity.value, entity.label) for entity in entities.entities),
         key=lambda item: item[0],
     )
+    replaced, applied, skipped = _apply_indexed_replacements(
+        text,
+        spans,
+        by_value_label=by_value_label,
+        by_value=by_value,
+        allow_value_fallback=allow_value_fallback,
+    )
+    return replaced, ReplacementApplication(
+        targeted_span_count=targeted,
+        applied_span_count=applied,
+        skipped_span_count=sum(skipped.values()),
+        skipped_span_label_counts=dict(sorted(skipped.items())),
+    )
+
+
+def _apply_indexed_replacements(
+    text: str,
+    spans: list[tuple[int, int, str, str]],
+    *,
+    by_value_label: dict[tuple[str, str], set[str]],
+    by_value: dict[str, set[str]],
+    allow_value_fallback: bool,
+) -> tuple[str, int, Counter[str]]:
 
     parts: list[str] = []
     cursor = 0
+    applied = 0
+    skipped: Counter[str] = Counter()
     for start, end, value, label in spans:
-        if start < cursor or end <= start or end > len(text):
+        if start < cursor or end <= start or end > len(text) or text[start:end] != value:
+            skipped[label or "unknown"] += 1
+            continue
+        synthetic = _resolve_synthetic(
+            value,
+            label,
+            by_value_label=by_value_label,
+            by_value=by_value,
+            allow_value_fallback=allow_value_fallback,
+        )
+        if synthetic is None:
+            skipped[label or "unknown"] += 1
             continue
         parts.append(text[cursor:start])
-        synthetic = by_value_label.get((value, label), by_value.get(value, text[start:end]))
         parts.append(synthetic)
         cursor = end
+        applied += 1
     parts.append(text[cursor:])
-    return "".join(parts)
+    return "".join(parts), applied, skipped
+
+
+def _index_replacements(
+    replacements: list[ReplacementEntry],
+) -> tuple[dict[tuple[str, str], set[str]], dict[str, set[str]]]:
+    by_value_label: dict[tuple[str, str], set[str]] = {}
+    by_value: dict[str, set[str]] = {}
+    for replacement in replacements:
+        by_value_label.setdefault((replacement.original, replacement.label), set()).add(replacement.synthetic)
+        by_value.setdefault(replacement.original, set()).add(replacement.synthetic)
+    return by_value_label, by_value
+
+
+def _resolve_synthetic(
+    value: str,
+    label: str,
+    *,
+    by_value_label: dict[tuple[str, str], set[str]],
+    by_value: dict[str, set[str]],
+    allow_value_fallback: bool,
+) -> str | None:
+    tuple_synthetics = by_value_label.get((value, label), set())
+    if len(tuple_synthetics) == 1:
+        return next(iter(tuple_synthetics))
+    value_synthetics = by_value.get(value, set())
+    if allow_value_fallback and len(value_synthetics) == 1:
+        return next(iter(value_synthetics))
+    return None
 
 
 def _parse_replacements(raw: str | dict | object) -> list[ReplacementEntry]:
     """Parse raw replacement map (JSON string or dict) into typed entries."""
     parsed = raw
+    model_dump = getattr(raw, "model_dump", None)
+    if callable(model_dump):
+        parsed = model_dump(mode="python")
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)

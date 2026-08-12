@@ -92,6 +92,8 @@ _RECORD_PRIVACY_METRICS = metric_paths(
     "entity_precision_mean",
     "entity_recall_mean",
     "entity_f1_mean",
+    "original_value_leak_unique_value_count",
+    "original_value_leak_source_entity_occurrence_count",
     "original_value_leak_count",
     "leakage_mass_mean",
     "weighted_leakage_rate_mean",
@@ -107,6 +109,10 @@ _REWRITE_UTILITY_METRICS = metric_paths(
 _REPLACEMENT_QUALITY_METRICS = metric_paths(
     "measurement/record",
     "replacement_count",
+    "replacement_map_entry_count",
+    "replacement_targeted_span_count",
+    "replacement_applied_span_count",
+    "replacement_skipped_span_count",
     "replacement_duplicate_value_count",
     "replacement_missing_final_entity_count",
     "replacement_missing_final_value_count",
@@ -687,7 +693,9 @@ def build_report_markdown(view: WandbRunView) -> str:
 | Case success rate | {_number_metric(summary, "benchmark/case_success_rate")} |
 | Mean case elapsed seconds | {_number_metric(summary, "benchmark/case_elapsed_sec_mean")} |
 | Final entities | {_int_metric(summary, "measurement/record/final_entity_count")} |
-| Original value leaks | {_int_metric(summary, "measurement/record/original_value_leak_count")} |
+| Leaked original values (unique, schema v2) | {_int_metric(summary, "measurement/record/original_value_leak_unique_value_count")} |
+| Source entities associated with leaks (schema v2) | {_int_metric(summary, "measurement/record/original_value_leak_source_entity_occurrence_count")} |
+| Original value leaks (legacy schema v1) | {_int_metric(summary, "measurement/record/original_value_leak_count")} |
 | Model requests | {_int_metric(summary, "measurement/ndd_workflow/observed_total_requests")} |
 | Failed model requests | {_int_metric(summary, "measurement/ndd_workflow/observed_failed_requests")} |
 | Total model tokens | {_int_metric(summary, "measurement/ndd_workflow/observed_total_tokens")} |

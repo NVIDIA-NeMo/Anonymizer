@@ -10,6 +10,8 @@ from types import ModuleType
 
 import pandas as pd
 
+from anonymizer.engine.constants import COL_FINAL_ENTITIES
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -64,6 +66,7 @@ def test_detection_artifact_analysis_reports_augmentation_contribution(
                         ]
                     }
                 ),
+                COL_FINAL_ENTITIES: json.dumps({"entities": [_entity("Alice", "first_name", 0, 5)]}),
                 "_validation_candidates": json.dumps(
                     {
                         "candidates": [
@@ -86,17 +89,21 @@ def test_detection_artifact_analysis_reports_augmentation_contribution(
     assert row.augmented_entity_count == 2
     assert row.augmented_duplicate_seed_value_count == 1
     assert row.augmented_new_value_count == 1
-    assert row.augmented_new_final_value_count == 1
-    assert row.final_entity_count == 2
+    assert row.augmented_new_detected_value_count == 1
+    assert row.augmented_new_final_value_count == 0
+    assert row.detected_entity_count == 2
+    assert row.final_entity_count == 1
     assert row.weak_api_key_shape_count == 1
     assert row.weak_api_key_shape_label_counts == {"api_key": 1}
-    assert row.final_entity_signature_count == 2
-    assert len(row.final_entity_signature_hashes) == 2
-    assert set(row.final_entity_signature_labels) == set(row.final_entity_signature_hashes)
-    assert sorted(row.final_entity_signature_labels.values()) == ["api_key", "first_name"]
-    assert set(row.final_entity_signature_details) == set(row.final_entity_signature_hashes)
+    assert row.detected_entity_signature_count == 2
+    assert len(row.detected_entity_signature_hashes) == 2
+    assert set(row.detected_entity_signature_labels) == set(row.detected_entity_signature_hashes)
+    assert sorted(row.detected_entity_signature_labels.values()) == ["api_key", "first_name"]
+    assert row.final_entity_signature_count == 1
+    assert list(row.final_entity_signature_labels.values()) == ["first_name"]
+    assert set(row.detected_entity_signature_details) == set(row.detected_entity_signature_hashes)
     first_name_detail = next(
-        detail for detail in row.final_entity_signature_details.values() if detail["label"] == "first_name"
+        detail for detail in row.detected_entity_signature_details.values() if detail["label"] == "first_name"
     )
     assert first_name_detail["source"] == "detector"
     assert first_name_detail["row_index"] == 0
@@ -143,9 +150,12 @@ def test_detection_artifact_analysis_handles_no_augment_rows(
     assert row.merged_validation_candidate_count == 0
     assert row.augmented_entity_count == 0
     assert row.augmented_new_value_count == 0
-    assert row.augmented_new_final_value_count == 0
-    assert row.final_entity_count == 1
-    assert row.final_source_counts == {"detector": 1}
-    assert row.final_entity_signature_count == 1
-    assert row.final_entity_signature_hashes == sorted(row.final_entity_signature_hashes)
-    assert list(row.final_entity_signature_labels.values()) == ["city"]
+    assert row.augmented_new_detected_value_count == 0
+    assert row.augmented_new_final_value_count is None
+    assert row.detected_entity_count == 1
+    assert row.final_entity_count is None
+    assert row.detected_source_counts == {"detector": 1}
+    assert row.detected_entity_signature_count == 1
+    assert row.detected_entity_signature_hashes == sorted(row.detected_entity_signature_hashes)
+    assert list(row.detected_entity_signature_labels.values()) == ["city"]
+    assert row.final_entity_signature_count is None

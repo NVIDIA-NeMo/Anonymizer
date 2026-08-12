@@ -13,21 +13,34 @@ from data_designer.config.column_types import ColumnConfigT
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_FINAL_ENTITIES,
     COL_FULL_REWRITE,
+    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
+    COL_REWRITE_BASELINE_TEXT,
     COL_REWRITE_DISPOSITION_BLOCK,
+    COL_REWRITE_REPLACEMENT_READY,
+    COL_REWRITE_TAGGED_TEXT,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
+    COL_TEXT,
     _jinja,
 )
+from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
+from anonymizer.engine.replace.strategies import (
+    ReplacementEntry,
+    _parse_replacements,
+    apply_replacements_to_spans,
+)
+from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
-    EntityReplacementMapSchema,
+    EntitiesSchema,
+    EntitySchema,
     RewriteOutputSchema,
 )
 
@@ -113,7 +126,7 @@ Rules:
             "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
             "<<DATA_CONTEXT>>": data_context_section,
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
-            "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+            "<<TAGGED_TEXT>>": _jinja(COL_REWRITE_TAGGED_TEXT),
             "<<REWRITE_DISPOSITION_BLOCK>>": COL_REWRITE_DISPOSITION_BLOCK,
             "<<REPLACEMENT_MAP_COL>>": COL_REPLACEMENT_MAP_FOR_PROMPT,
             "<<REPLACEMENT_MAP>>": _jinja(COL_REPLACEMENT_MAP_FOR_PROMPT),
@@ -152,29 +165,114 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
 def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
     """Keep only replacement entries for entities with protection_method_suggestion='replace'."""
     disposition_block: list[dict] = row.get(COL_REWRITE_DISPOSITION_BLOCK, [])
-    replace_values = {
-        e["entity_value"] for e in disposition_block if e.get("protection_method_suggestion") == "replace"
+    replace_pairs = {
+        (str(e.get("entity_value", "")), str(e.get("entity_label", "")))
+        for e in disposition_block
+        if e.get("protection_method_suggestion") == "replace"
     }
     raw_map = row.get(COL_REPLACEMENT_MAP)
     if raw_map is None:
-        if replace_values:
+        if replace_pairs:
             logger.warning(
                 "COL_REPLACEMENT_MAP is None but entities require replacement; prompt will have no replacements."
             )
         row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": []}
         return row
-    raw_map = normalize_payload(raw_map)
-    if hasattr(raw_map, "model_dump"):
-        raw_map = raw_map.model_dump(mode="python")
-    parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
     filtered = [
-        replacement.model_dump() for replacement in parsed_map.replacements if replacement.original in replace_values
+        {"original": replacement.original, "label": replacement.label, "synthetic": replacement.synthetic}
+        for replacement in _parse_replacements(raw_map)
+        if (replacement.original, replacement.label) in replace_pairs
     ]
     row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": filtered}
     return row
 
 
-@custom_column_generator(required_columns=[COL_FULL_REWRITE])
+@custom_column_generator(
+    required_columns=[
+        COL_TEXT,
+        COL_FINAL_ENTITIES,
+        COL_REPLACEMENT_MAP,
+        COL_REWRITE_DISPOSITION_BLOCK,
+        COL_TAG_NOTATION,
+    ]
+)
+def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
+    """Apply strict, label-aware replacements before the LLM sees rewrite input."""
+    entities = EntitiesSchema.from_raw(row.get(COL_FINAL_ENTITIES, {}))
+    replace_pairs = _replace_pairs(row.get(COL_REWRITE_DISPOSITION_BLOCK, []))
+    target_entities = EntitiesSchema(entities=[e for e in entities.entities if (e.value, e.label) in replace_pairs])
+    replacements = _parse_replacements(row.get(COL_REPLACEMENT_MAP))
+    baseline, application = apply_replacements_to_spans(
+        str(row.get(COL_TEXT, "")), target_entities, replacements, allow_value_fallback=False
+    )
+    row[COL_REPLACEMENT_APPLICATION] = application.to_metrics()
+    admitted_pairs = {(entity.value, entity.label) for entity in target_entities.entities}
+    row[COL_REWRITE_REPLACEMENT_READY] = (
+        replace_pairs <= admitted_pairs and application.applied_span_count == application.targeted_span_count
+    )
+    if not row[COL_REWRITE_REPLACEMENT_READY]:
+        # Keep the original tags for a diagnostic-safe unavailable result; extraction
+        # below prevents this row from being accepted as a successful rewrite.
+        row[COL_REWRITE_TAGGED_TEXT] = row.get(COL_TAGGED_TEXT, "")
+        row[COL_REWRITE_BASELINE_TEXT] = None
+        return row
+    row[COL_REWRITE_BASELINE_TEXT] = baseline
+    row[COL_REWRITE_TAGGED_TEXT] = build_tagged_text(
+        baseline,
+        _shift_entities(entities, replace_pairs=replace_pairs, replacements=replacements),
+        notation=str(row.get(COL_TAG_NOTATION, "bracket")),
+    )
+    return row
+
+
+def _replace_pairs(disposition_block: object) -> set[tuple[str, str]]:
+    if not isinstance(disposition_block, list):
+        return set()
+    return {
+        (str(item.get("entity_value", "")), str(item.get("entity_label", "")))
+        for item in disposition_block
+        if isinstance(item, dict) and item.get("protection_method_suggestion") == "replace"
+    }
+
+
+def _shift_entities(
+    entities: EntitiesSchema,
+    *,
+    replace_pairs: set[tuple[str, str]],
+    replacements: list[ReplacementEntry],
+) -> list[EntitySpan]:
+    replacement_by_pair = _unique_replacements(replacements)
+    shifted_entities = []
+    delta = 0
+    for entity in sorted(entities.entities, key=lambda item: item.start_position):
+        synthetic = replacement_by_pair.get((entity.value, entity.label))
+        value = synthetic if (entity.value, entity.label) in replace_pairs and synthetic is not None else entity.value
+        start = entity.start_position + delta
+        shifted_entities.append(_shifted_entity(entity, value=value, start=start))
+        delta += len(value) - (entity.end_position - entity.start_position)
+    return shifted_entities
+
+
+def _shifted_entity(entity: EntitySchema, *, value: str, start: int) -> EntitySpan:
+    return EntitySpan(
+        entity_id=entity.id,
+        value=value,
+        label=entity.label,
+        start_position=start,
+        end_position=start + len(value),
+        score=entity.score,
+        source=entity.source,
+    )
+
+
+def _unique_replacements(replacements: list[ReplacementEntry]) -> dict[tuple[str, str], str]:
+    grouped: dict[tuple[str, str], set[str]] = {}
+    for replacement in replacements:
+        grouped.setdefault((replacement.original, replacement.label), set()).add(replacement.synthetic)
+    return {key: next(iter(values)) for key, values in grouped.items() if len(values) == 1}
+
+
+@custom_column_generator(required_columns=[COL_FULL_REWRITE, COL_REWRITE_REPLACEMENT_READY])
 def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
     """Extract rewritten_text from the LLM structured output.
 
@@ -182,6 +280,10 @@ def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
     downstream steps (repair, judge, human-review flagging) can distinguish
     a failed rewrite from a valid one.
     """
+    if not row.get(COL_REWRITE_REPLACEMENT_READY, True):
+        logger.warning("Required rewrite replacement was unavailable; marking rewritten text unavailable.")
+        row[COL_REWRITTEN_TEXT] = None
+        return row
     try:
         full_rewrite = row[COL_FULL_REWRITE]
         if hasattr(full_rewrite, "model_dump"):
@@ -228,6 +330,10 @@ class RewriteGenerationWorkflow:
             CustomColumnConfig(
                 name=COL_REPLACEMENT_MAP_FOR_PROMPT,
                 generator_function=_filter_replacement_map_for_prompt,
+            ),
+            CustomColumnConfig(
+                name=COL_REWRITE_TAGGED_TEXT,
+                generator_function=_prepare_rewrite_tagged_text,
             ),
             LLMStructuredColumnConfig(
                 name=COL_FULL_REWRITE,
