@@ -160,10 +160,17 @@ class TestEnvHelpers:
         assert _telemetry_endpoint() == custom
 
     def test_deployment_type_default_is_sdk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ANONYMIZER_USAGE_TYPE", raising=False)
         monkeypatch.delenv("NEMO_DEPLOYMENT_TYPE", raising=False)
         assert _deployment_type() == DeploymentTypeEnum.SDK
 
+    def test_deployment_type_reads_anonymizer_usage_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NEMO_DEPLOYMENT_TYPE", raising=False)
+        monkeypatch.setenv("ANONYMIZER_USAGE_TYPE", "cli")
+        assert _deployment_type() == DeploymentTypeEnum.CLI
+
     def test_deployment_type_accepts_nvidia_internal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANONYMIZER_USAGE_TYPE", "cli")
         monkeypatch.setenv("NEMO_DEPLOYMENT_TYPE", "nvidia-internal")
         assert _deployment_type() == DeploymentTypeEnum.NVIDIA_INTERNAL
 

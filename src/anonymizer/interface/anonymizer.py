@@ -183,7 +183,7 @@ class Anonymizer:
         # Tag DataDesigner telemetry events so they're filterable as anonymizer traffic in
         # the shared NeMo dashboards. `setdefault` so users (or upstream hosts) can override.
         os.environ.setdefault("NEMO_SESSION_PREFIX", "anonymizer-")
-        os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "sdk")
+        os.environ.setdefault("ANONYMIZER_USAGE_TYPE", "sdk")
         resolved_artifact_path = Path(artifact_path or ".anonymizer-artifacts")
         try:
             parsed = parse_model_configs(model_configs)
