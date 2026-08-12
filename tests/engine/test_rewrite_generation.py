@@ -372,7 +372,7 @@ def test_apply_direct_replacements_all_replace_spans_transformed() -> None:
 
 
 def test_apply_direct_replacements_no_cascade_when_synthetic_matches_another_original() -> None:
-    """Single-pass regex prevents Alice→Bob→Carlos cascade."""
+    """Single-pass regex prevents Alice→Bob→Carlos cascade in plain text."""
     disposition = {
         "sensitivity_disposition": [
             {
@@ -409,10 +409,12 @@ def test_apply_direct_replacements_no_cascade_when_synthetic_matches_another_ori
         COL_SENSITIVITY_DISPOSITION: disposition,
         COL_REPLACEMENT_MAP: replacement_map,
         COL_TEXT: "Alice and Bob met.",
-        COL_TAGGED_TEXT: "Alice and Bob met.",
+        COL_TAGGED_TEXT: "<first_name>Alice</first_name> and <first_name>Bob</first_name> met.",
+        COL_TAG_NOTATION: "xml",
     }
     result = _apply_direct_replacements(row)
     assert result[COL_PREREPLACE_TEXT] == "Bob and Carlos met."
+    assert result[COL_PREREPLACE_TAGGED_TEXT] == "<first_name>Bob</first_name> and <first_name>Carlos</first_name> met."
 
 
 # ---------------------------------------------------------------------------

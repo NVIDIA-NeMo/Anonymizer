@@ -202,41 +202,31 @@ def _get_replace_pairs(row: dict[str, Any]) -> tuple[list[tuple[str, str, str]],
 def _apply_tagged_text_replacements(
     tagged_text: str, pairs: list[tuple[str, str, str]], tag_notation: str
 ) -> str:
-    """Replace entity values in tagged text using tag-boundary-aware matching.
+    """Replace entity values in tagged text using a single-pass, tag-boundary-aware substitution.
 
-    Matches each entity value only when it appears as the text content of its
-    corresponding tag wrapper, preventing substring corruption (e.g. 'Ann' inside
-    'Anna' is safe because the tagged form '<first_name>Ann</first_name>' is bounded
-    by tag delimiters that 'Anna' does not share).
+    Builds a lookup from full tagged span → replacement tagged span, then applies all
+    substitutions in one regex pass so a synthetic value that matches another entity's
+    original is never re-replaced (same cascade-prevention guarantee as the plain-text path).
     """
+    if not pairs:
+        return tagged_text
+    lookup: dict[str, str] = {}
     for original, synthetic, label in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
-        esc_o = re.escape(original)
-        esc_l = re.escape(label)
         if tag_notation == "xml":
-            tagged_text = re.sub(
-                r"(<" + esc_l + r">)" + esc_o + r"(</" + esc_l + r">)",
-                lambda m, s=synthetic: m.group(1) + s + m.group(2),
-                tagged_text,
-            )
+            tagged_original = f"<{label}>{original}</{label}>"
+            tagged_synthetic = f"<{label}>{synthetic}</{label}>"
         elif tag_notation == "bracket":
-            tagged_text = re.sub(
-                r"\[\[" + esc_o + r"\|" + esc_l + r"\]\]",
-                lambda m, s=synthetic, l=label: "[[" + s + "|" + l + "]]",
-                tagged_text,
-            )
+            tagged_original = f"[[{original}|{label}]]"
+            tagged_synthetic = f"[[{synthetic}|{label}]]"
         elif tag_notation == "paren":
-            tagged_text = re.sub(
-                r"\(\(SENSITIVE:" + esc_l + r"\|" + esc_o + r"\)\)",
-                lambda m, s=synthetic, l=label: "((SENSITIVE:" + l + "|" + s + "))",
-                tagged_text,
-            )
+            tagged_original = f"((SENSITIVE:{label}|{original}))"
+            tagged_synthetic = f"((SENSITIVE:{label}|{synthetic}))"
         else:  # sentinel
-            tagged_text = re.sub(
-                r"(<<SENSITIVE:" + esc_l + r">>)" + esc_o + r"(<</SENSITIVE:" + esc_l + r">>)",
-                lambda m, s=synthetic: m.group(1) + s + m.group(2),
-                tagged_text,
-            )
-    return tagged_text
+            tagged_original = f"<<SENSITIVE:{label}>>{original}<</SENSITIVE:{label}>>"
+            tagged_synthetic = f"<<SENSITIVE:{label}>>{synthetic}<</SENSITIVE:{label}>>"
+        lookup[tagged_original] = tagged_synthetic
+    pattern = re.compile("|".join(re.escape(k) for k in lookup))
+    return pattern.sub(lambda m: lookup[m.group(0)], tagged_text)
 
 
 @custom_column_generator(
