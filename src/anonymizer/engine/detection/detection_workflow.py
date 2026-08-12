@@ -503,7 +503,8 @@ def _materialize_final_entities(
     kept = [
         e
         for e in parsed.entities
-        if (allowed is None or e.label.casefold() in allowed) and e.label.casefold() not in denied
+        if (allowed is None or e.label.strip().casefold() in allowed)
+        and e.label.strip().casefold() not in denied
     ]
     return EntitiesSchema(entities=kept).model_dump()
 
