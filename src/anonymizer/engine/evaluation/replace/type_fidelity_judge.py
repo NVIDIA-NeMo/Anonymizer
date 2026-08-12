@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -234,7 +234,7 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
     """
     if raw_map is None:
         return []
-    if hasattr(raw_map, "model_dump"):
+    if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
     if isinstance(raw_map, str):
         try:
@@ -298,4 +298,5 @@ class TypeFidelityJudgeWorkflow(_BaseJudgeWorkflow):
 
     @classmethod
     def _extract_invalid(cls, parsed: BaseModel) -> list[dict[str, object]]:
+        parsed = cast(TypeFidelityJudgmentSchema, parsed)
         return [entry.model_dump() for entry in parsed.invalid_replacements]

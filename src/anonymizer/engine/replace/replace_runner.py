@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import cast
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -22,6 +23,8 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
+from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
@@ -72,7 +75,7 @@ class ReplacementWorkflow:
         """Apply the replacement strategy (no LLM judges).
 
         Evaluation is a separate concern — call ``evaluate()`` on the resulting
-        dataframe when you want the LLM alignment scores.
+        dataframe when you want the Judge Agreement scores.
         """
         strategy = type(replace_method).__name__
         with stage_timer(
@@ -115,12 +118,16 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
+        entity_labels: list[str] | None = None,
+        compute_detection_validity: bool = False,
+        data_summary: str | None = None,
     ) -> ReplacementResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.
 
-        For Substitute, runs all 4 judges (detection + type fidelity + relational
-        consistency + attribute fidelity) as columns of a single DataDesigner
-        workflow. For other strategies, runs the detection judge only.
+        Entity coverage always runs for every replace strategy. Substitute also
+        runs type fidelity, relational consistency, and attribute fidelity.
+        Detection validity runs only when ``compute_detection_validity=True``.
+        All active judges are submitted as columns of one DataDesigner workflow.
 
         Raises ``ValueError`` if the workflow has no adapter wired up or if the
         dataframe is missing the columns the judges read.
@@ -141,10 +148,17 @@ class ReplacementWorkflow:
                 f"missing: {sorted(missing)}. Pass the trace_dataframe from a "
                 f"previous preview()/run() call."
             )
+        entity_coverage_judge = EntityCoverageWorkflow(
+            adapter=self._adapter,  # type: ignore[arg-type]
+            entity_labels=entity_labels,
+            data_summary=data_summary,
+        )
         failed_records: list[FailedRecord] = []
         judged_df = self._run_merged_judges(
             dataframe,
             is_substitute=is_substitute,
+            entity_coverage_judge=entity_coverage_judge,
+            compute_detection_validity=compute_detection_validity,
             model_configs=model_configs,
             selected_models=selected_models,
             preview_num_records=preview_num_records,
@@ -161,6 +175,8 @@ class ReplacementWorkflow:
         dataframe: pd.DataFrame,
         *,
         is_substitute: bool,
+        entity_coverage_judge: EntityCoverageWorkflow,
+        compute_detection_validity: bool,
         model_configs: list[ModelConfig],
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None,
@@ -173,7 +189,9 @@ class ReplacementWorkflow:
         + apply passthrough defaults). The adapter sees one workflow with N
         columns and lets DD schedule them in parallel.
         """
-        active = [j for j in [self._detection_judge] if j is not None]
+        active: list[_BaseJudgeWorkflow] = [entity_coverage_judge]
+        if compute_detection_validity and self._detection_judge is not None:
+            active.append(self._detection_judge)
         if is_substitute:
             active.extend(
                 j
@@ -195,10 +213,11 @@ class ReplacementWorkflow:
         # these itself; doing it here lets us treat evaluation as non-critical:
         # rows the LLM drops still appear in the result with "Unavailable"
         # verdicts instead of disappearing from a previously successful run.
-        prepared = self._adapter._attach_record_ids(prepared)  # type: ignore[union-attr]
+        adapter = cast(NddAdapter, self._adapter)
+        prepared = adapter._attach_record_ids(prepared)
 
         try:
-            run_result = self._adapter.run_workflow(  # type: ignore[union-attr]
+            run_result = adapter.run_workflow(
                 prepared,
                 model_configs=model_configs,
                 columns=[judge.column_config(selected_models) for judge in active],
@@ -220,7 +239,7 @@ class ReplacementWorkflow:
             else:
                 judged_df = prepared
         except Exception:
-            logger.warning("Replace judges workflow failed; populating defaults for all judges", exc_info=True)
+            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.", exc_info=True)
             judged_df = prepared
 
         for judge in active:

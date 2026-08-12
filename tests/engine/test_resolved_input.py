@@ -40,7 +40,7 @@ def test_is_frozen() -> None:
         resolved_text_column="bio",
     )
     with pytest.raises(FrozenInstanceError):
-        resolved.resolved_text_column = "other"  # type: ignore[misc]
+        resolved.resolved_text_column = "other"  # ty: ignore[invalid-assignment]
 
 
 def test_with_dataframe_swaps_frame_keeps_metadata() -> None:

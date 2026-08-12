@@ -174,5 +174,6 @@ nav:
   - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md
+      - "After Anonymization — Part I: Evaluating Replace Mode": devnotes/posts/evaluation-anonymizer-replace.md
       - "Introducing NeMo Anonymizer": devnotes/posts/anonymizer-intro.md
       - "Running NeMo Anonymizer Fully Self-Hosted on One B300": devnotes/posts/self-hosted-anonymizer-b300.md

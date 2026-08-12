@@ -19,15 +19,16 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Protocol, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
 
 from anonymizer.config.models import EvaluateModelSelection
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
 
@@ -40,6 +41,27 @@ class JudgeResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+
+
+class _JudgeRunResult(Protocol):
+    @property
+    def dataframe(self) -> pd.DataFrame: ...
+
+    @property
+    def failed_records(self) -> list[FailedRecord]: ...
+
+
+class _JudgeAdapter(Protocol):
+    def run_workflow(
+        self,
+        dataframe: pd.DataFrame,
+        /,
+        *,
+        model_configs: list[ModelConfig],
+        columns: list[ColumnConfigT],
+        workflow_name: str,
+        preview_num_records: int | None = None,
+    ) -> _JudgeRunResult: ...
 
 
 class _BaseJudgeWorkflow(ABC):
@@ -63,7 +85,7 @@ class _BaseJudgeWorkflow(ABC):
     # Logical workflow name surfaced in logs and FailedRecord entries.
     WORKFLOW_NAME: ClassVar[str]
 
-    def __init__(self, adapter: NddAdapter) -> None:
+    def __init__(self, adapter: _JudgeAdapter) -> None:
         self._adapter = adapter
 
     # ------------------------------------------------------------------ hooks
@@ -191,7 +213,7 @@ class _BaseJudgeWorkflow(ABC):
         run_result = self._adapter.run_workflow(
             with_content,
             model_configs=model_configs,
-            columns=[self.column_config(selected_models)],
+            columns=cast(list[ColumnConfigT], [self.column_config(selected_models)]),
             workflow_name=self.WORKFLOW_NAME,
             preview_num_records=effective_preview_num_records,
         )

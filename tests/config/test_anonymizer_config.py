@@ -89,11 +89,13 @@ def test_entity_labels_defaults_to_none() -> None:
 
 def test_entity_labels_accepts_list() -> None:
     config = AnonymizerConfig(detect={"entity_labels": ["FIRST_NAME", "email"]}, replace=Redact())
+    assert config.detect.entity_labels is not None
     assert set(config.detect.entity_labels) == {"first_name", "email"}
 
 
 def test_entity_labels_strips_whitespace() -> None:
     config = AnonymizerConfig(detect={"entity_labels": ["  first_name ", "email"]}, replace=Redact())
+    assert config.detect.entity_labels is not None
     assert "first_name" in config.detect.entity_labels
     assert "email" in config.detect.entity_labels
 

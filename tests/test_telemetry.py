@@ -163,6 +163,10 @@ class TestEnvHelpers:
         monkeypatch.delenv("NEMO_DEPLOYMENT_TYPE", raising=False)
         assert _deployment_type() == DeploymentTypeEnum.SDK
 
+    def test_deployment_type_accepts_nvidia_internal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEMO_DEPLOYMENT_TYPE", "nvidia-internal")
+        assert _deployment_type() == DeploymentTypeEnum.NVIDIA_INTERNAL
+
     def test_deployment_type_invalid_value_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NEMO_DEPLOYMENT_TYPE", "definitely-not-real")
         # Must not raise — telemetry must never block runtime on a misconfigured env var.
@@ -202,6 +206,7 @@ class TestAnonymizerEvent:
         assert event.num_success_records == -1
         assert event.num_failure_records == -1
         assert event.avg_tokens_per_record == -1
+        assert event.input_tokens == 0
         # Rewrite-only model fields default to not_applicable
         assert event.rewriter_model == NOT_APPLICABLE
 
@@ -210,7 +215,7 @@ class TestAnonymizerEvent:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError):
-            AnonymizerEvent(
+            AnonymizerEvent(  # ty: ignore[missing-argument]
                 task=TaskEnum.BATCH,
                 task_status=TaskStatusEnum.COMPLETED,
                 entity_detector_model="x",
@@ -223,7 +228,7 @@ class TestAnonymizerEvent:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError):
-            AnonymizerEvent(
+            AnonymizerEvent(  # ty: ignore[missing-argument]
                 task=TaskEnum.BATCH,
                 task_status=TaskStatusEnum.COMPLETED,
                 transformation_type="redact",
@@ -237,6 +242,7 @@ class TestAnonymizerEvent:
             strict_entity_protection=True,
             num_input_records=42,
             avg_tokens_per_record=128,
+            input_tokens=512,
             model_hosts=["nvidia-build", "openrouter"],
         )
         dumped = event.model_dump(by_alias=True)
@@ -247,6 +253,7 @@ class TestAnonymizerEvent:
         assert dumped["strictEntityProtection"] is True
         assert dumped["numInputRecords"] == 42
         assert dumped["avgTokensPerRecord"] == 128
+        assert dumped["inputTokens"] == 512
         assert dumped["modelHosts"] == ["nvidia-build", "openrouter"]
         # dominantFailureStep is gone — must not appear
         assert "dominantFailureStep" not in dumped
@@ -278,7 +285,7 @@ class TestBuildPayload:
         assert payload["clientId"] == "184482118588404"
         assert payload["clientVer"] == "1.2.3"
         assert payload["sessionId"] == "anonymizer-abc"
-        assert payload["eventSchemaVer"] == "1.7"
+        assert payload["eventSchemaVer"] == "1.9"
         assert len(payload["events"]) == 1
         assert payload["events"][0]["name"] == "anonymizer_event"
         assert payload["events"][0]["ts"] == "2026-05-11T12:00:00.000Z"
@@ -290,6 +297,7 @@ class TestBuildPayload:
         assert params["task"] == "batch"
         assert params["taskStatus"] == "completed"
         assert params["deploymentType"] == "sdk"
+        assert params["inputTokens"] == 0
 
     def test_payload_is_json_dumpable(self) -> None:
         payload = build_payload([self._make_queued()], source_client_version="1.0")
@@ -315,7 +323,7 @@ class TestTelemetryHandlerOptOut:
     def test_enqueue_noop_for_non_event(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NEMO_TELEMETRY_ENABLED", "true")
         handler = TelemetryHandler()
-        handler.enqueue("not an event")  # type: ignore[arg-type]
+        handler.enqueue("not an event")  # ty: ignore[invalid-argument-type]
         assert handler._events == []
 
     def test_enqueue_when_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:

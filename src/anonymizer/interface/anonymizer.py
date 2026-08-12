@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
 
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
@@ -21,8 +21,10 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
     EvaluateConfig,
+    Rewrite,
 )
-from anonymizer.config.replace_strategies import Substitute
+from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
@@ -30,9 +32,12 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
+    COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
+    COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_VALID,
@@ -48,6 +53,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
@@ -64,6 +70,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
@@ -90,6 +97,43 @@ if TYPE_CHECKING:
     from data_designer.config.config_builder import DataDesignerConfigBuilder
 
 logger = logging.getLogger("anonymizer")
+
+
+def _has_entities_for_evaluation(raw: object) -> bool:
+    """Return whether a row should receive entity-dependent evaluation scores."""
+    try:
+        return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
+    except Exception:
+        # Malformed entity metadata should not hide a missing score.
+        return True
+
+
+def _log_unavailable_scores(
+    dataframe: pd.DataFrame,
+    checks: list[tuple[str, str, pd.Series | None]],
+    *,
+    group_label: str,
+) -> None:
+    """Warn for unavailable active-judge scores."""
+    unavailable_scores: list[tuple[str, int, int]] = []
+    for label, column, expected_mask in checks:
+        applicable = dataframe if expected_mask is None else dataframe.loc[expected_mask]
+        applicable_count = len(applicable)
+        if applicable_count == 0:
+            continue
+        unavailable = applicable_count if column not in applicable.columns else int(applicable[column].isna().sum())
+        if unavailable:
+            unavailable_scores.append((label, unavailable, applicable_count))
+        else:
+            logger.debug("%s score available for all %d applicable records.", label.capitalize(), applicable_count)
+    if len(unavailable_scores) == 1:
+        label, unavailable, applicable_count = unavailable_scores[0]
+        logger.warning("%s score unavailable for %d/%d records.", label.capitalize(), unavailable, applicable_count)
+    elif unavailable_scores:
+        details = "; ".join(
+            f"{label}: {unavailable}/{applicable_count}" for label, unavailable, applicable_count in unavailable_scores
+        )
+        logger.warning("%s scores unavailable — %s.", group_label, details)
 
 
 def _initialize_logging() -> None:
@@ -197,7 +241,7 @@ class Anonymizer:
         """Run the full anonymization pipeline (detection + replacement).
 
         No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the LLM alignment scores.
+        result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -276,12 +320,14 @@ class Anonymizer:
     ) -> DataDesignerConfigBuilder:
         """Build the detection workflow reading an EXISTING seed parquet (no write).
 
-        Like :meth:`export_detection_config`, but for a distributed executor that builds
-        the workflow *in-process on each worker* (so the custom-column callables stay
-        live — they cannot survive JSON serialization) and received the seed dataset from
-        the orchestrator. The seed is read from ``seed_path`` (not rewritten), and
-        ``num_jobs > 1`` selects this worker's ordered partition (``job_index`` of
-        ``num_jobs``). See ``anonymizer.distributed`` for the worker factory entrypoint.
+        Like :meth:`export_detection_config`, but points at a seed dataset that the
+        submitting side has already materialized. ``num_jobs > 1`` selects one ordered
+        partition (``job_index`` of ``num_jobs``). Serialize the returned builder with
+        ``builder.get_builder_config().to_json()`` and reconstruct it on a worker with
+        ``DataDesignerConfigBuilder.from_config()``. The worker must have
+        ``nemo-anonymizer`` installed so Data Designer can discover the detection plugins,
+        and ``seed_path`` must resolve to an existing file when the worker reconstructs
+        the config. Runtime model providers remain external to the serialized config.
         """
         self._validate_preflight_config(config)
         return self._detection_workflow.build_detection_builder_for_seed(
@@ -307,7 +353,7 @@ class Anonymizer:
         """Run the pipeline on a subset of records for quick inspection.
 
         No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the LLM alignment scores.
+        result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -330,6 +376,8 @@ class Anonymizer:
                 preview_num_records=num_records,
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+                entity_labels=config.detect.entity_labels,
+                data_summary=result.data_summary,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -384,39 +432,13 @@ class Anonymizer:
                 knobs (placeholder today; reserved for metric selection,
                 per-judge model/prompt overrides, etc.).
         """
-        _ = config  # placeholder; no knobs to read yet
-        rewrite_config = getattr(output, "rewrite_config", None)
-        replace_method = getattr(output, "replace_method", None)
+        evaluate_config = config or EvaluateConfig()
+        rewrite_config = cast(PrivacyGoal | None, getattr(output, "rewrite_config", None))
+        replace_method = cast(ReplaceMethod | None, getattr(output, "replace_method", None))
+        text_column = output.resolved_text_column
+        is_rewrite = rewrite_config is not None
 
-        if rewrite_config is not None:
-            try:
-                validate_model_alias_references(
-                    self._model_configs,
-                    self._selected_models,
-                    check_rewrite=False,
-                    check_evaluate=True,
-                    check_rewrite_judge=True,
-                )
-            except ValueError as exc:
-                raise InvalidConfigError(str(exc)) from exc
-            text_column = output.resolved_text_column
-            internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
-            rewrite_result = self._rewrite_runner.evaluate(
-                internal_df,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.evaluate,
-                privacy_goal=rewrite_config,
-            )
-            renamed_trace = _rename_output_columns(rewrite_result.dataframe, resolved_text_column=text_column)
-            return AnonymizerResult(
-                dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
-                trace_dataframe=renamed_trace,
-                resolved_text_column=text_column,
-                failed_records=rewrite_result.failed_records,
-                rewrite_config=rewrite_config,
-            )
-
-        if replace_method is None:
+        if not is_rewrite and replace_method is None:
             raise ValueError(
                 "Cannot evaluate this output — it has no associated anonymization config. "
                 "Pass an AnonymizerResult / PreviewResult produced by run() / preview(). "
@@ -430,29 +452,168 @@ class Anonymizer:
                 check_substitute=isinstance(replace_method, Substitute),
                 check_rewrite=False,
                 check_evaluate=True,
+                check_rewrite_judge=is_rewrite,
+                check_detection_validity_judge=evaluate_config.compute_detection_validity,
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
-        text_column = output.resolved_text_column
+
+        entity_labels = getattr(output, "entity_labels", None)
+        data_summary = getattr(output, "data_summary", None)
+        num_records = len(output.trace_dataframe)
+        mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
+        active_judges = ["rewrite_judge", "entity_coverage_judge"] if is_rewrite else ["entity_coverage_judge"]
+        if evaluate_config.compute_detection_validity:
+            active_judges.append("detection_validity_judge")
+        if isinstance(replace_method, Substitute):
+            active_judges.extend(
+                [
+                    "replace_type_fidelity_judge",
+                    "replace_relational_consistency_judge",
+                    "replace_attribute_fidelity_judge",
+                ]
+            )
+        logger.info("🧪 Running %s evaluation on %d records", mode_name, num_records)
+        logger.debug(
+            "evaluation config: mode=%s, text_column=%s, detection_validity=%s, "
+            "entity_labels=%s, data_summary_provided=%s",
+            mode_name,
+            text_column,
+            evaluate_config.compute_detection_validity,
+            len(entity_labels) if entity_labels is not None else "default",
+            bool(data_summary),
+        )
+        logger.debug("active evaluation judges: %s", ", ".join(active_judges))
+        logger.debug("evaluation models: %s", self._selected_models.evaluate)
+        evaluation_start = time.perf_counter()
         # trace_dataframe is in user-facing form (e.g., 'biography' instead of
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
         # internal names, so reverse the rename before the DD call and re-apply
         # it on the result.
         internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
-        replace_result = self._replace_runner.evaluate(
-            internal_df,
-            replace_method=replace_method,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.evaluate,
+        if is_rewrite:
+            logger.info(LOG_INDENT + "⚖️ Running rewrite judges")
+            stage_start = time.perf_counter()
+            rewrite_result = self._rewrite_runner.evaluate(
+                internal_df,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.evaluate,
+                privacy_goal=rewrite_config,
+                compute_detection_validity=evaluate_config.compute_detection_validity,
+            )
+            entity_mask = (
+                rewrite_result.dataframe[COL_ENTITIES_BY_VALUE].apply(_has_entities_for_evaluation)
+                if COL_ENTITIES_BY_VALUE in rewrite_result.dataframe.columns
+                else None
+            )
+            rewrite_checks = [("rewrite judge", COL_JUDGE_EVALUATION, entity_mask)]
+            if evaluate_config.compute_detection_validity:
+                rewrite_checks.append(("detection validity", COL_DETECTION_VALID, None))
+            _log_unavailable_scores(
+                rewrite_result.dataframe,
+                rewrite_checks,
+                group_label="Rewrite evaluation",
+            )
+            logger.info(
+                LOG_INDENT + "📋 Rewrite judges complete [%.1fs]",
+                time.perf_counter() - stage_start,
+            )
+            all_failed: list[FailedRecord] = list(rewrite_result.failed_records)
+            coverage_wf = EntityCoverageWorkflow(
+                adapter=self._adapter,
+                entity_labels=entity_labels,
+                data_summary=data_summary,
+            )
+            logger.info(LOG_INDENT + "🔎 Running entity coverage")
+            stage_start = time.perf_counter()
+            judged_df, coverage_failed = coverage_wf.run_non_critical(
+                rewrite_result.dataframe,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.evaluate,
+            )
+            _log_unavailable_scores(
+                judged_df,
+                [("entity coverage", COL_ENTITY_COVERAGE, None)],
+                group_label="Entity coverage",
+            )
+            logger.info(
+                LOG_INDENT + "📋 Entity coverage complete [%.1fs]",
+                time.perf_counter() - stage_start,
+            )
+            all_failed.extend(coverage_failed)
+            renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
+            result = AnonymizerResult(
+                dataframe=_build_user_dataframe(
+                    renamed_trace,
+                    resolved_text_column=text_column,
+                    compute_detection_validity=evaluate_config.compute_detection_validity,
+                ),
+                trace_dataframe=renamed_trace,
+                resolved_text_column=text_column,
+                failed_records=all_failed,
+                rewrite_config=rewrite_config,
+                entity_labels=entity_labels,
+                data_summary=data_summary,
+            )
+        else:
+            if replace_method is None:
+                raise ValueError("Replace evaluation requires an associated replace method.")
+            logger.info(LOG_INDENT + "⚖️ Running replace judges")
+            stage_start = time.perf_counter()
+            replace_result = self._replace_runner.evaluate(
+                internal_df,
+                replace_method=replace_method,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.evaluate,
+                entity_labels=entity_labels,
+                compute_detection_validity=evaluate_config.compute_detection_validity,
+                data_summary=data_summary,
+            )
+            replace_checks = [("entity coverage", COL_ENTITY_COVERAGE, None)]
+            if evaluate_config.compute_detection_validity:
+                replace_checks.append(("detection validity", COL_DETECTION_VALID, None))
+            if isinstance(replace_method, Substitute):
+                replace_checks.extend(
+                    [
+                        ("type fidelity", COL_TYPE_FIDELITY_VALID, None),
+                        ("relational consistency", COL_RELATIONAL_CONSISTENCY_VALID, None),
+                        ("attribute fidelity", COL_ATTRIBUTE_FIDELITY_VALID, None),
+                    ]
+                )
+            _log_unavailable_scores(
+                replace_result.dataframe,
+                replace_checks,
+                group_label="Replace evaluation",
+            )
+            logger.info(
+                LOG_INDENT + "📋 Replace judges complete [%.1fs]",
+                time.perf_counter() - stage_start,
+            )
+            renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
+            result = AnonymizerResult(
+                dataframe=_build_user_dataframe(
+                    renamed_trace,
+                    resolved_text_column=text_column,
+                    compute_detection_validity=evaluate_config.compute_detection_validity,
+                ),
+                trace_dataframe=renamed_trace,
+                resolved_text_column=text_column,
+                failed_records=replace_result.failed_records,
+                replace_method=replace_method,
+                entity_labels=entity_labels,
+                data_summary=data_summary,
+            )
+
+        if result.failed_records:
+            logger.debug("%d evaluation failed record(s).", len(result.failed_records))
+            for failure in result.failed_records:
+                logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
+        logger.info(
+            "🎉 Evaluation complete — %d records processed [%.1fs]",
+            num_records,
+            time.perf_counter() - evaluation_start,
         )
-        renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
-        return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_column),
-            trace_dataframe=renamed_trace,
-            resolved_text_column=text_column,
-            failed_records=replace_result.failed_records,
-            replace_method=replace_method,
-        )
+        return result
 
     def validate_config(self, config: AnonymizerConfig) -> None:
         """Validate that the active workflow config is compatible with model selections."""
@@ -597,6 +758,9 @@ class Anonymizer:
         elif config.rewrite is not None:
             logger.info("✏️ Running rewrite pipeline")
             t0 = time.perf_counter()
+            privacy_goal = config.rewrite.privacy_goal
+            if privacy_goal is None:
+                raise InvalidConfigError("rewrite.privacy_goal must not be None")
             rewrite_runner = (
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
             )
@@ -605,7 +769,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.rewrite,
                 replace_model_selection=self._selected_models.replace,
-                privacy_goal=config.rewrite.privacy_goal,
+                privacy_goal=privacy_goal,
                 evaluation=config.rewrite.evaluation,
                 data_summary=data.data_summary,
                 preview_num_records=preview_num_records,
@@ -645,10 +809,14 @@ class Anonymizer:
             failed_records=all_failures,
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+            entity_labels=config.detect.entity_labels,
+            data_summary=data.data_summary,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""
+        if config.rewrite is not None and config.rewrite.privacy_goal is None:
+            raise InvalidConfigError("rewrite.privacy_goal must not be None")
         try:
             validate_model_alias_references(
                 self._model_configs,
@@ -737,57 +905,74 @@ class Anonymizer:
         failure_counts = _collect_failure_counts(failed)
         hosts = _resolve_model_hosts(self._resolved_providers)
 
-        return AnonymizerEvent(
-            task=task,
-            task_status=status,
-            job_duration_sec=duration_sec,
-            num_input_records=total_records,
-            num_success_records=success_count,
-            num_failure_records=failure_count,
-            avg_tokens_per_record=avg_tokens,
-            transformation_type=transformation_type,
-            custom_data_summary_provided=bool(data.data_summary),
-            custom_privacy_goal_provided=_custom_privacy_goal_provided(rewrite),
-            custom_substitute_instructions_provided=bool(substitute is not None and substitute.instructions),
-            max_repair_iterations=(rewrite.max_repair_iterations if rewrite is not None else -1),
-            strict_entity_protection=(rewrite.strict_entity_protection if rewrite is not None else False),
-            repair_iterations_triggered=_repair_iterations_triggered(failed, rewrite is not None),
-            entity_detector_model=models["entity_detector"],
-            entity_validator_model=models["entity_validator"],
-            entity_augmenter_model=models["entity_augmenter"],
-            latent_detector_model=models["latent_detector"],
-            replacement_generator_model=models["replacement_generator"],
-            domain_classifier_model=models["domain_classifier"],
-            disposition_analyzer_model=models["disposition_analyzer"],
-            meaning_extractor_model=models["meaning_extractor"],
-            qa_generator_model=models["qa_generator"],
-            rewriter_model=models["rewriter"],
-            evaluator_model=models["evaluator"],
-            repairer_model=models["repairer"],
-            model_hosts=hosts,
-            entity_detection_failure_count=failure_counts["entity_detection"],
-            latent_detection_failure_count=failure_counts["latent_detection"],
-            replace_map_generation_failure_count=failure_counts["replace_map_generation"],
-            rewrite_pipeline_failure_count=failure_counts["rewrite_pipeline"],
-            rewrite_evaluate_failure_count=failure_counts["rewrite_evaluate"],
-            rewrite_repair_failure_count=failure_counts["rewrite_repair"],
-            rewrite_final_judge_failure_count=failure_counts["rewrite_final_judge"],
-            unknown_step_failure_count=failure_counts["unknown"],
+        return AnonymizerEvent.model_validate(
+            {
+                "task": task,
+                "task_status": status,
+                "job_duration_sec": duration_sec,
+                "num_input_records": total_records,
+                "num_success_records": success_count,
+                "num_failure_records": failure_count,
+                "avg_tokens_per_record": avg_tokens,
+                "input_tokens": self._adapter.consume_input_tokens(),
+                "transformation_type": transformation_type,
+                "custom_data_summary_provided": bool(data.data_summary),
+                "custom_privacy_goal_provided": _custom_privacy_goal_provided(rewrite),
+                "custom_substitute_instructions_provided": bool(substitute is not None and substitute.instructions),
+                "max_repair_iterations": rewrite.max_repair_iterations if rewrite is not None else -1,
+                "strict_entity_protection": rewrite.strict_entity_protection if rewrite is not None else False,
+                "repair_iterations_triggered": _repair_iterations_triggered(failed, rewrite is not None),
+                "entity_detector_model": models["entity_detector"],
+                "entity_validator_model": models["entity_validator"],
+                "entity_augmenter_model": models["entity_augmenter"],
+                "latent_detector_model": models["latent_detector"],
+                "replacement_generator_model": models["replacement_generator"],
+                "domain_classifier_model": models["domain_classifier"],
+                "disposition_analyzer_model": models["disposition_analyzer"],
+                "meaning_extractor_model": models["meaning_extractor"],
+                "qa_generator_model": models["qa_generator"],
+                "rewriter_model": models["rewriter"],
+                "evaluator_model": models["evaluator"],
+                "repairer_model": models["repairer"],
+                "model_hosts": hosts,
+                "entity_detection_failure_count": failure_counts["entity_detection"],
+                "latent_detection_failure_count": failure_counts["latent_detection"],
+                "replace_map_generation_failure_count": failure_counts["replace_map_generation"],
+                "rewrite_pipeline_failure_count": failure_counts["rewrite_pipeline"],
+                "rewrite_evaluate_failure_count": failure_counts["rewrite_evaluate"],
+                "rewrite_repair_failure_count": failure_counts["rewrite_repair"],
+                "rewrite_final_judge_failure_count": failure_counts["rewrite_final_judge"],
+                "unknown_step_failure_count": failure_counts["unknown"],
+            }
         )
+
+
+class _ListConvertible(Protocol):
+    def tolist(self) -> object: ...
+
+
+def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
+    return callable(getattr(value, "tolist", None))
 
 
 def _unwrap_entities(raw: object) -> list:
     if isinstance(raw, dict):
-        return raw.get("entities", [])
-    if isinstance(raw, list):
-        return raw
-    return getattr(raw, "entities", [])
+        entities = raw.get("entities", [])
+    elif isinstance(raw, list):
+        entities = raw
+    else:
+        entities = getattr(raw, "entities", [])
+    if _is_list_convertible(entities):
+        entities = entities.tolist()
+    return entities if isinstance(entities, list) else []
 
 
 def _entity_label(entity: object) -> str | None:
     if isinstance(entity, dict):
-        return entity.get("label")
-    return getattr(entity, "label", None)
+        label = entity.get("label")
+    else:
+        label = getattr(entity, "label", None)
+    return label if isinstance(label, str) else None
 
 
 def _count_labels_for_row(raw: object) -> Counter[str]:
@@ -827,7 +1012,7 @@ def _resolve_model_providers(
             if not candidate.is_file():
                 raise FileNotFoundError(f"Providers config file not found: {candidate}")
             model_providers = candidate
-    config_dict = load_config_file(model_providers)
+    config_dict = load_config_file(model_providers)  # ty: ignore[invalid-argument-type]
     raw_providers = config_dict.get("providers")
     if not isinstance(raw_providers, list):
         raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
@@ -876,11 +1061,17 @@ def _unrename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> 
     return df.rename(columns=rename_map)
 
 
-def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
+def _build_user_dataframe(
+    trace_dataframe: pd.DataFrame,
+    *,
+    resolved_text_column: str,
+    compute_detection_validity: bool = False,
+) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
-                 optional judge verdict columns when available
+                 entity_coverage, missed_entities (always after evaluate()),
+                 detection_valid, detection_invalid_entities (only when compute_detection_validity=True)
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
     Detect-only: {text_col}, {text_col}_with_spans, final_entities
@@ -897,18 +1088,20 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             COL_WEIGHTED_LEAKAGE_RATE,
             COL_ANY_HIGH_LEAKED,
             COL_NEEDS_HUMAN_REVIEW,
-            COL_DETECTION_VALID,  # only present after evaluate()
-            COL_DETECTION_INVALID_ENTITIES,  # only present after evaluate()
             COL_JUDGE_EVALUATION,  # only present after evaluate()
+            COL_ENTITY_COVERAGE,  # only present after evaluate()
+            COL_MISSED_ENTITIES,  # only present after evaluate()
         }
+        if compute_detection_validity:
+            allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}
     elif f"{text_col}_replaced" in t.columns:
         allowed = {
             text_col,
             f"{text_col}_replaced",
             f"{text_col}_with_spans",
             COL_FINAL_ENTITIES,
-            COL_DETECTION_VALID,
-            COL_DETECTION_INVALID_ENTITIES,
+            COL_ENTITY_COVERAGE,
+            COL_MISSED_ENTITIES,
             COL_TYPE_FIDELITY_VALID,
             COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
             COL_RELATIONAL_CONSISTENCY_VALID,
@@ -916,6 +1109,8 @@ def _build_user_dataframe(trace_dataframe: pd.DataFrame, *, resolved_text_column
             COL_ATTRIBUTE_FIDELITY_VALID,
             COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
         }
+        if compute_detection_validity:
+            allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}
     else:
         allowed = {
             text_col,
@@ -947,17 +1142,17 @@ def _transformation_type_string(config: AnonymizerConfig) -> str:
     return type(config.replace).__name__.lower()
 
 
-def _custom_privacy_goal_provided(rewrite: object | None) -> bool:
+def _custom_privacy_goal_provided(rewrite: Rewrite | None) -> bool:
     """Detect whether the user supplied a non-default privacy_goal.
 
     ``Rewrite.populate_default_privacy_goal`` always populates a default if the
     user passed None, so we treat the default protect/preserve text as "not custom".
     """
-    if rewrite is None or rewrite.privacy_goal is None:  # type: ignore[union-attr]
+    if rewrite is None or rewrite.privacy_goal is None:
         return False
     from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT
 
-    goal = rewrite.privacy_goal  # type: ignore[union-attr]
+    goal = rewrite.privacy_goal
     return goal.protect != DEFAULT_PROTECT_TEXT or goal.preserve != DEFAULT_PRESERVE_TEXT
 
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from data_designer.config.models import ModelConfig, ModelProvider, load_model_configs
 from data_designer.config.utils.io_helpers import load_config_file
@@ -48,7 +48,7 @@ def parse_model_configs(raw: str | Path | None) -> ParsedModelConfigs:
     if raw is None:
         default_yaml = _load_yaml_dict(DEFAULT_CONFIG_DIR / "models.yaml")
         return ParsedModelConfigs(
-            model_configs=load_model_configs(default_yaml),
+            model_configs=load_model_configs(default_yaml),  # ty: ignore[invalid-argument-type]
             selected_models=load_default_model_selection(),
         )
 
@@ -63,7 +63,7 @@ def parse_model_configs(raw: str | Path | None) -> ParsedModelConfigs:
 
     user_selections = parsed.pop("selected_models", None)
     _validate_raw_model_configs_have_provider(parsed)
-    model_configs = load_model_configs(parsed)
+    model_configs = load_model_configs(parsed)  # ty: ignore[invalid-argument-type]
     return ParsedModelConfigs(
         model_configs=model_configs,
         selected_models=_merge_selections(user_selections),
@@ -77,10 +77,12 @@ def load_default_model_selection(config_dir: Path | None = None) -> ModelSelecti
     """
     resolved_dir = config_dir or DEFAULT_CONFIG_DIR
     return ModelSelection(
-        detection=DetectionModelSelection(**load_workflow_selections(WorkflowName.detection, resolved_dir)),
-        replace=ReplaceModelSelection(**load_workflow_selections(WorkflowName.replace, resolved_dir)),
-        rewrite=RewriteModelSelection(**load_workflow_selections(WorkflowName.rewrite, resolved_dir)),
-        evaluate=EvaluateModelSelection(**load_workflow_selections(WorkflowName.evaluate, resolved_dir)),
+        detection=DetectionModelSelection.model_validate(
+            load_workflow_selections(WorkflowName.detection, resolved_dir)
+        ),
+        replace=ReplaceModelSelection.model_validate(load_workflow_selections(WorkflowName.replace, resolved_dir)),
+        rewrite=RewriteModelSelection.model_validate(load_workflow_selections(WorkflowName.rewrite, resolved_dir)),
+        evaluate=EvaluateModelSelection.model_validate(load_workflow_selections(WorkflowName.evaluate, resolved_dir)),
     )
 
 
@@ -197,8 +199,12 @@ def resolve_model_aliases(
     """
     value = getattr(selection_model, role)
     if isinstance(value, list):
-        return list(value)
-    return [value]
+        if all(isinstance(alias, str) for alias in value):
+            return value
+        raise TypeError(f"Role {role!r} contains a non-string model alias.")
+    if isinstance(value, str):
+        return [value]
+    raise TypeError(f"Role {role!r} does not contain a model alias.")
 
 
 def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> ModelSelection:
@@ -261,15 +267,19 @@ def validate_model_alias_references(
     check_rewrite: bool = False,
     check_evaluate: bool = False,
     check_rewrite_judge: bool = False,
+    check_detection_validity_judge: bool = False,
 ) -> None:
     """Validate that active workflow model aliases exist in the model pool.
 
-    ``check_evaluate`` validates the shared evaluation roles (``detection_validity_judge``
+    ``check_evaluate`` validates the shared evaluation roles (``entity_coverage_judge``
     is always checked when on; the three ``replace_*_judge`` roles are additionally
     checked when ``check_substitute`` is also True). ``check_rewrite_judge`` validates
     ``evaluate.rewrite_judge`` and must be set independently when evaluating a rewrite
     result — it is separate from ``check_rewrite`` so that full rewrite pipeline roles
     are not required just to call ``evaluate()`` on an existing rewrite result.
+    ``check_detection_validity_judge`` validates ``evaluate.detection_validity_judge``
+    and must be set independently because detection validity is disabled by default
+    (``EvaluateConfig.compute_detection_validity=False``).
     """
     known_aliases = {model_config.alias for model_config in model_configs}
     detection_roles = selected_models.detection.model_dump()
@@ -286,7 +296,11 @@ def validate_model_alias_references(
             _collect_role(roles_to_check, f"replace.{role}", alias)
     if check_evaluate:
         evaluate_roles = selected_models.evaluate.model_dump()
-        _collect_role(roles_to_check, "evaluate.detection_validity_judge", evaluate_roles["detection_validity_judge"])
+        _collect_role(roles_to_check, "evaluate.entity_coverage_judge", evaluate_roles["entity_coverage_judge"])
+        if check_detection_validity_judge:
+            _collect_role(
+                roles_to_check, "evaluate.detection_validity_judge", evaluate_roles["detection_validity_judge"]
+            )
         if check_rewrite_judge:
             _collect_role(roles_to_check, "evaluate.rewrite_judge", evaluate_roles["rewrite_judge"])
         if check_substitute:
@@ -359,8 +373,9 @@ def _validate_raw_model_configs_have_provider(parsed: dict[str, Any]) -> None:
     for idx, entry in enumerate(raw_configs):
         if not isinstance(entry, dict):
             raise ValueError(f"model_configs[{idx}] must be a mapping.")
-        if _provider_field_missing(entry):
-            missing.append(str(entry.get("alias", f"<index {idx}>")))
+        typed_entry = cast(dict[str, Any], entry)
+        if _provider_field_missing(typed_entry):
+            missing.append(str(typed_entry.get("alias", f"<index {idx}>")))
     if missing:
         aliases = ", ".join(repr(alias) for alias in missing)
         raise ValueError(

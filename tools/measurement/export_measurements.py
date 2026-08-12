@@ -13,7 +13,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import cyclopts
 import pandas as pd
@@ -86,7 +86,13 @@ def export_tables(
 ) -> ExportResult:
     output_dir.mkdir(parents=True, exist_ok=True)
     tables = [
-        _export_one_table(record_type, rows, output_dir=output_dir, export_format=export_format, overwrite=overwrite)
+        _export_one_table(
+            cast(str, record_type),
+            rows,
+            output_dir=output_dir,
+            export_format=export_format,
+            overwrite=overwrite,
+        )
         for record_type, rows in dataframe.groupby("record_type", sort=False)
     ]
     result = ExportResult(

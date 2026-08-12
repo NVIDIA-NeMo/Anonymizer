@@ -75,9 +75,11 @@ input_df
               RepairWorkflow                  → _rewritten_text (failing rows only)
   → output: {text_col}_rewritten, utility_score, leakage_mass, needs_human_review, …
 
-Later, `RewriteWorkflow.evaluate()` can run the non-critical judge steps:
+Later, `Anonymizer.evaluate()` runs the non-critical judge steps:
+  → EntityCoverageWorkflow                  → entity_coverage, leaked_entities   (always)
+  → FinalJudgeWorkflow                      → judge_evaluation                    (always)
   → DetectionJudgeWorkflow                  → detection_valid, detection_invalid_entities
-  → FinalJudgeWorkflow                      → judge_evaluation
+                                              (only when EvaluateConfig.compute_detection_validity=True)
 ```
 
 Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0).
@@ -115,7 +117,7 @@ make test          # run all tests
 make bootstrap     # install dev dependencies
 make format        # ruff format + sort imports
 make format-check  # read-only lint check (used in CI)
-make typecheck     # ty type check (advisory)
+make typecheck     # blocking ty type check (warnings fail too)
 make docs-serve    # local MkDocs server at http://127.0.0.1:8000
 ```
 

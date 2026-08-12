@@ -64,6 +64,9 @@ class AnonymizerResult(_DisplayMixin):
             mode was used. Set by ``run()`` / ``preview()``; consumed by
             ``evaluate()`` to dispatch the rewrite judges. Mutually exclusive
             with ``replace_method``.
+        data_summary: Optional dataset context supplied with the original input.
+            Preserved for ``evaluate()`` so entity-coverage judging uses the
+            same context as detection.
     """
 
     dataframe: pd.DataFrame
@@ -72,6 +75,8 @@ class AnonymizerResult(_DisplayMixin):
     failed_records: list[FailedRecord]
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
+    entity_labels: list[str] | None = None
+    data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -105,6 +110,9 @@ class PreviewResult(_DisplayMixin):
         rewrite_config: The privacy goal that produced this preview when rewrite
             mode was used. Set by ``preview()``; consumed by ``evaluate()`` to
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
+        data_summary: Optional dataset context supplied with the original input.
+            Preserved for ``evaluate()`` so entity-coverage judging uses the
+            same context as detection.
     """
 
     dataframe: pd.DataFrame
@@ -114,6 +122,8 @@ class PreviewResult(_DisplayMixin):
     preview_num_records: int
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
+    entity_labels: list[str] | None = None
+    data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:

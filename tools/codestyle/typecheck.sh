@@ -6,7 +6,7 @@
 # typecheck.sh -- run ty type checks on Python files
 #
 # Usage:
-#   ./typecheck.sh                        # all files (ty discovers and excludes via pyproject.toml)
+#   ./typecheck.sh                        # configured repository paths
 #   ./typecheck.sh src/foo.py bar.py      # specific files
 #
 
@@ -19,7 +19,7 @@ source "$REPO_ROOT/tools/codestyle/_lib.sh"
 require_tool ty
 
 if [[ $# -eq 0 ]]; then
-    ty check
+    ty check --error-on-warning
 else
-    ty check "$@"
+    ty check --error-on-warning "$@"
 fi

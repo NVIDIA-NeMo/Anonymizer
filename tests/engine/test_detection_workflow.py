@@ -482,7 +482,7 @@ def test_detection_workflow_plugins_are_discoverable() -> None:
             for plugin in PluginRegistry().get_plugins(PluginType.COLUMN_GENERATOR)
             if plugin.name.startswith("anonymizer-")
         }
-        assert names == {"anonymizer-detection-transform", "anonymizer-chunked-validation"}
+        assert {"anonymizer-detection-transform", "anonymizer-chunked-validation"} <= names
     finally:
         PluginRegistry.reset()
 

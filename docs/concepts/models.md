@@ -26,6 +26,7 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 | `gliner-pii-detector` | [`nvidia/gliner-pii`](https://build.nvidia.com/nvidia/gliner-pii) | Entity detection (NER) |
 | `gpt-oss-120b` | [`openai/gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Detection validation & augmentation, replacement, replace evaluation, rewriting |
 | `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, rewrite evaluation, final judge |
+| `nemotron-super` | [`nvidia/nemotron-3-super-v3`](https://build.nvidia.com/nvidia/nemotron-3-super-v3) | Entity coverage evaluation |
 
 Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the default configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
 
