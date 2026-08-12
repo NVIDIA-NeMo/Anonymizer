@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
+    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
@@ -368,6 +369,13 @@ class RewriteWorkflow:
         df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=eval_seed_cols)
         all_failed.extend(eval_result.failed_records)
 
+        replacement_unavailable = (
+            ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
+            if COL_REWRITE_REPLACEMENT_READY in df.columns
+            else pd.Series(False, index=df.index)
+        )
+        df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None
+
         repair_columns = self._repair_wf.columns(
             selected_models=selected_models,
             privacy_goal=privacy_goal,
@@ -375,7 +383,7 @@ class RewriteWorkflow:
         )
 
         for iteration in range(evaluation.max_repair_iterations):
-            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool)
+            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool) & ~replacement_unavailable
             if not needs_repair_mask.any():
                 logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
                 break
@@ -424,8 +432,14 @@ class RewriteWorkflow:
             all_failed.extend(eval_result.failed_records)
 
             df = pd.concat([passing_rows, failing_rows], ignore_index=True)
+            replacement_unavailable = (
+                ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
+                if COL_REWRITE_REPLACEMENT_READY in df.columns
+                else pd.Series(False, index=df.index)
+            )
 
         # Compute needs_human_review from objective metrics after the loop exhausts.
+        df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None
         needs_review = df[COL_REWRITTEN_TEXT].isna()
         needs_review = needs_review | df[COL_ANY_HIGH_LEAKED].apply(bool)
         if evaluation.flag_utility_below is not None:

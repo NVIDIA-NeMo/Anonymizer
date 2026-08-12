@@ -396,6 +396,7 @@ def analyze_benchmark_output(
     detection_artifacts: Path | None = None,
 ) -> BenchmarkOutputAnalysis:
     measurements = read_jsonl_table(benchmark_dir / "measurements.jsonl", required=True)
+    _validate_measurement_schema_versions(measurements)
     artifacts_path = detection_artifacts or benchmark_dir / "detection-artifacts.jsonl"
     artifacts = read_jsonl_table(artifacts_path, required=detection_artifacts is not None)
     traces = read_trace_summary_table(benchmark_dir / "traces")
@@ -412,6 +413,21 @@ def analyze_benchmark_output(
         model_usage=model_usage,
         model_usage_groups=build_model_usage_group_rows(model_usage),
     )
+
+
+def _validate_measurement_schema_versions(measurements: pd.DataFrame) -> None:
+    if "schema_version" not in measurements.columns:
+        return
+    versions = measurements["schema_version"].dropna()
+    unsupported = [
+        value for value in versions.unique() if not pd.api.types.is_integer(value) or int(value) not in (1, 2)
+    ]
+    if unsupported:
+        raise ValueError("measurement input must use supported measurement schema versions 1 or 2")
+    for case_id in _case_ids(measurements):
+        case_versions = set(_rows_for_case(measurements, case_id)["schema_version"].dropna().tolist())
+        if len(case_versions) > 1:
+            raise ValueError(f"case {case_id} contains mixed measurement schema versions")
 
 
 def read_jsonl_table(path: Path, *, required: bool) -> pd.DataFrame:
@@ -502,12 +518,16 @@ def _build_case_row(
     records_per_ndd_sec = _safe_rate(record_count, ndd_elapsed_sec_total)
     input_text_tokens_per_pipeline_sec = _safe_rate(input_text_tokens_total, pipeline_elapsed_sec)
     input_text_tokens_per_ndd_sec = _safe_rate(input_text_tokens_total, ndd_elapsed_sec_total)
+    measurement_schema_version = _first_int([measurement_rows], ["schema_version"])
+    leak_presence_column = (
+        "original_value_leak_unique_value_count" if measurement_schema_version == 2 else "original_value_leak_count"
+    )
     final_entity_count = _coalesce_number(
         _sum_or_none(record_rows, "final_entity_count"),
         _sum_or_none(artifact_rows, "final_entity_count"),
     )
     return CaseAnalysisRow(
-        measurement_schema_version=_first_int([measurement_rows], ["schema_version"]),
+        measurement_schema_version=measurement_schema_version,
         suite_id=_first_value([measurement_rows, artifact_rows, trace_rows], ["run_tags.suite_id", "suite_id"]),
         workload_id=_first_value(
             [measurement_rows, artifact_rows, trace_rows], ["run_tags.workload_id", "workload_id"]
@@ -584,7 +604,7 @@ def _build_case_row(
             "replacement_synthetic_original_collision_value_count",
         ),
         original_value_leak_count=_sum_or_none(record_rows, "original_value_leak_count"),
-        original_value_leak_record_count=_positive_count(record_rows, "original_value_leak_count"),
+        original_value_leak_record_count=_positive_count(record_rows, leak_presence_column),
         original_value_leak_label_counts=_sum_prefixed_ints(record_rows, "original_value_leak_label_counts."),
         original_value_leak_unique_value_count=_sum_or_none(record_rows, "original_value_leak_unique_value_count"),
         original_value_leak_source_entity_occurrence_count=_sum_or_none(
@@ -834,12 +854,19 @@ def _case_artifact_metrics(
     validation_max_entities_per_call: int | None,
 ) -> dict[str, int | float | list[str] | dict[str, str] | dict[str, dict[str, Any]] | None]:
     has_v2 = "artifact_schema_version" in artifact_rows.columns
-    v2_rows = (
-        artifact_rows[pd.to_numeric(artifact_rows["artifact_schema_version"], errors="coerce") == 2]
+    v2_mask = (
+        pd.to_numeric(artifact_rows["artifact_schema_version"], errors="coerce") == 2
         if has_v2
-        else artifact_rows.iloc[0:0]
+        else pd.Series(False, index=artifact_rows.index)
     )
-    detected_prefix = "detected" if "detected_entity_count" in artifact_rows.columns else "final"
+    v2_rows = artifact_rows[v2_mask]
+    legacy_rows = artifact_rows[~v2_mask].copy()
+    for column in list(legacy_rows.columns):
+        if column.startswith("final_"):
+            legacy_rows[f"detected_{column.removeprefix('final_')}"] = legacy_rows[column]
+    if "augmented_new_final_value_count" in legacy_rows.columns:
+        legacy_rows["augmented_new_detected_value_count"] = legacy_rows["augmented_new_final_value_count"]
+    detected_rows = pd.concat([legacy_rows, v2_rows], ignore_index=True)
     return {
         "detection_artifact_rows": len(artifact_rows),
         "seed_entity_count": _sum_or_none(artifact_rows, "seed_entity_count"),
@@ -849,12 +876,9 @@ def _case_artifact_metrics(
             validation_max_entities_per_call=validation_max_entities_per_call,
         ),
         "augmented_entity_count": _sum_or_none(artifact_rows, "augmented_entity_count"),
-        "augmented_new_detected_value_count": _coalesce_number(
-            _sum_or_none(artifact_rows, "augmented_new_detected_value_count"),
-            _sum_or_none(artifact_rows, "augmented_new_final_value_count"),
-        ),
+        "augmented_new_detected_value_count": _sum_or_none(detected_rows, "augmented_new_detected_value_count"),
         "augmented_new_final_value_count": _sum_or_none(v2_rows, "augmented_new_final_value_count"),
-        **_artifact_population_metrics(artifact_rows, source_prefix=detected_prefix, output_prefix="detected"),
+        **_artifact_population_metrics(detected_rows, source_prefix="detected", output_prefix="detected"),
         **_artifact_population_metrics(v2_rows, source_prefix="final", output_prefix="final"),
     }
 
@@ -1469,7 +1493,7 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
             "replacement_synthetic_original_collision_label_counts.",
         ),
         sum_original_value_leak_count=_sum_or_none(group, "original_value_leak_count"),
-        leaking_case_count=_positive_count(group, "original_value_leak_count"),
+        leaking_case_count=_positive_count(group, "original_value_leak_record_count"),
         median_original_value_leak_count=_median_or_none(group, "original_value_leak_count"),
         sum_original_value_leak_unique_value_count=_sum_or_none(group, "original_value_leak_unique_value_count"),
         sum_original_value_leak_source_entity_occurrence_count=_sum_or_none(

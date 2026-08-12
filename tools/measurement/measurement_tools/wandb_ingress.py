@@ -210,16 +210,33 @@ class RecordMeasurement(_RowMeasurement):
         )
         explicit = (
             self.replacement_map_entry_count,
+            self.replacement_map_entry_label_counts,
             self.replacement_targeted_span_count,
             self.replacement_applied_span_count,
             self.replacement_skipped_span_count,
+            self.replacement_skipped_span_label_counts,
             self.original_value_leak_unique_value_count,
             self.original_value_leak_source_entity_occurrence_count,
+            self.original_value_leak_source_entity_occurrence_label_counts,
         )
         if self.schema_version == 1 and any(value is not None for value in explicit):
             raise ValueError("schema v1 record contains schema v2 metric fields")
         if self.schema_version == 2 and any(value is not None for value in legacy):
             raise ValueError("schema v2 record contains legacy ambiguous metric fields")
+        targeted = self.replacement_targeted_span_count
+        applied = self.replacement_applied_span_count
+        skipped = self.replacement_skipped_span_count
+        application_counts = (targeted, applied, skipped)
+        if any(value is not None for value in application_counts):
+            if targeted is None or applied is None or skipped is None:
+                raise ValueError("replacement application cardinalities must be provided together")
+            if targeted != applied + skipped:
+                raise ValueError("replacement targeted span count must equal applied plus skipped span counts")
+        if self.replacement_skipped_span_label_counts is not None:
+            if self.replacement_skipped_span_count is None:
+                raise ValueError("replacement skipped label counts require replacement application cardinalities")
+            if sum(self.replacement_skipped_span_label_counts.values()) != self.replacement_skipped_span_count:
+                raise ValueError("replacement skipped label counts must sum to replacement skipped span count")
         return self
 
 

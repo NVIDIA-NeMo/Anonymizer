@@ -212,7 +212,9 @@ def test_wandb_snapshot_rejects_metric_fields_from_another_schema(
         _strict_record_payload(
             schema_version=2,
             replacement_map_entry_count=1,
+            replacement_targeted_span_count=2,
             replacement_applied_span_count=2,
+            replacement_skipped_span_count=0,
             original_value_leak_unique_value_count=0,
         ),
     ],
@@ -228,6 +230,110 @@ def test_wandb_snapshot_accepts_metrics_for_matching_schema(
     snapshot = wandb_ingress_tool.read_measurement_snapshot(path)
 
     assert snapshot.records[0].schema_version == payload["schema_version"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("replacement_map_entry_label_counts", {"person": 1}),
+        ("replacement_skipped_span_label_counts", {"person": 1}),
+        ("original_value_leak_source_entity_occurrence_label_counts", {"person": 1}),
+    ],
+)
+def test_wandb_snapshot_rejects_v2_label_count_companions_on_v1(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    field: str,
+    value: dict[str, int],
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    payload = _strict_record_payload(schema_version=1)
+    payload[field] = value
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema violation"):
+        wandb_ingress_tool.read_measurement_snapshot(path)
+
+
+def test_wandb_snapshot_preserves_v2_label_count_companions(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    payload = _strict_record_payload(
+        schema_version=2,
+        replacement_map_entry_label_counts={"person": 1},
+        replacement_targeted_span_count=2,
+        replacement_applied_span_count=1,
+        replacement_skipped_span_count=1,
+        replacement_skipped_span_label_counts={"email": 1},
+        original_value_leak_source_entity_occurrence_label_counts={"person": 2},
+    )
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    record = wandb_ingress_tool.read_measurement_snapshot(path).records[0]
+
+    assert record.replacement_map_entry_label_counts == {"person": 1}
+    assert record.replacement_skipped_span_label_counts == {"email": 1}
+    assert record.original_value_leak_source_entity_occurrence_label_counts == {"person": 2}
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "replacement_targeted_span_count": 3,
+            "replacement_applied_span_count": 1,
+            "replacement_skipped_span_count": 1,
+        },
+        {"replacement_targeted_span_count": 2},
+        {
+            "replacement_targeted_span_count": 2,
+            "replacement_applied_span_count": 1,
+            "replacement_skipped_span_count": 1,
+            "replacement_skipped_span_label_counts": {"person": 2},
+        },
+    ],
+)
+def test_wandb_snapshot_rejects_inconsistent_replacement_cardinality(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    updates: dict[str, object],
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    payload = _strict_record_payload(schema_version=2)
+    payload.update(updates)
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema violation"):
+        wandb_ingress_tool.read_measurement_snapshot(path)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {},
+        {
+            "replacement_targeted_span_count": 3,
+            "replacement_applied_span_count": 2,
+            "replacement_skipped_span_count": 1,
+            "replacement_skipped_span_label_counts": {"person": 1},
+        },
+    ],
+)
+def test_wandb_snapshot_accepts_optional_or_consistent_replacement_cardinality(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    updates: dict[str, object],
+) -> None:
+    path = tmp_path / "measurements.jsonl"
+    payload = _strict_record_payload(schema_version=2)
+    payload.update(updates)
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    snapshot = wandb_ingress_tool.read_measurement_snapshot(path)
+
+    assert len(snapshot.records) == 1
 
 
 def test_wandb_snapshot_rejects_symlink_and_special_file(
