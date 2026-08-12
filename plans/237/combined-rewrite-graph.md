@@ -67,12 +67,20 @@ post-detection rewrite work, so a full detection-plus-rewrite graph remains a la
 
 ## Benchmark Result
 
-The authoritative paired run completed 30 pairs without failures. The combined
-path reduced median Data Designer workflows from five to three, but did not show
-a latency improvement: paired wall time was 1.81% slower and rewrite time was
-1.58% slower. Quality and leakage were comparable. The run was confounded by
-more repairs, more output tokens, and fixed variant ordering, so it establishes
-neither an intrinsic slowdown nor a speedup.
+The authoritative controlled run completed 12 pairs without workload failures.
+Both paths received the same prepared and initially evaluated state. Ten rows
+required one repair and two skipped repair in both paths; none exhausted the
+three configured rounds. Both paths made 80 LLM requests, while the measured
+rewrite/evaluate portion used four Data Designer workflows for legacy and two
+for combined across two counterbalanced groups.
+
+Combined took 10.56 seconds versus 10.80 seconds for legacy, a 2.2% reduction.
+Leakage remained zero for every output, repair counts agreed for all rows, 10/12
+outputs were byte-identical, and 11/12 review decisions agreed. The paired mean
+utility delta was -0.0867 with median zero and an approximate 95% interval of
+[-0.2496, 0.0763]. Separate real-model generation and judge calls remain
+nondeterministic, so this establishes latency and behavioral parity rather than
+a speedup.
 
 Performance is therefore a regression guardrail, not the integration rationale.
 
@@ -81,10 +89,12 @@ Performance is therefore a regression guardrail, not the integration rationale.
 1. [x] **Conditional behavior**: verify row-local skipping, multiple repairs,
    exhausted repairs, passthrough defaults, row order, and graph validation.
 2. [ ] **Failure attribution and default rollout**: add a Data Designer result API
-   exposing the failed column and seed-row identity. Until then, keep the legacy
-   workflow as the default. Data Designer 0.8 task traces expose the column and
-   row position only when full tracing is enabled, which is not a scalable
-   production mechanism and does not include Anonymizer's record id.
+   exposing the failed column and seed-row identity, tracked in
+   [DataDesigner #860](https://github.com/NVIDIA-NeMo/DataDesigner/issues/860).
+   Until then, keep the legacy workflow as the default. Data Designer 0.8 task
+   traces expose the column and row position only when full tracing is enabled,
+   which is not a scalable production mechanism and does not include
+   Anonymizer's record id.
 3. [x] **Measurements**: record one physical `rewrite-combined` Data Designer
    workflow while preserving aggregate model usage, repair counts, review flags,
    and runner-level row counts. Precise failure-stage measurements remain part of
@@ -97,7 +107,7 @@ Performance is therefore a regression guardrail, not the integration rationale.
 6. [ ] **Consolidation**: after failure attribution is available, fold the graph
    into `RewriteWorkflow`, remove `use_combined_graph`, remove the duplicate
    runner, and delete the legacy loop.
-7. [ ] **Performance guardrail**: rerun the corrected paired benchmark with
+7. [x] **Performance guardrail**: rerun the corrected paired benchmark with
    balanced ordering and equivalent repair decisions.
 
 ## Portability
