@@ -83,9 +83,10 @@ readonly CURL_RETRIES=3
 readonly CURL_RETRY_DELAY=2
 # Set MISE_REQUIRE_SIGNED_INSTALL=1 to fail hard when the signed path can't
 # be completed (missing gpg or network failure fetching the key / installer)
-# instead of falling back to the unsigned `curl | sh` path. Recommended for
-# CI/release pipelines; default is off so local dev on slim images still
-# succeeds with a loud warning.
+# instead of falling back to the unsigned mise.run installer. Recommended
+# for CI/release pipelines; default is off so local dev on slim images still
+# succeeds with a loud warning. The fallback is downloaded completely before
+# execution so curl retries cannot concatenate partial responses into a pipe.
 REQUIRE_SIGNED_INSTALL="${MISE_REQUIRE_SIGNED_INSTALL:-0}"
 
 curl_fetch() {
@@ -126,7 +127,13 @@ unsigned_install_or_fail() {
         exit 1
     fi
     echo "WARNING: ${reason} -- installing mise ${MISE_VERSION} via ${MISE_RUN_URL} without signature verification" >&2
-    curl_fetch "$MISE_RUN_URL" | MISE_VERSION="$MISE_VERSION" sh
+    (
+        local unsigned_script
+        unsigned_script="$(mktemp "${TMPDIR:-/tmp}/mise-install.unsigned.XXXXXXXX")"
+        trap 'rm -f "$unsigned_script"' EXIT
+        curl_fetch -o "$unsigned_script" "$MISE_RUN_URL"
+        MISE_VERSION="$MISE_VERSION" sh "$unsigned_script"
+    )
 }
 
 expected="${MISE_VERSION#v}"

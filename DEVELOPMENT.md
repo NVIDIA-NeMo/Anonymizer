@@ -59,12 +59,14 @@ Common mise tasks:
 
 ```bash
 mise run setup                  # tools, dev dependencies, and repository hooks
+mise run setup all              # tools, every dependency group, and repository hooks
 mise run deps:sync docs         # synchronize dev + docs dependencies
 mise run deps:sync notebooks    # synchronize dev + notebook dependencies
 mise run hooks:install          # reinstall repository hooks
 mise run check                  # read-only format, lint, type, lock, and SPDX checks
 mise run check ::: test         # read-only checks plus unit tests
 mise run test                   # unit tests
+mise run test:all               # unit and opt-in end-to-end tests (credentials may be required)
 mise run test:coverage          # unit tests with coverage report
 mise run docs:build             # strict docs build
 mise run docs:serve             # local docs server
@@ -100,6 +102,12 @@ For end-to-end behavior:
 
 ```bash
 mise run test:e2e
+```
+
+To run both the unit and end-to-end suites:
+
+```bash
+mise run test:all
 ```
 
 For docs changes:
