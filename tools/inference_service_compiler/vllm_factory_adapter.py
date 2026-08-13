@@ -12,13 +12,15 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, assert_never, cast
+
+from inference_service_compiler.models import FactoryPlugin, parse_factory_plugin
 
 DEFAULT_CHUNK_LENGTH = 384
 DEFAULT_OVERLAP = 128
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DetectionRequest:
     """Validated Anonymizer detector request."""
 
@@ -31,7 +33,7 @@ class DetectionRequest:
     flat_ner: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Entity:
     """One entity in Anonymizer's detector response shape."""
 
@@ -62,7 +64,7 @@ async def anonymizer_chat_compatibility(
     responses = importlib.import_module("starlette.responses")
     try:
         detection = parse_detection_request(await request.json())
-        plugin = os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"]
+        plugin = parse_factory_plugin(os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"])
         entities: list[Entity] = []
         if detection.labels:
             chunks = split_text(detection.text, detection.chunk_length, detection.overlap)
@@ -183,7 +185,7 @@ async def invoke_pooling(
     *,
     handler: Any,
     model: str,
-    plugin: str,
+    plugin: FactoryPlugin,
     text: str,
     labels: tuple[str, ...],
     threshold: float,
@@ -196,13 +198,14 @@ async def invoke_pooling(
         "labels": list(labels),
         "threshold": threshold,
     }
-    if plugin == "deberta_gliner":
-        data["flat_ner"] = flat_ner
-    elif plugin == "deberta_gliner2":
-        data["include_confidence"] = True
-        data["include_spans"] = True
-    else:
-        raise ValueError(f"unsupported vLLM Factory plugin {plugin!r}")
+    match plugin:
+        case "deberta_gliner":
+            data["flat_ner"] = flat_ner
+        case "deberta_gliner2":
+            data["include_confidence"] = True
+            data["include_spans"] = True
+        case _:
+            assert_never(plugin)
     response = await handler(protocol.IOProcessorRequest(model=model, data=data), None)
     if response.status_code != 200:
         raise RuntimeError(f"vLLM Factory pooling request returned {response.status_code}")
@@ -217,7 +220,7 @@ async def invoke_pooling(
 
 def merge_entities(
     *,
-    plugin: str,
+    plugin: FactoryPlugin,
     chunks: list[tuple[str, int]],
     results: Sequence[object],
     flat_ner: bool,
@@ -227,7 +230,13 @@ def merge_entities(
         raise ValueError("vLLM Factory returned an unexpected result count")
     entities: list[Entity] = []
     for (chunk, offset), result in zip(chunks, results, strict=True):
-        normalized = normalize_gliner(result) if plugin == "deberta_gliner" else normalize_gliner2(result)
+        match plugin:
+            case "deberta_gliner":
+                normalized = normalize_gliner(result)
+            case "deberta_gliner2":
+                normalized = normalize_gliner2(result)
+            case _:
+                assert_never(plugin)
         for entity in normalized:
             if entity.start < 0 or entity.end < entity.start or entity.end > len(chunk):
                 raise ValueError("vLLM Factory returned an invalid entity span")

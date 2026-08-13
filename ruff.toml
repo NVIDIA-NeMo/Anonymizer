@@ -34,7 +34,7 @@ fixable = ["ALL"]
 unfixable = []
 
 [lint.isort]
-known-first-party = ["anonymizer"]
+known-first-party = ["anonymizer", "inference_service_compiler"]
 
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"

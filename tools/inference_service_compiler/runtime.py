@@ -10,9 +10,10 @@ import signal
 import subprocess
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, assert_never, cast
 
 import httpx
 
@@ -38,6 +39,14 @@ class RuntimeEffectError(RuntimeError):
     def __init__(self, diagnostic: RuntimeDiagnostic) -> None:
         super().__init__(diagnostic.message)
         self.diagnostic = diagnostic
+
+
+@dataclass(frozen=True, slots=True)
+class StopOutcome:
+    """Immutable result of terminating one managed process group."""
+
+    outcome: Literal["terminated", "forced"]
+    cleanup_complete: bool
 
 
 def probe_endpoint(
@@ -162,13 +171,13 @@ def cancel_run(launch: LaunchReceipt) -> CancellationReceipt:
             outcome="already-stopped",
             cleanup_complete=True,
         )
-    outcome, cleanup_complete = _stop_running_handle(handle, launch.shutdown_timeout_seconds)
+    stop = _stop_running_handle(handle, launch.shutdown_timeout_seconds)
     return CancellationReceipt(
         plan_digest=launch.plan_digest,
         canceled_at=_now(),
         handle=handle,
-        outcome=outcome,
-        cleanup_complete=cleanup_complete,
+        outcome=stop.outcome,
+        cleanup_complete=stop.cleanup_complete,
     )
 
 
@@ -191,18 +200,17 @@ def is_handle_running(handle: LocalProcessHandle) -> bool:
 def _cleanup_handle(handle: LocalProcessHandle, timeout_seconds: float) -> bool:
     if not is_handle_running(handle):
         return True
-    _outcome, cleanup_complete = _stop_running_handle(handle, timeout_seconds)
-    return cleanup_complete
+    return _stop_running_handle(handle, timeout_seconds).cleanup_complete
 
 
 def _stop_running_handle(
     handle: LocalProcessHandle,
     timeout_seconds: float,
-) -> tuple[Literal["terminated", "forced"], bool]:
+) -> StopOutcome:
     try:
         os.killpg(handle.process_group_id, signal.SIGTERM)
     except ProcessLookupError:
-        return "terminated", True
+        return StopOutcome(outcome="terminated", cleanup_complete=True)
     deadline = time.monotonic() + timeout_seconds
     running = True
     while time.monotonic() < deadline:
@@ -215,10 +223,10 @@ def _stop_running_handle(
         try:
             os.killpg(handle.process_group_id, signal.SIGKILL)
         except ProcessLookupError:
-            return "forced", True
+            return StopOutcome(outcome="forced", cleanup_complete=True)
         running = is_handle_running(handle)
         outcome = "forced"
-    return outcome, not running
+    return StopOutcome(outcome=outcome, cleanup_complete=not running)
 
 
 def wait_for_readiness(
@@ -324,7 +332,8 @@ def _probe_task(plan: RunPlan, client: httpx.Client, headers: Mapping[str, str])
             if entities and all(isinstance(entity, dict) and "score" in entity for entity in entities):
                 observed.append("scores")
             return tuple(observed)
-    raise TypeError(f"unsupported task type {type(plan.intent.task)!r}")
+        case _:
+            assert_never(plan.intent.task)
 
 
 def _parse_models(payload: object) -> tuple[str, ...]:

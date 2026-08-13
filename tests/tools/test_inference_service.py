@@ -128,6 +128,14 @@ def test_factory_detection_is_task_bounded() -> None:
         )
 
 
+def test_factory_plugin_is_closed_at_the_intent_boundary() -> None:
+    """Profiles cannot select an uncharacterized Factory plugin."""
+    models, _compiler, _runtime = modules()
+
+    with pytest.raises(ValidationError):
+        models.VllmFactoryIntegration.model_validate({"plugin": "unsupported"})
+
+
 def test_factory_detection_requires_a_pin_and_characterized_model() -> None:
     models, compiler, _runtime = modules()
     for model_id, revision, message in (
