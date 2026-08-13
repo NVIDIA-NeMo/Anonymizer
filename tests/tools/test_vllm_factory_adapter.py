@@ -54,7 +54,7 @@ def test_parse_detection_request_accepts_label_free_health_check() -> None:
 def test_merge_gliner_entities_restores_offsets_and_deduplicates_overlap() -> None:
     """Chunk-relative factory spans become stable document offsets."""
     adapter = load_adapter()
-    chunks = [("Alice met Bob", 0), ("Bob at NVIDIA", 10)]
+    chunks = [adapter.TextChunk("Alice met Bob", 0), adapter.TextChunk("Bob at NVIDIA", 10)]
     results = [
         [
             {"text": "Alice", "label": "person", "start": 0, "end": 5, "score": 0.9},
@@ -86,7 +86,7 @@ def test_merge_gliner2_entities_normalizes_confidence_and_spans() -> None:
 
     entities = adapter.merge_entities(
         plugin="deberta_gliner2",
-        chunks=[("Email alice@example.com", 0)],
+        chunks=[adapter.TextChunk("Email alice@example.com", 0)],
         results=[
             {
                 "entities": {
@@ -120,6 +120,6 @@ def test_split_text_matches_native_character_overlap_contract() -> None:
     adapter = load_adapter()
 
     assert adapter.split_text("abcdefghij", chunk_length=6, overlap=2) == [
-        ("abcdef", 0),
-        ("efghij", 4),
+        adapter.TextChunk("abcdef", 0),
+        adapter.TextChunk("efghij", 4),
     ]
