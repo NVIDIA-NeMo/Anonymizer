@@ -11,11 +11,11 @@ authors:
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-Return to the customer biographies from Part 1. Replace mode changed the explicit identifiers, but this time the data must meet a stricter privacy requirement. Even after names and addresses are replaced, a rare occupation, an exact sequence of life events, or a distinctive combination of hometown and employer may still identify someone.
+Let's return to the customer biographies from Part 1. Replace mode changed the explicit identifiers. Now suppose the data must meet a stricter privacy requirement: even after names and addresses are replaced, a rare occupation, an exact sequence of life events, or a distinctive combination of hometown and employer may still identify someone.
 
-You use NeMo Anonymizer's Rewrite mode to protect information conveyed by latent entities and combinations of identifying clues. It transforms the full record—not just explicit identifiers—while preserving the meaning that still matters. Rewriting introduces a tradeoff: the output can retain identifying clues or lose useful information.
+With that stricter goal in mind, we recommend to use NeMo Anonymizer's Rewrite mode. It can account for latent entities and combinations of identifying clues by transforming the full record—not just explicit identifiers—while preserving the meaning that still matters. The challenge is to reduce identifying detail without losing useful information.
 
-During `run()` or `preview()`, Rewrite checks each generated record for how much protected information can still be deduced and how much important meaning was preserved. Those results drive the repair iterations. After anonymization, an optional `evaluate()` call provides a broader review of entity detection coverage, privacy, quality, and style.
+During `run()` or `preview()`, Rewrite checks each generated record for privacy leakage and meaning preservation. Leakage results determine whether a record enters the repair loop, while both leakage and utility contribute to the final human-review flag. After anonymization, an optional `evaluate()` call reviews entity coverage and the rewrite's privacy, quality, and style. Detection validity is separately opt-in.
 
 This is Part 2 of a two-part series on evaluation in Anonymizer. Part 1 covers Replace mode; this article explains the two evaluation layers used by **Rewrite mode**, what each score means, and how to inspect the results.
 
@@ -30,15 +30,17 @@ Unlike Replace mode, Rewrite mode evaluates every generated rewrite as part of `
 ```mermaid
 flowchart TD
     A[Source data] --> B[Anonymizer.preview / run\nDetect and rewrite]
-    B --> C[In-pipeline checks\nUtility · leakage · repair]
+    B --> C[Evaluate–repair loop\nUtility · leakage · repair]
     C --> D[Rewrite result]
     D --> E[Optional Anonymizer.evaluate]
     E --> F[Post-hoc judge report\nCoverage · privacy · quality · style]
 ```
 
-The in-pipeline checks drive the repair loop and `needs_human_review`. The post-hoc judge evaluation is informational: it adds judge outputs but does not rewrite the text again or change the existing human-review decision.
+Rewrite first scores each record for privacy leakage and utility. If leakage is too high, it rewrites the record and checks it again. When the evaluate–repair loop ends, it flags records that still need human review. Post-hoc judge evaluation is an optional, separate step that you run by calling `evaluate()` after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See [Part 1](evaluation-anonymizer-replace.md#anonymization-and-evaluation-as-separate-steps) for more about this workflow.
 
 ```python
+import pickle
+
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
 
 anonymizer = Anonymizer()
@@ -48,17 +50,27 @@ result = anonymizer.run(
     data=AnonymizerInput(source="records.csv", text_column="text"),
 )
 
-# In-pipeline metrics are already present after run().
-pipeline_metric_columns = [
+# Rewrite metrics are already present after run().
+rewrite_metric_columns = [
     "utility_score",
     "leakage_mass",
     "weighted_leakage_rate",
     "needs_human_review",
 ]
-pipeline_scores = result.dataframe[pipeline_metric_columns]
+rewrite_scores = result.dataframe[rewrite_metric_columns]
 
-# A separate call adds post-hoc judge outputs.
-evaluated = anonymizer.evaluate(result)
+# To run the optional post-hoc evaluation immediately, use:
+# evaluated = anonymizer.evaluate(result)
+
+# To evaluate in a later session, save the complete result.
+with open("rewrite-result.pkl", "wb") as f:
+    pickle.dump(result, f)
+
+# In the later session, reload the complete result before evaluating it.
+with open("rewrite-result.pkl", "rb") as f:
+    saved_result = pickle.load(f)
+
+evaluated = anonymizer.evaluate(saved_result)
 posthoc_scores = evaluated.dataframe[["entity_coverage", "judge_evaluation"]]
 ```
 
@@ -66,7 +78,7 @@ As in Replace mode, the completed result is reusable. You can run `evaluate()` i
 
 ---
 
-## In-Pipeline Checks: Did the Rewrite Balance Privacy and Utility?
+## Evaluate–Repair Loop: Did the Rewrite Balance Privacy and Utility?
 
 During `run()` or `preview()`, Anonymizer creates quality questions from the original record and privacy questions from the detected entities and their sensitivity dispositions. It answers those questions against the rewritten text, computes per-record metrics, and repairs rows that exceed the configured privacy threshold.
 
@@ -74,7 +86,7 @@ During `run()` or `preview()`, Anonymizer creates quality questions from the ori
 
 `utility_score` measures how well the rewritten text answers questions about the original record. Scores range from `0.0` to `1.0`; higher is better.
 
-Critical meaning units count twice as much as important ones:
+Before rewriting, Anonymizer extracts pieces of information to preserve, called meaning units, and labels each one as `critical` or `important`. When computing `utility_score`, a critical meaning unit receives twice the weight of an important one:
 
 ```text
 utility_score = weighted mean of per-question answer scores
@@ -124,7 +136,7 @@ flowchart LR
     E --> B
 ```
 
-`risk_tolerance` controls the repair and review thresholds. The default is `low`; use `minimal` for a stricter posture or `moderate` / `high` for more tolerance. Setting `max_repair_iterations=0` disables repair but still computes the in-pipeline metrics.
+`risk_tolerance` controls the repair and review thresholds. The default is `low`; use `minimal` for a stricter posture or `moderate` / `high` for more tolerance. Setting `max_repair_iterations=0` disables repair but still computes the rewrite metrics.
 
 ### Human Review: Which Records Still Need Attention?
 
@@ -134,7 +146,7 @@ After repair ends, `needs_human_review` becomes `True` when the rewrite is missi
 
 | Output column | Meaning |
 |---|---|
-| `needs_human_review` | Final review flag based on in-pipeline metrics |
+| `needs_human_review` | Final review flag based on the rewrite metrics |
 
 </div>
 
@@ -144,32 +156,11 @@ Records with no detected entities skip rewriting and pass through unchanged with
 
 ## Post-Hoc Evaluation: What Does an Independent Judge See?
 
-Calling `evaluate()` adds entity coverage and a holistic rewrite judgment. Detection validity can also be enabled when you want a precision-side audit of the detected entities.
+The post-hoc report includes entity coverage and a holistic rewrite judgment, with detection validity available as an opt-in audit.
 
 ### Entity Coverage: Were All In-Scope Entities Detected?
 
-Entity coverage measures how many unique, in-scope candidate values identified by the judge were also detected by Anonymizer.
-
-An independent LLM judge extracts candidate values from the original text. Postprocessing removes out-of-scope, non-literal, and duplicate candidates, then compares the remaining values with Anonymizer's detected entities. Unmatched candidates appear in `missed_entities`.
-
-```text
-entity_coverage = n_covered / n_candidates
-```
-
-A score of `1.0` means no judge candidates were missed, or the judge found no candidates. A lower score means the judge found candidate values not covered by Anonymizer's detected entities. Entity coverage measures detection recall, not whether the rewritten text still leaks those values.
-
-A score below `1.0` is a review signal, not definitive evidence of a privacy failure. Review the `missed_entities` entries in context: judge candidates can be ambiguous, and whether broad values require protection depends on your privacy policy.
-
-<div class="output-columns-table" markdown>
-
-| Output column | Meaning |
-|---|---|
-| `entity_coverage` | Float in `[0.0, 1.0]`, or `None` if the judge was unavailable |
-| `missed_entities` | List of `{value, label, reasoning}` for each entity the judge found that Anonymizer missed |
-
-</div>
-
-Entity coverage always runs during post-hoc evaluation. The judge respects the entity scope configured for the run—if `entity_labels` was set, only entities of those types are considered in scope. If a `data_summary` was provided, it helps the judge interpret domain-specific values in context.
+Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies in-scope candidates in the original text and measures how many Anonymizer detected. See [Part 1: Entity Coverage](evaluation-anonymizer-replace.md#entity-coverage-were-all-in-scope-entities-detected) for the calculation, output columns, and interpretation guidance.
 
 ### Privacy: Did the Rewrite Reduce Linkage Risk?
 
@@ -195,47 +186,29 @@ The style rubric evaluates fluency, grammar, clarity, coherence, and whether the
 - `medium` — readable with isolated awkward phrasing.
 - `low` — noticeably unnatural, broken, or placeholder-like.
 
-All three rubric results are stored together:
+All three rubric results are stored together in `judge_evaluation`. To retrieve the value for the first record:
 
 ```python
-evaluated.dataframe.loc[0, "judge_evaluation"]
-
-# {
-#     "privacy": {"score": "high", "reasoning": "..."},
-#     "quality": {"score": "medium", "reasoning": "..."},
-#     "style": {"score": "high", "reasoning": "..."},
-# }
+judge_evaluation = evaluated.dataframe.loc[0, "judge_evaluation"]
 ```
+
+An example value looks like this:
+
+```json
+{
+  "privacy": {"score": "high", "reasoning": "..."},
+  "quality": {"score": "medium", "reasoning": "..."},
+  "style": {"score": "high", "reasoning": "..."}
+}
+```
+
+The `reasoning` field explains why the selected rubric level applies, using evidence from the original and rewritten text.
 
 These rubric scores are informational. They do not trigger repair and do not modify `needs_human_review`.
 
 ### Detection Validity: Were the Detected Entities Valid in Context?
 
-Detection validity is the optional precision-side complement to entity coverage. In Rewrite mode, `detection_valid` is the fraction of detected `(value, label)` pairs that passed, from `0.0` to `1.0`.
-
-It surfaces false positives, wrong labels, wrong boundaries, and values that could be sensitive elsewhere but are not sensitive in the context of the original record.
-
-***Note:*** Detection-validity judgments are particularly sensitive to entity label names and wording. Ambiguous, overlapping, or domain-specific labels can change how the judge interprets the same detected value, so review flagged wrong-label cases against your configured taxonomy.
-
-```python
-from anonymizer import EvaluateConfig
-
-evaluated = anonymizer.evaluate(
-    result,
-    config=EvaluateConfig(compute_detection_validity=True),
-)
-```
-
-<div class="output-columns-table" markdown>
-
-| Output column | Meaning |
-|---|---|
-| `detection_valid` | Fraction of detected entities that passed, or `None` if unavailable |
-| `detection_invalid_entities` | Flagged `{value, label, reasoning}` entries |
-
-</div>
-
-Detection validity is **opt-in** and is intended primarily for model and threshold evaluation. A score of `1.0` means all checked detections passed; a lower score is the fraction that passed. What counts as an acceptable sensitive-entity detection can depend on the dataset, privacy policy, and desired label granularity.
+Detection validity uses the same opt-in judge as Replace mode to check whether detected `(value, label)` pairs are valid in context. Rewrite reports the fraction that passed from `0.0` to `1.0`, aligning it with Rewrite's numeric scoring, whereas Replace reports whether all detections passed as a boolean. See [Part 1: Detection Validity](evaluation-anonymizer-replace.md#detection-validity-were-the-detected-entities-valid-in-context) for what it flags and how to enable it.
 
 ---
 
@@ -247,11 +220,11 @@ To inspect the first record (row `0`):
 evaluated.display_record(0)
 ```
 
-The Rewrite report shows the original and rewritten text, in-pipeline utility and leakage metrics, the human-review flag, post-hoc privacy / quality / style scores, entity coverage, and the entity disposition used to guide protection. When detection validity is enabled, that score and any flagged detections also appear.
+The Rewrite report shows the original and rewritten text, rewrite utility and leakage metrics, the human-review flag, post-hoc privacy / quality / style scores, entity coverage, and the entity disposition used to guide protection. When detection validity is enabled, that score and any flagged detections also appear.
 
 <div style="text-align: center;" markdown>
 
-![Screenshot of display_record output for a Rewrite result showing original and rewritten text, in-pipeline metrics, post-hoc judge scores, entity coverage, and entity disposition.](assets/evaluate-rewrite-display-record.png){ loading=lazy }
+![Screenshot of display_record output for a Rewrite result showing original and rewritten text, rewrite metrics, post-hoc judge scores, entity coverage, and entity disposition.](assets/evaluate-rewrite-display-record.png){ loading=lazy }
 
 </div>
 
@@ -264,8 +237,8 @@ evaluated.dataframe[[
     "weighted_leakage_rate",
     "needs_human_review",
     "entity_coverage",
+    "detection_valid",    # Disabled by default, added only when compute_detection_validity=True
     "judge_evaluation",
-    # "detection_valid",  # Add only when compute_detection_validity=True
 ]]
 ```
 
@@ -273,30 +246,7 @@ evaluated.dataframe[[
 
 ## Comparing Judge Models
 
-The judge model for each post-hoc role is configurable. This makes it straightforward to compare results across models—run `evaluate()` on the same original, unevaluated Rewrite result with different model configurations without paying to re-run detection, rewriting, or repair.
-
-```python
-model_configs_nemotron = """
-selected_models:
-  evaluate:
-    entity_coverage_judge: nemotron-super
-    rewrite_judge: nemotron-30b-thinking
-"""
-
-model_configs_gpt = """
-selected_models:
-  evaluate:
-    entity_coverage_judge: gpt-oss-120b
-    rewrite_judge: gpt-oss-120b
-"""
-
-evaluated_nemotron = Anonymizer(model_configs=model_configs_nemotron).evaluate(result)
-evaluated_gpt = Anonymizer(model_configs=model_configs_gpt).evaluate(result)
-```
-
-The entity coverage judge defaults to `nemotron-super`; the holistic Rewrite judge defaults to `nemotron-30b-thinking`. Detection validity uses the shared `detection_validity_judge` role and defaults to `gpt-oss-120b`.
-
-Because the rewritten data does not change between these calls, differences come from the evaluation layer rather than rewriting. They may reflect the selected model, LLM nondeterminism, provider behavior, or other evaluation-time differences.
+Judge models are configured and compared the same way as in [Part 1: Comparing Judge Models](evaluation-anonymizer-replace.md#comparing-judge-models): run `evaluate()` on the same result with different model configurations, without rerunning anonymization. See [Evaluation: Model Roles](../../concepts/evaluation.md#model-roles) for the default model used by each evaluation step, which you can treat as the baseline when comparing candidate models.
 
 ---
 
@@ -316,9 +266,9 @@ Use these signals together. Review representative records, inspect failures and 
 
 ## The Bottom Line
 
-Rewrite evaluation is not a single final score. The in-pipeline checks measure utility and leakage, repair failing rows, and flag unresolved risk. The optional post-hoc judge evaluation adds independent evidence about detection coverage and the rewrite's overall privacy, quality, and style.
+Rewrite evaluation is not a single final score. The evaluate–repair loop measures utility and leakage, repairs failing rows, and flags unresolved risk. The optional post-hoc judge evaluation adds independent evidence about detection coverage and the rewrite's overall privacy, quality, and style.
 
-That separation supports two workflows: use the in-pipeline metrics to control generation, then apply post-hoc judges when you need a broader audit of completed results.
+The two layers serve different purposes: rewrite metrics guide repair during anonymization, while post-hoc judges provide a broader assessment of the completed results.
 
 Skipping post-hoc evaluation can leave detection gaps and holistic privacy, quality, or style problems unnoticed until affected records reach downstream systems.
 
