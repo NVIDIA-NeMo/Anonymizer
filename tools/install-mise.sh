@@ -71,7 +71,7 @@ read_pinned_mise_version() {
 MISE_VERSION="${MISE_VERSION:-$(read_pinned_mise_version)}"
 : "${MISE_GPG_KEY:?MISE_GPG_KEY is required (pass from bootstrap caller)}"
 
-readonly MISE_SIG_URL="https://mise.jdx.dev/install.sh.sig"
+readonly MISE_SIG_URL="https://github.com/jdx/mise/releases/download/${MISE_VERSION}/install.sh.sig"
 readonly MISE_RUN_URL="https://mise.run"
 readonly MISE_GPG_KEY_URL="https://keys.openpgp.org/vks/v1/by-fingerprint"
 

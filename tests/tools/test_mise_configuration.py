@@ -68,6 +68,13 @@ def test_local_mise_installer_fetches_and_pins_release_key_over_https() -> None:
     assert '--recv-keys "$MISE_GPG_KEY"' not in installer
 
 
+def test_local_mise_installer_fetches_signature_for_pinned_version() -> None:
+    installer = (REPO_ROOT / "tools/install-mise.sh").read_text(encoding="utf-8")
+
+    assert 'MISE_SIG_URL="https://github.com/jdx/mise/releases/download/${MISE_VERSION}/install.sh.sig"' in installer
+    assert "https://mise.jdx.dev/install.sh.sig" not in installer
+
+
 def test_local_mise_installer_downloads_unsigned_fallback_before_execution() -> None:
     installer = (REPO_ROOT / "tools/install-mise.sh").read_text(encoding="utf-8")
 
