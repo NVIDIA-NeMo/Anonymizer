@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from inference_service_compiler.models import FactoryPlugin, parse_factory_plugin
 from inference_service_compiler.vllm_factory_integration import (
     io_processor_for,
     prepare_model,
@@ -25,7 +26,7 @@ ANONYMIZER_CHAT_MIDDLEWARE = "inference_service_compiler.vllm_factory_adapter.an
 MINIMUM_VLLM_PYTHON = (3, 12)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VllmServerParameters:
     """Bounded settings accepted by the source-owned vLLM server process."""
 
@@ -47,7 +48,7 @@ class VllmServerParameters:
     enable_mamba_cache_stochastic_rounding: bool = False
     mamba_cache_philox_rounds: int = 0
     lora_module: str | None = None
-    vllm_factory_plugin: str | None = None
+    vllm_factory_plugin: FactoryPlugin | None = None
     prepared_model_root: str = "/tmp/anonymizer-vllm-factory"
 
 
@@ -104,7 +105,9 @@ def parse_server_parameters(argv: Sequence[str]) -> VllmServerParameters:
         enable_mamba_cache_stochastic_rounding=parsed.enable_mamba_cache_stochastic_rounding,
         mamba_cache_philox_rounds=parsed.mamba_cache_philox_rounds,
         lora_module=parsed.lora_modules,
-        vllm_factory_plugin=parsed.vllm_factory_plugin,
+        vllm_factory_plugin=(
+            parse_factory_plugin(parsed.vllm_factory_plugin) if parsed.vllm_factory_plugin is not None else None
+        ),
         prepared_model_root=parsed.prepared_model_root,
     )
 
