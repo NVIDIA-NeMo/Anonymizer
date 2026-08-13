@@ -310,16 +310,20 @@ def _parse_metadata(config: dict[str, Any]) -> tuple[Literal[1, 2], WandbRunMeta
 
 
 def _measurement_schema_version(config: dict[str, Any]) -> Literal[1, 2]:
-    """Read the flattened comparison dimension, retaining historical reports."""
-    value = config.get("measurement_schema_version")
-    if value is None:
-        benchmark = config.get("benchmark")
-        value = benchmark.get("measurement_schema_version") if isinstance(benchmark, dict) else None
-    if value is None:
+    """Validate and read the duplicated comparison dimension from a W&B config."""
+    values: list[Literal[1, 2]] = []
+    if "measurement_schema_version" in config:
+        values.append(config["measurement_schema_version"])
+    benchmark = config.get("benchmark")
+    if isinstance(benchmark, Mapping) and "measurement_schema_version" in benchmark:
+        values.append(benchmark["measurement_schema_version"])
+    if not values:
         return 1
-    if type(value) is not int or value not in {1, 2}:
+    if any(type(value) is not int or value not in {1, 2} for value in values):
         raise ValueError("W&B run is missing a valid measurement schema version")
-    return value
+    if len(set(values)) != 1:
+        raise ValueError("W&B run has conflicting measurement schema versions")
+    return values[0]
 
 
 def _project_v2_metadata(config: dict[str, Any]) -> dict[str, Any]:

@@ -577,6 +577,49 @@ def test_wandb_report_rejects_non_strict_flattened_measurement_schema_version(
         )
 
 
+def test_wandb_report_rejects_conflicting_measurement_schema_versions(wandb_report_tool: ModuleType) -> None:
+    summary, config = _wandb_report_fixture()
+    config["measurement_schema_version"] = 1
+    config["benchmark"]["measurement_schema_version"] = 2
+
+    with pytest.raises(ValueError, match="conflicting measurement schema versions"):
+        wandb_report_tool.parse_wandb_run_view(
+            SimpleNamespace(id="run-a", name="v1", group=None, job_type="benchmark", summary=summary, config=config),
+            run_path=wandb_report_tool.WandbRunPath(entity="entity", project="project", run_id="run-a"),
+            allowed_metrics=frozenset(wandb_report_tool._all_report_metrics()),
+        )
+
+
+def test_wandb_report_rejects_invalid_nested_measurement_schema_version(wandb_report_tool: ModuleType) -> None:
+    summary, config = _wandb_report_fixture()
+    config["benchmark"]["measurement_schema_version"] = 3
+
+    with pytest.raises(ValueError, match="valid measurement schema version"):
+        wandb_report_tool.parse_wandb_run_view(
+            SimpleNamespace(id="run-a", name="v1", group=None, job_type="benchmark", summary=summary, config=config),
+            run_path=wandb_report_tool.WandbRunPath(entity="entity", project="project", run_id="run-a"),
+            allowed_metrics=frozenset(wandb_report_tool._all_report_metrics()),
+        )
+
+
+@pytest.mark.parametrize("measurement_schema_version", [1, 2])
+def test_wandb_report_accepts_matching_measurement_schema_versions(
+    wandb_report_tool: ModuleType,
+    measurement_schema_version: int,
+) -> None:
+    summary, config = _wandb_report_fixture()
+    config["measurement_schema_version"] = measurement_schema_version
+    config["benchmark"]["measurement_schema_version"] = measurement_schema_version
+
+    view = wandb_report_tool.parse_wandb_run_view(
+        SimpleNamespace(id="run-a", name="run", group=None, job_type="benchmark", summary=summary, config=config),
+        run_path=wandb_report_tool.WandbRunPath(entity="entity", project="project", run_id="run-a"),
+        allowed_metrics=frozenset(wandb_report_tool._all_report_metrics()),
+    )
+
+    assert view.measurement_schema_version == measurement_schema_version
+
+
 @pytest.mark.parametrize(
     "fixture_name,schema_version,run_kind",
     [
