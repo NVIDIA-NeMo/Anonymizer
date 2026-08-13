@@ -169,9 +169,7 @@ def _filter_replacement_map_to_input_entities(
     # regular space in the original field; we want to keep those entries using
     # the canonical (detected) entity value so downstream lookups succeed.
     _nws = lambda s: " ".join(s.split())  # noqa: E731
-    normalized_allowed: dict[tuple[str, str], tuple[str, str]] = {
-        (_nws(v), lbl): (v, lbl) for v, lbl in allowed_pairs
-    }
+    normalized_allowed: dict[tuple[str, str], tuple[str, str]] = {(_nws(v), lbl): (v, lbl) for v, lbl in allowed_pairs}
     protected_original_values = {value for value, _ in allowed_pairs}
     filtered: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()

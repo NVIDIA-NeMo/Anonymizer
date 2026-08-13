@@ -199,9 +199,7 @@ def _get_replace_pairs(row: dict[str, Any]) -> tuple[list[tuple[str, str, str]],
     return pairs, replace_values
 
 
-def _apply_tagged_text_replacements(
-    tagged_text: str, pairs: list[tuple[str, str, str]], tag_notation: str
-) -> str:
+def _apply_tagged_text_replacements(tagged_text: str, pairs: list[tuple[str, str, str]], tag_notation: str) -> str:
     """Replace entity values in tagged text using a single-pass, tag-boundary-aware substitution.
 
     Builds a lookup from full tagged span → replacement tagged span, then applies all
@@ -274,8 +272,7 @@ def _apply_direct_replacements(row: dict[str, Any]) -> dict[str, Any]:
         replace_value_set = {original for original, _, _ in pairs}
         replace_entities = EntitiesSchema(
             entities=[
-                e for e in all_entities.entities
-                if e.value in replace_value_set and e.end_position > e.start_position
+                e for e in all_entities.entities if e.value in replace_value_set and e.end_position > e.start_position
             ]
         )
         replacement_entries = [
