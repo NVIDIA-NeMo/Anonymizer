@@ -10,6 +10,7 @@ import signal
 import subprocess
 import time
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,24 +58,20 @@ def probe_endpoint(
     """Probe one managed endpoint and record only capabilities observed at runtime."""
     verify_plan(plan)
     headers = _probe_headers(plan, secret_values or {})
-    owns_client = client is None
-    active_client = client or httpx.Client(timeout=10)
     try:
-        models_response = active_client.get(plan.readiness.url, headers=headers)
-        if models_response.status_code != plan.readiness.expected_status:
-            raise ValueError(
-                f"readiness probe returned status {models_response.status_code}, "
-                f"expected {plan.readiness.expected_status}"
-            )
-        models = _parse_models(models_response.json())
-        observed = _probe_task(plan, active_client, headers)
+        with nullcontext(client) if client is not None else httpx.Client(timeout=10) as active_client:
+            models_response = active_client.get(plan.readiness.url, headers=headers)
+            if models_response.status_code != plan.readiness.expected_status:
+                raise ValueError(
+                    f"readiness probe returned status {models_response.status_code}, "
+                    f"expected {plan.readiness.expected_status}"
+                )
+            models = _parse_models(models_response.json())
+            observed = _probe_task(plan, active_client, headers)
     except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeEffectError(
             RuntimeDiagnostic(code="probe-failed", message=f"capability probe failed: {exc}")
         ) from exc
-    finally:
-        if owns_client:
-            active_client.close()
     return CapabilityProbeReceipt(
         plan_digest=plan.plan_digest,
         endpoint=plan.endpoint,

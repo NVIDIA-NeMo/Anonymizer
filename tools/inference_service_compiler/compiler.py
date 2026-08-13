@@ -76,7 +76,13 @@ class ServiceCompilation:
 def compile_intent(intent: InferenceIntent, *, source_revision: str) -> RunPlan:
     """Compile semantic intent without starting, probing, or allocating anything."""
     if not source_revision:
-        raise ValueError("source_revision must not be empty")
+        raise CompilationError(
+            CompilerDiagnostic(
+                code="invalid-source-revision",
+                message="source_revision must not be empty",
+                details={},
+            )
+        )
     required = intent.task.required_capabilities()
     compilation = _compile_vllm(intent)
     placement = intent.local
@@ -136,73 +142,83 @@ def _canonical_json(value: object) -> bytes:
 
 
 def _compile_vllm(intent: InferenceIntent) -> ServiceCompilation:
-    engine = intent.vllm
     match intent.task:
         case EntityDetection() as task:
-            factory = engine.factory
-            if factory is None:
-                _raise_unsupported_task_engine(task.kind, "vllm")
-            if intent.model.revision is None:
-                raise CompilationError(
-                    CompilerDiagnostic(
-                        code="unpinned-model-revision",
-                        message="vLLM Factory entity detection requires a pinned model revision",
-                        details={"model": intent.model.model_id},
-                    )
-                )
-            if not supports_model(factory.plugin, intent.model.model_id):
-                raise CompilationError(
-                    CompilerDiagnostic(
-                        code="unsupported-model-engine",
-                        message=(
-                            f"model {intent.model.model_id!r} is not characterized for "
-                            f"vLLM Factory plugin {factory.plugin!r}"
-                        ),
-                        details={"model": intent.model.model_id, "plugin": factory.plugin},
-                    )
-                )
-            if intent.model.adapter is not None:
-                raise CompilationError(
-                    CompilerDiagnostic(
-                        code="unsupported-model-adapter",
-                        message="vLLM Factory entity detection does not support a model adapter",
-                        details={"engine": "vllm", "task": task.kind},
-                    )
-                )
-            command, runtime = _vllm_command(intent, engine)
-            return ServiceCompilation(
-                command=command,
-                runtime=runtime,
-                declared_capabilities=task.required_capabilities(),
-                compatibility_evidence=(
-                    CompatibilityEvidence(
-                        rule="vllm-factory-entity-detection-v1",
-                        outcome="runtime-probe-required",
-                        detail=(
-                            "vLLM Factory supplies model preparation, pooling inference, and IO processing; "
-                            "the Anonymizer adapter preserves dynamic labels, offsets, and scores"
-                        ),
-                    ),
-                ),
-            )
+            return _compile_entity_detection(intent, task)
         case Generation() as task:
-            if engine.factory is not None:
-                _raise_unsupported_task_engine(task.kind, "vllm")
-            command, runtime = _vllm_command(intent, engine)
-            return ServiceCompilation(
-                command=command,
-                runtime=runtime,
-                declared_capabilities=("chat-completions",),
-                compatibility_evidence=(
-                    CompatibilityEvidence(
-                        rule="vllm-openai-compatible-v1",
-                        outcome="characterized",
-                        detail="vLLM exposes chat completions for generation",
-                    ),
-                ),
-            )
+            return _compile_generation(intent, task)
         case _:
             assert_never(intent.task)
+
+
+def _compile_entity_detection(intent: InferenceIntent, task: EntityDetection) -> ServiceCompilation:
+    _validate_factory_detection(intent, task)
+    command, runtime = _vllm_command(intent, intent.vllm)
+    return ServiceCompilation(
+        command=command,
+        runtime=runtime,
+        declared_capabilities=task.required_capabilities(),
+        compatibility_evidence=(
+            CompatibilityEvidence(
+                rule="vllm-factory-entity-detection-v1",
+                outcome="runtime-probe-required",
+                detail=(
+                    "vLLM Factory supplies model preparation, pooling inference, and IO processing; "
+                    "the Anonymizer adapter preserves dynamic labels, offsets, and scores"
+                ),
+            ),
+        ),
+    )
+
+
+def _validate_factory_detection(intent: InferenceIntent, task: EntityDetection) -> None:
+    factory = intent.vllm.factory
+    if factory is None:
+        _raise_unsupported_task_engine(task.kind, "vllm")
+    if intent.model.revision is None:
+        raise CompilationError(
+            CompilerDiagnostic(
+                code="unpinned-model-revision",
+                message="vLLM Factory entity detection requires a pinned model revision",
+                details={"model": intent.model.model_id},
+            )
+        )
+    if not supports_model(factory.plugin, intent.model.model_id):
+        raise CompilationError(
+            CompilerDiagnostic(
+                code="unsupported-model-engine",
+                message=(
+                    f"model {intent.model.model_id!r} is not characterized for vLLM Factory plugin {factory.plugin!r}"
+                ),
+                details={"model": intent.model.model_id, "plugin": factory.plugin},
+            )
+        )
+    if intent.model.adapter is not None:
+        raise CompilationError(
+            CompilerDiagnostic(
+                code="unsupported-model-adapter",
+                message="vLLM Factory entity detection does not support a model adapter",
+                details={"engine": "vllm", "task": task.kind},
+            )
+        )
+
+
+def _compile_generation(intent: InferenceIntent, task: Generation) -> ServiceCompilation:
+    if intent.vllm.factory is not None:
+        _raise_unsupported_task_engine(task.kind, "vllm")
+    command, runtime = _vllm_command(intent, intent.vllm)
+    return ServiceCompilation(
+        command=command,
+        runtime=runtime,
+        declared_capabilities=("chat-completions",),
+        compatibility_evidence=(
+            CompatibilityEvidence(
+                rule="vllm-openai-compatible-v1",
+                outcome="characterized",
+                detail="vLLM exposes chat completions for generation",
+            ),
+        ),
+    )
 
 
 def _vllm_command(
@@ -234,22 +250,16 @@ def _vllm_engine_arguments(intent: InferenceIntent, engine: Vllm) -> tuple[Comma
                 intent.model.revision,
             )
         )
-    if engine.served_model_name is not None:
-        arguments.extend(_literal_arguments("--served-model-name", engine.served_model_name))
-    if engine.tensor_parallel_size is not None:
-        arguments.extend(_literal_arguments("--tensor-parallel-size", str(engine.tensor_parallel_size)))
-    if engine.gpu_memory_utilization is not None:
-        arguments.extend(_literal_arguments("--gpu-memory-utilization", str(engine.gpu_memory_utilization)))
-    if engine.max_model_len is not None:
-        arguments.extend(_literal_arguments("--max-model-len", str(engine.max_model_len)))
-    if engine.max_num_seqs is not None:
-        arguments.extend(_literal_arguments("--max-num-seqs", str(engine.max_num_seqs)))
-    if engine.eager:
-        arguments.extend(_literal_arguments("--enforce-eager"))
-    if engine.enable_prefix_caching:
-        arguments.extend(_literal_arguments("--enable-prefix-caching"))
-    if engine.async_scheduling:
-        arguments.extend(_literal_arguments("--async-scheduling"))
+    arguments.extend(_optional_vllm_arguments(engine))
+    arguments.extend(
+        LiteralArgument(value=flag)
+        for flag, enabled in (
+            ("--enforce-eager", engine.eager),
+            ("--enable-prefix-caching", engine.enable_prefix_caching),
+            ("--async-scheduling", engine.async_scheduling),
+        )
+        if enabled
+    )
     if engine.mamba_backend is not None:
         arguments.extend(_literal_arguments("--mamba-backend", engine.mamba_backend))
     if engine.mamba_ssm_cache_dtype != "auto":
@@ -276,6 +286,19 @@ def _vllm_engine_arguments(intent: InferenceIntent, engine: Vllm) -> tuple[Comma
             )
         )
     return tuple(arguments)
+
+
+def _optional_vllm_arguments(engine: Vllm) -> tuple[CommandArgument, ...]:
+    values = (
+        ("--served-model-name", engine.served_model_name),
+        ("--tensor-parallel-size", engine.tensor_parallel_size),
+        ("--gpu-memory-utilization", engine.gpu_memory_utilization),
+        ("--max-model-len", engine.max_model_len),
+        ("--max-num-seqs", engine.max_num_seqs),
+    )
+    return tuple(
+        argument for flag, value in values if value is not None for argument in _literal_arguments(flag, str(value))
+    )
 
 
 def _vllm_environment(engine: Vllm) -> tuple[SecretEnvironmentVariable, ...]:
