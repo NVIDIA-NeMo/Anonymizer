@@ -42,10 +42,10 @@ GLiNER2 service, or an internal inference deployment. Plain `Anonymizer()` uses 
 detector and [build.nvidia.com](https://build.nvidia.com) LLM settings; override when your models point
 at different provider names or URLs.
 
-For managed GLiNER through vLLM Factory, the native detector fallback, and
-vLLM generation endpoints, see [Run local inference services](inference-services.md).
-That guide covers immutable plans, local processes, and capability
-receipts, and provider configuration.
+For managed GLiNER through vLLM Factory and vLLM generation endpoints, see
+[Deploy local models](inference-services.md). That guide covers host and GPU
+container deployment, immutable plans, capability receipts, cleanup, and
+provider configuration.
 
 Set your API keys first:
 

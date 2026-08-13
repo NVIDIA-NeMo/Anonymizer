@@ -1,81 +1,266 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Run Local Inference Services
+# Deploy Local Models
 
-The source tree provides `tools/inference_service.py` for compiling and managing
-one domain: a local-process vLLM server. Compilation is pure and produces a
-versioned, digest-protected plan; launch, probe, inspect, and cancel consume that
-plan rather than re-reading a profile.
+NeMo Anonymizer can run its detector and generation roles against models on
+your own NVIDIA GPU. The repository includes pinned profiles and a lifecycle
+tool for this purpose. The tool compiles a profile into an immutable plan,
+starts the service, proves its API contract, and records enough process identity
+to inspect or stop it later.
 
-Install the optional local-model dependencies on a Linux GPU host:
+This path suits development workstations, on-premises servers, and isolated
+environments where text must stay on local infrastructure. It manages one
+deployment shape: a vLLM process on the machine where the tool runs. You can
+run that process directly on the host or inside the supplied GPU container.
+
+The tool lives under `tools/` and is not installed with the
+`nemo-anonymizer` wheel. Start from a source checkout.
+
+## Choose models
+
+Seven profiles ship in `tools/inference_service_profiles/`:
+
+| Profile | Endpoint model name | Role and hardware guidance |
+| --- | --- | --- |
+| `nvidia-gliner.toml` | `nvidia/gliner-pii` | Default PII detector; can share an 80 GB GPU with a 20B or 30B generator |
+| `gliner2.toml` | `fastino/gliner2-privacy-filter-PII-multi` | Alternative multilingual PII detector |
+| `vllm-local.toml` | `anonymizer-local` | TinyLlama lifecycle smoke test |
+| `gpt-oss-20b.toml` | `gpt-oss-20b-local` | Compact GPT-OSS generation |
+| `gpt-oss-120b.toml` | `gpt-oss-120b-local` | GPT-OSS generation on a dedicated 80 GB GPU |
+| `qwen3-30b-a3b-instruct.toml` | `qwen3-30b-a3b-instruct-local` | Multilingual generation |
+| `nemotron-3.5-lightning.toml` | `nemotron-3.5-lightning-local` | High-throughput generation on an 80 GB GPU |
+
+Each profile pins its Hugging Face revision. Generation profiles use stock
+vLLM. The two detector profiles use the pinned external
+[vLLM Factory](https://github.com/latenceainew/vllm-factory) integration and
+Anonymizer's OpenAI-compatible detector adapter.
+
+GPU memory also depends on the architecture, context length, concurrency, and
+other processes. Lower `max_model_len`, `max_num_seqs`, or
+`gpu_memory_utilization` when vLLM cannot reserve its KV cache. Do not co-host
+the GPT-OSS 120B profile with another model on an 80 GB GPU.
+
+## Understand the lifecycle
+
+The workflow has two durable files:
+
+```text
+profile.toml -> compile -> plan.json -> launch -> launch.json
+                              |                    |
+                              +-> probe            +-> inspect
+                                                   +-> cancel
+```
+
+`compile` has no runtime effects. The plan contains the full command, endpoint,
+dependencies, compatibility evidence, and a SHA-256 digest. Runtime commands
+verify that digest before acting.
+
+`launch` waits for `/v1/models` and a task-specific request. A generation
+service must return a chat completion. A detector must demonstrate dynamic
+labels, offsets, and scores. The launch receipt records the process group and
+Linux start marker so later commands do not signal a reused PID.
+
+The v2 profile schema has four sections:
+
+- `[task]` selects generation or entity detection and its required capabilities.
+- `[model]` pins the Hugging Face model and optional LoRA adapter.
+- `[vllm]` sets the served name, memory limits, parallelism, caching, Mamba controls, authentication source, and optional Factory plugin.
+- `[local]` sets the bind address, port, startup timeout, and shutdown timeout.
+
+## Deploy on the GPU host
+
+### Install
+
+Install [uv](https://docs.astral.sh/uv/) and sync the local-model dependency
+group with Python 3.12:
 
 ```bash
 uv sync --python 3.12 --group dev --group local-models
-python -m vllm_factory.compat.doctor
+uv run --python 3.12 python -m vllm_factory.compat.doctor
 nvidia-smi
 ```
 
-The group pins vLLM 0.27.1, the external vLLM Factory revision, and the CUDA
-compiler wheels needed by the Nemotron profile.
+The lockfile pins vLLM 0.27.1, vLLM Factory, and the CUDA compiler wheels used
+by the Nemotron FlashInfer profile.
 
-## Profiles
+### Compile and launch
 
-Seven pinned profiles ship in `tools/inference_service_profiles/`. Generation
-profiles use Hugging Face vLLM. `nvidia-gliner.toml` and `gliner2.toml` use the
-pinned NVIDIA vLLM Factory integration for entity detection. Detection requires
-the Factory section; stock vLLM generation must not include it.
-
-| Profile | Served model | Use |
-| --- | --- | --- |
-| `vllm-local.toml` | `anonymizer-local` | Small lifecycle smoke tests |
-| `gpt-oss-20b.toml` | `gpt-oss-20b-local` | Compact GPT-OSS development |
-| `gpt-oss-120b.toml` | `gpt-oss-120b-local` | Dedicated 80 GB GPU |
-| `qwen3-30b-a3b-instruct.toml` | `qwen3-30b-a3b-instruct-local` | Multilingual generation |
-| `nemotron-3.5-lightning.toml` | `nemotron-3.5-lightning-local` | High-throughput generation |
-| `nvidia-gliner.toml` | model ID | NVIDIA GLiNER detection |
-| `gliner2.toml` | model ID | GLiNER2 detection |
-
-Memory requirements also depend on the GPU, driver, context length, and
-concurrency. Reduce `max_model_len` or `max_num_seqs` if vLLM cannot reserve its
-KV cache. Do not co-host the 120B GPT-OSS profile on the GPU used for detection.
-
-## Lifecycle
+Run all commands from the repository root. This example starts NVIDIA GLiNER
+on `127.0.0.1:8001`:
 
 ```bash
-uv run tools/inference_service.py compile \
+uv run --python 3.12 python tools/inference_service.py compile \
   --profile tools/inference_service_profiles/nvidia-gliner.toml \
-  --source-revision "$(git rev-parse HEAD)" --output plan.json
-uv run tools/inference_service.py launch --plan plan.json --output launch.json
-uv run tools/inference_service.py inspect --receipt launch.json
-uv run tools/inference_service.py probe --plan plan.json
-uv run tools/inference_service.py cancel --receipt launch.json
+  --source-revision "$(git rev-parse HEAD)" \
+  --output gliner-plan.json
+
+uv run --python 3.12 python tools/inference_service.py launch \
+  --plan gliner-plan.json \
+  --output gliner-launch.json \
+  --log-directory .inference-service-runs
 ```
 
-The `[local]` section holds host, port, and bounded startup/shutdown timeouts.
-The `[vllm]` section holds tensor parallelism, memory and model limits, API-key
-environment source, LoRA, eager/prefix/async controls, and Mamba controls.
-Secrets remain symbolic in plans and are read from their named environment
-variable only at launch. Probes use `/v1/models` plus a task-aware chat payload;
-the generation probe accepts reasoning-aware GPT-OSS responses.
+The command returns after both probes pass. Keep `gliner-launch.json`; it owns
+the process identity used for inspection and cleanup.
 
-## GLiNER through vLLM Factory
+### Operate the service
 
-Factory-backed detection keeps vLLM Factory's pooling endpoint and adds the
-OpenAI-compatible chat contract used by Anonymizer. The adapter preserves
-dynamic labels, offsets, scores, and overlapping character chunks. Model
-preparation uses the profile's pinned Hugging Face revision.
+```bash
+uv run --python 3.12 python tools/inference_service.py inspect \
+  --receipt gliner-launch.json
+
+uv run --python 3.12 python tools/inference_service.py probe \
+  --plan gliner-plan.json
+
+curl -sf http://127.0.0.1:8001/v1/models | python -m json.tool
+
+uv run --python 3.12 python tools/inference_service.py cancel \
+  --receipt gliner-launch.json
+```
+
+`cancel` sends `SIGTERM` to the receipt-owned process group, waits for the
+profile's shutdown timeout, and uses `SIGKILL` if the group remains alive.
+
+## Deploy in a GPU container
+
+The supplied container image installs the same locked local-model environment.
+The container stays alive as the deployment boundary. The lifecycle tool still
+manages a local process inside that boundary, so plans and receipts keep the
+same schema as a host deployment.
+
+### Prerequisites
+
+Install Docker, the NVIDIA driver, and
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+Confirm that Docker can expose the GPU:
+
+```bash
+docker run --rm --gpus all \
+  nvidia/cuda:13.0.2-base-ubuntu24.04 nvidia-smi
+```
+
+### Build the image
+
+From the repository root:
+
+```bash
+docker build \
+  --file tools/inference_service.Dockerfile \
+  --tag nemo-anonymizer-local-models:dev \
+  .
+```
+
+The build uses the repository lockfile. It downloads several large GPU wheels,
+so allow enough disk space for the image and model cache.
+
+### Start the deployment container
+
+Create host directories for receipts, logs, prepared Factory models, and the
+Hugging Face cache:
+
+```bash
+mkdir -p .local-model-deployment/state
+mkdir -p .local-model-deployment/factory
+mkdir -p "$HOME/.cache/huggingface"
+
+docker run --detach \
+  --name anonymizer-local-models \
+  --gpus all \
+  --ipc host \
+  --network host \
+  --volume "$PWD/.local-model-deployment/state:/state" \
+  --volume "$PWD/.local-model-deployment/factory:/tmp/anonymizer-vllm-factory" \
+  --volume "$HOME/.cache/huggingface:/models/huggingface" \
+  nemo-anonymizer-local-models:dev
+```
+
+Host networking is required because the pinned profiles bind to `127.0.0.1`.
+It is supported by Docker Engine on Linux. The profile port must be free on the
+host. The default profiles do not authenticate requests, so keep the bind local
+or place the service behind authenticated TLS before exposing it.
+
+### Compile and launch inside the container
+
+```bash
+SOURCE_REVISION="$(git rev-parse HEAD)"
+docker exec anonymizer-local-models \
+  python tools/inference_service.py compile \
+  --profile tools/inference_service_profiles/nvidia-gliner.toml \
+  --source-revision "$SOURCE_REVISION" \
+  --output /state/gliner-plan.json
+
+docker exec anonymizer-local-models \
+  python tools/inference_service.py launch \
+  --plan /state/gliner-plan.json \
+  --output /state/gliner-launch.json \
+  --log-directory /state/logs
+```
+
+The mounted `/state` directory makes the plan, launch receipt, and logs visible
+on the host. Operate the service through `docker exec`:
+
+```bash
+docker exec anonymizer-local-models \
+  python tools/inference_service.py inspect \
+  --receipt /state/gliner-launch.json
+
+docker exec anonymizer-local-models \
+  python tools/inference_service.py probe \
+  --plan /state/gliner-plan.json
+
+curl -sf http://127.0.0.1:8001/v1/models | python -m json.tool
+```
+
+### Stop cleanly
+
+Cancel each managed service before removing the container:
+
+```bash
+docker exec anonymizer-local-models \
+  python tools/inference_service.py cancel \
+  --receipt /state/gliner-launch.json
+
+docker stop anonymizer-local-models
+docker rm anonymizer-local-models
+```
+
+Stopping the container first removes the runtime boundary before the tool can
+write a cancellation receipt. Use `cancel` first when lifecycle evidence or
+graceful model shutdown matters.
 
 ## Connect Anonymizer
 
-Use the plan endpoint and served model name in a custom DataDesigner provider
-and model configuration. Custom model configuration replaces Anonymizer's
-bundled model pool, so retain every alias required by the roles you use. See
-[Custom models](models.md#custom-models) for the role map.
+Add the local endpoint to a provider file:
 
-Compilation proves static compatibility. The launch probe proves the observed
-endpoint contract. Run Anonymizer preview and evaluation before trusting a new
-model for privacy or utility.
+```yaml title="providers.yaml"
+providers:
+  - name: local-gliner
+    endpoint: http://127.0.0.1:8001/v1
+    provider_type: openai
+    api_key: EMPTY
+```
 
-Docker placement, native Transformers GLiNER serving, and cache discovery are
-not supported by this tool.
+Then route the detector alias to that provider in your model configuration:
+
+```yaml title="models.yaml"
+model_configs:
+  - alias: gliner-pii-detector
+    model: nvidia/gliner-pii
+    provider: local-gliner
+    inference_parameters:
+      max_parallel_requests: 8
+      timeout: 120
+```
+
+Custom `model_configs` replaces the full bundled model pool. Copy the bundled
+configuration and change only the roles you are deploying locally, or define
+every alias needed by the selected pipeline. See
+[Custom models](models.md#custom-models) for role mapping and complete examples.
+
+For the detector request and response contract, chunking behavior, and a live
+PII request, see [Self-hosting GLiNER](self-hosting-gliner.md).
+
+Compilation proves static compatibility. The launch probe proves the endpoint
+shape. Run Anonymizer preview and evaluation before accepting a model for a
+privacy-sensitive workload.
