@@ -94,6 +94,7 @@ constraint-dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tools"]
 markers = [
     "e2e: end-to-end tests",
     "integration: integration tests",
@@ -104,7 +105,7 @@ include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools"]
 
 [tool.ty.environment]
 python-version = "3.11"
-root = ["src", ".", "tools/measurement"]
+root = ["src", ".", "tools", "tools/measurement"]
 
 [tool.coverage.run]
 omit = []

@@ -6,15 +6,21 @@ from __future__ import annotations
 
 import importlib
 import os
-import sys
 import tomllib
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
+from inference_service_compiler import vllm_runtime as factory
+
 TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
 REPO_ROOT = TOOLS_ROOT.parent
+
+
+def load_factory_module():
+    """Compatibility alias for the directly imported production module."""
+    return factory
 
 
 def test_local_models_group_pins_vllm_and_external_factory_source() -> None:
@@ -34,19 +40,8 @@ def test_local_models_group_pins_vllm_and_external_factory_source() -> None:
     ]
 
 
-def load_factory_module():
-    """Load the source-tree runtime without packaging it."""
-    sys.path.insert(0, str(TOOLS_ROOT))
-    try:
-        return importlib.import_module("inference_service_compiler.vllm_runtime")
-    finally:
-        sys.path.pop(0)
-
-
 def test_parse_server_parameters_accepts_only_the_compiler_contract() -> None:
     """The process entry point accepts the bounded arguments emitted by the compiler."""
-    factory = load_factory_module()
-
     parameters = factory.parse_server_parameters(
         [
             "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -101,7 +96,6 @@ def test_parse_server_parameters_accepts_only_the_compiler_contract() -> None:
 def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
     """The local service is built from vLLM Python config objects."""
     pytest.importorskip("vllm")
-    factory = load_factory_module()
     parameters = factory.VllmServerParameters(
         model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         host="127.0.0.1",
@@ -149,7 +143,6 @@ def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
 def test_factory_constructs_pooling_server_for_external_gliner_plugin() -> None:
     """Factory-backed detection uses vLLM pooling and the project's IOProcessor."""
     pytest.importorskip("vllm")
-    factory = load_factory_module()
     parameters = factory.VllmServerParameters(
         model="/tmp/prepared-gliner",
         host="127.0.0.1",

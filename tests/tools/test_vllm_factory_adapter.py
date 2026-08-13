@@ -4,26 +4,20 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
+
+from inference_service_compiler import vllm_factory_adapter as adapter
 
 TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
 
 
 def load_adapter():
-    """Load the source-tree adapter without installing it as a package."""
-    sys.path.insert(0, str(TOOLS_ROOT))
-    try:
-        return importlib.import_module("inference_service_compiler.vllm_factory_adapter")
-    finally:
-        sys.path.pop(0)
+    """Compatibility alias for the directly imported production module."""
+    return adapter
 
 
 def test_parse_detection_request_preserves_anonymizer_options() -> None:
     """The adapter accepts the detector extras emitted by DataDesigner."""
-    adapter = load_adapter()
-
     request = adapter.parse_detection_request(
         {
             "model": "nvidia/gliner-pii",
@@ -46,7 +40,6 @@ def test_parse_detection_request_preserves_anonymizer_options() -> None:
 
 def test_parse_detection_request_accepts_label_free_health_check() -> None:
     """DataDesigner's generic model health check receives a valid empty result."""
-    adapter = load_adapter()
 
     request = adapter.parse_detection_request(
         {
