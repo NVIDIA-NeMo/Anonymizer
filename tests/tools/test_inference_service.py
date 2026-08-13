@@ -4,18 +4,17 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import stat
-import sys
 from pathlib import Path
-from types import ModuleType
-from typing import Any
 from unittest import mock
 
 import httpx
 import pytest
 from pydantic import ValidationError
+
+from inference_service_compiler import cli, compiler, models, runtime
+from inference_service_compiler.profiles import load_profile
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
@@ -23,28 +22,25 @@ PROFILES = TOOLS / "inference_service_profiles"
 CLI = TOOLS / "inference_service.py"
 
 
-def modules() -> tuple[ModuleType, ModuleType, ModuleType]:
-    sys.path.insert(0, str(TOOLS))
-    try:
-        return (
-            importlib.import_module("inference_service_compiler.models"),
-            importlib.import_module("inference_service_compiler.compiler"),
-            importlib.import_module("inference_service_compiler.runtime"),
-        )
-    finally:
-        sys.path.pop(0)
+def modules():
+    """Return directly imported production modules for concise existing tests."""
+    return models, compiler, runtime
 
 
-def generation(models: ModuleType, **vllm: object) -> Any:
+def generation(_models: object = None, **vllm: object) -> models.InferenceIntent:
     return models.InferenceIntent(
         task=models.Generation(),
         model=models.HuggingFaceModel(model_id="openai/gpt-oss-20b", revision="abc"),
-        vllm=models.Vllm(**vllm),
+        vllm=models.Vllm.model_validate(vllm),
         local=models.LocalProcess(port=8000, startup_timeout_seconds=3, shutdown_timeout_seconds=0.01),
     )
 
 
-def launch_receipt(models: ModuleType, plan: Any, handle: Any) -> Any:
+def launch_receipt(
+    _models: object,
+    plan: models.RunPlan,
+    handle: models.LocalProcessHandle,
+) -> models.LaunchReceipt:
     return models.LaunchReceipt(
         plan_digest=plan.plan_digest,
         launched_at="2026-08-07T00:00:00+00:00",
@@ -68,8 +64,6 @@ def test_cli_remains_a_directly_executable_source_entrypoint() -> None:
 
 def test_all_shipped_profiles_compile() -> None:
     models, compiler, _runtime = modules()
-    load_profile = importlib.import_module("inference_service_compiler.profiles").load_profile
-
     plans = [
         compiler.compile_intent(load_profile(path), source_revision="test") for path in sorted(PROFILES.glob("*.toml"))
     ]
@@ -79,7 +73,6 @@ def test_all_shipped_profiles_compile() -> None:
 
 def test_compile_command_writes_a_digest_verified_plan(tmp_path: Path) -> None:
     _models, compiler, _runtime = modules()
-    cli = importlib.import_module("inference_service_compiler.cli")
     output = tmp_path / "plan.json"
     with pytest.raises(SystemExit) as exc_info:
         cli.app(
@@ -96,6 +89,25 @@ def test_compile_command_writes_a_digest_verified_plan(tmp_path: Path) -> None:
     assert exc_info.value.code == 0
     plan = compiler.load_plan(output.read_text(encoding="utf-8"))
     assert plan.expected_model == "anonymizer-local"
+
+
+def test_compile_command_translates_non_directory_profile_paths(tmp_path: Path) -> None:
+    """Filesystem path-shape errors retain the documented bad-input exit."""
+    not_a_directory = tmp_path / "profile-file"
+    not_a_directory.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.app(
+            [
+                "compile",
+                "--profile",
+                str(not_a_directory / "profile.toml"),
+                "--source-revision",
+                "test",
+            ]
+        )
+
+    assert exc_info.value.code == 125
 
 
 def test_generation_argv_keeps_local_vllm_controls_and_omits_defaults() -> None:

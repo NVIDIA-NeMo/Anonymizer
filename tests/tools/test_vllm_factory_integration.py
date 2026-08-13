@@ -4,27 +4,17 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from inference_service_compiler import vllm_factory_integration as integration
+
 TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
-
-
-def load_integration():
-    """Load the source-tree integration without installing it as a package."""
-    sys.path.insert(0, str(TOOLS_ROOT))
-    try:
-        return importlib.import_module("inference_service_compiler.vllm_factory_integration")
-    finally:
-        sys.path.pop(0)
 
 
 def test_prepare_model_injects_pinned_revision_into_upstream_python_api(tmp_path: Path) -> None:
     """Anonymizer closes vLLM Factory's missing Hugging Face revision argument."""
-    integration = load_integration()
     download = mock.Mock(return_value="/cache/file")
     list_files = mock.Mock(return_value=[])
     tokenizer = mock.Mock(return_value=mock.Mock())
