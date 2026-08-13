@@ -180,23 +180,43 @@ class CommandSpec(FrozenModel):
         """Render the complete non-secret process argument vector."""
         return tuple(argument.value for argument in self.argv)
 
-    def render_environment(self, *, resolve_secrets: Mapping[str, str] | None = None) -> dict[str, str]:
-        """Render environment values with redacted or explicitly supplied secrets."""
+    @property
+    def secret_sources(self) -> tuple[str, ...]:
+        """Return the secret-source names this command owns."""
+        return tuple(
+            variable.source_environment_variable
+            for variable in self.environment
+            if isinstance(variable, SecretEnvironmentVariable)
+        )
+
+    def render_environment(self) -> dict[str, str]:
+        """Render an inspectable environment with every secret source redacted."""
         values: dict[str, str] = {}
         for variable in self.environment:
             match variable:
                 case EnvironmentVariable(name=name, value=value):
                     values[name] = value
                 case SecretEnvironmentVariable(name=name, source_environment_variable=source):
-                    if resolve_secrets is None:
-                        values[name] = f"<secret:{source}>"
-                    elif source in resolve_secrets:
-                        values[name] = resolve_secrets[source]
-                    else:
-                        raise ValueError(f"secret environment variable {source!r} is not resolved")
+                    values[name] = f"<secret:{source}>"
                 case _:
                     assert_never(variable)
         return values
+
+    def resolve_environment(self, secret_values: Mapping[str, str]) -> dict[str, str]:
+        """Strictly resolve this command's owned secret sources for execution."""
+        resolved = self.render_environment()
+        for variable in self.environment:
+            match variable:
+                case EnvironmentVariable():
+                    pass
+                case SecretEnvironmentVariable(name=name, source_environment_variable=source):
+                    try:
+                        resolved[name] = secret_values[source]
+                    except KeyError as exc:
+                        raise ValueError(f"secret environment variable {source!r} is not resolved") from exc
+                case _:
+                    assert_never(variable)
+        return resolved
 
 
 class EndpointContract(FrozenModel):

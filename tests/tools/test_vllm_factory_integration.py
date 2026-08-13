@@ -13,6 +13,17 @@ from inference_service_compiler import vllm_factory_integration as integration
 TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
 
 
+def test_factory_plugin_spec_is_immutable_and_complete() -> None:
+    """Each supported plugin resolves all of its metadata through one product."""
+    gliner = integration.factory_plugin_spec("deberta_gliner")
+    gliner2 = integration.factory_plugin_spec("deberta_gliner2")
+
+    assert gliner.io_processor == "deberta_gliner_io"
+    assert gliner.characterized_models == frozenset({"nvidia/gliner-pii"})
+    assert gliner2.io_processor == "deberta_gliner2_io"
+    assert gliner2.characterized_models == frozenset({"fastino/gliner2-privacy-filter-PII-multi"})
+
+
 def test_prepare_model_injects_pinned_revision_into_upstream_python_api(tmp_path: Path) -> None:
     """Anonymizer closes vLLM Factory's missing Hugging Face revision argument."""
     download = mock.Mock(return_value="/cache/file")

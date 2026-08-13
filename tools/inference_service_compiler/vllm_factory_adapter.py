@@ -53,6 +53,14 @@ class Entity:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class TextChunk:
+    """One text segment and its original document offset."""
+
+    text: str
+    offset: int
+
+
 async def anonymizer_chat_compatibility(
     request: Any,
     call_next: Callable[[Any], Awaitable[Any]],
@@ -77,12 +85,12 @@ async def anonymizer_chat_compatibility(
                         handler=handler,
                         model=detection.model,
                         plugin=plugin,
-                        text=chunk,
+                        text=chunk.text,
                         labels=detection.labels,
                         threshold=detection.threshold,
                         flat_ner=detection.flat_ner,
                     )
-                    for chunk, _offset in chunks
+                    for chunk in chunks
                 )
             )
             entities = merge_entities(
@@ -167,14 +175,14 @@ def extract_text(messages: object) -> str:
     raise ValueError("message content must be a string or list")
 
 
-def split_text(text: str, chunk_length: int, overlap: int) -> list[tuple[str, int]]:
+def split_text(text: str, chunk_length: int, overlap: int) -> list[TextChunk]:
     """Split text with the same character-offset contract as the native runtime."""
     if not text:
-        return [("", 0)]
-    chunks: list[tuple[str, int]] = []
+        return [TextChunk("", 0)]
+    chunks: list[TextChunk] = []
     start = 0
     while start < len(text):
-        chunks.append((text[start : start + chunk_length], start))
+        chunks.append(TextChunk(text[start : start + chunk_length], start))
         if start + chunk_length >= len(text):
             break
         start += chunk_length - overlap
@@ -221,7 +229,7 @@ async def invoke_pooling(
 def merge_entities(
     *,
     plugin: FactoryPlugin,
-    chunks: list[tuple[str, int]],
+    chunks: Sequence[TextChunk],
     results: Sequence[object],
     flat_ner: bool,
 ) -> list[Entity]:
@@ -229,7 +237,7 @@ def merge_entities(
     if len(chunks) != len(results):
         raise ValueError("vLLM Factory returned an unexpected result count")
     entities: list[Entity] = []
-    for (chunk, offset), result in zip(chunks, results, strict=True):
+    for chunk, result in zip(chunks, results, strict=True):
         match plugin:
             case "deberta_gliner":
                 normalized = normalize_gliner(result)
@@ -238,14 +246,14 @@ def merge_entities(
             case _:
                 assert_never(plugin)
         for entity in normalized:
-            if entity.start < 0 or entity.end < entity.start or entity.end > len(chunk):
+            if entity.start < 0 or entity.end < entity.start or entity.end > len(chunk.text):
                 raise ValueError("vLLM Factory returned an invalid entity span")
             entities.append(
                 Entity(
                     text=entity.text,
                     label=entity.label,
-                    start=entity.start + offset,
-                    end=entity.end + offset,
+                    start=entity.start + chunk.offset,
+                    end=entity.end + chunk.offset,
                     score=entity.score,
                 )
             )

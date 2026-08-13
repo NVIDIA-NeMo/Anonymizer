@@ -8,6 +8,7 @@ import importlib
 import json
 import re
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Literal, assert_never
 
@@ -19,14 +20,27 @@ VLLM_FACTORY_DEPENDENCY = f"vllm-factory[gliner] @ git+{VLLM_FACTORY_SOURCE_URL}
 
 FactoryIoProcessor = Literal["deberta_gliner_io", "deberta_gliner2_io"]
 
-PLUGIN_IO_PROCESSORS: dict[FactoryPlugin, FactoryIoProcessor] = {
-    "deberta_gliner": "deberta_gliner_io",
-    "deberta_gliner2": "deberta_gliner2_io",
-}
-CHARACTERIZED_MODELS: dict[FactoryPlugin, frozenset[str]] = {
-    "deberta_gliner": frozenset({"nvidia/gliner-pii"}),
-    "deberta_gliner2": frozenset({"fastino/gliner2-privacy-filter-PII-multi"}),
-}
+
+@dataclass(frozen=True, slots=True)
+class FactoryPluginSpec:
+    """Immutable, characterized contract for one supported Factory plugin."""
+
+    io_processor: FactoryIoProcessor
+    characterized_models: frozenset[str]
+
+
+def factory_plugin_spec(plugin: FactoryPlugin) -> FactoryPluginSpec:
+    """Return the exhaustive immutable specification for a Factory plugin."""
+    match plugin:
+        case "deberta_gliner":
+            return FactoryPluginSpec("deberta_gliner_io", frozenset({"nvidia/gliner-pii"}))
+        case "deberta_gliner2":
+            return FactoryPluginSpec(
+                "deberta_gliner2_io",
+                frozenset({"fastino/gliner2-privacy-filter-PII-multi"}),
+            )
+        case _:
+            assert_never(plugin)
 
 
 def prepare_model(
@@ -74,22 +88,12 @@ def prepare_model(
 
 def io_processor_for(plugin: FactoryPlugin) -> FactoryIoProcessor:
     """Resolve the vLLM IOProcessor entry point for a supported factory plugin."""
-    match plugin:
-        case "deberta_gliner":
-            return "deberta_gliner_io"
-        case "deberta_gliner2":
-            return "deberta_gliner2_io"
-        case _:
-            assert_never(plugin)
+    return factory_plugin_spec(plugin).io_processor
 
 
 def supports_model(plugin: FactoryPlugin, model_id: str) -> bool:
     """Return whether this source revision was characterized for the pair."""
-    match plugin:
-        case "deberta_gliner" | "deberta_gliner2":
-            return model_id in CHARACTERIZED_MODELS[plugin]
-        case _:
-            assert_never(plugin)
+    return model_id in factory_plugin_spec(plugin).characterized_models
 
 
 def _prepared_model_path(*, root: Path, model_id: str, revision: str, plugin: FactoryPlugin) -> Path:

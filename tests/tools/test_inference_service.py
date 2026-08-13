@@ -122,7 +122,9 @@ def test_generation_argv_keeps_local_vllm_controls_and_omits_defaults() -> None:
         argv.index("--tensor-parallel-size") : argv.index("--tensor-parallel-size") + 2
     ]
     assert "--enforce-eager" in argv and "--enable-prefix-caching" not in argv
+    assert plan.command.secret_sources == ("LOCAL_KEY",)
     assert plan.command.render_environment() == {"VLLM_API_KEY": "<secret:LOCAL_KEY>"}
+    assert plan.command.resolve_environment({"LOCAL_KEY": "secret-value"}) == {"VLLM_API_KEY": "secret-value"}
 
 
 def test_factory_detection_is_task_bounded() -> None:

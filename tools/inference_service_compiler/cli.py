@@ -16,7 +16,7 @@ import cyclopts
 from pydantic import BaseModel, ValidationError
 
 from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_intent, load_plan
-from inference_service_compiler.models import LaunchReceipt, SecretEnvironmentVariable
+from inference_service_compiler.models import LaunchReceipt
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
     RuntimeEffectError,
@@ -81,12 +81,7 @@ def launch(
 ) -> None:
     """Launch a compiled plan and write its reconnectable handle receipt."""
     parsed = load_plan(plan.read_text(encoding="utf-8"))
-    required_secrets = {
-        variable.source_environment_variable
-        for variable in parsed.command.environment
-        if isinstance(variable, SecretEnvironmentVariable)
-    }
-    secret_values = {name: os.environ[name] for name in required_secrets if name in os.environ}
+    secret_values = {name: os.environ[name] for name in parsed.command.secret_sources if name in os.environ}
     write_json(
         launch_plan(parsed, secret_values=secret_values, log_directory=log_directory),
         output,
