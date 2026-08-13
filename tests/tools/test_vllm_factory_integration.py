@@ -10,8 +10,6 @@ from unittest import mock
 
 from inference_service_compiler import vllm_factory_integration as integration
 
-TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
-
 
 def test_factory_plugin_spec_is_immutable_and_complete() -> None:
     """Each supported plugin resolves all of its metadata through one product."""

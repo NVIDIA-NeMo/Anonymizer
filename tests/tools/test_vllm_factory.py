@@ -18,11 +18,6 @@ TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
 REPO_ROOT = TOOLS_ROOT.parent
 
 
-def load_factory_module():
-    """Compatibility alias for the directly imported production module."""
-    return factory
-
-
 def test_local_models_group_pins_vllm_and_external_factory_source() -> None:
     """The runtime pins vLLM and the reviewed external factory source revision."""
     project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -168,7 +163,6 @@ def test_run_server_uses_the_vllm_0_27_lifecycle_boundary() -> None:
     api_server = importlib.import_module("vllm.entrypoints.openai.api_server")
     api_utils = importlib.import_module("vllm.entrypoints.serve.utils.api_utils")
 
-    factory = load_factory_module()
     arguments = mock.sentinel.arguments
     coroutine = mock.sentinel.coroutine
     run_vllm_server = mock.Mock(return_value=coroutine)
@@ -194,8 +188,6 @@ def test_run_server_uses_the_vllm_0_27_lifecycle_boundary() -> None:
 
 def test_factory_exposes_interpreter_tools_on_path() -> None:
     """vLLM subprocess helpers can find executables installed beside Python."""
-    factory = load_factory_module()
-
     with (
         mock.patch.object(factory.sys, "prefix", "/workspace/.venv"),
         mock.patch.dict(os.environ, {"PATH": "/usr/bin"}),
@@ -207,7 +199,6 @@ def test_factory_exposes_interpreter_tools_on_path() -> None:
 
 def test_factory_avoids_flashinfer_jit_without_overriding_operator_choice() -> None:
     """The wheel-only runtime does not require a host CUDA compiler by default."""
-    factory = load_factory_module()
     parameters = factory.VllmServerParameters(model="model", host="127.0.0.1", port=8000)
 
     with (
@@ -227,7 +218,6 @@ def test_factory_avoids_flashinfer_jit_without_overriding_operator_choice() -> N
 
 def test_factory_rejects_python_3_11_before_importing_vllm() -> None:
     """The server reports the local vLLM Python floor before vLLM starts."""
-    factory = load_factory_module()
     parameters = factory.VllmServerParameters(model="model", host="127.0.0.1", port=8000)
 
     with mock.patch.object(factory.sys, "version_info", (3, 11)):
@@ -237,7 +227,6 @@ def test_factory_rejects_python_3_11_before_importing_vllm() -> None:
 
 def test_factory_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None:
     """The FlashInfer backend can JIT from the CUDA toolkit shipped as Python wheels."""
-    factory = load_factory_module()
     cuda_root = tmp_path / "nvidia" / "cu13"
     (cuda_root / "bin").mkdir(parents=True)
     (cuda_root / "bin" / "nvcc").touch()
@@ -262,7 +251,6 @@ def test_factory_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None
 
 def test_factory_selects_model_and_io_plugins_together() -> None:
     """vLLM's shared plugin allowlist retains both factory entry-point groups."""
-    factory = load_factory_module()
     parameters = factory.VllmServerParameters(
         model="nvidia/gliner-pii",
         revision="bd23e8ef",
