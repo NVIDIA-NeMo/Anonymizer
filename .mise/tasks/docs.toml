@@ -7,15 +7,11 @@ run = "uv run --locked --group docs mkdocs serve"
 
 ["docs:build"]
 description = "Build the documentation site in strict mode. Writes the ignored site/ directory."
-usage = '''
-arg "[project]" help="Project directory containing mkdocs.yml" default="."
-'''
-run = 'uv run --directory "${usage_project:-.}" --locked --group docs mkdocs build --strict'
+run = "uv run --locked --group docs mkdocs build --strict"
 
 ["docs:deploy"]
-description = "Deploy versioned documentation with mike from a project directory. Updates the remote gh-pages branch."
+description = "Deploy versioned documentation with mike. Updates the remote gh-pages branch."
 usage = '''
 arg "<version>" help="Documentation version to deploy"
-arg "[project]" help="Project directory containing mkdocs.yml" default="."
 '''
-run = 'uv run --directory "${usage_project:-.}" --locked --group docs mike deploy --push --update-aliases "${usage_version?}" latest'
+run = 'uv run --locked --group docs mike deploy --push --update-aliases "${usage_version?}" latest'
