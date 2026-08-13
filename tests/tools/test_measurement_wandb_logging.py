@@ -404,6 +404,7 @@ def test_wandb_config_excludes_suite_run_tags(wandb_setup_tool: ModuleType) -> N
     )
 
     assert "run_tags" not in config.sdk_values()
+    assert config.sdk_values()["measurement_schema_version"] == 1
 
 
 def test_wandb_config_projects_only_declared_metadata(wandb_setup_tool: ModuleType) -> None:
@@ -416,7 +417,12 @@ def test_wandb_config_projects_only_declared_metadata(wandb_setup_tool: ModuleTy
     metadata = wandb_setup_tool.WandbRunMetadata.model_validate(
         {
             "run_kind": "sweep_arm",
-            "benchmark": {"suite_id": "suite-a", "case_count": 2, "suite_file_hash": "content-hash"},
+            "benchmark": {
+                "suite_id": "suite-a",
+                "case_count": 2,
+                "suite_file_hash": "content-hash",
+                "measurement_schema_version": 2,
+            },
             "execution": {"backend": "slurm", "export": True, "slurm": {"job_id": "123"}},
             "workloads": [{"id": "workload-a", "row_limit": 5, "source": {"kind": "local_file", "suffix": ".csv"}}],
             "configs": [
@@ -446,6 +452,7 @@ def test_wandb_config_projects_only_declared_metadata(wandb_setup_tool: ModuleTy
     assert config.execution == metadata.execution
     assert config.sweep_params == {"configs_all_detect_gliner_threshold": 0.3}
     assert config.sdk_values()["sweep_param_configs_all_detect_gliner_threshold"] == 0.3
+    assert config.sdk_values()["measurement_schema_version"] == 2
 
 
 def test_wandb_benchmark_identity_requires_pr_for_candidate_branch(wandb_import_tool: ModuleType) -> None:

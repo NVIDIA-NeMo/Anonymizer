@@ -313,7 +313,9 @@ def create_benchmark_workspace(
             effective_project_path,
             group=group,
             title=workspace_title,
-            comparison_config_key=comparison.config_key if comparison is not None else "sweep_arm_id",
+            comparison_config_keys=comparison.config_keys
+            if comparison is not None
+            else ("sweep_arm_id", "measurement_schema_version"),
             ws=ws,
             wr=workspace_wr,
         )
@@ -376,12 +378,12 @@ def build_benchmark_workspace(
     *,
     group: str | None,
     title: str,
-    comparison_config_key: str = "sweep_arm_id",
+    comparison_config_keys: tuple[str, str] = ("sweep_arm_id", "measurement_schema_version"),
     ws: Any,
     wr: Any,
 ) -> Any:
     """Build an unsaved manual W&B workspace for benchmark runs."""
-    groupby = wr.Config(comparison_config_key) if group else None
+    groupby = wr.Config(comparison_config_keys[0]) if group else None
     return ws.Workspace(
         entity=project_path.entity,
         project=project_path.project,
@@ -391,13 +393,13 @@ def build_benchmark_workspace(
         runset_settings=_benchmark_runset_settings(
             ws,
             group=group,
-            comparison_config_key=comparison_config_key,
+            comparison_config_keys=comparison_config_keys,
         ),
         sections=_benchmark_workspace_sections(
             ws,
             wr,
             groupby=groupby,
-            comparison_config_key=comparison_config_key,
+            comparison_config_keys=comparison_config_keys,
         ),
     )
 
@@ -453,7 +455,7 @@ def build_benchmark_group_report(
         project=project_path.project,
         name="Benchmark sweep",
         filters=[expr.Metric("Group") == group],
-        groupby=[f"config.{resolved_comparison.config_key}"],
+        groupby=[f"config.{key}" for key in resolved_comparison.config_keys],
         pinned_columns=["Name", "State", "CreatedTimestamp", "Group", "Tags"],
         visible_columns=_group_visible_columns(resolved_comparison, sweep_param_columns),
     )
@@ -483,6 +485,7 @@ def _single_run_visible_columns() -> list[str]:
 def _group_visible_columns(comparison: GroupComparison, parameter_columns: list[str] | None = None) -> list[str]:
     columns = [
         f"config:{comparison.config_key}",
+        "config:measurement_schema_version",
         "config:run_kind",
         *(["config:sweep_id", "config:sweep_params"] if comparison.run_kind == "sweep_arm" else []),
         *(parameter_columns or []),
@@ -499,10 +502,10 @@ def _benchmark_workspace_settings(ws: Any) -> Any:
     )
 
 
-def _benchmark_runset_settings(ws: Any, *, group: str | None, comparison_config_key: str) -> Any:
+def _benchmark_runset_settings(ws: Any, *, group: str | None, comparison_config_keys: tuple[str, str]) -> Any:
     return ws.RunsetSettings(
         filters=_benchmark_run_filters(ws, group=group),
-        groupby=_benchmark_run_groupby(ws, group=group, comparison_config_key=comparison_config_key),
+        groupby=_benchmark_run_groupby(ws, group=group, comparison_config_keys=comparison_config_keys),
         order=[ws.Ordering(ws.Metric("CreatedTimestamp"), ascending=False)],
         pinned_columns=["Name", "State", "CreatedTimestamp", "Group", "JobType", "Tags"],
     )
@@ -513,8 +516,8 @@ def _benchmark_run_filters(ws: Any, *, group: str | None) -> Any:
     return ws.And(job_filter, ws.Metric("Group") == group) if group else job_filter
 
 
-def _benchmark_run_groupby(ws: Any, *, group: str | None, comparison_config_key: str) -> list[Any]:
-    return [ws.Config(comparison_config_key)] if group else [ws.Metric("Group")]
+def _benchmark_run_groupby(ws: Any, *, group: str | None, comparison_config_keys: tuple[str, str]) -> list[Any]:
+    return [ws.Config(key) for key in comparison_config_keys] if group else [ws.Metric("Group")]
 
 
 def _benchmark_workspace_sections(
@@ -522,7 +525,7 @@ def _benchmark_workspace_sections(
     wr: Any,
     *,
     groupby: Any | None,
-    comparison_config_key: str,
+    comparison_config_keys: tuple[str, str],
 ) -> list[Any]:
     sections = []
     for name, panel_defs, is_open in _WORKSPACE_BAR_SECTIONS:
@@ -540,7 +543,7 @@ def _benchmark_workspace_sections(
         sections.append(
             ws.Section(
                 name="Sweep Comparison",
-                panels=_comparison_workspace_panels(wr, comparison_config_key=comparison_config_key),
+                panels=_comparison_workspace_panels(wr, comparison_config_keys=comparison_config_keys),
                 is_open=True,
             )
         )
@@ -557,8 +560,12 @@ def _workspace_bar_panels(
     return [_bar_panel(wr, title, metrics, groupby=groupby) for title, metrics in panel_defs]
 
 
-def _comparison_workspace_panels(wr: Any, *, comparison_config_key: str = "sweep_arm_id") -> list[Any]:
-    columns = [f"config:{comparison_config_key}", *_WORKSPACE_COMPARISON_COLUMNS[1:]]
+def _comparison_workspace_panels(
+    wr: Any,
+    *,
+    comparison_config_keys: tuple[str, str] = ("sweep_arm_id", "measurement_schema_version"),
+) -> list[Any]:
+    columns = [*(f"config:{key}" for key in comparison_config_keys), *_WORKSPACE_COMPARISON_COLUMNS[1:]]
     return [
         wr.RunComparer(diff_only=True),
         wr.ParallelCoordinatesPlot(

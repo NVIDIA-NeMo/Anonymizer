@@ -670,15 +670,17 @@ def test_completion_seal_allows_root_owned_group_writable_intermediate_directory
     assert any(path == "shared-project" for path in descriptor_paths.values())
 
 
+@pytest.mark.parametrize("measurement_schema_version", [1, 2])
 def test_completion_seal_round_trip_and_digest_verification(
     tmp_path: Path,
     wandb_completion_tool: ModuleType,
+    measurement_schema_version: int,
 ) -> None:
     measurement_path = tmp_path / "measurements.jsonl"
     measurement_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": measurement_schema_version,
                 "record_type": "stage",
                 "run_id": "dataset__config__r000",
                 "run_tags": {
@@ -725,6 +727,7 @@ def test_completion_seal_round_trip_and_digest_verification(
 
     assert seal_path.read_bytes() == first_bytes
     assert captured_seal.seal.case.config_id == "config"
+    assert captured_seal.seal.measurement_schema_version == measurement_schema_version
     assert "jobs" not in json.loads(first_bytes)["slurm"]
     assert not list(tmp_path.glob(".*.tmp"))
 

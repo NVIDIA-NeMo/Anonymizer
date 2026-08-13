@@ -541,6 +541,7 @@ class WandbRunMetadata(StrictFrozenModel):
 
 class WandbConfigPayload(WandbRunMetadata):
     suite_id: VisibleIdentifier
+    measurement_schema_version: Literal[1, 2]
     wandb_mode: WandbMode
     wandb_log_tables: StrictBool
     benchmark_suite_id: VisibleIdentifier | None = None
@@ -586,6 +587,11 @@ class WandbConfigPayload(WandbRunMetadata):
     ) -> WandbConfigPayload:
         values: dict[str, Any] = {
             "suite_id": suite_id,
+            "measurement_schema_version": (
+                metadata.benchmark.measurement_schema_version
+                if metadata.benchmark is not None and metadata.benchmark.measurement_schema_version is not None
+                else 1
+            ),
             "wandb_mode": settings.wandb_mode,
             "wandb_log_tables": settings.wandb_log_tables,
         }
@@ -1082,6 +1088,7 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
     ),
     WandbConfigPayload: _aggregate_policies(
         "suite_id",
+        "measurement_schema_version",
         "wandb_mode",
         "wandb_log_tables",
         "benchmark_suite_id",

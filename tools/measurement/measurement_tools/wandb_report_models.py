@@ -107,6 +107,7 @@ class WandbSummaryView(BaseModel):
 
 class WandbRunView(BaseModel):
     schema_version: Literal[1, 2]
+    measurement_schema_version: Literal[1, 2]
     path: WandbRunPath
     name: VisibleText
     group: VisibleText | None = None
@@ -124,6 +125,11 @@ class GroupComparison(BaseModel):
     label: StrictStr
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    @property
+    def config_keys(self) -> tuple[str, str]:
+        """Return the complete W&B config dimensions for safe comparison."""
+        return (self.config_key, "measurement_schema_version")
 
 
 def parse_wandb_run_view(
@@ -149,6 +155,7 @@ def parse_wandb_run_view(
             raise ValueError("W&B run name could not be resolved")
         return WandbRunView(
             schema_version=schema_version,
+            measurement_schema_version=_measurement_schema_version(config),
             path=run_path,
             name=name,
             group=_strict_optional_text(getattr(run, "group", None)),
@@ -300,6 +307,19 @@ def _parse_metadata(config: dict[str, Any]) -> tuple[Literal[1, 2], WandbRunMeta
         return 2, WandbRunMetadata.model_validate(values, strict=True)
     values = _project_v1_metadata(config)
     return 1, WandbRunMetadata.model_validate(values, strict=True)
+
+
+def _measurement_schema_version(config: dict[str, Any]) -> Literal[1, 2]:
+    """Read the flattened comparison dimension, retaining historical reports."""
+    value = config.get("measurement_schema_version")
+    if value is None:
+        benchmark = config.get("benchmark")
+        value = benchmark.get("measurement_schema_version") if isinstance(benchmark, dict) else None
+    if value is None:
+        return 1
+    if value not in {1, 2} or isinstance(value, bool):
+        raise ValueError("W&B run is missing a valid measurement schema version")
+    return value
 
 
 def _project_v2_metadata(config: dict[str, Any]) -> dict[str, Any]:

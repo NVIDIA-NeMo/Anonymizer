@@ -376,6 +376,7 @@ def test_wandb_report_sweep_columns_include_benchmark_metric_groups(wandb_report
         "summary:measurement/stage/input_rows_per_sec_mean",
     }
     assert expected.issubset(set(columns))
+    assert "config:measurement_schema_version" in columns
 
 
 def test_wandb_report_sweep_panels_cover_metric_sections(wandb_report_tool: ModuleType) -> None:
@@ -450,6 +451,10 @@ def test_wandb_workspace_builds_manual_benchmark_sections(wandb_report_tool: Mod
     assert {"RunComparer", "ParallelCoordinatesPlot", "ParameterImportancePlot"}.issubset(comparison_panel_types)
     assert "benchmark/case_success_rate" in summary_metrics
     assert sections["Sweep Comparison"].panels[0].diff_only is True
+    assert [grouping.name for grouping in workspace.runset_settings.groupby] == [
+        "sweep_arm_id",
+        "measurement_schema_version",
+    ]
 
 
 @pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince20")
@@ -468,7 +473,7 @@ def test_wandb_sweep_report_uses_043_grouping_accessors(wandb_report_tool: Modul
     panel_grid = report.blocks[-1]
     grouped_panels = [panel for panel in panel_grid.panels if type(panel).__name__ == "BarPlot"]
 
-    assert panel_grid.runsets[0].groupby == ["config.sweep_arm_id"]
+    assert panel_grid.runsets[0].groupby == ["config.sweep_arm_id", "config.measurement_schema_version"]
     assert grouped_panels
     assert all(isinstance(panel.groupby, wr.Config) for panel in grouped_panels)
     assert all(panel.groupby.name == "sweep_arm_id" for panel in grouped_panels)
@@ -484,6 +489,7 @@ def test_wandb_parallel_coordinates_use_typed_accessors(wandb_report_tool: Modul
     parallel_coordinates = next(panel for panel in panels if isinstance(panel, wr.ParallelCoordinatesPlot))
 
     assert [type(column.metric) for column in parallel_coordinates.columns] == [
+        wr.Config,
         wr.Config,
         wr.Config,
         wr.Config,
@@ -524,6 +530,7 @@ def test_wandb_report_views_parse_v1_and_v2_with_explicit_axes(wandb_report_tool
     )
     v2_config = {
         "run_kind": "imported_case",
+        "measurement_schema_version": 2,
         "benchmark": {"metadata_schema_version": 2, "suite_id": "case-a", "case_count": 1},
         "configs": [{"id": "config-a"}],
         "imported": {
@@ -544,11 +551,14 @@ def test_wandb_report_views_parse_v1_and_v2_with_explicit_axes(wandb_report_tool
     )
 
     assert v1.schema_version == 1
+    assert v1.measurement_schema_version == 1
     assert v1.comparison.kind == "native_suite"
     assert v2.schema_version == 2
+    assert v2.measurement_schema_version == 2
     assert v2.comparison.kind == "imported_case"
     assert v2.comparison.config_id == "config-a"
     assert wandb_report_tool.group_comparison([v2]).config_key == "imported_config_id"
+    assert wandb_report_tool.group_comparison([v2]).config_keys == ("imported_config_id", "measurement_schema_version")
 
 
 @pytest.mark.parametrize(

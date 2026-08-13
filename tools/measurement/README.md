@@ -7,6 +7,15 @@ This directory contains developer tools for measuring Anonymizer runs and
 exporting measurement JSONL to tables. Run the tools inside the project
 environment, either with an activated venv or through `uv run`.
 
+## Measurement schema compatibility
+
+Measurement schema versions are durable data contracts. Homogeneous schema v1
+and v2 snapshots and their completion seals remain valid indefinitely, while
+mixed-version snapshots are rejected. W&B publication keeps the schema version
+as a sanitized top-level comparison value, and first-party reports and
+workspaces group by it alongside the suite, sweep-arm, or imported-config
+identity. Do not add v1-to-v2 metric aliases: compare versions separately.
+
 Use these tools when you need evidence about cost, latency, reliability, or
 anonymization quality. They are not product entry points.
 
