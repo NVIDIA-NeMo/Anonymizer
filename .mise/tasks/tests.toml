@@ -5,6 +5,13 @@
 description = "Run all unit tests."
 run = "uv run --locked --group dev pytest"
 
+["test:all"]
+description = "Run unit and opt-in end-to-end tests. May require model-provider credentials."
+run = [
+  { task = "test" },
+  { task = "test:e2e" },
+]
+
 ["test:e2e"]
 description = "Run the opt-in end-to-end test suite. May require model-provider credentials."
 run = "uv run --locked --group dev pytest -m e2e tests_e2e/test_e2e.py"

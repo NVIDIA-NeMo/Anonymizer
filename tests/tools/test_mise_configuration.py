@@ -68,6 +68,14 @@ def test_local_mise_installer_fetches_and_pins_release_key_over_https() -> None:
     assert '--recv-keys "$MISE_GPG_KEY"' not in installer
 
 
+def test_local_mise_installer_downloads_unsigned_fallback_before_execution() -> None:
+    installer = (REPO_ROOT / "tools/install-mise.sh").read_text(encoding="utf-8")
+
+    assert 'curl_fetch -o "$unsigned_script" "$MISE_RUN_URL"' in installer
+    assert 'MISE_VERSION="$MISE_VERSION" sh "$unsigned_script"' in installer
+    assert 'curl_fetch "$MISE_RUN_URL" |' not in installer
+
+
 def test_makefile_exposes_bootstrap_without_deprecated_task_aliases() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     phony_targets = [line.removeprefix(".PHONY: ") for line in makefile.splitlines() if line.startswith(".PHONY: ")]
@@ -116,11 +124,18 @@ def test_mise_dependency_profiles_require_current_lockfile() -> None:
     setup_tasks = _read_toml(REPO_ROOT / ".mise/tasks/setup.toml")
     sync_task = setup_tasks["deps:sync"]
 
-    assert sync_task["run"].count("uv sync --locked") == 4
-    assert 'choices "runtime" "dev" "docs" "notebooks"' in sync_task["usage"]
+    assert sync_task["run"].count("uv sync --locked") == 5
+    assert 'choices "runtime" "dev" "docs" "notebooks" "all"' in sync_task["usage"]
     assert "runtime) uv sync --locked --no-default-groups" in sync_task["run"]
-    for profile in ("runtime", "dev", "docs", "notebooks"):
+    for profile in ("runtime", "dev", "docs", "notebooks", "all"):
         assert f"{profile}) uv sync --locked" in sync_task["run"]
+    assert "all) uv sync --locked --all-groups" in sync_task["run"]
+
+
+def test_mise_test_all_composes_unit_and_end_to_end_suites() -> None:
+    test_tasks = _read_toml(REPO_ROOT / ".mise/tasks/tests.toml")
+
+    assert test_tasks["test:all"]["run"] == [{"task": "test"}, {"task": "test:e2e"}]
 
 
 def test_mise_task_tree_uses_colon_delimited_vocabulary() -> None:
@@ -146,6 +161,7 @@ def test_mise_task_tree_uses_colon_delimited_vocabulary() -> None:
         "hooks:install",
         "lock:update",
         "notebooks:execute",
+        "test:all",
         "test:coverage",
     } <= task_names
     assert "validate" not in task_names

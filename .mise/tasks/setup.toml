@@ -5,7 +5,7 @@
 description = "Install pinned tools and sync a dependency profile. Developer profiles also install repository hooks; modifies the Mise cache, .venv, and .git/hooks."
 usage = '''
 arg "[profile]" help="Dependency profile to install" default="dev" {
-  choices "runtime" "dev" "docs" "notebooks"
+  choices "runtime" "dev" "docs" "notebooks" "all"
 }
 flag "--no-hooks" help="Skip hook installation in ephemeral CI environments"
 '''
@@ -24,7 +24,7 @@ fi
 description = "Synchronize one locked dependency profile into .venv or UV_PROJECT_ENVIRONMENT."
 usage = '''
 arg "[profile]" help="Dependency profile to install" default="dev" {
-  choices "runtime" "dev" "docs" "notebooks"
+  choices "runtime" "dev" "docs" "notebooks" "all"
 }
 '''
 run = '''
@@ -33,6 +33,7 @@ case "${usage_profile:-dev}" in
   dev) uv sync --locked --group dev ;;
   docs) uv sync --locked --group dev --group docs ;;
   notebooks) uv sync --locked --group dev --group notebooks ;;
+  all) uv sync --locked --all-groups ;;
 esac
 '''
 

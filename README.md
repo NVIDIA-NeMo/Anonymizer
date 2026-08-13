@@ -147,7 +147,9 @@ After installation, invoke it with `/anonymizer` in an agent that supports slash
 
 ```bash
 make setup                  # Install pinned tools, dev dependencies, and hooks
+mise run setup all          # Install every locked dependency group
 mise run test               # Run tests
+mise run test:all           # Run unit and end-to-end tests
 mise run test:coverage      # Run with coverage report
 mise run check              # Run all read-only static checks
 anonymizer --help           # CLI usage
