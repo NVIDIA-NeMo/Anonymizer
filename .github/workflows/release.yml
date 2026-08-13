@@ -13,12 +13,11 @@
 name: "Release NeMo Anonymizer"
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      release-ref:
-        description: Full SHA (not short) or tag of the commit to build
-        required: true
-        type: string
       dry-run:
         description: "Dry Run: only publish to Test PyPI"
         required: true
@@ -44,27 +43,22 @@ jobs:
     outputs:
       version: ${{ steps.build.outputs.version }}
     steps:
-      - name: Checkout workflow
+      - name: Checkout triggering ref
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
           dependency-profile: "runtime"
 
-      - name: Checkout release target
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.release-ref }}
-          fetch-depth: "0"
-          fetch-tags: true
-          path: release-target
-
       - name: Build wheel
         id: build
         run: |
-          mise run build:wheel release-target
-          WHEEL=$(ls release-target/dist/*.whl)
+          mise run build:wheel
+          WHEEL=$(ls dist/*.whl)
           VERSION=$(echo "$WHEEL" | sed -n 's/.*-\([0-9][^-]*\)-.*/\1/p')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Built: $WHEEL (version $VERSION)"
@@ -72,7 +66,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: nemo-anonymizer-${{ steps.build.outputs.version }}
-          path: release-target/dist/*.whl
+          path: dist/*.whl
           retention-days: 90
 
       - name: Publish to Test PyPI (always, as pre-flight)
@@ -85,10 +79,10 @@ jobs:
             --skip-existing \
             --non-interactive \
             --verbose \
-            release-target/dist/*.whl
+            dist/*.whl
 
       - name: Publish to PyPI
-        if: ${{ !inputs.dry-run }}
+        if: ${{ github.event_name == 'push' || !inputs.dry-run }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PERSONAL_TOKEN }}
@@ -96,16 +90,18 @@ jobs:
           uvx twine upload \
             --non-interactive \
             --verbose \
-            release-target/dist/*.whl
+            dist/*.whl
 
   create-gh-release:
     name: Create GitHub release
     needs: publish-wheel
-    if: ${{ inputs.create-gh-release }}
+    if: ${{ github.event_name == 'push' || inputs.create-gh-release }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout workflow
+      - name: Checkout triggering ref
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v8
@@ -116,7 +112,7 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_REF: ${{ inputs.release-ref }}
+          TARGET_SHA: ${{ github.sha }}
           VERSION: ${{ needs.publish-wheel.outputs.version }}
         run: |
           PRERELEASE_FLAG=""
@@ -128,42 +124,36 @@ jobs:
             dist/*.whl \
             --generate-notes \
             --title "v${VERSION}" \
-            --target "$RELEASE_REF" \
+            --target "$TARGET_SHA" \
             $PRERELEASE_FLAG
 
   deploy-release-docs:
     name: Deploy release docs
     needs: [publish-wheel, create-gh-release]
-    if: ${{ inputs.create-gh-release }}
+    if: ${{ github.event_name == 'push' || inputs.create-gh-release }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout workflow
+      - name: Checkout triggering ref
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
-          dependency-profile: "runtime"
-
-      - name: Checkout release target
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.release-ref }}
-          fetch-depth: "0"
-          fetch-tags: true
-          path: release-target
+          dependency-profile: "docs"
 
       - name: Configure git for mike
         run: |
-          git -C release-target config user.name "github-actions[bot]"
-          git -C release-target config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Build docs
-        run: mise run docs:build release-target
+        run: mise run docs:build
 
       - name: Deploy release docs with mike
         env:
           VERSION: ${{ needs.publish-wheel.outputs.version }}
-        run: mise run docs:deploy "$VERSION" release-target
+        run: mise run docs:deploy "$VERSION"
