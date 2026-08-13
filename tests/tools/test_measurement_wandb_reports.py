@@ -561,6 +561,22 @@ def test_wandb_report_views_parse_v1_and_v2_with_explicit_axes(wandb_report_tool
     assert wandb_report_tool.group_comparison([v2]).config_keys == ("imported_config_id", "measurement_schema_version")
 
 
+@pytest.mark.parametrize("measurement_schema_version", [True, 1.0, "1", 3])
+def test_wandb_report_rejects_non_strict_flattened_measurement_schema_version(
+    wandb_report_tool: ModuleType,
+    measurement_schema_version: object,
+) -> None:
+    summary, config = _wandb_report_fixture()
+    config["measurement_schema_version"] = measurement_schema_version
+
+    with pytest.raises(ValueError, match="valid measurement schema version"):
+        wandb_report_tool.parse_wandb_run_view(
+            SimpleNamespace(id="run-a", name="v1", group=None, job_type="benchmark", summary=summary, config=config),
+            run_path=wandb_report_tool.WandbRunPath(entity="entity", project="project", run_id="run-a"),
+            allowed_metrics=frozenset(wandb_report_tool._all_report_metrics()),
+        )
+
+
 @pytest.mark.parametrize(
     "fixture_name,schema_version,run_kind",
     [

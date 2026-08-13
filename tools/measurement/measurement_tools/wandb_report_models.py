@@ -317,7 +317,7 @@ def _measurement_schema_version(config: dict[str, Any]) -> Literal[1, 2]:
         value = benchmark.get("measurement_schema_version") if isinstance(benchmark, dict) else None
     if value is None:
         return 1
-    if value not in {1, 2} or isinstance(value, bool):
+    if type(value) is not int or value not in {1, 2}:
         raise ValueError("W&B run is missing a valid measurement schema version")
     return value
 
