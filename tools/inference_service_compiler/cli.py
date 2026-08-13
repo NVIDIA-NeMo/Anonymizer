@@ -43,6 +43,7 @@ def command_errors(function: Callable[P, R]) -> Callable[P, R]:
             CompilationError,
             FileNotFoundError,
             IsADirectoryError,
+            NotADirectoryError,
             PermissionError,
             PlanIntegrityError,
             RuntimeEffectError,
