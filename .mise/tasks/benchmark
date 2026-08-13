@@ -14,7 +14,7 @@ suite="tools/measurement/examples/repo-data-smoke.yaml"
 output_dir="${BENCHMARK_OUTPUT_DIR:-benchmark-runs/${profile}}"
 runner_args=()
 if [[ -n "${usage_runner_args:-}" ]]; then
-  read -r -a runner_args <<<"$usage_runner_args"
+  eval "runner_args=($usage_runner_args)"
 fi
 
 case "$profile" in
@@ -29,5 +29,5 @@ esac
 uv run --locked --group dev python tools/measurement/run_benchmarks.py \
   "$suite" \
   --output "$output_dir" \
-  "${trace_args[@]}" \
-  "${runner_args[@]}"
+  ${trace_args[@]+"${trace_args[@]}"} \
+  ${runner_args[@]+"${runner_args[@]}"}
