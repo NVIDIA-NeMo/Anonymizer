@@ -4,16 +4,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from inference_service_compiler import vllm_factory_adapter as adapter
-
-TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
-
-
-def load_adapter():
-    """Compatibility alias for the directly imported production module."""
-    return adapter
 
 
 def test_parse_detection_request_preserves_anonymizer_options() -> None:
@@ -53,7 +44,6 @@ def test_parse_detection_request_accepts_label_free_health_check() -> None:
 
 def test_merge_gliner_entities_restores_offsets_and_deduplicates_overlap() -> None:
     """Chunk-relative factory spans become stable document offsets."""
-    adapter = load_adapter()
     chunks = [adapter.TextChunk("Alice met Bob", 0), adapter.TextChunk("Bob at NVIDIA", 10)]
     results = [
         [
@@ -82,8 +72,6 @@ def test_merge_gliner_entities_restores_offsets_and_deduplicates_overlap() -> No
 
 def test_merge_gliner2_entities_normalizes_confidence_and_spans() -> None:
     """GLiNER2's schema result becomes the detector's flat entity list."""
-    adapter = load_adapter()
-
     entities = adapter.merge_entities(
         plugin="deberta_gliner2",
         chunks=[adapter.TextChunk("Email alice@example.com", 0)],
@@ -117,8 +105,6 @@ def test_merge_gliner2_entities_normalizes_confidence_and_spans() -> None:
 
 def test_split_text_matches_native_character_overlap_contract() -> None:
     """The adapter keeps the characterized character-based chunk semantics."""
-    adapter = load_adapter()
-
     assert adapter.split_text("abcdefghij", chunk_length=6, overlap=2) == [
         adapter.TextChunk("abcdef", 0),
         adapter.TextChunk("efghij", 4),
