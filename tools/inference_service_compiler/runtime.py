@@ -28,7 +28,6 @@ from inference_service_compiler.models import (
     LocalProcessHandle,
     RunPlan,
     RuntimeDiagnostic,
-    SecretEnvironmentVariable,
     StatusReceipt,
 )
 
@@ -94,13 +93,16 @@ def launch_plan(
 ) -> LaunchReceipt:
     """Launch a verified plan and return reconnectable identity plus readiness evidence."""
     verify_plan(plan)
-    resolved_secrets = _resolve_secrets(plan, secret_values)
+    try:
+        command_environment = plan.command.resolve_environment(secret_values)
+    except ValueError as exc:
+        raise RuntimeEffectError(RuntimeDiagnostic(code="missing-secret", message=str(exc))) from exc
     argv = plan.command.render_argv()
     environment = os.environ.copy()
-    environment.update(plan.command.render_environment(resolve_secrets=resolved_secrets))
+    environment.update(command_environment)
     log_directory.mkdir(parents=True, exist_ok=True)
-    handle = _launch_handle(plan, argv, environment, log_directory)
-    probe = _probe_or_cleanup(plan, handle, resolved_secrets)
+    handle = _launch_process(plan, argv, environment, log_directory)
+    probe = _probe_or_cleanup(plan, handle, secret_values)
     return LaunchReceipt(
         plan_digest=plan.plan_digest,
         launched_at=_now(),
@@ -108,15 +110,6 @@ def launch_plan(
         handle=handle,
         probe=probe,
     )
-
-
-def _launch_handle(
-    plan: RunPlan,
-    argv: tuple[str, ...],
-    environment: dict[str, str],
-    log_directory: Path,
-) -> LocalProcessHandle:
-    return _launch_process(plan, argv, environment, log_directory)
 
 
 def _probe_or_cleanup(
@@ -349,23 +342,6 @@ def _parse_models(payload: object) -> tuple[str, ...]:
             if "id" in record:
                 models.append(str(record["id"]))
     return tuple(models)
-
-
-def _resolve_secrets(plan: RunPlan, values: dict[str, str]) -> dict[str, str]:
-    required = {
-        variable.source_environment_variable
-        for variable in plan.command.environment
-        if isinstance(variable, SecretEnvironmentVariable)
-    }
-    missing = sorted(name for name in required if name not in values)
-    if missing:
-        raise RuntimeEffectError(
-            RuntimeDiagnostic(
-                code="missing-secret",
-                message=f"secret environment variable {missing[0]!r} is not resolved",
-            )
-        )
-    return {name: values[name] for name in required}
 
 
 def _probe_headers(plan: RunPlan, secret_values: Mapping[str, str]) -> dict[str, str]:

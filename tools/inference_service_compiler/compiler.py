@@ -78,7 +78,7 @@ def compile_intent(intent: InferenceIntent, *, source_revision: str) -> RunPlan:
     if not source_revision:
         raise ValueError("source_revision must not be empty")
     required = intent.task.required_capabilities()
-    compilation = _compile_service(intent)
+    compilation = _compile_vllm(intent)
     placement = intent.local
     endpoint = EndpointContract(host=placement.host, port=placement.port)
     plan = RunPlan(
@@ -135,14 +135,8 @@ def _canonical_json(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def _compile_service(intent: InferenceIntent) -> ServiceCompilation:
-    return _compile_vllm(intent, intent.vllm)
-
-
-def _compile_vllm(
-    intent: InferenceIntent,
-    engine: Vllm,
-) -> ServiceCompilation:
+def _compile_vllm(intent: InferenceIntent) -> ServiceCompilation:
+    engine = intent.vllm
     match intent.task:
         case EntityDetection() as task:
             factory = engine.factory
