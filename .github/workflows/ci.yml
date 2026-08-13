@@ -16,6 +16,16 @@ env:
   DEFAULT_PYTHON_VERSION: "3.11"
 
 jobs:
+  benchmark-task-shell:
+    name: Benchmark task (macOS Bash 3.2)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test benchmark task
+        run: bash tests/tools/test_benchmark_task.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest

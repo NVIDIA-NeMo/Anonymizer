@@ -3,7 +3,10 @@
 
 [test]
 description = "Run all unit tests."
-run = "uv run --locked --group dev pytest"
+run = [
+  "bash tests/tools/test_benchmark_task.sh",
+  "uv run --locked --group dev pytest",
+]
 
 ["test:all"]
 description = "Run unit and opt-in end-to-end tests. May require model-provider credentials."
@@ -18,4 +21,7 @@ run = "uv run --locked --group dev pytest -m e2e tests_e2e/test_e2e.py"
 
 ["test:coverage"]
 description = "Run unit tests and write terminal, .coverage, and htmlcov coverage reports."
-run = "uv run --locked --group dev pytest --cov=anonymizer --cov-report=term-missing --cov-report=html"
+run = [
+  "bash tests/tools/test_benchmark_task.sh",
+  "uv run --locked --group dev pytest --cov=anonymizer --cov-report=term-missing --cov-report=html",
+]
