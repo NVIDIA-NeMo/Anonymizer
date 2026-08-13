@@ -133,13 +133,13 @@ The `CUDA_ROOT` path above is specific to the Brev B300 SXM6 environment used fo
 
 `--gpu-memory-utilization 0.45` was a conservative co-location setting, not a compute throttle. In vLLM it controls the GPU memory budget for model weights and KV cache. Qwen could use more memory if the run needed a larger KV cache, but this setting left headroom for the GLiNER server on the same GPU and still completed the measured batches with zero failures.
 
-GLiNER ran on the same machine. Current reruns use the source-tree inference
-service compiler described in [Self-hosting GLiNER](../../concepts/self-hosting-gliner.md),
-which records the exact model, engine, placement, batch environment, endpoint,
-and process identity in versioned plans and receipts.
+GLiNER ran on the same machine. Current reruns use the source-tree local-model
+deployment tool described in [Self-hosting GLiNER](../../concepts/self-hosting-gliner.md).
+It records the exact model, vLLM settings, endpoint, and process identity in
+versioned plans and receipts. The current detector path uses vLLM Factory.
 
 ```toml title="gliner-b300.toml"
-schema_version = "inference-service.intent/v1"
+schema_version = "inference-service.intent/v2"
 
 [task]
 kind = "entity-detection"
@@ -148,37 +148,31 @@ offsets = true
 scores = true
 
 [model]
-kind = "hugging-face"
 model_id = "nvidia/gliner-pii"
 revision = "bd23e8ef4425fd04e34c5204ab49ffaa706eae79"
 
-[engine]
-kind = "native-gliner"
-family = "nvidia-gliner"
-device = "cuda"
-max_batch_requests = 64
-batch_wait_ms = 10
+[vllm]
+python_executable = ".venv/bin/python"
+gpu_memory_utilization = 0.45
+max_model_len = 512
 
-[placement]
-kind = "local-process"
+[vllm.factory]
+plugin = "deberta_gliner"
+prepared_model_root = "/tmp/anonymizer-vllm-factory"
+
+[local]
 host = "127.0.0.1"
 port = 9000
-
-[access]
-kind = "direct"
-
-[lifecycle]
-kind = "managed"
 startup_timeout_seconds = 300
 shutdown_timeout_seconds = 30
 ```
 
 ```bash
-uv run tools/inference_service.py compile \
+uv run --python 3.12 python tools/inference_service.py compile \
   --profile gliner-b300.toml \
   --source-revision 3f68c145 \
   --output gliner-b300-plan.json
-uv run tools/inference_service.py launch \
+uv run --python 3.12 python tools/inference_service.py launch \
   --plan gliner-b300-plan.json \
   --output gliner-b300-launch.json \
   --log-directory logs

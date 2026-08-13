@@ -8,11 +8,10 @@ By default, Anonymizer's entity detection stage calls the hosted `nvidia/gliner-
 The default NVIDIA GLiNER model is small enough to share a GPU with a local
 LLM. The optional GLiNER2 PII model is also fully local. The pinned reference
 profiles serve both models through vLLM 0.27.1 and the external
-[vLLM Factory](https://github.com/latenceainew/vllm-factory) project. A native
-CPU, MPS, or GPU fallback remains available for custom profiles.
+[vLLM Factory](https://github.com/latenceainew/vllm-factory) project.
 
 The characterized services live inside the source-tree
-[inference service compiler](inference-services.md). They are **not** installed
+[local-model deployment tool](inference-services.md). They are **not** installed
 with `pip install nemo-anonymizer`; compile and launch them from a source
 checkout.
 
@@ -91,7 +90,7 @@ Native Transformers GLiNER fallback serving is intentionally not included.
 
 ---
 
-## Running it
+## Deploying it
 
 !!! note "Source checkout only"
 
@@ -121,10 +120,8 @@ the network; inference stays local after setup.
 ### Start the server
 
 Compile the pinned vLLM Factory GLiNER TOML profile and launch the resulting
-plan as shown in
-[Run local inference services](inference-services.md#gliner-through-vllm-factory).
-The profile keeps the model checkpoint, engine, factory plugin, placement,
-access, and managed lifecycle separate. NVIDIA GLiNER uses
+plan as shown in [Deploy local models](inference-services.md). That guide has
+complete host and GPU container workflows. NVIDIA GLiNER uses
 `deberta_gliner`; GLiNER2 uses `deberta_gliner2`.
 
 Launch writes a versioned receipt only after the model-list and detection
@@ -135,8 +132,8 @@ The model families do not use identical label vocabularies. The request example 
 
 The reference profiles have **no authentication**. The default bind address is
 `127.0.0.1` so detection traffic stays on localhost. Set `api_key_env` in the
-engine or place the endpoint behind authenticated TLS before exposing it to
-another host.
+`[vllm]` section or place the endpoint behind authenticated TLS before exposing
+it to another host.
 
 Verify the server is reachable:
 
