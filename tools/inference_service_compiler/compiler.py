@@ -7,7 +7,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from typing import Never
+from dataclasses import dataclass
+from typing import Never, assert_never
 
 from pydantic import BaseModel
 
@@ -62,20 +63,30 @@ class PlanIntegrityError(ValueError):
     """A serialized plan does not match its declared digest."""
 
 
+@dataclass(frozen=True, slots=True)
+class ServiceCompilation:
+    """Complete immutable product of selecting one service implementation."""
+
+    command: CommandSpec
+    runtime: LocalProcessRuntime
+    declared_capabilities: tuple[Capability, ...]
+    compatibility_evidence: tuple[CompatibilityEvidence, ...]
+
+
 def compile_intent(intent: InferenceIntent, *, source_revision: str) -> RunPlan:
     """Compile semantic intent without starting, probing, or allocating anything."""
     if not source_revision:
         raise ValueError("source_revision must not be empty")
     required = intent.task.required_capabilities()
-    command, runtime, declared, evidence = _compile_service(intent)
+    compilation = _compile_service(intent)
     placement = intent.local
     endpoint = EndpointContract(host=placement.host, port=placement.port)
     plan = RunPlan(
         plan_digest="",
         intent_digest=digest_model(intent),
         intent=intent,
-        command=command,
-        runtime=runtime,
+        command=compilation.command,
+        runtime=compilation.runtime,
         endpoint=endpoint,
         readiness=HttpProbe(
             host=placement.host,
@@ -86,8 +97,8 @@ def compile_intent(intent: InferenceIntent, *, source_revision: str) -> RunPlan:
         ),
         expected_model=intent.expected_model,
         required_capabilities=required,
-        declared_capabilities=declared,
-        compatibility_evidence=evidence,
+        declared_capabilities=compilation.declared_capabilities,
+        compatibility_evidence=compilation.compatibility_evidence,
         dependencies=_plan_dependencies(intent),
         source_revision=source_revision,
     )
@@ -124,78 +135,80 @@ def _canonical_json(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def _compile_service(
-    intent: InferenceIntent,
-) -> tuple[CommandSpec, LocalProcessRuntime, tuple[Capability, ...], tuple[CompatibilityEvidence, ...]]:
+def _compile_service(intent: InferenceIntent) -> ServiceCompilation:
     return _compile_vllm(intent, intent.vllm)
 
 
 def _compile_vllm(
     intent: InferenceIntent,
     engine: Vllm,
-) -> tuple[CommandSpec, LocalProcessRuntime, tuple[Capability, ...], tuple[CompatibilityEvidence, ...]]:
-    if isinstance(intent.task, EntityDetection):
-        factory = engine.factory
-        if factory is None:
-            _raise_unsupported_task_engine(intent.task.kind, "vllm")
-        if intent.model.revision is None:
-            raise CompilationError(
-                CompilerDiagnostic(
-                    code="unpinned-model-revision",
-                    message="vLLM Factory entity detection requires a pinned model revision",
-                    details={"model": intent.model.model_id},
+) -> ServiceCompilation:
+    match intent.task:
+        case EntityDetection() as task:
+            factory = engine.factory
+            if factory is None:
+                _raise_unsupported_task_engine(task.kind, "vllm")
+            if intent.model.revision is None:
+                raise CompilationError(
+                    CompilerDiagnostic(
+                        code="unpinned-model-revision",
+                        message="vLLM Factory entity detection requires a pinned model revision",
+                        details={"model": intent.model.model_id},
+                    )
                 )
-            )
-        if not supports_model(factory.plugin, intent.model.model_id):
-            raise CompilationError(
-                CompilerDiagnostic(
-                    code="unsupported-model-engine",
-                    message=(
-                        f"model {intent.model.model_id!r} is not characterized for "
-                        f"vLLM Factory plugin {factory.plugin!r}"
-                    ),
-                    details={
-                        "model": intent.model.model_id,
-                        "plugin": factory.plugin,
-                    },
+            if not supports_model(factory.plugin, intent.model.model_id):
+                raise CompilationError(
+                    CompilerDiagnostic(
+                        code="unsupported-model-engine",
+                        message=(
+                            f"model {intent.model.model_id!r} is not characterized for "
+                            f"vLLM Factory plugin {factory.plugin!r}"
+                        ),
+                        details={"model": intent.model.model_id, "plugin": factory.plugin},
+                    )
                 )
-            )
-        if intent.model.adapter is not None:
-            raise CompilationError(
-                CompilerDiagnostic(
-                    code="unsupported-model-adapter",
-                    message="vLLM Factory entity detection does not support a model adapter",
-                    details={"engine": "vllm", "task": intent.task.kind},
+            if intent.model.adapter is not None:
+                raise CompilationError(
+                    CompilerDiagnostic(
+                        code="unsupported-model-adapter",
+                        message="vLLM Factory entity detection does not support a model adapter",
+                        details={"engine": "vllm", "task": task.kind},
+                    )
                 )
-            )
-        command, runtime = _vllm_command(intent, engine)
-        return (
-            command,
-            runtime,
-            intent.task.required_capabilities(),
-            (
-                CompatibilityEvidence(
-                    rule="vllm-factory-entity-detection-v1",
-                    outcome="runtime-probe-required",
-                    detail=(
-                        "vLLM Factory supplies model preparation, pooling inference, and IO processing; "
-                        "the Anonymizer adapter preserves dynamic labels, offsets, and scores"
+            command, runtime = _vllm_command(intent, engine)
+            return ServiceCompilation(
+                command=command,
+                runtime=runtime,
+                declared_capabilities=task.required_capabilities(),
+                compatibility_evidence=(
+                    CompatibilityEvidence(
+                        rule="vllm-factory-entity-detection-v1",
+                        outcome="runtime-probe-required",
+                        detail=(
+                            "vLLM Factory supplies model preparation, pooling inference, and IO processing; "
+                            "the Anonymizer adapter preserves dynamic labels, offsets, and scores"
+                        ),
                     ),
                 ),
-            ),
-        )
-    if not isinstance(intent.task, Generation) or engine.factory is not None:
-        _raise_unsupported_task_engine(intent.task.kind, "vllm")
-    command, runtime = _vllm_command(intent, engine)
-    declared = ("chat-completions",)
-    evidence = (
-        CompatibilityEvidence(
-            rule="vllm-openai-compatible-v1",
-            outcome="characterized",
-            detail="vLLM exposes chat completions for generation",
-        ),
-    )
-    return command, runtime, declared, evidence
+            )
+        case Generation() as task:
+            if engine.factory is not None:
+                _raise_unsupported_task_engine(task.kind, "vllm")
+            command, runtime = _vllm_command(intent, engine)
+            return ServiceCompilation(
+                command=command,
+                runtime=runtime,
+                declared_capabilities=("chat-completions",),
+                compatibility_evidence=(
+                    CompatibilityEvidence(
+                        rule="vllm-openai-compatible-v1",
+                        outcome="characterized",
+                        detail="vLLM exposes chat completions for generation",
+                    ),
+                ),
+            )
+        case _:
+            assert_never(intent.task)
 
 
 def _vllm_command(

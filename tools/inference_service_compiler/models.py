@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Literal
+from typing import Annotated, Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +17,16 @@ STATUS_RECEIPT_SCHEMA_VERSION = "inference-service.status-receipt/v1"
 CANCELLATION_RECEIPT_SCHEMA_VERSION = "inference-service.cancellation-receipt/v1"
 
 Capability = Literal["chat-completions", "dynamic-labels", "offsets", "scores"]
+FactoryPlugin = Literal["deberta_gliner", "deberta_gliner2"]
+
+
+def parse_factory_plugin(value: str) -> FactoryPlugin:
+    """Parse the Factory plugin name at an untyped process boundary."""
+    match value:
+        case "deberta_gliner" | "deberta_gliner2":
+            return value
+        case _:
+            raise ValueError(f"unsupported vLLM Factory plugin {value!r}")
 
 
 class FrozenModel(BaseModel):
@@ -77,7 +87,7 @@ class HuggingFaceModel(FrozenModel):
 class VllmFactoryIntegration(FrozenModel):
     """A supported vLLM Factory structured-prediction plugin."""
 
-    plugin: Literal["deberta_gliner", "deberta_gliner2"]
+    plugin: FactoryPlugin
     prepared_model_root: str = Field(default="/tmp/anonymizer-vllm-factory", min_length=1)
 
 
@@ -184,6 +194,8 @@ class CommandSpec(FrozenModel):
                         values[name] = resolve_secrets[source]
                     else:
                         raise ValueError(f"secret environment variable {source!r} is not resolved")
+                case _:
+                    assert_never(variable)
         return values
 
 

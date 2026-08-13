@@ -9,12 +9,13 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from tomllib import TOMLDecodeError
 from typing import ParamSpec, TypeVar
 
 import cyclopts
 from pydantic import BaseModel, ValidationError
 
-from inference_service_compiler.compiler import CompilationError, compile_intent, load_plan
+from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_intent, load_plan
 from inference_service_compiler.models import LaunchReceipt, SecretEnvironmentVariable
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
@@ -38,7 +39,17 @@ def command_errors(function: Callable[P, R]) -> Callable[P, R]:
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return function(*args, **kwargs)
-        except (CompilationError, OSError, RuntimeEffectError, ValidationError, ValueError) as exc:
+        except (
+            CompilationError,
+            FileNotFoundError,
+            IsADirectoryError,
+            PermissionError,
+            PlanIntegrityError,
+            RuntimeEffectError,
+            TOMLDecodeError,
+            UnicodeDecodeError,
+            ValidationError,
+        ) as exc:
             sys.stderr.write(f"error: {exc}\n")
             raise SystemExit(125) from exc
 

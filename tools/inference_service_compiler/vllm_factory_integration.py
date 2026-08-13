@@ -9,17 +9,21 @@ import json
 import re
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal, assert_never
+
+from inference_service_compiler.models import FactoryPlugin
 
 VLLM_FACTORY_SOURCE_REVISION = "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0"
 VLLM_FACTORY_SOURCE_URL = "https://github.com/latenceainew/vllm-factory.git"
 VLLM_FACTORY_DEPENDENCY = f"vllm-factory[gliner] @ git+{VLLM_FACTORY_SOURCE_URL}@{VLLM_FACTORY_SOURCE_REVISION}"
 
-PLUGIN_IO_PROCESSORS = {
+FactoryIoProcessor = Literal["deberta_gliner_io", "deberta_gliner2_io"]
+
+PLUGIN_IO_PROCESSORS: dict[FactoryPlugin, FactoryIoProcessor] = {
     "deberta_gliner": "deberta_gliner_io",
     "deberta_gliner2": "deberta_gliner2_io",
 }
-CHARACTERIZED_MODELS = {
+CHARACTERIZED_MODELS: dict[FactoryPlugin, frozenset[str]] = {
     "deberta_gliner": frozenset({"nvidia/gliner-pii"}),
     "deberta_gliner2": frozenset({"fastino/gliner2-privacy-filter-PII-multi"}),
 }
@@ -29,12 +33,10 @@ def prepare_model(
     *,
     model_id: str,
     revision: str | None,
-    plugin: str,
+    plugin: FactoryPlugin,
     prepared_model_root: str,
 ) -> str:
     """Prepare one pinned model through vLLM Factory's Python API."""
-    if plugin not in PLUGIN_IO_PROCESSORS:
-        raise ValueError(f"unsupported vLLM Factory plugin {plugin!r}")
     if revision is None:
         raise ValueError("vLLM Factory models require a pinned Hugging Face revision")
 
@@ -70,20 +72,27 @@ def prepare_model(
     return str(output)
 
 
-def io_processor_for(plugin: str) -> str:
+def io_processor_for(plugin: FactoryPlugin) -> FactoryIoProcessor:
     """Resolve the vLLM IOProcessor entry point for a supported factory plugin."""
-    try:
-        return PLUGIN_IO_PROCESSORS[plugin]
-    except KeyError as exc:
-        raise ValueError(f"unsupported vLLM Factory plugin {plugin!r}") from exc
+    match plugin:
+        case "deberta_gliner":
+            return "deberta_gliner_io"
+        case "deberta_gliner2":
+            return "deberta_gliner2_io"
+        case _:
+            assert_never(plugin)
 
 
-def supports_model(plugin: str, model_id: str) -> bool:
+def supports_model(plugin: FactoryPlugin, model_id: str) -> bool:
     """Return whether this source revision was characterized for the pair."""
-    return model_id in CHARACTERIZED_MODELS.get(plugin, ())
+    match plugin:
+        case "deberta_gliner" | "deberta_gliner2":
+            return model_id in CHARACTERIZED_MODELS[plugin]
+        case _:
+            assert_never(plugin)
 
 
-def _prepared_model_path(*, root: Path, model_id: str, revision: str, plugin: str) -> Path:
+def _prepared_model_path(*, root: Path, model_id: str, revision: str, plugin: FactoryPlugin) -> Path:
     safe_model = re.sub(r"[^A-Za-z0-9_.-]+", "--", model_id).strip("-")
     return root / safe_model / revision / plugin
 
