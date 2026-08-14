@@ -278,14 +278,6 @@ Build a wheel locally:
 mise run build:wheel
 ```
 
-Release automation can apply the current repository commands to a separate project checkout:
-
-```bash
-mise run build:wheel path/to/project
-mise run docs:build path/to/project
-mise run docs:deploy VERSION path/to/project
-```
-
 Release tags use `vMAJOR.MINOR.PATCH` for stable releases and `vMAJOR.MINOR.PATCHrcN` for release candidates, while the Python package version is the unprefixed version.
 
 Release publishing is handled by `.github/workflows/release.yml`.

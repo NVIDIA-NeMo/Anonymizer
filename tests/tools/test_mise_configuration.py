@@ -27,6 +27,65 @@ def test_github_setup_requires_signed_mise_installer() -> None:
     assert install_step.get("env", {}).get("MISE_REQUIRE_SIGNED_INSTALL") == "1"
 
 
+def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> None:
+    workflow_path = REPO_ROOT / ".github/workflows/release.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(workflow_text)
+    triggers = workflow.get("on", workflow[True])
+    dispatch_inputs = triggers["workflow_dispatch"]["inputs"]
+
+    assert triggers["push"]["tags"] == ["v*"]
+    assert set(dispatch_inputs) == {"dry-run", "create-gh-release"}
+    assert "release-ref" not in workflow_text
+    assert "release-target" not in workflow_text
+
+    publish_steps = workflow["jobs"]["publish-wheel"]["steps"]
+    checkout_steps = [
+        step for job in workflow["jobs"].values() for step in job["steps"] if step.get("uses") == "actions/checkout@v6"
+    ]
+    assert checkout_steps
+    assert all("ref" not in step.get("with", {}) for step in checkout_steps)
+    assert all("path" not in step.get("with", {}) for step in checkout_steps)
+
+    build_step = next(step for step in publish_steps if step.get("id") == "build")
+    assert "mise run build:wheel" in build_step["run"]
+    assert "dist/*.whl" in build_step["run"]
+    assert 'if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v${VERSION}" ]; then' in build_step["run"]
+    assert "exit 1" in build_step["run"]
+
+    release_steps = workflow["jobs"]["create-gh-release"]["steps"]
+    release_step = next(step for step in release_steps if step.get("name") == "Create GitHub release")
+    assert release_step["env"]["TARGET_SHA"] == "${{ github.sha }}"
+    assert '--target "$TARGET_SHA"' in release_step["run"]
+
+    docs_steps = workflow["jobs"]["deploy-release-docs"]["steps"]
+    assert next(step for step in docs_steps if step.get("name") == "Build docs")["run"] == "mise run docs:build"
+    assert (
+        next(step for step in docs_steps if step.get("name") == "Deploy release docs with mike")["run"]
+        == 'mise run docs:deploy "$VERSION"'
+    )
+
+    publish_to_pypi = next(step for step in publish_steps if step.get("name") == "Publish to PyPI")
+    assert publish_to_pypi["if"] == "${{ github.event_name == 'push' || !inputs.dry-run }}"
+    assert (
+        workflow["jobs"]["create-gh-release"]["if"] == "${{ github.event_name == 'push' || inputs.create-gh-release }}"
+    )
+    assert (
+        workflow["jobs"]["deploy-release-docs"]["if"]
+        == "${{ github.event_name == 'push' || inputs.create-gh-release }}"
+    )
+
+
+def test_release_tasks_use_current_checkout() -> None:
+    build_task = (REPO_ROOT / ".mise/tasks/build/wheel").read_text(encoding="utf-8")
+    docs_tasks = _read_toml(REPO_ROOT / ".mise/tasks/docs.toml")
+
+    assert "usage_project" not in build_task
+    assert set(docs_tasks["docs:build"]) == {"description", "run"}
+    assert 'arg "[project]"' not in docs_tasks["docs:deploy"]["usage"]
+    assert "--directory" not in docs_tasks["docs:deploy"]["run"]
+
+
 def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/benchmark-ci.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["benchmark"]["steps"]
@@ -54,83 +113,6 @@ def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
 
     upload_step = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
     assert upload_step["with"]["path"] == "benchmark-target/${{ env.BENCHMARK_OUTPUT_DIR }}/"
-
-
-def test_release_workflow_keeps_setup_on_workflow_revision() -> None:
-    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
-    triggers = workflow[True]
-
-    assert "release-ref" in triggers["workflow_dispatch"]["inputs"]
-
-    for job_name in ("publish-wheel", "deploy-release-docs"):
-        steps = workflow["jobs"][job_name]["steps"]
-        setup_index = next(
-            index for index, step in enumerate(steps) if step.get("uses") == "./.github/actions/setup-python-env"
-        )
-        root_checkout_index = next(
-            index
-            for index, step in enumerate(steps)
-            if step.get("uses") == "actions/checkout@v6" and "ref" not in step.get("with", {})
-        )
-        target_checkout_index = next(
-            index
-            for index, step in enumerate(steps)
-            if step.get("uses") == "actions/checkout@v6" and step.get("with", {}).get("path") == "release-target"
-        )
-
-        assert root_checkout_index < setup_index < target_checkout_index
-        assert steps[setup_index]["with"]["checkout"] == "false"
-        assert steps[target_checkout_index]["with"] == {
-            "ref": "${{ inputs.release-ref }}",
-            "fetch-depth": "0",
-            "fetch-tags": True,
-            "path": "release-target",
-        }
-
-
-def test_release_workflow_runs_repository_commands_against_historical_target() -> None:
-    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
-
-    publish_steps = workflow["jobs"]["publish-wheel"]["steps"]
-    build_step = next(step for step in publish_steps if step.get("id") == "build")
-    assert "mise run build:wheel release-target" in build_step["run"]
-    assert "release-target/dist/*.whl" in build_step["run"]
-    assert (
-        next(step for step in publish_steps if step.get("uses") == "actions/upload-artifact@v7")["with"]["path"]
-        == "release-target/dist/*.whl"
-    )
-    assert all(
-        "release-target/dist/*.whl" in step["run"]
-        for step in publish_steps
-        if step.get("name") in {"Publish to Test PyPI (always, as pre-flight)", "Publish to PyPI"}
-    )
-
-    release_steps = workflow["jobs"]["create-gh-release"]["steps"]
-    release_step = next(step for step in release_steps if step.get("name") == "Create GitHub release")
-    assert release_step["env"]["RELEASE_REF"] == "${{ inputs.release-ref }}"
-    assert '--target "$RELEASE_REF"' in release_step["run"]
-
-    docs_steps = workflow["jobs"]["deploy-release-docs"]["steps"]
-    assert (
-        "git -C release-target config"
-        in next(step for step in docs_steps if step.get("name") == "Configure git for mike")["run"]
-    )
-    assert (
-        next(step for step in docs_steps if step.get("name") == "Build docs")["run"]
-        == "mise run docs:build release-target"
-    )
-    assert (
-        next(step for step in docs_steps if step.get("name") == "Deploy release docs with mike")["run"]
-        == 'mise run docs:deploy "$VERSION" release-target'
-    )
-
-    build_task = (REPO_ROOT / ".mise/tasks/build/wheel").read_text(encoding="utf-8")
-    docs_tasks = _read_toml(REPO_ROOT / ".mise/tasks/docs.toml")
-    assert 'arg "[project]"' in build_task
-    assert 'uv build --wheel "$project"' in build_task
-    assert 'arg "[project]"' in docs_tasks["docs:build"]["usage"]
-    assert "uv run --directory" in docs_tasks["docs:build"]["run"]
-    assert set(docs_tasks["docs:deploy"]) == {"description", "usage", "run"}
 
 
 def test_local_mise_installer_keeps_unsigned_fallback_opt_in() -> None:
