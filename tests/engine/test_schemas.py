@@ -254,7 +254,7 @@ def test_entity_disposition_low_risk_non_leave_as_is_promotes_risk_to_medium(met
     # Coerced and non-coerced paths must produce the same serialization type (plain string, not enum).
     dumped = entity.model_dump()
     assert dumped["combined_risk_level"] == "medium"
-    assert isinstance(dumped["combined_risk_level"], str)
+    assert type(dumped["combined_risk_level"]) is str
 
 
 def test_entity_disposition_invalid_high_risk_but_leave_as_is() -> None:

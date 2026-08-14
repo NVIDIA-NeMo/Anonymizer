@@ -162,7 +162,7 @@ class EntityDispositionSchema(BaseModel):
             )
             # Trust the protection intent over the risk label; promote risk to medium
             # rather than suppressing the protection.
-            self.combined_risk_level = CombinedRiskLevel.medium.value  # type: ignore[assignment]
+            self.combined_risk_level = CombinedRiskLevel.medium.value  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         if (
             self.combined_risk_level == CombinedRiskLevel.high
             and self.protection_method_suggestion == ProtectionMethod.leave_as_is
