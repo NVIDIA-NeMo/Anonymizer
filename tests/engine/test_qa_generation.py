@@ -34,7 +34,6 @@ from anonymizer.engine.schemas import (
     EntityCategory,
     EntityDispositionSchema,
     EntitySource,
-    MeaningUnitAspect,
     MeaningUnitImportance,
     MeaningUnitSchema,
     MeaningUnitsSchema,
@@ -75,13 +74,13 @@ _STUB_MEANING_UNITS = MeaningUnitsSchema(
     units=[
         MeaningUnitSchema(
             id=1,
-            aspect=MeaningUnitAspect.ROLE,
+            aspect="role",
             unit="An individual works as a software engineer.",
             importance=MeaningUnitImportance.critical,
         ),
         MeaningUnitSchema(
             id=2,
-            aspect=MeaningUnitAspect.ENVIRONMENT,
+            aspect="environment",
             unit="The individual works remotely.",
             importance=MeaningUnitImportance.important,
         ),
@@ -158,6 +157,16 @@ def test_serialize_meaning_units_accepts_dict_payload() -> None:
     serialized = json.loads(result[COL_MEANING_UNITS_SERIALIZED])
     assert len(serialized) == 2
     assert serialized[1]["id"] == 2
+
+
+def test_meaning_unit_accepts_aspect_outside_former_enum() -> None:
+    """Regression: aspects like 'diagnosis' or 'goal' were rejected when aspect was an enum."""
+    unit = MeaningUnitSchema(
+        id=1, aspect="diagnosis", unit="patient presents with type 2 diabetes", importance="critical"
+    )
+    assert unit.aspect == "diagnosis"
+    unit2 = MeaningUnitSchema(id=2, aspect="goal", unit="aims to reduce HbA1c below 7%", importance="important")
+    assert unit2.aspect == "goal"
 
 
 def test_generate_privacy_qa_column_only_protected_entities() -> None:

@@ -33,7 +33,7 @@ Each schema group corresponds to one pipeline step:
         Uses LLMJudgeColumnConfig with Score rubrics (no custom schema needed)
 
 Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
-                  ProtectionMethod, CombinedRiskLevel, MeaningUnitAspect, PrivacyAnswer
+                  ProtectionMethod, CombinedRiskLevel, PrivacyAnswer
 """
 
 from __future__ import annotations
@@ -249,25 +249,6 @@ class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
 # ---------------------------------------------------------------------------
 
 
-class MeaningUnitAspect(str, Enum):
-    ROLE = "role"
-    PROCESS = "process"
-    RELATIONSHIP = "relationship"
-    ENVIRONMENT = "environment"
-    ROUTINE = "routine"
-    CREATIVE_OUTPUT = "creative_output"
-    VALUE = "value"
-    MOTIVATION = "motivation"
-    INFLUENCE = "influence"
-    AUDIENCE = "audience"
-    LEGAL_BASIS = "legal_basis"
-    INSTITUTION = "institution"
-    JUSTIFICATION = "justification"
-    PROCEDURAL_STATUS = "procedural_status"
-    TEMPORAL_SEQUENCE = "temporal_sequence"
-    RIGHTS_IMPACT = "rights_impact"
-
-
 class MeaningUnitImportance(str, Enum):
     critical = "critical"
     important = "important"
@@ -275,7 +256,7 @@ class MeaningUnitImportance(str, Enum):
 
 class MeaningUnitSchema(BaseModel):
     id: int = Field(ge=1)
-    aspect: MeaningUnitAspect
+    aspect: str = Field(min_length=1)
     unit: str = Field(min_length=1)
     importance: MeaningUnitImportance
 
@@ -294,7 +275,7 @@ class MeaningUnitsSchema(BaseModel):
 
 class QualityQAItemSchema(BaseModel):
     id: int
-    aspect: str
+    aspect: str = Field(min_length=1)
     importance: MeaningUnitImportance
     question: str
     reference_answer: str
