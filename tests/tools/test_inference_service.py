@@ -163,7 +163,7 @@ def test_factory_detection_is_task_bounded() -> None:
         )
 
 
-def test_factory_plugin_is_closed_at_the_intent_boundary() -> None:
+def test_factory_plugin_is_closed_at_the_spec_boundary() -> None:
     """Profiles cannot select an uncharacterized Factory plugin."""
     with pytest.raises(ValidationError):
         models.VllmFactoryIntegration.model_validate({"plugin": "unsupported"})
@@ -320,6 +320,27 @@ def test_launch_refuses_an_unmarked_process_and_cleans_up(tmp_path: Path) -> Non
     process.wait.assert_called_once_with(timeout=1)
     assert exc_info.value.diagnostic.code == "missing-process-start-marker"
     assert exc_info.value.diagnostic.cleanup_complete is True
+
+
+def test_launch_refuses_an_unmarked_process_when_cleanup_cannot_reap(tmp_path: Path) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    process = mock.Mock(pid=4242)
+    process.poll.return_value = None
+    process.wait.side_effect = (
+        runtime.subprocess.TimeoutExpired(cmd=plan.command.render_argv(), timeout=1),
+        runtime.subprocess.TimeoutExpired(cmd=plan.command.render_argv(), timeout=1),
+    )
+    with (
+        mock.patch.object(runtime.subprocess, "Popen", return_value=process),
+        mock.patch.object(runtime, "read_process_start_marker", return_value=None),
+        mock.patch.object(runtime.os, "killpg") as killpg,
+        pytest.raises(runtime.RuntimeEffectError) as exc_info,
+    ):
+        runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
+    assert killpg.call_args_list == [mock.call(4242, runtime.signal.SIGTERM), mock.call(4242, runtime.signal.SIGKILL)]
+    assert all(call.kwargs["timeout"] > 0 for call in process.wait.call_args_list)
+    assert exc_info.value.diagnostic.code == "missing-process-start-marker"
+    assert exc_info.value.diagnostic.cleanup_complete is False
 
 
 def test_missing_secret_fails_before_process_start(tmp_path: Path) -> None:
