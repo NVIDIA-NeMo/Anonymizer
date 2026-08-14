@@ -50,6 +50,8 @@ def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> No
     build_step = next(step for step in publish_steps if step.get("id") == "build")
     assert "mise run build:wheel" in build_step["run"]
     assert "dist/*.whl" in build_step["run"]
+    assert 'if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v${VERSION}" ]; then' in build_step["run"]
+    assert "exit 1" in build_step["run"]
 
     release_steps = workflow["jobs"]["create-gh-release"]["steps"]
     release_step = next(step for step in release_steps if step.get("name") == "Create GitHub release")
