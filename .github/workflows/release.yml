@@ -44,23 +44,27 @@ jobs:
     outputs:
       version: ${{ steps.build.outputs.version }}
     steps:
-      - name: Checkout at release ref
+      - name: Checkout workflow
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.release-ref }}
-          fetch-depth: 0
-          fetch-tags: true
 
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
           dependency-profile: "runtime"
 
+      - name: Checkout release target
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-ref }}
+          fetch-depth: "0"
+          fetch-tags: true
+          path: release-target
+
       - name: Build wheel
         id: build
         run: |
-          mise run build:wheel
-          WHEEL=$(ls dist/*.whl)
+          mise run build:wheel release-target
+          WHEEL=$(ls release-target/dist/*.whl)
           VERSION=$(echo "$WHEEL" | sed -n 's/.*-\([0-9][^-]*\)-.*/\1/p')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Built: $WHEEL (version $VERSION)"
@@ -68,7 +72,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: nemo-anonymizer-${{ steps.build.outputs.version }}
-          path: dist/*.whl
+          path: release-target/dist/*.whl
           retention-days: 90
 
       - name: Publish to Test PyPI (always, as pre-flight)
@@ -81,7 +85,7 @@ jobs:
             --skip-existing \
             --non-interactive \
             --verbose \
-            dist/*.whl
+            release-target/dist/*.whl
 
       - name: Publish to PyPI
         if: ${{ !inputs.dry-run }}
@@ -92,7 +96,7 @@ jobs:
           uvx twine upload \
             --non-interactive \
             --verbose \
-            dist/*.whl
+            release-target/dist/*.whl
 
   create-gh-release:
     name: Create GitHub release
@@ -100,11 +104,8 @@ jobs:
     if: ${{ inputs.create-gh-release }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout at release ref
+      - name: Checkout workflow
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.release-ref }}
-          fetch-depth: 0
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v8
@@ -115,6 +116,7 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ inputs.release-ref }}
           VERSION: ${{ needs.publish-wheel.outputs.version }}
         run: |
           PRERELEASE_FLAG=""
@@ -126,6 +128,7 @@ jobs:
             dist/*.whl \
             --generate-notes \
             --title "v${VERSION}" \
+            --target "$RELEASE_REF" \
             $PRERELEASE_FLAG
 
   deploy-release-docs:
@@ -136,28 +139,31 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout at release ref
+      - name: Checkout workflow
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.release-ref }}
-          fetch-depth: 0
 
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
+          dependency-profile: "runtime"
+
+      - name: Checkout release target
+        uses: actions/checkout@v6
+        with:
           ref: ${{ inputs.release-ref }}
           fetch-depth: "0"
-          dependency-profile: "docs"
+          fetch-tags: true
+          path: release-target
 
       - name: Configure git for mike
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C release-target config user.name "github-actions[bot]"
+          git -C release-target config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Build docs
-        run: mise run docs:build
+        run: mise run docs:build release-target
 
       - name: Deploy release docs with mike
         env:
           VERSION: ${{ needs.publish-wheel.outputs.version }}
-        run: uv run --locked --group docs mike deploy --push --update-aliases "$VERSION" latest
+        run: mise run docs:deploy "$VERSION" release-target
