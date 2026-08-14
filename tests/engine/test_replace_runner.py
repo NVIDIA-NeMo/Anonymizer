@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_RELATIONAL_CONSISTENCY_JUDGE,
     COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACED_TEXT,
+    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_TEXT,
     COL_TYPE_FIDELITY_JUDGE,
@@ -119,6 +120,48 @@ def test_substitute_runner_applies_generated_map(
     assert llm_workflow.generate_map_only.call_count == 1
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
     assert len(result.failed_records) == 1
+    assert result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0] == {
+        "targeted_span_count": 2,
+        "applied_span_count": 2,
+        "skipped_span_count": 0,
+        "skipped_span_label_counts": {},
+    }
+
+
+def test_apply_replacement_map_reports_invalid_and_overlapping_spans() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice Bob"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                        {"value": "lice ", "label": "alias", "start_position": 1, "end_position": 6},
+                        {"value": "Bob", "label": "first_name", "start_position": 99, "end_position": 102},
+                    ]
+                }
+            ],
+            COL_REPLACEMENT_MAP: [
+                {
+                    "replacements": [
+                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
+                        {"original": "lice ", "label": "alias", "synthetic": "X"},
+                        {"original": "Bob", "label": "first_name", "synthetic": "Robert"},
+                    ]
+                }
+            ],
+        }
+    )
+
+    result = apply_replacement_map(dataframe)
+
+    assert result[COL_REPLACED_TEXT].iloc[0] == "Maria Bob"
+    assert result[COL_REPLACEMENT_APPLICATION].iloc[0] == {
+        "targeted_span_count": 3,
+        "applied_span_count": 1,
+        "skipped_span_count": 2,
+        "skipped_span_label_counts": {"alias": 1, "first_name": 1},
+    }
 
 
 def test_substitute_without_workflow_raises(
@@ -462,6 +505,31 @@ def test_apply_replacement_map_handles_string_map() -> None:
     )
     output_df = apply_replacement_map(dataframe)
     assert output_df[COL_REPLACED_TEXT].iloc[0] == "abc Elena xyz"
+
+
+def test_apply_replacement_map_does_not_cascade_synthetic_values() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice and Maria"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                        {"value": "Maria", "label": "first_name", "start_position": 10, "end_position": 15},
+                    ]
+                }
+            ],
+            COL_REPLACEMENT_MAP: [
+                {
+                    "replacements": [
+                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
+                        {"original": "Maria", "label": "first_name", "synthetic": "Elena"},
+                    ]
+                }
+            ],
+        }
+    )
+    assert apply_replacement_map(dataframe)[COL_REPLACED_TEXT].iloc[0] == "Maria and Elena"
 
 
 @pytest.mark.parametrize(

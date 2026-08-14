@@ -107,6 +107,7 @@ class WandbSummaryView(BaseModel):
 
 class WandbRunView(BaseModel):
     schema_version: Literal[1, 2]
+    measurement_schema_version: Literal[1, 2]
     path: WandbRunPath
     name: VisibleText
     group: VisibleText | None = None
@@ -124,6 +125,11 @@ class GroupComparison(BaseModel):
     label: StrictStr
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    @property
+    def config_keys(self) -> tuple[str, str]:
+        """Return the complete W&B config dimensions for safe comparison."""
+        return (self.config_key, "measurement_schema_version")
 
 
 def parse_wandb_run_view(
@@ -149,6 +155,7 @@ def parse_wandb_run_view(
             raise ValueError("W&B run name could not be resolved")
         return WandbRunView(
             schema_version=schema_version,
+            measurement_schema_version=_measurement_schema_version(config),
             path=run_path,
             name=name,
             group=_strict_optional_text(getattr(run, "group", None)),
@@ -300,6 +307,23 @@ def _parse_metadata(config: dict[str, Any]) -> tuple[Literal[1, 2], WandbRunMeta
         return 2, WandbRunMetadata.model_validate(values, strict=True)
     values = _project_v1_metadata(config)
     return 1, WandbRunMetadata.model_validate(values, strict=True)
+
+
+def _measurement_schema_version(config: dict[str, Any]) -> Literal[1, 2]:
+    """Validate and read the duplicated comparison dimension from a W&B config."""
+    values: list[Literal[1, 2]] = []
+    if "measurement_schema_version" in config:
+        values.append(config["measurement_schema_version"])
+    benchmark = config.get("benchmark")
+    if isinstance(benchmark, Mapping) and "measurement_schema_version" in benchmark:
+        values.append(benchmark["measurement_schema_version"])
+    if not values:
+        return 1
+    if any(type(value) is not int or value not in {1, 2} for value in values):
+        raise ValueError("W&B run is missing a valid measurement schema version")
+    if len(set(values)) != 1:
+        raise ValueError("W&B run has conflicting measurement schema versions")
+    return values[0]
 
 
 def _project_v2_metadata(config: dict[str, Any]) -> dict[str, Any]:

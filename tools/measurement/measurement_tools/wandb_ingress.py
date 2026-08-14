@@ -43,7 +43,7 @@ RowIndex = StrictInt | None
 
 
 class _MeasurementEnvelope(StrictFrozenModel):
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     run_id: StrictStr = Field(min_length=1, max_length=256)
     run_tags: dict[StrictStr, JsonValue]
     timestamp_unix_sec: NonNegativeFloat
@@ -179,6 +179,15 @@ class RecordMeasurement(_RowMeasurement):
     replacement_synthetic_original_collision_value_count: NonNegativeInt | None = None
     original_value_leak_count: NonNegativeInt | None = None
     original_value_leak_label_counts: dict[StrictStr, NonNegativeInt] | None = None
+    replacement_map_entry_count: NonNegativeInt | None = None
+    replacement_map_entry_label_counts: dict[StrictStr, NonNegativeInt] | None = None
+    replacement_targeted_span_count: NonNegativeInt | None = None
+    replacement_applied_span_count: NonNegativeInt | None = None
+    replacement_skipped_span_count: NonNegativeInt | None = None
+    replacement_skipped_span_label_counts: dict[StrictStr, NonNegativeInt] | None = None
+    original_value_leak_unique_value_count: NonNegativeInt | None = None
+    original_value_leak_source_entity_occurrence_count: NonNegativeInt | None = None
+    original_value_leak_source_entity_occurrence_label_counts: dict[StrictStr, NonNegativeInt] | None = None
     utility_score: Probability | None = None
     leakage_mass: NonNegativeFloat | None = None
     weighted_leakage_rate: Probability | None = None
@@ -190,6 +199,45 @@ class RecordMeasurement(_RowMeasurement):
     validation_chunk_count: NonNegativeInt | None = None
     llm_calls_estimated_total: NonNegativeInt | None = None
     llm_calls_estimated_by_stage: dict[StrictStr, NonNegativeInt | None] | None = None
+
+    @model_validator(mode="after")
+    def metric_fields_match_schema_version(self) -> RecordMeasurement:
+        legacy = (
+            self.replacement_count,
+            self.replacement_label_counts,
+            self.original_value_leak_count,
+            self.original_value_leak_label_counts,
+        )
+        explicit = (
+            self.replacement_map_entry_count,
+            self.replacement_map_entry_label_counts,
+            self.replacement_targeted_span_count,
+            self.replacement_applied_span_count,
+            self.replacement_skipped_span_count,
+            self.replacement_skipped_span_label_counts,
+            self.original_value_leak_unique_value_count,
+            self.original_value_leak_source_entity_occurrence_count,
+            self.original_value_leak_source_entity_occurrence_label_counts,
+        )
+        if self.schema_version == 1 and any(value is not None for value in explicit):
+            raise ValueError("schema v1 record contains schema v2 metric fields")
+        if self.schema_version == 2 and any(value is not None for value in legacy):
+            raise ValueError("schema v2 record contains legacy ambiguous metric fields")
+        targeted = self.replacement_targeted_span_count
+        applied = self.replacement_applied_span_count
+        skipped = self.replacement_skipped_span_count
+        application_counts = (targeted, applied, skipped)
+        if any(value is not None for value in application_counts):
+            if targeted is None or applied is None or skipped is None:
+                raise ValueError("replacement application cardinalities must be provided together")
+            if targeted != applied + skipped:
+                raise ValueError("replacement targeted span count must equal applied plus skipped span counts")
+        if self.replacement_skipped_span_label_counts is not None:
+            if self.replacement_skipped_span_count is None:
+                raise ValueError("replacement skipped label counts require replacement application cardinalities")
+            if sum(self.replacement_skipped_span_label_counts.values()) != self.replacement_skipped_span_count:
+                raise ValueError("replacement skipped label counts must sum to replacement skipped span count")
+        return self
 
 
 class EvaluationMeasurement(_RowMeasurement):
@@ -291,6 +339,13 @@ class MeasurementSnapshot(StrictFrozenModel):
     byte_count: NonNegativeInt
     records: tuple[MeasurementRecord, ...]
 
+    @property
+    def measurement_schema_version(self) -> Literal[1, 2]:
+        versions = {record.schema_version for record in self.records}
+        if len(versions) != 1:
+            raise ValueError("measurement snapshot must contain exactly one schema version")
+        return next(iter(versions))
+
     def terminal_stage(self, *, expected_status: Literal["completed", "error"] = "completed") -> StageMeasurement:
         """Return the single terminal stage after enforcing the shared run-status invariant."""
         run_ids = {record.run_id for record in self.records}
@@ -353,6 +408,7 @@ def read_measurement_snapshot(
         max_line_bytes=max_line_bytes,
         max_nesting=max_nesting,
     )
+    _validate_schema_versions(records)
     _validate_run_identities(records, expected_statuses=expected_statuses)
     return MeasurementSnapshot(
         path=path,
@@ -360,6 +416,11 @@ def read_measurement_snapshot(
         byte_count=len(captured.payload),
         records=tuple(records),
     )
+
+
+def _validate_schema_versions(records: list[MeasurementRecord]) -> None:
+    if len({record.schema_version for record in records}) > 1:
+        raise ValueError("measurement input contains mixed measurement schema versions")
 
 
 def _read_bounded_snapshot(descriptor: int, *, max_bytes: int) -> tuple[bytes, str]:

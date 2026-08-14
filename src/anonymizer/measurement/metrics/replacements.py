@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any, cast
 
-from anonymizer.measurement._coerce import _coerce_payload
+from anonymizer.measurement._coerce import _coerce_int, _coerce_payload
 
 
 def _replacement_map_metrics(raw: object) -> dict[str, Any]:
@@ -18,12 +18,32 @@ def _replacement_map_metrics(raw: object) -> dict[str, Any]:
         if synthetic is not None:
             synthetic_values.append(str(synthetic))
     return {
-        "replacement_count": len(replacement_maps),
-        "replacement_label_counts": dict(
+        "replacement_map_entry_count": len(replacement_maps),
+        "replacement_map_entry_label_counts": dict(
             sorted(Counter(item.get("label", "") for item in replacement_maps if item.get("label")).items())
         ),
         "replacement_duplicate_value_count": max(0, len(synthetic_values) - len(set(synthetic_values))),
     }
+
+
+def _replacement_application_metrics(raw: object) -> dict[str, Any]:
+    payload = _coerce_payload(raw)
+    if not isinstance(payload, Mapping):
+        return {}
+    counts: dict[str, Any] = {
+        name: max(0, _coerce_int(payload.get(name), default=0))
+        for name in ("targeted_span_count", "applied_span_count", "skipped_span_count")
+    }
+    labels = payload.get("skipped_span_label_counts", {})
+    counts["replacement_targeted_span_count"] = counts.pop("targeted_span_count")
+    counts["replacement_applied_span_count"] = counts.pop("applied_span_count")
+    counts["replacement_skipped_span_count"] = counts.pop("skipped_span_count")
+    counts["replacement_skipped_span_label_counts"] = (
+        dict(sorted((str(label), max(0, _coerce_int(count, default=0))) for label, count in labels.items()))
+        if isinstance(labels, Mapping)
+        else {}
+    )
+    return counts
 
 
 def _replacement_coverage_metrics(raw: object, final_entities: list[dict[str, Any]]) -> dict[str, Any]:

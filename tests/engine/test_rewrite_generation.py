@@ -3,20 +3,29 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_FINAL_ENTITIES,
     COL_FULL_REWRITE,
+    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
+    COL_REWRITE_BASELINE_TEXT,
     COL_REWRITE_DISPOSITION_BLOCK,
+    COL_REWRITE_REPLACEMENT_READY,
+    COL_REWRITE_TAGGED_TEXT,
     COL_REWRITTEN_TEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
+    COL_TEXT,
     _jinja,
 )
 from anonymizer.engine.rewrite.rewrite_generation import (
@@ -25,6 +34,7 @@ from anonymizer.engine.rewrite.rewrite_generation import (
     _filter_replacement_map_for_prompt,
     _format_rewrite_disposition_block,
     _get_rewrite_prompt,
+    _prepare_rewrite_tagged_text,
 )
 from anonymizer.engine.schemas import EntityReplacementMapSchema, RewriteOutputSchema
 
@@ -205,6 +215,133 @@ def test_filter_replacement_map_accepts_schema_instance(
     assert len(result[COL_REPLACEMENT_MAP_FOR_PROMPT]["replacements"]) == 1
 
 
+def test_prepare_rewrite_tagged_text_is_label_aware_and_preserves_tag_label() -> None:
+    row = {
+        COL_TEXT: "Alice met Alice",
+        COL_FINAL_ENTITIES: {
+            "entities": [
+                {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                {"value": "Alice", "label": "company_name", "start_position": 10, "end_position": 15},
+            ]
+        },
+        COL_REPLACEMENT_MAP: {
+            "replacements": [
+                {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
+                {"original": "Alice", "label": "company_name", "synthetic": "Nova"},
+            ]
+        },
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+            {"entity_value": "Alice", "entity_label": "company_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] met [[Alice|company_name]]",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REWRITE_TAGGED_TEXT] == "[[Maria|first_name]] met [[Nova|company_name]]"
+    assert result[COL_REWRITE_BASELINE_TEXT] == "Maria met Nova"
+    assert result[COL_REWRITE_REPLACEMENT_READY] is True
+    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 2
+
+
+def test_prepare_rewrite_tagged_text_fails_closed_for_partial_map() -> None:
+    row = {
+        COL_TEXT: "Alice met Bob",
+        COL_FINAL_ENTITIES: {
+            "entities": [
+                {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                {"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 13},
+            ]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+            {"entity_value": "Bob", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] met [[Bob|first_name]]",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REWRITE_REPLACEMENT_READY] is False
+    assert result[COL_REPLACEMENT_APPLICATION]["targeted_span_count"] == 2
+    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 1
+    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == {"first_name": 1}
+
+
+def test_prepare_rewrite_tagged_text_preserves_side_effects_through_data_designer() -> None:
+    row = {
+        COL_TEXT: "Alice",
+        COL_FINAL_ENTITIES: {
+            "entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice|first_name]]",
+    }
+    config = CustomColumnConfig(
+        name=COL_REWRITE_TAGGED_TEXT,
+        generator_function=_prepare_rewrite_tagged_text,
+    )
+    assert COL_TAGGED_TEXT in config.required_columns
+    assert set(config.side_effect_columns) == {
+        COL_REPLACEMENT_APPLICATION,
+        COL_REWRITE_BASELINE_TEXT,
+        COL_REWRITE_REPLACEMENT_READY,
+    }
+
+    result = CustomColumnGenerator(config, resource_provider=Mock()).generate(row)
+
+    assert isinstance(result, dict)
+    assert result[COL_REWRITE_TAGGED_TEXT] == "[[Maria|first_name]]"
+    assert result[COL_REWRITE_BASELINE_TEXT] == "Maria"
+    assert result[COL_REWRITE_REPLACEMENT_READY] is True
+    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 1
+
+
+def test_prepare_rewrite_tagged_text_never_rewrites_tag_metadata() -> None:
+    row = {
+        COL_TEXT: "name",
+        COL_FINAL_ENTITIES: {
+            "entities": [{"value": "name", "label": "first_name", "start_position": 0, "end_position": 4}]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "name", "label": "first_name", "synthetic": "alias"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "name", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[name|first_name]]",
+    }
+
+    result = _prepare_rewrite_tagged_text(row)
+
+    assert result[COL_REWRITE_TAGGED_TEXT] == "[[alias|first_name]]"
+
+
+@pytest.mark.parametrize("replacement_map", [None, "not-json", {"replacements": [{"original": "Alice"}]}])
+def test_rewrite_replacement_fails_closed_for_absent_or_malformed_map(replacement_map: object) -> None:
+    row = {
+        COL_TEXT: "Alice",
+        COL_FINAL_ENTITIES: {
+            "entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
+        },
+        COL_REPLACEMENT_MAP: replacement_map,
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice|first_name]]",
+    }
+
+    filtered = _filter_replacement_map_for_prompt(row)
+    result = _prepare_rewrite_tagged_text(filtered)
+
+    assert result[COL_REWRITE_REPLACEMENT_READY] is False
+    assert result[COL_REWRITE_BASELINE_TEXT] is None
+
+
 # ---------------------------------------------------------------------------
 # Tests: _extract_rewritten_text
 # ---------------------------------------------------------------------------
@@ -271,7 +408,7 @@ def test_get_rewrite_prompt_no_data_context_when_none(privacy_goal: PrivacyGoal)
 
 def test_get_rewrite_prompt_references_required_columns(privacy_goal: PrivacyGoal) -> None:
     prompt = _get_rewrite_prompt(privacy_goal)
-    assert _jinja(COL_TAGGED_TEXT) in prompt
+    assert _jinja(COL_REWRITE_TAGGED_TEXT) in prompt
     assert COL_TAG_NOTATION in prompt
     assert COL_REWRITE_DISPOSITION_BLOCK in prompt
     assert _jinja(COL_REPLACEMENT_MAP_FOR_PROMPT) in prompt
@@ -282,13 +419,13 @@ def test_get_rewrite_prompt_references_required_columns(privacy_goal: PrivacyGoa
 # ---------------------------------------------------------------------------
 
 
-def test_columns_returns_four_configs(
+def test_columns_returns_five_configs(
     stub_rewrite_model_selection: RewriteModelSelection,
     privacy_goal: PrivacyGoal,
 ) -> None:
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
-    assert len(cols) == 4
+    assert len(cols) == 5
 
 
 def test_columns_has_llm_config_with_rewriter_alias(
@@ -322,4 +459,5 @@ def test_columns_includes_custom_configs_for_disposition_and_text_extraction(
     custom_names = {c.name for c in cols if isinstance(c, CustomColumnConfig)}
     assert COL_REWRITE_DISPOSITION_BLOCK in custom_names
     assert COL_REPLACEMENT_MAP_FOR_PROMPT in custom_names
+    assert COL_REWRITE_TAGGED_TEXT in custom_names
     assert COL_REWRITTEN_TEXT in custom_names

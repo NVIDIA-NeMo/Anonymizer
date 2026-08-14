@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-MEASUREMENT_SCHEMA_VERSION = 1
+MEASUREMENT_SCHEMA_VERSION = 2
 DEFAULT_MEASUREMENT_ENV_PREFIX = "ANONYMIZER_MEASUREMENT_"
 DD_TRACE_MODES = {"none", "last_message", "all_messages"}
 DDTraceMode = Literal["none", "last_message", "all_messages"]

@@ -102,7 +102,7 @@ class CompletionSealProducer(RedactedStrictFrozenModel):
 class CompletionSeal(RedactedStrictFrozenModel):
     seal_schema_version: Literal[1] = COMPLETION_SEAL_SCHEMA_VERSION
     terminal_status: Literal["completed"]
-    measurement_schema_version: Literal[1]
+    measurement_schema_version: Literal[1, 2]
     expected_run_id: VisibleIdentifier
     measurement_byte_count: NonNegativeInt
     measurement_record_count: NonNegativeInt
@@ -133,7 +133,7 @@ def build_completion_seal(
     _validate_case_identity(snapshot, case)
     return CompletionSeal(
         terminal_status="completed",
-        measurement_schema_version=1,
+        measurement_schema_version=snapshot.measurement_schema_version,
         expected_run_id=terminal.run_id,
         measurement_byte_count=snapshot.byte_count,
         measurement_record_count=len(snapshot.records),
@@ -174,6 +174,7 @@ def verify_completion_seal(snapshot: MeasurementSnapshot, seal: CompletionSeal) 
     terminal = snapshot.terminal_stage()
     _validate_case_identity(snapshot, seal.case)
     expected = (
+        seal.measurement_schema_version,
         seal.measurement_byte_count,
         seal.measurement_record_count,
         seal.measurement_sha256,
@@ -181,6 +182,7 @@ def verify_completion_seal(snapshot: MeasurementSnapshot, seal: CompletionSeal) 
         seal.terminal_status,
     )
     observed = (
+        snapshot.measurement_schema_version,
         snapshot.byte_count,
         len(snapshot.records),
         snapshot.sha256,

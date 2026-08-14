@@ -20,7 +20,7 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Annotated, Iterable, Protocol, TypeGuard, cast
+from typing import Annotated, Iterable, Literal, Protocol, TypeGuard, cast
 
 import cyclopts
 import pandas as pd
@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_VALIDATION_CANDIDATES,
@@ -49,6 +50,7 @@ API_KEY_PREFIX_RE = re.compile(r"^(sk-|sk_|sk-ant-|sk-proj-|ghp_|pat-|hf_|xox[a-
 
 
 class DetectionArtifactRow(BaseModel):
+    artifact_schema_version: Literal[2] = 2
     workflow_name: str
     batch_file: str
     row_index: int
@@ -56,16 +58,24 @@ class DetectionArtifactRow(BaseModel):
     seed_validation_candidate_count: int
     merged_validation_candidate_count: int
     augmented_entity_count: int
-    final_entity_count: int
+    detected_entity_count: int
+    final_entity_count: int | None = None
     augmented_duplicate_seed_value_count: int
     augmented_new_value_count: int
-    augmented_new_final_value_count: int
+    augmented_new_detected_value_count: int
+    augmented_new_final_value_count: int | None = None
     weak_api_key_shape_count: int
-    final_entity_signature_count: int
+    detected_entity_signature_count: int
+    detected_entity_signature_hashes: list[str] = Field(default_factory=list)
+    detected_entity_signature_labels: dict[str, str] = Field(default_factory=dict)
+    detected_entity_signature_details: dict[str, dict[str, object]] = Field(default_factory=dict)
+    final_entity_signature_count: int | None = None
     final_entity_signature_hashes: list[str] = Field(default_factory=list)
     final_entity_signature_labels: dict[str, str] = Field(default_factory=dict)
     final_entity_signature_details: dict[str, dict[str, object]] = Field(default_factory=dict)
     weak_api_key_shape_label_counts: dict[str, int] = Field(default_factory=dict)
+    detected_label_counts: dict[str, int] = Field(default_factory=dict)
+    detected_source_counts: dict[str, int] = Field(default_factory=dict)
     final_label_counts: dict[str, int] = Field(default_factory=dict)
     final_source_counts: dict[str, int] = Field(default_factory=dict)
 
@@ -121,7 +131,8 @@ def _analyze_dataframe_row(
 ) -> DetectionArtifactRow:
     seed_entities = _parse_entities(row.get(COL_SEED_ENTITIES_JSON))
     augmented_entities = _parse_augmented_entities(row.get(COL_AUGMENTED_ENTITIES))
-    final_entities = _parse_entities(row.get(COL_DETECTED_ENTITIES))
+    detected_entities = _parse_entities(row.get(COL_DETECTED_ENTITIES))
+    final_entities = _parse_entities(row.get(COL_FINAL_ENTITIES)) if COL_FINAL_ENTITIES in row.index else None
     return build_detection_artifact_row_from_entities(
         workflow_name=workflow_name,
         batch_file=batch_file,
@@ -130,6 +141,7 @@ def _analyze_dataframe_row(
         seed_validation_candidate_count=_parse_validation_candidate_count(row.get(COL_SEED_VALIDATION_CANDIDATES)),
         merged_validation_candidate_count=_parse_validation_candidate_count(row.get(COL_VALIDATION_CANDIDATES)),
         augmented_entities=augmented_entities,
+        detected_entities=detected_entities,
         final_entities=final_entities,
     )
 
@@ -143,15 +155,16 @@ def build_detection_artifact_row_from_entities(
     seed_validation_candidate_count: int,
     merged_validation_candidate_count: int,
     augmented_entities: list[EntitySchema],
-    final_entities: list[EntitySchema],
+    detected_entities: list[EntitySchema],
+    final_entities: list[EntitySchema] | None = None,
 ) -> DetectionArtifactRow:
     seed_values = {_value_key(entity.value) for entity in seed_entities}
-    final_values = {_value_key(entity.value) for entity in final_entities}
+    detected_values = {_value_key(entity.value) for entity in detected_entities}
+    final_values = {_value_key(entity.value) for entity in final_entities} if final_entities is not None else None
     augmented_new = [entity for entity in augmented_entities if _value_key(entity.value) not in seed_values]
-    weak_counts = _weak_api_key_shape_counts(final_entities)
-    final_entity_signatures = _entity_signature_hashes(final_entities, row_index=int(row_index))
-    final_entity_signature_labels = _entity_signature_labels(final_entities, row_index=int(row_index))
-    final_entity_signature_details = _entity_signature_details(final_entities, row_index=int(row_index))
+    weak_counts = _weak_api_key_shape_counts(detected_entities)
+    detected_signatures = _entity_signature_hashes(detected_entities, row_index=int(row_index))
+    final_signatures = _entity_signature_hashes(final_entities or [], row_index=int(row_index))
     return DetectionArtifactRow(
         workflow_name=workflow_name,
         batch_file=batch_file,
@@ -160,18 +173,32 @@ def build_detection_artifact_row_from_entities(
         seed_validation_candidate_count=seed_validation_candidate_count,
         merged_validation_candidate_count=merged_validation_candidate_count,
         augmented_entity_count=len(augmented_entities),
-        final_entity_count=len(final_entities),
+        detected_entity_count=len(detected_entities),
+        final_entity_count=len(final_entities) if final_entities is not None else None,
         augmented_duplicate_seed_value_count=len(augmented_entities) - len(augmented_new),
         augmented_new_value_count=len(augmented_new),
-        augmented_new_final_value_count=sum(1 for entity in augmented_new if _value_key(entity.value) in final_values),
+        augmented_new_detected_value_count=sum(
+            1 for entity in augmented_new if _value_key(entity.value) in detected_values
+        ),
+        augmented_new_final_value_count=(
+            sum(1 for entity in augmented_new if _value_key(entity.value) in final_values)
+            if final_values is not None
+            else None
+        ),
         weak_api_key_shape_count=sum(weak_counts.values()),
-        final_entity_signature_count=len(final_entity_signatures),
-        final_entity_signature_hashes=final_entity_signatures,
-        final_entity_signature_labels=final_entity_signature_labels,
-        final_entity_signature_details=final_entity_signature_details,
+        detected_entity_signature_count=len(detected_signatures),
+        detected_entity_signature_hashes=detected_signatures,
+        detected_entity_signature_labels=_entity_signature_labels(detected_entities, row_index=int(row_index)),
+        detected_entity_signature_details=_entity_signature_details(detected_entities, row_index=int(row_index)),
+        final_entity_signature_count=len(final_signatures) if final_entities is not None else None,
+        final_entity_signature_hashes=final_signatures,
+        final_entity_signature_labels=_entity_signature_labels(final_entities or [], row_index=int(row_index)),
+        final_entity_signature_details=_entity_signature_details(final_entities or [], row_index=int(row_index)),
         weak_api_key_shape_label_counts=dict(weak_counts),
-        final_label_counts=_count_by(final_entities, "label"),
-        final_source_counts=_count_by(final_entities, "source"),
+        detected_label_counts=_count_by(detected_entities, "label"),
+        detected_source_counts=_count_by(detected_entities, "source"),
+        final_label_counts=_count_by(final_entities or [], "label"),
+        final_source_counts=_count_by(final_entities or [], "source"),
     )
 
 

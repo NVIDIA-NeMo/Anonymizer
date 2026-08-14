@@ -13,6 +13,7 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
+    COL_REWRITE_BASELINE_TEXT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
@@ -76,6 +77,23 @@ class TestLeakedItemsText:
 
 
 class TestRenderRepairPrompt:
+    def test_uses_pre_replaced_baseline_instead_of_original_sensitive_text(self) -> None:
+        row = {
+            COL_TEXT: "Alice lives in Seattle.",
+            COL_REWRITE_BASELINE_TEXT: "Maria lives in Portland.",
+            COL_REWRITTEN_TEXT: "Maria lives in a city.",
+            COL_LEAKAGE_MASS: 0.5,
+            COL_ANY_HIGH_LEAKED: False,
+            COL_UTILITY_SCORE: 0.9,
+            "_leaked_privacy_items": "",
+        }
+        params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
+
+        result = _render_repair_prompt(row, params)
+
+        assert "Maria lives in Portland." in result
+        assert "Alice lives in Seattle." not in result
+
     def test_contains_key_sections(self) -> None:
         row = {
             COL_TEXT: "Alice lives in Seattle.",

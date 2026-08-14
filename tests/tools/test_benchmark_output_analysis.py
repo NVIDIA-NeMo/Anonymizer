@@ -53,10 +53,11 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(
     assert bio.entity_recall == pytest.approx(10 / 22)
     assert bio.replacement_missing_final_entity_label_counts == {"date": 2}
     assert bio.replacement_synthetic_original_collision_label_counts == {"date": 1}
-    assert bio.artifact_final_detector_entity_count == 11
-    assert bio.artifact_final_augmenter_entity_count == 3
-    assert bio.artifact_final_entity_signature_hashes == ["bio-hash-a", "bio-hash-b"]
-    assert bio.artifact_final_entity_signature_details["bio-hash-a"] == {
+    assert bio.artifact_detected_detector_entity_count == 11
+    assert bio.artifact_detected_augmenter_entity_count == 3
+    assert bio.artifact_detected_entity_signature_hashes == ["bio-hash-a", "bio-hash-b"]
+    assert bio.artifact_final_entity_count is None
+    assert bio.artifact_detected_entity_signature_details["bio-hash-a"] == {
         "label": "person",
         "source": "detector",
         "row_index": 0,
@@ -68,7 +69,7 @@ def test_analyze_benchmark_output_joins_measurements_and_detection_artifacts(
     shell = cases["shell__native-local__r000"]
     assert shell.experimental_replacement_strategy == "custom_replacement_strategy"
     assert shell.original_value_leak_count == 1
-    assert shell.artifact_final_entity_signature_details["shell-hash-a"]["source"] == "native"
+    assert shell.artifact_detected_entity_signature_details["shell-hash-a"]["source"] == "native"
 
     model_rows = {row.model_name: row for row in result.model_usage}
     assert model_rows["nvidia/gliner-pii"].observed_total_tokens == 1100
@@ -334,10 +335,10 @@ def test_analyze_benchmark_output_accepts_detection_artifact_override(
     default_result = tool.analyze_benchmark_output(benchmark_dir)
     override_result = tool.analyze_benchmark_output(benchmark_dir, detection_artifacts=refreshed_artifacts)
 
-    assert default_result.cases[0].artifact_final_entity_signature_hashes == ["stale-hash"]
+    assert default_result.cases[0].artifact_detected_entity_signature_hashes == ["stale-hash"]
     assert override_result.detection_artifacts_path == str(refreshed_artifacts)
-    assert override_result.cases[0].artifact_final_entity_signature_hashes == ["fresh-hash-a", "fresh-hash-b"]
-    assert override_result.cases[0].artifact_final_entity_signature_labels == {
+    assert override_result.cases[0].artifact_detected_entity_signature_hashes == ["fresh-hash-a", "fresh-hash-b"]
+    assert override_result.cases[0].artifact_detected_entity_signature_labels == {
         "fresh-hash-a": "person",
         "fresh-hash-b": "email",
     }
@@ -365,6 +366,205 @@ def test_analyze_benchmark_output_requires_detection_artifact_override_path(
 
     with pytest.raises(ValueError, match="input path does not exist"):
         tool.analyze_benchmark_output(benchmark_dir, detection_artifacts=tmp_path / "missing.jsonl")
+
+
+def test_group_rows_partition_measurement_schema_versions(load_tool: Callable[..., ModuleType]) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_schema_groups",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    cases = [
+        tool.CaseAnalysisRow(case_id="case-v1", run_id="case-v1", measurement_schema_version=1),
+        tool.CaseAnalysisRow(case_id="case-v2", run_id="case-v2", measurement_schema_version=2),
+    ]
+
+    groups = tool.build_group_rows(cases)
+
+    assert {group.measurement_schema_version for group in groups} == {1, 2}
+
+
+@pytest.mark.parametrize("schema_version", [0, 3, 1.5, True])
+def test_analyze_benchmark_output_rejects_unsupported_measurement_schema_versions(
+    load_tool: Callable[..., ModuleType], tmp_path: Path, schema_version: object
+) -> None:
+    tool = load_tool(
+        f"measurement_benchmark_output_bad_schema_{schema_version}",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [{"schema_version": schema_version, "record_type": "record", "run_id": "case-a"}],
+    )
+
+    with pytest.raises(ValueError, match="supported measurement schema versions"):
+        tool.analyze_benchmark_output(benchmark_dir)
+
+
+def test_analyze_benchmark_output_rejects_mixed_schema_versions_within_case(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_mixed_case_schema",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [
+            {"schema_version": 1, "record_type": "record", "run_id": "case-a"},
+            {"schema_version": 2, "record_type": "record", "run_id": "case-a"},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="case-a.*mixed measurement schema versions"):
+        tool.analyze_benchmark_output(benchmark_dir)
+
+
+@pytest.mark.parametrize("invalid_schema_version", [True, 1.0])
+def test_analyze_benchmark_output_rejects_mixed_json_scalar_schema_types_before_pandas_coercion(
+    load_tool: Callable[..., ModuleType], tmp_path: Path, invalid_schema_version: object
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_mixed_scalar_schema_types",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [
+            {"schema_version": 1, "record_type": "record", "run_id": "case-a"},
+            {"schema_version": invalid_schema_version, "record_type": "record", "run_id": "case-b"},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="supported measurement schema versions 1 or 2"):
+        tool.analyze_benchmark_output(benchmark_dir)
+
+
+def test_analyze_benchmark_output_counts_leak_presence_by_schema_version(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_leak_presence",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [
+            {
+                "schema_version": 1,
+                "record_type": "record",
+                "run_id": "case-v1",
+                "original_value_leak_count": 2,
+            },
+            {
+                "schema_version": 2,
+                "record_type": "record",
+                "run_id": "case-v2",
+                "original_value_leak_unique_value_count": 1,
+                "original_value_leak_source_entity_occurrence_count": 3,
+            },
+            {
+                "schema_version": 2,
+                "record_type": "record",
+                "run_id": "case-v2",
+                "original_value_leak_unique_value_count": 0,
+                "original_value_leak_source_entity_occurrence_count": 0,
+            },
+        ],
+    )
+
+    result = tool.analyze_benchmark_output(benchmark_dir)
+    cases = {case.case_id: case for case in result.cases}
+    groups = {group.measurement_schema_version: group for group in result.groups}
+    assert cases["case-v1"].original_value_leak_record_count == 1
+    assert cases["case-v1"].original_value_leak_count == 2
+    assert cases["case-v2"].original_value_leak_record_count == 1
+    assert cases["case-v2"].original_value_leak_count is None
+    assert cases["case-v2"].original_value_leak_unique_value_count == 1
+    assert groups[1].leaking_case_count == 1
+    assert groups[1].sum_original_value_leak_count == 2
+    assert groups[2].leaking_case_count == 1
+    assert groups[2].sum_original_value_leak_count is None
+
+
+def test_analyze_benchmark_output_mixes_legacy_and_v2_detection_artifacts_row_wise(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_mixed_artifacts",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [{"schema_version": 2, "record_type": "record", "run_id": "case-a"}],
+    )
+    _write_jsonl(
+        benchmark_dir / "detection-artifacts.jsonl",
+        [
+            {
+                "case_id": "case-a",
+                "final_entity_count": 2,
+                "final_source_counts": {"detector": 2},
+                "final_entity_signature_hashes": ["legacy-hash"],
+                "final_entity_signature_labels": {"legacy-hash": "person"},
+                "augmented_new_final_value_count": 1,
+            },
+            {
+                "artifact_schema_version": 2,
+                "case_id": "case-a",
+                "detected_entity_count": 3,
+                "detected_source_counts": {"augmenter": 3},
+                "detected_entity_signature_hashes": ["v2-hash"],
+                "detected_entity_signature_labels": {"v2-hash": "email"},
+                "augmented_new_detected_value_count": 2,
+                "final_entity_count": 1,
+            },
+        ],
+    )
+
+    case = tool.analyze_benchmark_output(benchmark_dir).cases[0]
+    assert case.artifact_detected_entity_count == 5
+    assert case.artifact_detected_detector_entity_count == 2
+    assert case.artifact_detected_augmenter_entity_count == 3
+    assert case.artifact_detected_entity_signature_hashes == ["legacy-hash", "v2-hash"]
+    assert case.artifact_detected_entity_signature_labels == {"legacy-hash": "person", "v2-hash": "email"}
+    assert case.augmented_new_detected_value_count == 3
+    assert case.artifact_final_entity_count == 1
+    assert case.final_entity_count == 1
+
+
+def test_analyze_benchmark_output_does_not_treat_legacy_artifact_final_count_as_materialized_final(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_legacy_artifact_final_count",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [{"schema_version": 1, "record_type": "record", "run_id": "case-a"}],
+    )
+    _write_jsonl(
+        benchmark_dir / "detection-artifacts.jsonl",
+        [{"case_id": "case-a", "final_entity_count": 2}],
+    )
+
+    case = tool.analyze_benchmark_output(benchmark_dir).cases[0]
+
+    assert case.artifact_detected_entity_count == 2
+    assert case.artifact_final_entity_count is None
+    assert case.final_entity_count is None
 
 
 def test_write_analysis_tables_exports_case_and_group_tables(
@@ -687,8 +887,9 @@ def test_analyze_benchmark_output_groups_artifact_contribution_metrics(
     assert group.median_seed_entity_count == 11
     assert group.median_seed_validation_candidate_count == 11
     assert group.median_augmented_entity_count == 6
-    assert group.median_augmented_new_final_value_count == 2
-    assert group.median_artifact_final_entity_count == 13
-    assert group.median_artifact_final_detector_entity_count == 11
-    assert group.median_artifact_final_augmenter_entity_count == 2
-    assert group.median_artifact_final_entity_signature_count == 3
+    assert group.median_augmented_new_detected_value_count == 2
+    assert group.median_artifact_detected_entity_count == 13
+    assert group.median_artifact_detected_detector_entity_count == 11
+    assert group.median_artifact_detected_augmenter_entity_count == 2
+    assert group.median_artifact_detected_entity_signature_count == 3
+    assert group.median_artifact_final_entity_count is None

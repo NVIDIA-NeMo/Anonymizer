@@ -248,7 +248,8 @@ def test_benchmark_detection_artifact_analysis_ignores_stale_artifacts(
     assert result_path == output_path
     rows = pd.read_json(output_path, lines=True)
     assert rows["workflow_name"].tolist() == ["entity-detection-new"]
-    assert rows["final_entity_count"].tolist() == [1]
+    assert rows["detected_entity_count"].tolist() == [1]
+    assert pd.isna(rows["final_entity_count"].iloc[0])
 
 
 def test_benchmark_case_detection_artifact_analysis_adds_case_metadata(

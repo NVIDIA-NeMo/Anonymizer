@@ -66,6 +66,7 @@ _EVALUATION_ROLLUPS = (
 
 
 class CaseAnalysisRow(BaseModel):
+    measurement_schema_version: int | None = None
     suite_id: str | None = None
     workload_id: str | None = None
     workload_category: str | None = None
@@ -136,6 +137,11 @@ class CaseAnalysisRow(BaseModel):
     entity_relaxed_label_compatible_recall: float | None = None
     entity_relaxed_label_compatible_f1: float | None = None
     replacement_count: float | None = None
+    replacement_map_entry_count: float | None = None
+    replacement_targeted_span_count: float | None = None
+    replacement_applied_span_count: float | None = None
+    replacement_skipped_span_count: float | None = None
+    replacement_skipped_span_label_counts: dict[str, int] = Field(default_factory=dict)
     replacement_missing_final_entity_count: float | None = None
     replacement_missing_final_entity_label_counts: dict[str, int] = Field(default_factory=dict)
     replacement_missing_final_value_count: float | None = None
@@ -145,6 +151,9 @@ class CaseAnalysisRow(BaseModel):
     original_value_leak_count: float | None = None
     original_value_leak_record_count: int = 0
     original_value_leak_label_counts: dict[str, int] = Field(default_factory=dict)
+    original_value_leak_unique_value_count: float | None = None
+    original_value_leak_source_entity_occurrence_count: float | None = None
+    original_value_leak_source_entity_occurrence_label_counts: dict[str, int] = Field(default_factory=dict)
     detection_judged_record_count: int = 0
     detection_valid_record_count: int = 0
     detection_valid_rate: float | None = None
@@ -167,7 +176,15 @@ class CaseAnalysisRow(BaseModel):
     seed_validation_candidate_count: float | None = None
     estimated_seed_validation_chunk_count: float | None = None
     augmented_entity_count: float | None = None
+    augmented_new_detected_value_count: float | None = None
     augmented_new_final_value_count: float | None = None
+    artifact_detected_entity_count: float | None = None
+    artifact_detected_detector_entity_count: float | None = None
+    artifact_detected_augmenter_entity_count: float | None = None
+    artifact_detected_entity_signature_count: float | None = None
+    artifact_detected_entity_signature_hashes: list[str] = Field(default_factory=list)
+    artifact_detected_entity_signature_labels: dict[str, str] = Field(default_factory=dict)
+    artifact_detected_entity_signature_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
     artifact_final_entity_count: float | None = None
     artifact_final_detector_entity_count: float | None = None
     artifact_final_augmenter_entity_count: float | None = None
@@ -178,6 +195,7 @@ class CaseAnalysisRow(BaseModel):
 
 
 class GroupAnalysisRow(BaseModel):
+    measurement_schema_version: int | None = None
     workload_id: str | None = None
     workload_category: str | None = None
     config_id: str | None = None
@@ -245,6 +263,11 @@ class GroupAnalysisRow(BaseModel):
     median_entity_relaxed_f1: float | None = None
     median_entity_relaxed_label_compatible_f1: float | None = None
     median_replacement_missing_final_entity_count: float | None = None
+    median_replacement_map_entry_count: float | None = None
+    median_replacement_targeted_span_count: float | None = None
+    median_replacement_applied_span_count: float | None = None
+    median_replacement_skipped_span_count: float | None = None
+    replacement_skipped_span_label_counts: dict[str, int] = Field(default_factory=dict)
     median_replacement_missing_final_value_count: float | None = None
     replacement_missing_final_entity_label_counts: dict[str, int] = Field(default_factory=dict)
     median_replacement_synthetic_original_collision_count: float | None = None
@@ -253,6 +276,9 @@ class GroupAnalysisRow(BaseModel):
     sum_original_value_leak_count: float | None = None
     leaking_case_count: int = 0
     median_original_value_leak_count: float | None = None
+    sum_original_value_leak_unique_value_count: float | None = None
+    sum_original_value_leak_source_entity_occurrence_count: float | None = None
+    original_value_leak_source_entity_occurrence_label_counts: dict[str, int] = Field(default_factory=dict)
     sum_detection_judged_record_count: int = 0
     sum_detection_valid_record_count: int = 0
     micro_detection_valid_rate: float | None = None
@@ -273,7 +299,12 @@ class GroupAnalysisRow(BaseModel):
     median_seed_validation_candidate_count: float | None = None
     median_estimated_seed_validation_chunk_count: float | None = None
     median_augmented_entity_count: float | None = None
+    median_augmented_new_detected_value_count: float | None = None
     median_augmented_new_final_value_count: float | None = None
+    median_artifact_detected_entity_count: float | None = None
+    median_artifact_detected_detector_entity_count: float | None = None
+    median_artifact_detected_augmenter_entity_count: float | None = None
+    median_artifact_detected_entity_signature_count: float | None = None
     median_artifact_final_entity_count: float | None = None
     median_artifact_final_detector_entity_count: float | None = None
     median_artifact_final_augmenter_entity_count: float | None = None
@@ -364,7 +395,10 @@ def analyze_benchmark_output(
     *,
     detection_artifacts: Path | None = None,
 ) -> BenchmarkOutputAnalysis:
-    measurements = read_jsonl_table(benchmark_dir / "measurements.jsonl", required=True)
+    measurements_path = benchmark_dir / "measurements.jsonl"
+    _validate_raw_measurement_schema_versions(measurements_path)
+    measurements = read_jsonl_table(measurements_path, required=True)
+    _validate_measurement_schema_versions(measurements)
     artifacts_path = detection_artifacts or benchmark_dir / "detection-artifacts.jsonl"
     artifacts = read_jsonl_table(artifacts_path, required=detection_artifacts is not None)
     traces = read_trace_summary_table(benchmark_dir / "traces")
@@ -381,6 +415,36 @@ def analyze_benchmark_output(
         model_usage=model_usage,
         model_usage_groups=build_model_usage_group_rows(model_usage),
     )
+
+
+def _validate_measurement_schema_versions(measurements: pd.DataFrame) -> None:
+    if "schema_version" not in measurements.columns:
+        return
+    versions = measurements["schema_version"].dropna()
+    unsupported = [
+        value for value in versions.unique() if not pd.api.types.is_integer(value) or int(value) not in (1, 2)
+    ]
+    if unsupported:
+        raise ValueError("measurement input must use supported measurement schema versions 1 or 2")
+    for case_id in _case_ids(measurements):
+        case_versions = set(_rows_for_case(measurements, case_id)["schema_version"].dropna().tolist())
+        if len(case_versions) > 1:
+            raise ValueError(f"case {case_id} contains mixed measurement schema versions")
+
+
+def _validate_raw_measurement_schema_versions(path: Path) -> None:
+    if not path.is_file():
+        return
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict) or "schema_version" not in record:
+                continue
+            value = record["schema_version"]
+            if value is not None and (type(value) is not int or value not in (1, 2)):
+                raise ValueError("measurement input must use supported measurement schema versions 1 or 2")
 
 
 def read_jsonl_table(path: Path, *, required: bool) -> pd.DataFrame:
@@ -471,11 +535,16 @@ def _build_case_row(
     records_per_ndd_sec = _safe_rate(record_count, ndd_elapsed_sec_total)
     input_text_tokens_per_pipeline_sec = _safe_rate(input_text_tokens_total, pipeline_elapsed_sec)
     input_text_tokens_per_ndd_sec = _safe_rate(input_text_tokens_total, ndd_elapsed_sec_total)
+    measurement_schema_version = _first_int([measurement_rows], ["schema_version"])
+    leak_presence_column = (
+        "original_value_leak_unique_value_count" if measurement_schema_version == 2 else "original_value_leak_count"
+    )
     final_entity_count = _coalesce_number(
         _sum_or_none(record_rows, "final_entity_count"),
-        _sum_or_none(artifact_rows, "final_entity_count"),
+        _sum_or_none(artifact_rows[_v2_artifact_mask(artifact_rows)], "final_entity_count"),
     )
     return CaseAnalysisRow(
+        measurement_schema_version=measurement_schema_version,
         suite_id=_first_value([measurement_rows, artifact_rows, trace_rows], ["run_tags.suite_id", "suite_id"]),
         workload_id=_first_value(
             [measurement_rows, artifact_rows, trace_rows], ["run_tags.workload_id", "workload_id"]
@@ -528,6 +597,11 @@ def _build_case_row(
         **_case_empty_detection_metrics(record_rows, record_count=record_count),
         **_case_ground_truth_metrics(record_rows, final_entity_count=final_entity_count),
         replacement_count=_sum_or_none(record_rows, "replacement_count"),
+        replacement_map_entry_count=_sum_or_none(record_rows, "replacement_map_entry_count"),
+        replacement_targeted_span_count=_sum_or_none(record_rows, "replacement_targeted_span_count"),
+        replacement_applied_span_count=_sum_or_none(record_rows, "replacement_applied_span_count"),
+        replacement_skipped_span_count=_sum_or_none(record_rows, "replacement_skipped_span_count"),
+        replacement_skipped_span_label_counts=_sum_prefixed_ints(record_rows, "replacement_skipped_span_label_counts."),
         replacement_missing_final_entity_count=_sum_or_none(record_rows, "replacement_missing_final_entity_count"),
         replacement_missing_final_entity_label_counts=_sum_prefixed_ints(
             record_rows,
@@ -547,8 +621,15 @@ def _build_case_row(
             "replacement_synthetic_original_collision_value_count",
         ),
         original_value_leak_count=_sum_or_none(record_rows, "original_value_leak_count"),
-        original_value_leak_record_count=_positive_count(record_rows, "original_value_leak_count"),
+        original_value_leak_record_count=_positive_count(record_rows, leak_presence_column),
         original_value_leak_label_counts=_sum_prefixed_ints(record_rows, "original_value_leak_label_counts."),
+        original_value_leak_unique_value_count=_sum_or_none(record_rows, "original_value_leak_unique_value_count"),
+        original_value_leak_source_entity_occurrence_count=_sum_or_none(
+            record_rows, "original_value_leak_source_entity_occurrence_count"
+        ),
+        original_value_leak_source_entity_occurrence_label_counts=_sum_prefixed_ints(
+            record_rows, "original_value_leak_source_entity_occurrence_label_counts."
+        ),
         **_case_evaluation_metrics(evaluation_rows),
         validation_max_entities_per_call=validation_max_entities_per_call,
         **_case_artifact_metrics(
@@ -789,7 +870,15 @@ def _case_artifact_metrics(
     *,
     validation_max_entities_per_call: int | None,
 ) -> dict[str, int | float | list[str] | dict[str, str] | dict[str, dict[str, Any]] | None]:
-    signature_hashes = _artifact_signature_hashes(artifact_rows)
+    v2_mask = _v2_artifact_mask(artifact_rows)
+    v2_rows = artifact_rows[v2_mask]
+    legacy_rows = artifact_rows[~v2_mask].copy()
+    for column in list(legacy_rows.columns):
+        if column.startswith("final_"):
+            legacy_rows[f"detected_{column.removeprefix('final_')}"] = legacy_rows[column]
+    if "augmented_new_final_value_count" in legacy_rows.columns:
+        legacy_rows["augmented_new_detected_value_count"] = legacy_rows["augmented_new_final_value_count"]
+    detected_rows = pd.concat([legacy_rows, v2_rows], ignore_index=True)
     return {
         "detection_artifact_rows": len(artifact_rows),
         "seed_entity_count": _sum_or_none(artifact_rows, "seed_entity_count"),
@@ -799,14 +888,37 @@ def _case_artifact_metrics(
             validation_max_entities_per_call=validation_max_entities_per_call,
         ),
         "augmented_entity_count": _sum_or_none(artifact_rows, "augmented_entity_count"),
-        "augmented_new_final_value_count": _sum_or_none(artifact_rows, "augmented_new_final_value_count"),
-        "artifact_final_entity_count": _sum_or_none(artifact_rows, "final_entity_count"),
-        "artifact_final_detector_entity_count": _sum_or_none(artifact_rows, "final_source_counts.detector"),
-        "artifact_final_augmenter_entity_count": _sum_or_none(artifact_rows, "final_source_counts.augmenter"),
-        "artifact_final_entity_signature_count": _signature_count(artifact_rows, signature_hashes=signature_hashes),
-        "artifact_final_entity_signature_hashes": signature_hashes,
-        "artifact_final_entity_signature_labels": _artifact_signature_labels(artifact_rows),
-        "artifact_final_entity_signature_details": _artifact_signature_details(artifact_rows),
+        "augmented_new_detected_value_count": _sum_or_none(detected_rows, "augmented_new_detected_value_count"),
+        "augmented_new_final_value_count": _sum_or_none(v2_rows, "augmented_new_final_value_count"),
+        **_artifact_population_metrics(detected_rows, source_prefix="detected", output_prefix="detected"),
+        **_artifact_population_metrics(v2_rows, source_prefix="final", output_prefix="final"),
+    }
+
+
+def _v2_artifact_mask(artifact_rows: pd.DataFrame) -> pd.Series:
+    if "artifact_schema_version" not in artifact_rows.columns:
+        return pd.Series(False, index=artifact_rows.index, dtype=bool)
+    return pd.to_numeric(artifact_rows["artifact_schema_version"], errors="coerce") == 2
+
+
+def _artifact_population_metrics(
+    artifact_rows: pd.DataFrame,
+    *,
+    source_prefix: str,
+    output_prefix: str,
+) -> dict[str, int | float | list[str] | dict[str, str] | dict[str, dict[str, Any]] | None]:
+    signature_hashes = _artifact_signature_hashes(artifact_rows, prefix=source_prefix)
+    output = f"artifact_{output_prefix}"
+    return {
+        f"{output}_entity_count": _sum_or_none(artifact_rows, f"{source_prefix}_entity_count"),
+        f"{output}_detector_entity_count": _sum_or_none(artifact_rows, f"{source_prefix}_source_counts.detector"),
+        f"{output}_augmenter_entity_count": _sum_or_none(artifact_rows, f"{source_prefix}_source_counts.augmenter"),
+        f"{output}_entity_signature_count": _signature_count(
+            artifact_rows, signature_hashes=signature_hashes, prefix=source_prefix
+        ),
+        f"{output}_entity_signature_hashes": signature_hashes,
+        f"{output}_entity_signature_labels": _artifact_signature_labels(artifact_rows, prefix=source_prefix),
+        f"{output}_entity_signature_details": _artifact_signature_details(artifact_rows, prefix=source_prefix),
     }
 
 
@@ -1019,40 +1131,43 @@ def _coalesce_number(*values: float | None) -> float | None:
     return None
 
 
-def _artifact_signature_hashes(artifact_rows: pd.DataFrame) -> list[str]:
-    if "final_entity_signature_hashes" not in artifact_rows.columns:
+def _artifact_signature_hashes(artifact_rows: pd.DataFrame, *, prefix: str) -> list[str]:
+    column = f"{prefix}_entity_signature_hashes"
+    if column not in artifact_rows.columns:
         return []
     values: set[str] = set()
-    for raw in artifact_rows["final_entity_signature_hashes"].dropna():
+    for raw in artifact_rows[column].dropna():
         values.update(_coerce_string_list(raw))
     return sorted(values)
 
 
-def _artifact_signature_labels(artifact_rows: pd.DataFrame) -> dict[str, str]:
+def _artifact_signature_labels(artifact_rows: pd.DataFrame, *, prefix: str) -> dict[str, str]:
     labels: dict[str, str] = {}
-    if "final_entity_signature_labels" in artifact_rows.columns:
-        for raw in artifact_rows["final_entity_signature_labels"].dropna():
+    labels_column = f"{prefix}_entity_signature_labels"
+    if labels_column in artifact_rows.columns:
+        for raw in artifact_rows[labels_column].dropna():
             labels.update(_coerce_string_dict(raw))
     for column in artifact_rows.columns:
-        prefix = "final_entity_signature_labels."
-        if not column.startswith(prefix):
+        column_prefix = f"{prefix}_entity_signature_labels."
+        if not column.startswith(column_prefix):
             continue
-        signature_hash = column.removeprefix(prefix)
+        signature_hash = column.removeprefix(column_prefix)
         for value in artifact_rows[column].dropna():
             labels[signature_hash] = str(value)
     return dict(sorted(labels.items()))
 
 
-def _artifact_signature_details(artifact_rows: pd.DataFrame) -> dict[str, dict[str, Any]]:
+def _artifact_signature_details(artifact_rows: pd.DataFrame, *, prefix: str) -> dict[str, dict[str, Any]]:
     details: dict[str, dict[str, Any]] = {}
-    if "final_entity_signature_details" in artifact_rows.columns:
-        for raw in artifact_rows["final_entity_signature_details"].dropna():
+    details_column = f"{prefix}_entity_signature_details"
+    if details_column in artifact_rows.columns:
+        for raw in artifact_rows[details_column].dropna():
             details.update(_coerce_detail_map(raw))
-    prefix = "final_entity_signature_details."
+    column_prefix = f"{prefix}_entity_signature_details."
     for column in artifact_rows.columns:
-        if not column.startswith(prefix):
+        if not column.startswith(column_prefix):
             continue
-        remainder = column.removeprefix(prefix)
+        remainder = column.removeprefix(column_prefix)
         signature_hash, _, field = remainder.partition(".")
         if not signature_hash or not field:
             continue
@@ -1109,10 +1224,10 @@ def _coerce_string_dict(raw: object) -> dict[str, str]:
     return {}
 
 
-def _signature_count(artifact_rows: pd.DataFrame, *, signature_hashes: list[str]) -> float | None:
+def _signature_count(artifact_rows: pd.DataFrame, *, signature_hashes: list[str], prefix: str) -> float | None:
     if signature_hashes:
         return float(len(signature_hashes))
-    return _sum_or_none(artifact_rows, "final_entity_signature_count")
+    return _sum_or_none(artifact_rows, f"{prefix}_entity_signature_count")
 
 
 def _positive_count(dataframe: pd.DataFrame, column: str) -> int:
@@ -1180,6 +1295,7 @@ def build_group_rows(cases: list[CaseAnalysisRow]) -> list[GroupAnalysisRow]:
     table = pd.DataFrame([case.model_dump() for case in cases])
     rows: list[GroupAnalysisRow] = []
     group_columns = [
+        "measurement_schema_version",
         "workload_id",
         "workload_category",
         "config_id",
@@ -1258,6 +1374,7 @@ def _build_model_usage_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> 
 
 def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysisRow:
     (
+        measurement_schema_version,
         workload_id,
         workload_category,
         config_id,
@@ -1291,6 +1408,7 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
     label_compatible_recall = _safe_ratio(label_compatible_gt_found, ground_truth_entity_count)
     evaluation_metrics = _group_evaluation_metrics(group)
     return GroupAnalysisRow(
+        measurement_schema_version=_int_if_not_nan(measurement_schema_version),
         workload_id=_none_if_nan(workload_id),
         workload_category=_none_if_nan(workload_category),
         config_id=_none_if_nan(config_id),
@@ -1370,6 +1488,11 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
             group,
             "replacement_missing_final_entity_count",
         ),
+        median_replacement_map_entry_count=_median_or_none(group, "replacement_map_entry_count"),
+        median_replacement_targeted_span_count=_median_or_none(group, "replacement_targeted_span_count"),
+        median_replacement_applied_span_count=_median_or_none(group, "replacement_applied_span_count"),
+        median_replacement_skipped_span_count=_median_or_none(group, "replacement_skipped_span_count"),
+        replacement_skipped_span_label_counts=_sum_prefixed_ints(group, "replacement_skipped_span_label_counts."),
         median_replacement_missing_final_value_count=_median_or_none(group, "replacement_missing_final_value_count"),
         replacement_missing_final_entity_label_counts=_sum_prefixed_ints(
             group,
@@ -1388,14 +1511,32 @@ def _build_group_row(keys: tuple[Any, ...], group: pd.DataFrame) -> GroupAnalysi
             "replacement_synthetic_original_collision_label_counts.",
         ),
         sum_original_value_leak_count=_sum_or_none(group, "original_value_leak_count"),
-        leaking_case_count=_positive_count(group, "original_value_leak_count"),
+        leaking_case_count=_positive_count(group, "original_value_leak_record_count"),
         median_original_value_leak_count=_median_or_none(group, "original_value_leak_count"),
+        sum_original_value_leak_unique_value_count=_sum_or_none(group, "original_value_leak_unique_value_count"),
+        sum_original_value_leak_source_entity_occurrence_count=_sum_or_none(
+            group, "original_value_leak_source_entity_occurrence_count"
+        ),
+        original_value_leak_source_entity_occurrence_label_counts=_sum_prefixed_ints(
+            group, "original_value_leak_source_entity_occurrence_label_counts."
+        ),
         **cast(dict[str, Any], evaluation_metrics),
         median_seed_entity_count=_median_or_none(group, "seed_entity_count"),
         median_seed_validation_candidate_count=_median_or_none(group, "seed_validation_candidate_count"),
         median_estimated_seed_validation_chunk_count=_median_or_none(group, "estimated_seed_validation_chunk_count"),
         median_augmented_entity_count=_median_or_none(group, "augmented_entity_count"),
+        median_augmented_new_detected_value_count=_median_or_none(group, "augmented_new_detected_value_count"),
         median_augmented_new_final_value_count=_median_or_none(group, "augmented_new_final_value_count"),
+        median_artifact_detected_entity_count=_median_or_none(group, "artifact_detected_entity_count"),
+        median_artifact_detected_detector_entity_count=_median_or_none(
+            group, "artifact_detected_detector_entity_count"
+        ),
+        median_artifact_detected_augmenter_entity_count=_median_or_none(
+            group, "artifact_detected_augmenter_entity_count"
+        ),
+        median_artifact_detected_entity_signature_count=_median_or_none(
+            group, "artifact_detected_entity_signature_count"
+        ),
         median_artifact_final_entity_count=_median_or_none(group, "artifact_final_entity_count"),
         median_artifact_final_detector_entity_count=_median_or_none(group, "artifact_final_detector_entity_count"),
         median_artifact_final_augmenter_entity_count=_median_or_none(group, "artifact_final_augmenter_entity_count"),

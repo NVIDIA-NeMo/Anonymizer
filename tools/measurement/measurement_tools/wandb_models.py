@@ -541,6 +541,7 @@ class WandbRunMetadata(StrictFrozenModel):
 
 class WandbConfigPayload(WandbRunMetadata):
     suite_id: VisibleIdentifier
+    measurement_schema_version: Literal[1, 2]
     wandb_mode: WandbMode
     wandb_log_tables: StrictBool
     benchmark_suite_id: VisibleIdentifier | None = None
@@ -586,6 +587,11 @@ class WandbConfigPayload(WandbRunMetadata):
     ) -> WandbConfigPayload:
         values: dict[str, Any] = {
             "suite_id": suite_id,
+            "measurement_schema_version": (
+                metadata.benchmark.measurement_schema_version
+                if metadata.benchmark is not None and metadata.benchmark.measurement_schema_version is not None
+                else 1
+            ),
             "wandb_mode": settings.wandb_mode,
             "wandb_log_tables": settings.wandb_log_tables,
         }
@@ -656,12 +662,18 @@ class _MetricTableRow(StrictFrozenModel):
     entity_relaxed_label_compatible_gt_found_count: NonNegativeInt | None = None
     entity_relaxed_label_compatible_detected_tp_count: NonNegativeInt | None = None
     replacement_count: NonNegativeInt | None = None
+    replacement_map_entry_count: NonNegativeInt | None = None
+    replacement_targeted_span_count: NonNegativeInt | None = None
+    replacement_applied_span_count: NonNegativeInt | None = None
+    replacement_skipped_span_count: NonNegativeInt | None = None
     replacement_duplicate_value_count: NonNegativeInt | None = None
     replacement_missing_final_entity_count: NonNegativeInt | None = None
     replacement_missing_final_value_count: NonNegativeInt | None = None
     replacement_synthetic_original_collision_count: NonNegativeInt | None = None
     replacement_synthetic_original_collision_value_count: NonNegativeInt | None = None
     original_value_leak_count: NonNegativeInt | None = None
+    original_value_leak_unique_value_count: NonNegativeInt | None = None
+    original_value_leak_source_entity_occurrence_count: NonNegativeInt | None = None
     detected_candidate_count: NonNegativeInt | None = None
     validation_chunk_count: NonNegativeInt | None = None
     llm_calls_estimated_total: NonNegativeInt | None = None
@@ -711,12 +723,18 @@ _METRIC_TABLE_POLICY_FIELDS = (
     "entity_relaxed_label_compatible_gt_found_count",
     "entity_relaxed_label_compatible_detected_tp_count",
     "replacement_count",
+    "replacement_map_entry_count",
+    "replacement_targeted_span_count",
+    "replacement_applied_span_count",
+    "replacement_skipped_span_count",
     "replacement_duplicate_value_count",
     "replacement_missing_final_entity_count",
     "replacement_missing_final_value_count",
     "replacement_synthetic_original_collision_count",
     "replacement_synthetic_original_collision_value_count",
     "original_value_leak_count",
+    "original_value_leak_unique_value_count",
+    "original_value_leak_source_entity_occurrence_count",
     "detected_candidate_count",
     "validation_chunk_count",
     "llm_calls_estimated_total",
@@ -1070,6 +1088,7 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
     ),
     WandbConfigPayload: _aggregate_policies(
         "suite_id",
+        "measurement_schema_version",
         "wandb_mode",
         "wandb_log_tables",
         "benchmark_suite_id",

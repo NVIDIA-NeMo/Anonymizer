@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
+    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
@@ -542,6 +543,58 @@ def test_repair_loop_runs_up_to_max_iterations(
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
     repair_calls = [n for n in workflow_names if "repair" in n]
     assert len(repair_calls) == max_iters
+
+
+def test_replacement_unavailable_remains_failed_closed_through_repair(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    stub_df_with_entities: pd.DataFrame,
+) -> None:
+    pipeline_df = stub_df_with_entities.copy()
+    pipeline_df["_anonymizer_row_order"] = [0]
+    pipeline_df[COL_REWRITE_REPLACEMENT_READY] = False
+    pipeline_df[COL_REWRITTEN_TEXT] = None
+
+    initial_eval = pipeline_df.copy()
+    initial_eval[COL_NEEDS_REPAIR] = True
+    initial_eval[COL_UTILITY_SCORE] = 0.0
+    initial_eval[COL_LEAKAGE_MASS] = 1.0
+    initial_eval[COL_ANY_HIGH_LEAKED] = False
+
+    repaired = initial_eval.copy()
+    repaired[COL_REWRITTEN_TEXT_NEXT] = "apparently safe repaired text"
+
+    passing_eval = repaired.copy()
+    passing_eval[COL_NEEDS_REPAIR] = False
+    passing_eval[COL_UTILITY_SCORE] = 1.0
+    passing_eval[COL_LEAKAGE_MASS] = 0.0
+
+    replace_df = stub_df_with_entities.copy()
+    replace_df["_replacement_map"] = [{"replacements": []}]
+    adapter = Mock()
+    adapter.run_workflow.side_effect = [
+        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
+        WorkflowRunResult(dataframe=initial_eval, failed_records=[]),
+        WorkflowRunResult(dataframe=repaired, failed_records=[]),
+        WorkflowRunResult(dataframe=passing_eval, failed_records=[]),
+    ]
+
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        result = RewriteWorkflow(adapter=adapter).run(
+            stub_df_with_entities,
+            model_configs=stub_model_configs,
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=1),
+        )
+
+    row = result.dataframe.iloc[0]
+    assert row[COL_REWRITE_REPLACEMENT_READY] is False or not bool(row[COL_REWRITE_REPLACEMENT_READY])
+    assert pd.isna(row[COL_REWRITTEN_TEXT])
+    assert bool(row[COL_NEEDS_HUMAN_REVIEW]) is True
 
 
 def test_only_failing_rows_sent_to_repair(

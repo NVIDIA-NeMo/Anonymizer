@@ -7,6 +7,15 @@ This directory contains developer tools for measuring Anonymizer runs and
 exporting measurement JSONL to tables. Run the tools inside the project
 environment, either with an activated venv or through `uv run`.
 
+## Measurement schema compatibility
+
+Measurement schema versions are durable data contracts. Homogeneous schema v1
+and v2 snapshots and their completion seals remain valid indefinitely, while
+mixed-version snapshots are rejected. W&B publication keeps the schema version
+as a sanitized top-level comparison value, and first-party reports and
+workspaces group by it alongside the suite, sweep-arm, or imported-config
+identity. Do not add v1-to-v2 metric aliases: compare versions separately.
+
 Use these tools when you need evidence about cost, latency, reliability, or
 anonymization quality. They are not product entry points.
 
@@ -655,7 +664,8 @@ cols = [
     "median_pipeline_elapsed_sec",
     "median_observed_total_requests",
     "median_observed_total_tokens",
-    "median_artifact_final_entity_signature_count",
+    "measurement_schema_version",
+    "median_artifact_detected_entity_signature_count",
 ]
 print(groups[cols].sort_values(["workload_id", "median_pipeline_elapsed_sec"]))
 
@@ -699,19 +709,34 @@ Detection artifacts:
 - `estimated_seed_validation_chunk_count`: estimated validator chunks from the
   active validation chunk size.
 - `augmented_entity_count`: augmenter suggestions.
-- `augmented_new_final_value_count`: augmenter suggestions that add values not
-  already present in the seed/final set.
-- `artifact_final_detector_entity_count` and
-  `artifact_final_augmenter_entity_count`: final entity source counts derived
-  from detection artifact sidecars.
-- `artifact_final_entity_signature_count` and
-  `artifact_final_entity_signature_hashes`: opaque final-span signatures derived
-  from detection artifacts. These do not include raw entity values.
+- `augmented_new_detected_value_count`: augmenter suggestions that add values
+  not already present in the seed set and survive post-validation detection.
+- `augmented_new_final_value_count`: those suggestions that also survive into
+  `COL_FINAL_ENTITIES`; it is unavailable in sidecars that lack final entities.
+- `artifact_detected_*`: post-validation detection counts, source counts, and
+  opaque span signatures. Legacy sidecars emitted detected values under
+  `final_*`; analysis reads those legacy fields only as detected metrics.
+- `artifact_final_*`: materialized final-entity counts and signatures. These
+  are populated only by artifact schema v2 rows that include actual final
+  entities. Signature fields never include raw entity values.
 
 Safety and replacement:
 
-- `original_value_leak_count`: count of protected original values still present
-  in replaced output.
+- `original_value_leak_unique_value_count`: distinct original values with a
+  boundary-aware literal match in replaced or rewritten output.
+  Matching is exact-case and uses Unicode alphanumeric boundaries; underscore
+  is treated as a boundary rather than as part of an identifier token.
+- `original_value_leak_source_entity_occurrence_count`: final source entity
+  occurrences associated with those matched values. This is not a count of
+  independently observed output occurrences. Its label-count companion has
+  the same source-occurrence cardinality.
+- `original_value_leak_count`: legacy schema-v1 source-occurrence field. Keep
+  it separate from schema-v2 series; benchmark groups include measurement
+  schema version in their key.
+- `replacement_map_entry_count`: entries in the generated replacement map.
+- `replacement_targeted_span_count`, `replacement_applied_span_count`, and
+  `replacement_skipped_span_count`: direct offset-application outcomes. The
+  skipped label counts contain labels only, never original or synthetic text.
 - `replacement_missing_final_entity_count`: final entity occurrences whose
   original value has no replacement-map entry.
 - `replacement_missing_final_value_count`: unique final entity values with no

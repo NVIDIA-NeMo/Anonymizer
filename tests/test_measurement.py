@@ -34,7 +34,9 @@ from anonymizer.engine.constants import (
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
     COL_REPLACED_TEXT,
+    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
+    COL_REWRITTEN_TEXT,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TEXT,
     COL_UTILITY_SCORE,
@@ -57,6 +59,7 @@ from anonymizer.measurement import (
     record_record_metrics,
     stage_timer,
 )
+from anonymizer.measurement.metrics.rewrite import _output_contains_original_value
 
 
 class _FailingSink:
@@ -69,6 +72,29 @@ class _FailingSink:
 
     def close(self) -> None:
         pass
+
+
+@pytest.mark.parametrize("value,output", [("Midwest", "Midwestern"), ("lawyer", "lawyers"), ("judge", "judges")])
+def test_original_value_leak_matching_rejects_morphological_substrings(value: str, output: str) -> None:
+    assert not _output_contains_original_value(output, value)
+
+
+@pytest.mark.parametrize("output", ["Midwest", "(Midwest),"])
+def test_original_value_leak_matching_accepts_standalone_and_punctuation(output: str) -> None:
+    assert _output_contains_original_value(output, "Midwest")
+
+
+@pytest.mark.parametrize(
+    ("value", "output", "expected"),
+    [
+        ("New York", "Near New York.", True),
+        ("José", "José\u2003arrived", True),
+        ("key", "key_suffix", True),
+        ("Acme", "acme", False),
+    ],
+)
+def test_original_value_leak_matching_documents_boundary_policy(value: str, output: str, expected: bool) -> None:
+    assert _output_contains_original_value(output, value) is expected
 
 
 @pytest.fixture
@@ -421,8 +447,8 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
     assert record["final_entity_label_counts"] == {"company_name": 1, "first_name": 1}
     assert record["detected_candidate_count"] == 2
     assert record["validation_chunk_count"] == 1
-    assert record["original_value_leak_count"] == 0
-    assert record["original_value_leak_label_counts"] == {}
+    assert record["original_value_leak_unique_value_count"] == 0
+    assert record["original_value_leak_source_entity_occurrence_label_counts"] == {}
     assert record["llm_calls_estimated_by_stage"] == {
         "entity_detection": 3,
         "replace_map_generation": 0,
@@ -1406,8 +1432,8 @@ def test_record_metrics_capture_generic_counts_without_raw_values() -> None:
     assert record["entity_relaxed_label_compatible_precision"] == 1.0
     assert record["entity_relaxed_label_compatible_recall"] == 1.0
     assert record["entity_relaxed_label_compatible_f1"] == 1.0
-    assert record["replacement_count"] == 2
-    assert record["replacement_label_counts"] == {"company_name": 1, "first_name": 1}
+    assert record["replacement_map_entry_count"] == 2
+    assert record["replacement_map_entry_label_counts"] == {"company_name": 1, "first_name": 1}
     assert record["replacement_duplicate_value_count"] == 1
     assert record["replacement_missing_final_entity_count"] == 0
     assert record["replacement_missing_final_entity_label_counts"] == {}
@@ -1569,6 +1595,52 @@ def test_record_metrics_counts_missing_replacement_map_entries_without_raw_value
     assert "Maya" not in serialized
 
 
+def test_record_metrics_separates_map_entries_from_span_application() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice met Alice and Alice"],
+            COL_REPLACED_TEXT: ["Maria met Maria and Alice"],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                        {"value": "Alice", "label": "first_name", "start_position": 10, "end_position": 15},
+                        {"value": "Alice", "label": "first_name", "start_position": 20, "end_position": 25},
+                    ]
+                }
+            ],
+            COL_REPLACEMENT_MAP: [
+                {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]}
+            ],
+            COL_REPLACEMENT_APPLICATION: [
+                {
+                    "targeted_span_count": 3,
+                    "applied_span_count": 2,
+                    "skipped_span_count": 1,
+                    "skipped_span_label_counts": {"first_name": 1},
+                }
+            ],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Substitute",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["replacement_map_entry_count"] == 1
+    assert record["replacement_targeted_span_count"] == 3
+    assert record["replacement_applied_span_count"] == 2
+    assert record["replacement_skipped_span_count"] == 1
+    assert record["replacement_skipped_span_label_counts"] == {"first_name": 1}
+
+
 def test_record_metrics_counts_synthetic_original_collisions_without_raw_values() -> None:
     final_entities = {
         "entities": [
@@ -1633,9 +1705,42 @@ def test_record_metrics_counts_original_value_replacement_leaks_without_raw_valu
         )
 
     record = collector.records[0]
-    assert record["original_value_leak_count"] == 1
-    assert record["original_value_leak_label_counts"] == {"api_key": 1}
+    assert record["original_value_leak_unique_value_count"] == 1
+    assert record["original_value_leak_source_entity_occurrence_label_counts"] == {"api_key": 1}
     assert leaked_key not in json.dumps(collector.records)
+
+
+def test_record_metrics_separates_unique_leaked_values_from_source_entity_occurrences() -> None:
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice met Alice and Alice."],
+            COL_REWRITTEN_TEXT: ["Alice remained."],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                        {"value": "Alice", "label": "first_name", "start_position": 10, "end_position": 15},
+                        {"value": "Alice", "label": "first_name", "start_position": 20, "end_position": 25},
+                    ]
+                }
+            ],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="rewrite",
+            strategy="Rewrite",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+        )
+
+    record = collector.records[0]
+    assert record["original_value_leak_unique_value_count"] == 1
+    assert record["original_value_leak_source_entity_occurrence_count"] == 3
+    assert record["original_value_leak_source_entity_occurrence_label_counts"] == {"first_name": 3}
 
 
 def test_record_metrics_ignores_short_value_inside_hash_replacement_token() -> None:
@@ -1658,8 +1763,8 @@ def test_record_metrics_ignores_short_value_inside_hash_replacement_token() -> N
         )
 
     record = collector.records[0]
-    assert record["original_value_leak_count"] == 0
-    assert record["original_value_leak_label_counts"] == {}
+    assert record["original_value_leak_unique_value_count"] == 0
+    assert record["original_value_leak_source_entity_occurrence_label_counts"] == {}
 
 
 def test_record_metrics_counts_standalone_short_value_replacement_leaks() -> None:
@@ -1682,8 +1787,8 @@ def test_record_metrics_counts_standalone_short_value_replacement_leaks() -> Non
         )
 
     record = collector.records[0]
-    assert record["original_value_leak_count"] == 1
-    assert record["original_value_leak_label_counts"] == {"age": 1}
+    assert record["original_value_leak_unique_value_count"] == 1
+    assert record["original_value_leak_source_entity_occurrence_label_counts"] == {"age": 1}
 
 
 def test_record_metrics_normalizes_integral_row_index_types() -> None:
