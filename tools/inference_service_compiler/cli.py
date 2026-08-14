@@ -15,15 +15,15 @@ from typing import ParamSpec, TypeVar
 import cyclopts
 from pydantic import BaseModel, ValidationError
 
-from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_intent, load_plan
+from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_profile, load_plan
 from inference_service_compiler.models import LaunchReceipt
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
     RuntimeEffectError,
-    cancel_run,
-    inspect_run,
     launch_plan,
     probe_endpoint,
+    status_run,
+    stop_run,
 )
 
 app = cyclopts.App(help="Compile and manage local inference services from TOML profiles.")
@@ -67,7 +67,7 @@ def compile_plan(
 ) -> None:
     """Compile a v2 TOML profile without performing runtime effects."""
     parsed = load_profile(profile)
-    plan = compile_intent(parsed, source_revision=source_revision)
+    plan = compile_profile(parsed, source_revision=source_revision)
     write_json(plan, output)
 
 
@@ -98,20 +98,20 @@ def probe(*, plan: Path, output: Path | None = None) -> None:
     write_json(probe_endpoint(parsed, secret_values=secret_values), output)
 
 
-@app.command(name="inspect")
+@app.command(name="status")
 @command_errors
-def inspect_command(*, receipt: Path, output: Path | None = None) -> None:
-    """Inspect the reconnectable identity in a launch receipt."""
+def status_command(*, receipt: Path, output: Path | None = None) -> None:
+    """Record the current state observed for a launch receipt handle."""
     launch_receipt = LaunchReceipt.model_validate_json(receipt.read_text(encoding="utf-8"))
-    write_json(inspect_run(launch_receipt), output)
+    write_json(status_run(launch_receipt), output)
 
 
 @app.command
 @command_errors
-def cancel(*, receipt: Path, output: Path | None = None) -> None:
-    """Cancel and clean up the managed identity in a launch receipt."""
+def stop(*, receipt: Path, output: Path | None = None) -> None:
+    """Stop and clean up the process group recorded by a launch receipt."""
     launch_receipt = LaunchReceipt.model_validate_json(receipt.read_text(encoding="utf-8"))
-    write_json(cancel_run(launch_receipt), output)
+    write_json(stop_run(launch_receipt), output)
 
 
 def write_json(value: BaseModel, output: Path | None) -> None:
