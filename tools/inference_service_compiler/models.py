@@ -247,7 +247,7 @@ class CompatibilityAssessment(FrozenModel):
 
 
 class RunPlan(FrozenModel):
-    """Portable, immutable, effect-free instructions for one service run."""
+    """Portable, frozen, effect-free instructions for one service run."""
 
     schema_version: Literal["inference-service.run-plan/v2"] = PLAN_SCHEMA_VERSION
     plan_digest: str

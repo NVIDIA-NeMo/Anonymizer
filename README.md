@@ -156,7 +156,7 @@ make install-pre-commit   # Install pre-commit hooks
 
 ### Local inference services
 
-Use the source-tree local-model deployment tool to create immutable plans and
+Use the source-tree local-model deployment tool to create checksummed plans and
 managed launch receipts for GLiNER or GLiNER2 through the pinned external vLLM
 Factory project, or for vLLM generation:
 

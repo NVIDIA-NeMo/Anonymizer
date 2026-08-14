@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Explicit local-process effects for immutable run plans."""
+"""Explicit local-process effects for frozen, checksummed run plans."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def launch_plan(
     secret_values: dict[str, str],
     log_directory: Path,
 ) -> LaunchReceipt:
-    """Launch a verified plan and return reconnectable identity plus readiness evidence."""
+    """Launch a checksummed plan and record its observed handle and readiness."""
     verify_plan(plan)
     try:
         command_environment = plan.command.resolve_environment(secret_values)
@@ -394,19 +394,17 @@ def _launch_process(
 
 
 def _terminate_unmarked_launch(process: subprocess.Popen[bytes]) -> None:
-    """Clean up a just-created child when its durable identity cannot be recorded."""
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=1)
-    except subprocess.TimeoutExpired:
+    """Make a bounded cleanup attempt when a child cannot be recorded."""
+    for signal_to_send in (signal.SIGTERM, signal.SIGKILL):
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, signal_to_send)
         except ProcessLookupError:
             return
-        process.wait()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            continue
+        return
 
 
 def _now() -> str:

@@ -79,7 +79,7 @@ def launch(
     output: Path | None = None,
     log_directory: Path = Path(".inference-service-runs"),
 ) -> None:
-    """Launch a compiled plan and write its reconnectable handle receipt."""
+    """Launch a compiled plan and record its observed handle and readiness."""
     parsed = load_plan(plan.read_text(encoding="utf-8"))
     secret_values = {name: os.environ[name] for name in parsed.command.secret_sources if name in os.environ}
     write_json(

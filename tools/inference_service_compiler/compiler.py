@@ -46,7 +46,7 @@ class CompilerDiagnostic(FrozenModel):
 
 
 class CompilationError(ValueError):
-    """Intent failed a closed compiler compatibility rule."""
+    """A service spec failed a closed compiler compatibility rule."""
 
     def __init__(self, diagnostic: CompilerDiagnostic) -> None:
         super().__init__(diagnostic.message)
@@ -54,7 +54,7 @@ class CompilationError(ValueError):
 
 
 class PlanIntegrityError(ValueError):
-    """A serialized plan does not match its declared digest."""
+    """A serialized plan does not match its declared consistency checksum."""
 
 
 def compile_profile(spec: LocalInferenceServiceSpec, *, source_revision: str) -> RunPlan:
@@ -97,14 +97,14 @@ def digest_plan(plan: RunPlan) -> str:
 
 
 def load_plan(serialized: str | bytes) -> RunPlan:
-    """Parse a closed v2 plan and reject transport mutation."""
+    """Parse a closed v2 plan and reject accidental transport mutation."""
     plan = RunPlan.model_validate_json(serialized)
     verify_plan(plan)
     return plan
 
 
 def verify_plan(plan: RunPlan) -> None:
-    """Reject a plan whose declared digest does not match its contents."""
+    """Check transport consistency, without authenticating or recompiling a plan."""
     expected = digest_plan(plan)
     if not hmac.compare_digest(plan.plan_digest, expected):
         raise PlanIntegrityError(f"plan digest mismatch: declared {plan.plan_digest!r}, computed {expected!r}")
