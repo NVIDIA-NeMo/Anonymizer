@@ -49,6 +49,9 @@ def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
     assert target_steps
     assert all(step["working-directory"] == "benchmark-target" for step in target_steps)
 
+    run_step = next(step for step in steps if step.get("name") == "Run benchmark suite")
+    assert "uv run --locked --group dev python tools/measurement/run_benchmarks.py" in run_step["run"]
+
     upload_step = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
     assert upload_step["with"]["path"] == "benchmark-target/${{ env.BENCHMARK_OUTPUT_DIR }}/"
 
