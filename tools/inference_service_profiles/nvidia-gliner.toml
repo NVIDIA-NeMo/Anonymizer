@@ -1,4 +1,4 @@
-schema_version = "inference-service.intent/v2"
+schema_version = "inference-service.local-spec/v2"
 
 [task]
 kind = "entity-detection"
