@@ -112,7 +112,7 @@ jobs:
             FAIL_FAST_ARGS+=(--fail-fast)
           fi
 
-          uv run --locked python tools/measurement/run_benchmarks.py \
+          uv run --locked --group dev python tools/measurement/run_benchmarks.py \
             "$BENCHMARK_SUITE" \
             --output "$BENCHMARK_OUTPUT_DIR" \
             --overwrite \
