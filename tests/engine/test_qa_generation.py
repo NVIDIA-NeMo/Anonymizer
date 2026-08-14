@@ -157,6 +157,14 @@ def test_serialize_meaning_units_accepts_dict_payload() -> None:
     assert serialized[1]["id"] == 2
 
 
+def test_meaning_unit_accepts_aspect_outside_former_enum() -> None:
+    """Regression: aspects like 'diagnosis' or 'goal' were rejected when aspect was an enum."""
+    unit = MeaningUnitSchema(id=1, aspect="diagnosis", unit="patient presents with type 2 diabetes", importance="critical")
+    assert unit.aspect == "diagnosis"
+    unit2 = MeaningUnitSchema(id=2, aspect="goal", unit="aims to reduce HbA1c below 7%", importance="important")
+    assert unit2.aspect == "goal"
+
+
 def test_generate_privacy_qa_column_only_protected_entities() -> None:
     row = {COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION}
     result = _generate_privacy_qa_column(row)
