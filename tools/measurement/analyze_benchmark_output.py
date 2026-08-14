@@ -395,7 +395,9 @@ def analyze_benchmark_output(
     *,
     detection_artifacts: Path | None = None,
 ) -> BenchmarkOutputAnalysis:
-    measurements = read_jsonl_table(benchmark_dir / "measurements.jsonl", required=True)
+    measurements_path = benchmark_dir / "measurements.jsonl"
+    _validate_raw_measurement_schema_versions(measurements_path)
+    measurements = read_jsonl_table(measurements_path, required=True)
     _validate_measurement_schema_versions(measurements)
     artifacts_path = detection_artifacts or benchmark_dir / "detection-artifacts.jsonl"
     artifacts = read_jsonl_table(artifacts_path, required=detection_artifacts is not None)
@@ -428,6 +430,21 @@ def _validate_measurement_schema_versions(measurements: pd.DataFrame) -> None:
         case_versions = set(_rows_for_case(measurements, case_id)["schema_version"].dropna().tolist())
         if len(case_versions) > 1:
             raise ValueError(f"case {case_id} contains mixed measurement schema versions")
+
+
+def _validate_raw_measurement_schema_versions(path: Path) -> None:
+    if not path.is_file():
+        return
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict) or "schema_version" not in record:
+                continue
+            value = record["schema_version"]
+            if value is not None and (type(value) is not int or value not in (1, 2)):
+                raise ValueError("measurement input must use supported measurement schema versions 1 or 2")
 
 
 def read_jsonl_table(path: Path, *, required: bool) -> pd.DataFrame:
@@ -524,7 +541,7 @@ def _build_case_row(
     )
     final_entity_count = _coalesce_number(
         _sum_or_none(record_rows, "final_entity_count"),
-        _sum_or_none(artifact_rows, "final_entity_count"),
+        _sum_or_none(artifact_rows[_v2_artifact_mask(artifact_rows)], "final_entity_count"),
     )
     return CaseAnalysisRow(
         measurement_schema_version=measurement_schema_version,
@@ -853,12 +870,7 @@ def _case_artifact_metrics(
     *,
     validation_max_entities_per_call: int | None,
 ) -> dict[str, int | float | list[str] | dict[str, str] | dict[str, dict[str, Any]] | None]:
-    has_v2 = "artifact_schema_version" in artifact_rows.columns
-    v2_mask = (
-        pd.to_numeric(artifact_rows["artifact_schema_version"], errors="coerce") == 2
-        if has_v2
-        else pd.Series(False, index=artifact_rows.index)
-    )
+    v2_mask = _v2_artifact_mask(artifact_rows)
     v2_rows = artifact_rows[v2_mask]
     legacy_rows = artifact_rows[~v2_mask].copy()
     for column in list(legacy_rows.columns):
@@ -881,6 +893,12 @@ def _case_artifact_metrics(
         **_artifact_population_metrics(detected_rows, source_prefix="detected", output_prefix="detected"),
         **_artifact_population_metrics(v2_rows, source_prefix="final", output_prefix="final"),
     }
+
+
+def _v2_artifact_mask(artifact_rows: pd.DataFrame) -> pd.Series:
+    if "artifact_schema_version" not in artifact_rows.columns:
+        return pd.Series(False, index=artifact_rows.index, dtype=bool)
+    return pd.to_numeric(artifact_rows["artifact_schema_version"], errors="coerce") == 2
 
 
 def _artifact_population_metrics(

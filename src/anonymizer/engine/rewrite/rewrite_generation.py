@@ -194,7 +194,13 @@ def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
         COL_REPLACEMENT_MAP,
         COL_REWRITE_DISPOSITION_BLOCK,
         COL_TAG_NOTATION,
-    ]
+        COL_TAGGED_TEXT,
+    ],
+    side_effect_columns=[
+        COL_REPLACEMENT_APPLICATION,
+        COL_REWRITE_REPLACEMENT_READY,
+        COL_REWRITE_BASELINE_TEXT,
+    ],
 )
 def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
     """Apply strict, label-aware replacements before the LLM sees rewrite input."""

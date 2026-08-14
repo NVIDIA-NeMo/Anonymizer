@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -243,20 +246,59 @@ def test_prepare_rewrite_tagged_text_is_label_aware_and_preserves_tag_label() ->
 
 def test_prepare_rewrite_tagged_text_fails_closed_for_partial_map() -> None:
     row = {
+        COL_TEXT: "Alice met Bob",
+        COL_FINAL_ENTITIES: {
+            "entities": [
+                {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                {"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 13},
+            ]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+            {"entity_value": "Bob", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] met [[Bob|first_name]]",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REWRITE_REPLACEMENT_READY] is False
+    assert result[COL_REPLACEMENT_APPLICATION]["targeted_span_count"] == 2
+    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 1
+    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == {"first_name": 1}
+
+
+def test_prepare_rewrite_tagged_text_preserves_side_effects_through_data_designer() -> None:
+    row = {
         COL_TEXT: "Alice",
         COL_FINAL_ENTITIES: {
             "entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
         },
-        COL_REPLACEMENT_MAP: {"replacements": []},
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
         COL_REWRITE_DISPOSITION_BLOCK: [
             {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
         ],
         COL_TAG_NOTATION: "bracket",
         COL_TAGGED_TEXT: "[[Alice|first_name]]",
     }
-    result = _prepare_rewrite_tagged_text(row)
-    assert result[COL_REWRITE_REPLACEMENT_READY] is False
-    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == {"first_name": 1}
+    config = CustomColumnConfig(
+        name=COL_REWRITE_TAGGED_TEXT,
+        generator_function=_prepare_rewrite_tagged_text,
+    )
+    assert COL_TAGGED_TEXT in config.required_columns
+    assert set(config.side_effect_columns) == {
+        COL_REPLACEMENT_APPLICATION,
+        COL_REWRITE_BASELINE_TEXT,
+        COL_REWRITE_REPLACEMENT_READY,
+    }
+
+    result = CustomColumnGenerator(config, resource_provider=Mock()).generate(row)
+
+    assert isinstance(result, dict)
+    assert result[COL_REWRITE_TAGGED_TEXT] == "[[Maria|first_name]]"
+    assert result[COL_REWRITE_BASELINE_TEXT] == "Maria"
+    assert result[COL_REWRITE_REPLACEMENT_READY] is True
+    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 1
 
 
 def test_prepare_rewrite_tagged_text_never_rewrites_tag_metadata() -> None:

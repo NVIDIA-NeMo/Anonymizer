@@ -423,6 +423,28 @@ def test_analyze_benchmark_output_rejects_mixed_schema_versions_within_case(
         tool.analyze_benchmark_output(benchmark_dir)
 
 
+@pytest.mark.parametrize("invalid_schema_version", [True, 1.0])
+def test_analyze_benchmark_output_rejects_mixed_json_scalar_schema_types_before_pandas_coercion(
+    load_tool: Callable[..., ModuleType], tmp_path: Path, invalid_schema_version: object
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_mixed_scalar_schema_types",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [
+            {"schema_version": 1, "record_type": "record", "run_id": "case-a"},
+            {"schema_version": invalid_schema_version, "record_type": "record", "run_id": "case-b"},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="supported measurement schema versions 1 or 2"):
+        tool.analyze_benchmark_output(benchmark_dir)
+
+
 def test_analyze_benchmark_output_counts_leak_presence_by_schema_version(
     load_tool: Callable[..., ModuleType], tmp_path: Path
 ) -> None:
@@ -517,6 +539,32 @@ def test_analyze_benchmark_output_mixes_legacy_and_v2_detection_artifacts_row_wi
     assert case.artifact_detected_entity_signature_labels == {"legacy-hash": "person", "v2-hash": "email"}
     assert case.augmented_new_detected_value_count == 3
     assert case.artifact_final_entity_count == 1
+    assert case.final_entity_count == 1
+
+
+def test_analyze_benchmark_output_does_not_treat_legacy_artifact_final_count_as_materialized_final(
+    load_tool: Callable[..., ModuleType], tmp_path: Path
+) -> None:
+    tool = load_tool(
+        "measurement_benchmark_output_legacy_artifact_final_count",
+        REPO_ROOT / "tools/measurement/analyze_benchmark_output.py",
+    )
+    benchmark_dir = tmp_path / "benchmark"
+    benchmark_dir.mkdir()
+    _write_jsonl(
+        benchmark_dir / "measurements.jsonl",
+        [{"schema_version": 1, "record_type": "record", "run_id": "case-a"}],
+    )
+    _write_jsonl(
+        benchmark_dir / "detection-artifacts.jsonl",
+        [{"case_id": "case-a", "final_entity_count": 2}],
+    )
+
+    case = tool.analyze_benchmark_output(benchmark_dir).cases[0]
+
+    assert case.artifact_detected_entity_count == 2
+    assert case.artifact_final_entity_count is None
+    assert case.final_entity_count is None
 
 
 def test_write_analysis_tables_exports_case_and_group_tables(
