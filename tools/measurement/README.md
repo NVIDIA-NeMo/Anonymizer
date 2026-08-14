@@ -475,6 +475,68 @@ Strict online imports require `--wandb-entity` (or
 `ANONYMIZER_MEASUREMENT_WANDB_ENTITY`) so the result always identifies the
 destination and includes a W&B run URL. Offline imports may omit the entity.
 
+### NVIDIA PR vs. Main Scorecard
+
+The NVIDIA benchmark project has a saved
+[PR vs. main scorecard](https://wandb.ai/nemo-llm-service/nemo-anonymizer-benchmarks/reports/PR-vs-main-scorecard--VmlldzoxNzY4NTMzMA).
+The report does not query every benchmark run directly. It displays one active
+dashboard snapshot generated from eligible imported runs.
+
+A benchmark run enters the scorecard snapshot only when all of these conditions
+hold:
+
+- The W&B run state is `finished`.
+- `benchmark_role` is `main-baseline` or `candidate`.
+- `anonymizer_mode` is `replace` or `rewrite`.
+- The run config contains `anonymizer_config_id`, and `benchmark_config_ids`
+  resolves to at least one config ID.
+- The run summary contains `publication/complete=true`.
+
+The scorecard matches main and candidate runs by `anonymizer_config_id` and
+`benchmark_config_ids`. It separates datasets by `benchmark_workload_ids`.
+Use the same values for a comparison pair; PR candidates also require a PR
+number. The sealed case supplies `benchmark_config_ids` and
+`benchmark_workload_ids`. The importer command supplies the remaining identity
+fields.
+
+Append fields like these to the strict importer command above for a main
+baseline:
+
+```bash
+  --benchmark-role main-baseline \
+  --benchmark-kind main \
+  --branch main \
+  --commit-sha 0123456789abcdef0123456789abcdef01234567 \
+  --anonymizer-config-id rat-replace-throughput \
+  --anonymizer-mode replace
+```
+
+Use matching comparison identifiers for the candidate:
+
+```bash
+  --benchmark-role candidate \
+  --benchmark-kind pr \
+  --branch contributor/feat/local-models \
+  --commit-sha 89abcdef0123456789abcdef0123456789abcdef \
+  --pr-number 212 \
+  --anonymizer-config-id rat-replace-throughput \
+  --anonymizer-mode replace
+```
+
+The strict sealed importer is the only repository command that currently emits
+the completion marker and accepts the full scorecard identity. Native runs from
+`run_benchmarks.py --wandb-mode online` do not set those fields and will not
+appear in this scorecard. They remain available in the W&B runs table and in
+workspaces created by `create_wandb_report.py`.
+
+After publishing both sides, rerun the scorecard snapshot publisher. That
+publisher is not shipped in this repository. The active W&B dashboard run
+retains its source as `code/publish_pr_scorecard.py`, but the publisher also
+depends on a team-owned HTML template and saved-view state. Until those assets
+move into the repository, coordinate the refresh with the dashboard publisher
+owner. A successful benchmark import does not refresh the saved scorecard by
+itself.
+
 The goal of W&B support is to get sanitized benchmark data into W&B. Workspaces,
 reports, views, and panels are presentation layers on top of that data. They
 can be edited in W&B, regenerated with the tooling below, or replaced as the
