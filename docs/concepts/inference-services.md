@@ -5,9 +5,9 @@
 
 NeMo Anonymizer can run its detector and generation roles against models on
 your own NVIDIA GPU. The repository includes pinned profiles and a lifecycle
-tool for this purpose. The tool compiles a profile into an immutable plan,
-starts the service, checks readiness, and records the local process handle it
-observed so it can later report status or request cleanup.
+tool for this purpose. The tool compiles a profile into a frozen, checksummed
+plan, starts the service, checks readiness, and records the local process handle
+it observed so it can later report status or request cleanup.
 
 This path suits development workstations, on-premises servers, and isolated
 environments where text must stay on local infrastructure. It manages one
@@ -55,6 +55,11 @@ profile.toml -> compile -> plan.json -> launch -> launch.json
 `compile` has no runtime effects. The plan contains the full command, endpoint,
 dependencies, compatibility assessments, and a SHA-256 digest. Runtime commands
 verify that digest before acting.
+
+The digest detects accidental changes while a plan is stored or transported.
+This developer tool trusts whoever can write the profile and plan: it does not
+authenticate the plan's author, sign the plan, or recompile the embedded spec to
+prove that every derived field is semantically consistent.
 
 `launch` waits for `/v1/models` and a task-specific request. A generation
 service must return a chat completion. A detector must demonstrate dynamic
@@ -264,6 +269,6 @@ every alias needed by the selected pipeline. See
 For the detector request and response contract, chunking behavior, and a live
 PII request, see [Self-hosting GLiNER](self-hosting-gliner.md).
 
-Compilation proves static compatibility. The launch probe proves the endpoint
-shape. Run Anonymizer preview and evaluation before accepting a model for a
-privacy-sensitive workload.
+Compilation records static compatibility assessments. The launch probe observes
+the endpoint shape and required task behavior. Run Anonymizer preview and
+evaluation before accepting a model for a privacy-sensitive workload.
