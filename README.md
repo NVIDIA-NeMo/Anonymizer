@@ -163,8 +163,8 @@ Factory project, or for vLLM generation:
 ```bash
 uv run tools/inference_service.py compile --profile tools/inference_service_profiles/nvidia-gliner.toml --source-revision 3f68c145 --output plan.json
 uv run tools/inference_service.py launch --plan plan.json --output launch.json
-uv run tools/inference_service.py inspect --receipt launch.json
-uv run tools/inference_service.py cancel --receipt launch.json
+uv run tools/inference_service.py status --receipt launch.json
+uv run tools/inference_service.py stop --receipt launch.json
 ```
 
 The tool is not part of the wheel and does not attach to externally owned

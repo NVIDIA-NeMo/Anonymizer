@@ -125,8 +125,8 @@ complete host and GPU container workflows. NVIDIA GLiNER uses
 `deberta_gliner`; GLiNER2 uses `deberta_gliner2`.
 
 Launch writes a versioned receipt only after the model-list and detection
-contract probes pass. Use that receipt with the compiler's `inspect` and
-`cancel` commands instead of supervising the internal server module directly.
+contract probes pass. Use that receipt with the compiler's `status` and
+`stop` commands instead of supervising the internal server module directly.
 
 The model families do not use identical label vocabularies. The request example below targets the default NVIDIA model and uses `user_name`; the default GLiNER2 PII checkpoint uses `username` for that category.
 

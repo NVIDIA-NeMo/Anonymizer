@@ -135,11 +135,12 @@ The `CUDA_ROOT` path above is specific to the Brev B300 SXM6 environment used fo
 
 GLiNER ran on the same machine. Current reruns use the source-tree local-model
 deployment tool described in [Self-hosting GLiNER](../../concepts/self-hosting-gliner.md).
-It records the exact model, vLLM settings, endpoint, and process identity in
-versioned plans and receipts. The current detector path uses vLLM Factory.
+It records the exact model, vLLM settings, endpoint, and observed process
+coordinates in versioned plans and receipts. The current detector path uses
+vLLM Factory.
 
 ```toml title="gliner-b300.toml"
-schema_version = "inference-service.intent/v2"
+schema_version = "inference-service.local-spec/v2"
 
 [task]
 kind = "entity-detection"

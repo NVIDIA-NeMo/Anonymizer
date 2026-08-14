@@ -9,12 +9,12 @@ from typing import Annotated, Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
-INTENT_SCHEMA_VERSION = "inference-service.intent/v2"
+SPEC_SCHEMA_VERSION = "inference-service.local-spec/v2"
 PLAN_SCHEMA_VERSION = "inference-service.run-plan/v2"
 CAPABILITY_PROBE_RECEIPT_SCHEMA_VERSION = "inference-service.capability-probe-receipt/v1"
 LAUNCH_RECEIPT_SCHEMA_VERSION = "inference-service.launch-receipt/v1"
 STATUS_RECEIPT_SCHEMA_VERSION = "inference-service.status-receipt/v1"
-CANCELLATION_RECEIPT_SCHEMA_VERSION = "inference-service.cancellation-receipt/v1"
+STOP_RECEIPT_SCHEMA_VERSION = "inference-service.stop-receipt/v1"
 
 Capability = Literal["chat-completions", "dynamic-labels", "offsets", "scores"]
 FactoryPlugin = Literal["deberta_gliner", "deberta_gliner2"]
@@ -59,7 +59,6 @@ class Generation(FrozenModel):
     """Text-generation requirements independent of a serving engine."""
 
     kind: Literal["generation"] = "generation"
-    chat: Literal[True] = True
 
     def required_capabilities(self) -> tuple[Capability, ...]:
         """Return the endpoint capabilities required by this task."""
@@ -121,17 +120,17 @@ class LocalProcess(FrozenModel):
     shutdown_timeout_seconds: float = Field(default=30, gt=0)
 
 
-class InferenceIntent(FrozenModel):
+class LocalInferenceServiceSpec(FrozenModel):
     """Complete semantic input to pure inference-service compilation."""
 
-    schema_version: Literal["inference-service.intent/v2"] = INTENT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.local-spec/v2"] = SPEC_SCHEMA_VERSION
     task: TaskSpec
     model: HuggingFaceModel
     vllm: Vllm
     local: LocalProcess
 
     @property
-    def expected_model(self) -> str:
+    def served_model_name(self) -> str:
         """Return the model ID that the compiled endpoint must serve."""
         if self.model.adapter is not None:
             return self.model.adapter.name
@@ -145,9 +144,6 @@ class LiteralArgument(FrozenModel):
 
     kind: Literal["literal"] = "literal"
     value: str
-
-
-CommandArgument = LiteralArgument
 
 
 class EnvironmentVariable(FrozenModel):
@@ -172,7 +168,7 @@ EnvironmentSpec = Annotated[EnvironmentVariable | SecretEnvironmentVariable, Fie
 class CommandSpec(FrozenModel):
     """Complete argv and ordinary environment for one managed service."""
 
-    argv: tuple[CommandArgument, ...] = Field(min_length=1)
+    argv: tuple[LiteralArgument, ...] = Field(min_length=1)
     environment: tuple[EnvironmentSpec, ...] = ()
     working_directory: str = "."
 
@@ -190,7 +186,7 @@ class CommandSpec(FrozenModel):
         )
 
     def render_environment(self) -> dict[str, str]:
-        """Render an inspectable environment with every secret source redacted."""
+        """Render an observable environment with every secret source redacted."""
         values: dict[str, str] = {}
         for variable in self.environment:
             match variable:
@@ -219,7 +215,7 @@ class CommandSpec(FrozenModel):
         return resolved
 
 
-class EndpointContract(FrozenModel):
+class EndpointAddress(FrozenModel):
     """Direct OpenAI-compatible endpoint produced by a run."""
 
     scheme: Literal["http"] = "http"
@@ -233,31 +229,16 @@ class EndpointContract(FrozenModel):
         return f"{self.scheme}://{self.host}:{self.port}{self.base_path}"
 
 
-class HttpProbe(FrozenModel):
+class ReadinessCheck(FrozenModel):
     """One bounded readiness or capability-probe request."""
 
-    scheme: Literal["http"] = "http"
-    host: str
-    port: int
     path: str
     expected_status: int = 200
     timeout_seconds: float = Field(gt=0)
     bearer_token_environment_variable: str | None = Field(default=None, min_length=1)
 
-    @property
-    def url(self) -> str:
-        """Return the complete probe URL."""
-        return f"{self.scheme}://{self.host}:{self.port}{self.path}"
 
-
-class LocalProcessRuntime(FrozenModel):
-    """Runtime facts needed to launch and stop a local process."""
-
-    kind: Literal["local-process"] = "local-process"
-    cleanup: Literal["terminate-process-group"] = "terminate-process-group"
-
-
-class CompatibilityEvidence(FrozenModel):
+class CompatibilityAssessment(FrozenModel):
     """One compiler rule supporting or qualifying the selected combination."""
 
     rule: str
@@ -270,16 +251,13 @@ class RunPlan(FrozenModel):
 
     schema_version: Literal["inference-service.run-plan/v2"] = PLAN_SCHEMA_VERSION
     plan_digest: str
-    intent_digest: str = Field(min_length=1)
-    intent: InferenceIntent
+    spec: LocalInferenceServiceSpec
     command: CommandSpec
-    runtime: LocalProcessRuntime
-    endpoint: EndpointContract
-    readiness: HttpProbe
-    expected_model: str = Field(min_length=1)
+    endpoint: EndpointAddress
+    readiness: ReadinessCheck
+    served_model_name: str = Field(min_length=1)
     required_capabilities: tuple[Capability, ...]
-    declared_capabilities: tuple[Capability, ...]
-    compatibility_evidence: tuple[CompatibilityEvidence, ...]
+    compatibility_assessments: tuple[CompatibilityAssessment, ...]
     dependencies: tuple[str, ...] = ()
     source_revision: str = Field(min_length=1)
 
@@ -289,7 +267,7 @@ class CapabilityProbeReceipt(FrozenModel):
 
     schema_version: Literal["inference-service.capability-probe-receipt/v1"] = CAPABILITY_PROBE_RECEIPT_SCHEMA_VERSION
     plan_digest: str
-    endpoint: EndpointContract
+    endpoint: EndpointAddress
     observed_at: str
     models: tuple[str, ...]
     observed_capabilities: tuple[Capability, ...]
@@ -297,19 +275,19 @@ class CapabilityProbeReceipt(FrozenModel):
 
 
 class LocalProcessHandle(FrozenModel):
-    """Reconnectable identity for a managed local process."""
+    """Observed local-process coordinates checked against PID reuse."""
 
     kind: Literal["local-process"] = "local-process"
     external_id: str
     pid: int = Field(ge=1)
     process_group_id: int = Field(ge=1)
-    start_marker: str | None
+    start_marker: str = Field(min_length=1)
     stdout_path: str
     stderr_path: str
 
 
 class LaunchReceipt(FrozenModel):
-    """Known launch effects, reconnectable identity, and readiness evidence."""
+    """Durable record of a launch operation and its readiness observations."""
 
     schema_version: Literal["inference-service.launch-receipt/v1"] = LAUNCH_RECEIPT_SCHEMA_VERSION
     plan_digest: str
@@ -320,7 +298,7 @@ class LaunchReceipt(FrozenModel):
 
 
 class StatusReceipt(FrozenModel):
-    """Observed state for a reconnectable managed handle."""
+    """Recorded state observation for a managed handle."""
 
     schema_version: Literal["inference-service.status-receipt/v1"] = STATUS_RECEIPT_SCHEMA_VERSION
     plan_digest: str
@@ -329,12 +307,12 @@ class StatusReceipt(FrozenModel):
     state: Literal["running", "stopped"]
 
 
-class CancellationReceipt(FrozenModel):
-    """Cancellation outcome and cleanup state for a managed handle."""
+class StopReceipt(FrozenModel):
+    """Recorded cleanup outcome for a managed handle."""
 
-    schema_version: Literal["inference-service.cancellation-receipt/v1"] = CANCELLATION_RECEIPT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.stop-receipt/v1"] = STOP_RECEIPT_SCHEMA_VERSION
     plan_digest: str
-    canceled_at: str
+    stopped_at: str
     handle: LocalProcessHandle
     outcome: Literal["terminated", "already-stopped", "forced"]
     cleanup_complete: bool

@@ -1,8 +1,7 @@
-schema_version = "inference-service.intent/v2"
+schema_version = "inference-service.local-spec/v2"
 
 [task]
 kind = "generation"
-chat = true
 
 [model]
 model_id = "openai/gpt-oss-120b"

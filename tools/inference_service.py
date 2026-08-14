@@ -10,7 +10,7 @@
 #   "structlog>=24.4",
 # ]
 # ///
-"""Compile and manage local inference services from typed intent."""
+"""Compile and manage local inference services from typed specifications."""
 
 from __future__ import annotations
 

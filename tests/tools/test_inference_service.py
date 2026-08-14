@@ -22,8 +22,8 @@ PROFILES = TOOLS / "inference_service_profiles"
 CLI = TOOLS / "inference_service.py"
 
 
-def generation(**vllm: object) -> models.InferenceIntent:
-    return models.InferenceIntent(
+def generation(**vllm: object) -> models.LocalInferenceServiceSpec:
+    return models.LocalInferenceServiceSpec(
         task=models.Generation(),
         model=models.HuggingFaceModel(model_id="openai/gpt-oss-20b", revision="abc"),
         vllm=models.Vllm.model_validate(vllm),
@@ -44,7 +44,7 @@ def launch_receipt(
             plan_digest=plan.plan_digest,
             endpoint=plan.endpoint,
             observed_at="2026-08-07T00:00:00+00:00",
-            models=(plan.expected_model,),
+            models=(plan.served_model_name,),
             observed_capabilities=plan.required_capabilities,
             passed=True,
         ),
@@ -58,10 +58,25 @@ def test_cli_remains_a_directly_executable_source_entrypoint() -> None:
 
 def test_all_shipped_profiles_compile() -> None:
     plans = [
-        compiler.compile_intent(load_profile(path), source_revision="test") for path in sorted(PROFILES.glob("*.toml"))
+        compiler.compile_profile(load_profile(path), source_revision="test") for path in sorted(PROFILES.glob("*.toml"))
     ]
-    assert len(plans) == 7
+    assert plans
     assert all(plan.schema_version == "inference-service.run-plan/v2" for plan in plans)
+    assert all(plan.readiness.path == "/models" for plan in plans)
+    assert all(plan.served_model_name for plan in plans)
+
+
+def test_plan_keeps_one_endpoint_address_and_one_served_model_vocabulary() -> None:
+    plan = compiler.compile_profile(generation(served_model_name="local-generator"), source_revision="test")
+
+    serialized = plan.model_dump(mode="json")
+    assert plan.endpoint.url == "http://127.0.0.1:8000/v1"
+    assert plan.readiness.path == "/models"
+    assert plan.served_model_name == "local-generator"
+    assert "host" not in serialized["readiness"]
+    assert "port" not in serialized["readiness"]
+    assert "intent_digest" not in serialized
+    assert "declared_capabilities" not in serialized
 
 
 def test_compile_command_writes_a_digest_verified_plan(tmp_path: Path) -> None:
@@ -80,7 +95,7 @@ def test_compile_command_writes_a_digest_verified_plan(tmp_path: Path) -> None:
         )
     assert exc_info.value.code == 0
     plan = compiler.load_plan(output.read_text(encoding="utf-8"))
-    assert plan.expected_model == "anonymizer-local"
+    assert plan.served_model_name == "anonymizer-local"
 
 
 def test_compile_command_translates_non_directory_profile_paths(tmp_path: Path) -> None:
@@ -119,7 +134,7 @@ def test_compile_command_translates_empty_source_revision() -> None:
 
 
 def test_generation_argv_keeps_local_vllm_controls_and_omits_defaults() -> None:
-    plan = compiler.compile_intent(
+    plan = compiler.compile_profile(
         generation(api_key_env="LOCAL_KEY", tensor_parallel_size=2, max_model_len=4096, eager=True),
         source_revision="test",
     )
@@ -135,15 +150,15 @@ def test_generation_argv_keeps_local_vllm_controls_and_omits_defaults() -> None:
 
 
 def test_factory_detection_is_task_bounded() -> None:
-    valid = models.InferenceIntent(
+    valid = models.LocalInferenceServiceSpec(
         task=models.EntityDetection(dynamic_labels=True, offsets=True, scores=True),
         model=models.HuggingFaceModel(model_id="nvidia/gliner-pii", revision="abc"),
         vllm=models.Vllm(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")),
         local=models.LocalProcess(),
     )
-    assert "--vllm-factory-plugin" in compiler.compile_intent(valid, source_revision="test").command.render_argv()
+    assert "--vllm-factory-plugin" in compiler.compile_profile(valid, source_revision="test").command.render_argv()
     with pytest.raises(compiler.CompilationError, match="does not support"):
-        compiler.compile_intent(
+        compiler.compile_profile(
             generation(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")), source_revision="test"
         )
 
@@ -159,21 +174,21 @@ def test_factory_detection_requires_a_pin_and_characterized_model() -> None:
         ("nvidia/gliner-pii", None, "pinned model revision"),
         ("unknown/model", "abc", "not characterized"),
     ):
-        intent = models.InferenceIntent(
+        spec = models.LocalInferenceServiceSpec(
             task=models.EntityDetection(dynamic_labels=True, offsets=True, scores=True),
             model=models.HuggingFaceModel(model_id=model_id, revision=revision),
             vllm=models.Vllm(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")),
             local=models.LocalProcess(),
         )
         with pytest.raises(compiler.CompilationError, match=message):
-            compiler.compile_intent(intent, source_revision="test")
+            compiler.compile_profile(spec, source_revision="test")
 
 
 def test_removed_domains_are_invalid_profile_fields() -> None:
     with pytest.raises(ValidationError):
-        models.InferenceIntent.model_validate(
+        models.LocalInferenceServiceSpec.model_validate(
             {
-                "schema_version": "inference-service.intent/v2",
+                "schema_version": "inference-service.local-spec/v2",
                 "task": {"kind": "generation"},
                 "model": {"model_id": "x"},
                 "vllm": {},
@@ -184,7 +199,7 @@ def test_removed_domains_are_invalid_profile_fields() -> None:
 
 
 def test_plan_digest_detects_transport_mutation() -> None:
-    plan = compiler.compile_intent(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation(), source_revision="test")
     changed = json.loads(plan.model_dump_json())
     changed["endpoint"]["port"] = 9000
     with pytest.raises(compiler.PlanIntegrityError, match="plan digest mismatch"):
@@ -192,7 +207,7 @@ def test_plan_digest_detects_transport_mutation() -> None:
 
 
 def test_lora_is_rendered_as_a_model_artifact() -> None:
-    intent = models.InferenceIntent(
+    spec = models.LocalInferenceServiceSpec(
         task=models.Generation(),
         model=models.HuggingFaceModel(
             model_id="openai/gpt-oss-20b",
@@ -201,12 +216,12 @@ def test_lora_is_rendered_as_a_model_artifact() -> None:
         vllm=models.Vllm(),
         local=models.LocalProcess(),
     )
-    argv = compiler.compile_intent(intent, source_revision="test").command.render_argv()
+    argv = compiler.compile_profile(spec, source_revision="test").command.render_argv()
     assert argv[-3:] == ("--enable-lora", "--lora-modules", "privacy=/models/privacy-adapter")
 
 
 def test_probe_payload_is_task_aware_and_reasoning_safe() -> None:
-    plan = compiler.compile_intent(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation(), source_revision="test")
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -225,12 +240,12 @@ def test_probe_payload_is_task_aware_and_reasoning_safe() -> None:
 
 
 def test_probe_uses_bearer_secret_without_serializing_it() -> None:
-    plan = compiler.compile_intent(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Bearer test-secret"
         if request.url.path == "/v1/models":
-            return httpx.Response(200, json={"data": [{"id": plan.expected_model}]})
+            return httpx.Response(200, json={"data": [{"id": plan.served_model_name}]})
         return httpx.Response(200, json={"choices": [{"message": {"content": "ready"}}]})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
@@ -240,7 +255,7 @@ def test_probe_uses_bearer_secret_without_serializing_it() -> None:
 
 
 def test_probe_rejects_wrong_model_and_status() -> None:
-    plan = compiler.compile_intent(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation(), source_revision="test")
 
     def wrong_model(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/models":
@@ -255,7 +270,7 @@ def test_probe_rejects_wrong_model_and_status() -> None:
 
 
 def test_plan_integrity_and_pid_cleanup_are_enforced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    plan = compiler.compile_intent(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation(), source_revision="test")
     with pytest.raises(compiler.PlanIntegrityError):
         runtime.launch_plan(
             plan.model_copy(update={"source_revision": "changed"}), secret_values={}, log_directory=tmp_path
@@ -268,12 +283,12 @@ def test_plan_integrity_and_pid_cleanup_are_enforced(tmp_path: Path, monkeypatch
 
 
 def test_launch_records_process_identity_and_resolves_secrets(tmp_path: Path) -> None:
-    plan = compiler.compile_intent(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
     probe = models.CapabilityProbeReceipt(
         plan_digest=plan.plan_digest,
         endpoint=plan.endpoint,
         observed_at="2026-08-07T00:00:00+00:00",
-        models=(plan.expected_model,),
+        models=(plan.served_model_name,),
         observed_capabilities=("chat-completions",),
         passed=True,
     )
@@ -290,8 +305,25 @@ def test_launch_records_process_identity_and_resolves_secrets(tmp_path: Path) ->
     assert receipt.handle.external_id == "4242:100"
 
 
+def test_launch_refuses_an_unmarked_process_and_cleans_up(tmp_path: Path) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    process = mock.Mock(pid=4242)
+    process.poll.return_value = 0
+    with (
+        mock.patch.object(runtime.subprocess, "Popen", return_value=process),
+        mock.patch.object(runtime, "read_process_start_marker", return_value=None),
+        mock.patch.object(runtime.os, "killpg") as killpg,
+        pytest.raises(runtime.RuntimeEffectError) as exc_info,
+    ):
+        runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
+    killpg.assert_called_once_with(4242, runtime.signal.SIGTERM)
+    process.wait.assert_called_once_with(timeout=1)
+    assert exc_info.value.diagnostic.code == "missing-process-start-marker"
+    assert exc_info.value.diagnostic.cleanup_complete is True
+
+
 def test_missing_secret_fails_before_process_start(tmp_path: Path) -> None:
-    plan = compiler.compile_intent(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
     with mock.patch.object(runtime.subprocess, "Popen") as popen:
         with pytest.raises(runtime.RuntimeEffectError) as exc_info:
             runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
@@ -300,8 +332,8 @@ def test_missing_secret_fails_before_process_start(tmp_path: Path) -> None:
     assert exc_info.value.diagnostic.known_effects == ()
 
 
-def test_inspect_cancel_and_forced_cleanup_are_versioned(tmp_path: Path) -> None:
-    plan = compiler.compile_intent(generation(), source_revision="test")
+def test_status_stop_and_forced_cleanup_are_versioned(tmp_path: Path) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,
@@ -312,15 +344,15 @@ def test_inspect_cancel_and_forced_cleanup_are_versioned(tmp_path: Path) -> None
     )
     launch = launch_receipt(plan, handle)
     with mock.patch.object(runtime, "is_handle_running", return_value=True):
-        assert runtime.inspect_run(launch).state == "running"
+        assert runtime.status_run(launch).state == "running"
     with (
         mock.patch.object(runtime, "is_handle_running", side_effect=[True, True, False]),
         mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 0.0, 1.0]),
         mock.patch.object(runtime.os, "killpg") as killpg,
     ):
-        canceled = runtime.cancel_run(launch)
-    assert canceled.outcome == "forced"
-    assert canceled.cleanup_complete is True
+        stopped = runtime.stop_run(launch)
+    assert stopped.outcome == "forced"
+    assert stopped.cleanup_complete is True
     assert [call.args[1] for call in killpg.call_args_list] == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
 
 
@@ -345,7 +377,7 @@ def test_process_stat_handles_spaces_and_zombies(tmp_path: Path) -> None:
 
 
 def test_failed_readiness_cleans_up_the_known_process(tmp_path: Path) -> None:
-    plan = compiler.compile_intent(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation(), source_revision="test")
     process = mock.Mock(pid=4242)
     failure = runtime.RuntimeEffectError(models.RuntimeDiagnostic(code="probe-failed", message="not ready"))
     with (
@@ -363,7 +395,7 @@ def test_failed_readiness_cleans_up_the_known_process(tmp_path: Path) -> None:
 
 
 def test_readiness_stops_when_the_managed_process_exits(tmp_path: Path) -> None:
-    plan = compiler.compile_intent(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation(), source_revision="test")
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,

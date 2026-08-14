@@ -6,8 +6,8 @@
 NeMo Anonymizer can run its detector and generation roles against models on
 your own NVIDIA GPU. The repository includes pinned profiles and a lifecycle
 tool for this purpose. The tool compiles a profile into an immutable plan,
-starts the service, proves its API contract, and records enough process identity
-to inspect or stop it later.
+starts the service, checks readiness, and records the local process handle it
+observed so it can later report status or request cleanup.
 
 This path suits development workstations, on-premises servers, and isolated
 environments where text must stay on local infrastructure. It manages one
@@ -48,12 +48,12 @@ The workflow has two durable files:
 ```text
 profile.toml -> compile -> plan.json -> launch -> launch.json
                               |                    |
-                              +-> probe            +-> inspect
-                                                   +-> cancel
+                              +-> probe            +-> status
+                                                   +-> stop
 ```
 
 `compile` has no runtime effects. The plan contains the full command, endpoint,
-dependencies, compatibility evidence, and a SHA-256 digest. Runtime commands
+dependencies, compatibility assessments, and a SHA-256 digest. Runtime commands
 verify that digest before acting.
 
 `launch` waits for `/v1/models` and a task-specific request. A generation
@@ -101,13 +101,15 @@ uv run --python 3.12 python tools/inference_service.py launch \
   --log-directory .inference-service-runs
 ```
 
-The command returns after both probes pass. Keep `gliner-launch.json`; it owns
-the process identity used for inspection and cleanup.
+The command returns after both readiness checks pass. Keep `gliner-launch.json`:
+it is an unsigned durable operation record containing the observed handle and
+its consistency fingerprint. It does not own or prove process identity; later
+status and stop operations re-check the exact PID and start marker.
 
 ### Operate the service
 
 ```bash
-uv run --python 3.12 python tools/inference_service.py inspect \
+uv run --python 3.12 python tools/inference_service.py status \
   --receipt gliner-launch.json
 
 uv run --python 3.12 python tools/inference_service.py probe \
@@ -115,12 +117,13 @@ uv run --python 3.12 python tools/inference_service.py probe \
 
 curl -sf http://127.0.0.1:8001/v1/models | python -m json.tool
 
-uv run --python 3.12 python tools/inference_service.py cancel \
+uv run --python 3.12 python tools/inference_service.py stop \
   --receipt gliner-launch.json
 ```
 
-`cancel` sends `SIGTERM` to the receipt-owned process group, waits for the
-profile's shutdown timeout, and uses `SIGKILL` if the group remains alive.
+`stop` checks the recorded PID and start marker before sending `SIGTERM` to its
+process group, waits for the profile's shutdown timeout, and uses `SIGKILL` if
+the group remains alive.
 
 ## Deploy in a GPU container
 
@@ -202,7 +205,7 @@ on the host. Operate the service through `docker exec`:
 
 ```bash
 docker exec anonymizer-local-models \
-  python tools/inference_service.py inspect \
+  python tools/inference_service.py status \
   --receipt /state/gliner-launch.json
 
 docker exec anonymizer-local-models \
@@ -214,11 +217,11 @@ curl -sf http://127.0.0.1:8001/v1/models | python -m json.tool
 
 ### Stop cleanly
 
-Cancel each managed service before removing the container:
+Stop each managed service before removing the container:
 
 ```bash
 docker exec anonymizer-local-models \
-  python tools/inference_service.py cancel \
+  python tools/inference_service.py stop \
   --receipt /state/gliner-launch.json
 
 docker stop anonymizer-local-models
@@ -226,7 +229,7 @@ docker rm anonymizer-local-models
 ```
 
 Stopping the container first removes the runtime boundary before the tool can
-write a cancellation receipt. Use `cancel` first when lifecycle evidence or
+write a stop receipt. Use `stop` first when lifecycle evidence or
 graceful model shutdown matters.
 
 ## Connect Anonymizer

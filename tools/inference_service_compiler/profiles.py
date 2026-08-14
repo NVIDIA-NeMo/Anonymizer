@@ -7,10 +7,10 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from inference_service_compiler.models import InferenceIntent
+from inference_service_compiler.models import LocalInferenceServiceSpec
 
 
-def load_profile(path: Path) -> InferenceIntent:
+def load_profile(path: Path) -> LocalInferenceServiceSpec:
     """Load and validate one TOML inference-service profile."""
     payload = tomllib.loads(path.read_text(encoding="utf-8"))
-    return InferenceIntent.model_validate(payload)
+    return LocalInferenceServiceSpec.model_validate(payload)

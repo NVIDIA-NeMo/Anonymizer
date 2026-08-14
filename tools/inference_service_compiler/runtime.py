@@ -20,7 +20,6 @@ import httpx
 
 from inference_service_compiler.compiler import verify_plan
 from inference_service_compiler.models import (
-    CancellationReceipt,
     Capability,
     CapabilityProbeReceipt,
     EntityDetection,
@@ -30,6 +29,7 @@ from inference_service_compiler.models import (
     RunPlan,
     RuntimeDiagnostic,
     StatusReceipt,
+    StopReceipt,
 )
 
 
@@ -60,7 +60,7 @@ def probe_endpoint(
     headers = _probe_headers(plan, secret_values or {})
     try:
         with nullcontext(client) if client is not None else httpx.Client(timeout=10) as active_client:
-            models_response = active_client.get(plan.readiness.url, headers=headers)
+            models_response = active_client.get(f"{plan.endpoint.url}{plan.readiness.path}", headers=headers)
             if models_response.status_code != plan.readiness.expected_status:
                 raise ValueError(
                     f"readiness probe returned status {models_response.status_code}, "
@@ -78,7 +78,7 @@ def probe_endpoint(
         observed_at=_now(),
         models=models,
         observed_capabilities=observed,
-        passed=plan.expected_model in models and set(plan.required_capabilities).issubset(observed),
+        passed=plan.served_model_name in models and set(plan.required_capabilities).issubset(observed),
     )
 
 
@@ -103,7 +103,7 @@ def launch_plan(
     return LaunchReceipt(
         plan_digest=plan.plan_digest,
         launched_at=_now(),
-        shutdown_timeout_seconds=plan.intent.local.shutdown_timeout_seconds,
+        shutdown_timeout_seconds=plan.spec.local.shutdown_timeout_seconds,
         handle=handle,
         probe=probe,
     )
@@ -117,7 +117,7 @@ def _probe_or_cleanup(
     try:
         probe = wait_for_readiness(plan, secret_values=secret_values, handle=handle)
     except RuntimeEffectError as exc:
-        cleanup_complete = _cleanup_handle(handle, plan.intent.local.shutdown_timeout_seconds)
+        cleanup_complete = _cleanup_handle(handle, plan.spec.local.shutdown_timeout_seconds)
         raise RuntimeEffectError(
             exc.diagnostic.model_copy(
                 update={
@@ -127,7 +127,7 @@ def _probe_or_cleanup(
             )
         ) from exc
     if not probe.passed:
-        cleanup_complete = _cleanup_handle(handle, plan.intent.local.shutdown_timeout_seconds)
+        cleanup_complete = _cleanup_handle(handle, plan.spec.local.shutdown_timeout_seconds)
         raise RuntimeEffectError(
             RuntimeDiagnostic(
                 code="capability-mismatch",
@@ -139,8 +139,8 @@ def _probe_or_cleanup(
     return probe
 
 
-def inspect_run(launch: LaunchReceipt) -> StatusReceipt:
-    """Inspect a reconnectable handle without changing its state."""
+def status_run(launch: LaunchReceipt) -> StatusReceipt:
+    """Observe a recorded handle without changing process state."""
     state = "running" if is_handle_running(launch.handle) else "stopped"
     return StatusReceipt(
         plan_digest=launch.plan_digest,
@@ -150,21 +150,21 @@ def inspect_run(launch: LaunchReceipt) -> StatusReceipt:
     )
 
 
-def cancel_run(launch: LaunchReceipt) -> CancellationReceipt:
+def stop_run(launch: LaunchReceipt) -> StopReceipt:
     """Stop the exact process group recorded by a launch receipt."""
     handle = launch.handle
     if not is_handle_running(handle):
-        return CancellationReceipt(
+        return StopReceipt(
             plan_digest=launch.plan_digest,
-            canceled_at=_now(),
+            stopped_at=_now(),
             handle=handle,
             outcome="already-stopped",
             cleanup_complete=True,
         )
     stop = _stop_running_handle(handle, launch.shutdown_timeout_seconds)
-    return CancellationReceipt(
+    return StopReceipt(
         plan_digest=launch.plan_digest,
-        canceled_at=_now(),
+        stopped_at=_now(),
         handle=handle,
         outcome=stop.outcome,
         cleanup_complete=stop.cleanup_complete,
@@ -174,7 +174,7 @@ def cancel_run(launch: LaunchReceipt) -> CancellationReceipt:
 def is_handle_running(handle: LocalProcessHandle) -> bool:
     """Check the external identity while guarding against Linux PID reuse."""
     current_marker = read_process_start_marker(handle.pid)
-    if handle.start_marker is not None and current_marker != handle.start_marker:
+    if current_marker != handle.start_marker:
         return False
     if read_process_state(handle.pid) == "Z":
         return False
@@ -230,7 +230,7 @@ def wait_for_readiness(
     last_error: RuntimeEffectError | None = None
     while time.monotonic() < deadline:
         if handle is not None and not is_handle_running(handle):
-            log_hint = f"; inspect {handle.stderr_path}"
+            log_hint = f"; status {handle.stderr_path}"
             raise RuntimeEffectError(
                 RuntimeDiagnostic(
                     code="launch-exited",
@@ -279,12 +279,12 @@ def _parse_process_stat(payload: str) -> tuple[str, str] | None:
 
 
 def _probe_task(plan: RunPlan, client: httpx.Client, headers: Mapping[str, str]) -> tuple[Capability, ...]:
-    match plan.intent.task:
+    match plan.spec.task:
         case Generation():
             response = client.post(
                 f"{plan.endpoint.url}/chat/completions",
                 json={
-                    "model": plan.expected_model,
+                    "model": plan.served_model_name,
                     "messages": [{"role": "user", "content": "Reply with the word ready."}],
                     "max_tokens": 128,
                     "chat_template_kwargs": {
@@ -303,7 +303,7 @@ def _probe_task(plan: RunPlan, client: httpx.Client, headers: Mapping[str, str])
             response = client.post(
                 f"{plan.endpoint.url}/chat/completions",
                 json={
-                    "model": plan.expected_model,
+                    "model": plan.served_model_name,
                     "messages": [{"role": "user", "content": "Ada Lovelace"}],
                     "labels": ["person"],
                     "threshold": 0.1,
@@ -323,7 +323,7 @@ def _probe_task(plan: RunPlan, client: httpx.Client, headers: Mapping[str, str])
                 observed.append("scores")
             return tuple(observed)
         case _:
-            assert_never(plan.intent.task)
+            assert_never(plan.spec.task)
 
 
 def _parse_models(payload: object) -> tuple[str, ...]:
@@ -373,15 +373,40 @@ def _launch_process(
             start_new_session=True,
         )
     marker = read_process_start_marker(process.pid)
-    suffix = marker or "unknown"
+    if marker is None:
+        _terminate_unmarked_launch(process)
+        raise RuntimeEffectError(
+            RuntimeDiagnostic(
+                code="missing-process-start-marker",
+                message="cannot record a managed process without a Linux start marker",
+                known_effects=(str(process.pid),),
+                cleanup_complete=process.poll() is not None,
+            )
+        )
     return LocalProcessHandle(
-        external_id=f"{process.pid}:{suffix}",
+        external_id=f"{process.pid}:{marker}",
         pid=process.pid,
         process_group_id=process.pid,
         start_marker=marker,
         stdout_path=str(stdout_path),
         stderr_path=str(stderr_path),
     )
+
+
+def _terminate_unmarked_launch(process: subprocess.Popen[bytes]) -> None:
+    """Clean up a just-created child when its durable identity cannot be recorded."""
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        process.wait()
 
 
 def _now() -> str:
