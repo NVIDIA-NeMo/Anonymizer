@@ -82,7 +82,7 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
                 source="detector",
             )
         )
-    return resolve_overlaps(parsed)
+    return resolve_overlaps(parsed, prefer_highest_score=True)
 
 
 def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[dict[str, str]]:
@@ -237,15 +237,21 @@ def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]
     return [*entities, *extra]
 
 
-def resolve_overlaps(entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Resolve span conflicts by preferring longer spans, then earlier starts."""
+def resolve_overlaps(entities: list[EntitySpan], *, prefer_highest_score: bool = False) -> list[EntitySpan]:
+    """Resolve span conflicts by preferring longer spans, then earlier starts.
+
+    Set ``prefer_highest_score=True`` only when all inputs share the same
+    provenance (e.g. raw GLiNER detections in ``parse_raw_entities``).
+    Mixed-source callers must leave it False so synthetic score-1.0 values
+    from augmenters or propagation cannot displace validated detector spans.
+    """
     sorted_entities = sorted(
         entities,
         key=lambda item: (
             -(item.end_position - item.start_position),
             item.start_position,
             item.end_position,
-            -item.score,
+            -item.score if prefer_highest_score else 0.0,
             item.label,
         ),
     )
