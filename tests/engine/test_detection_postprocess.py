@@ -389,12 +389,14 @@ def test_resolve_overlaps_default_uses_label_not_score() -> None:
 def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
     """Regression: relationship (0.941) should beat last_name (0.719) on same span."""
     text = "She called Mum every day."
-    raw = json.dumps({
-        "entities": [
-            {"text": "Mum", "label": "last_name", "start": 11, "end": 14, "score": 0.719},
-            {"text": "Mum", "label": "relationship", "start": 11, "end": 14, "score": 0.941},
-        ]
-    })
+    raw = json.dumps(
+        {
+            "entities": [
+                {"text": "Mum", "label": "last_name", "start": 11, "end": 14, "score": 0.719},
+                {"text": "Mum", "label": "relationship", "start": 11, "end": 14, "score": 0.941},
+            ]
+        }
+    )
     result = parse_raw_entities(raw_response=raw, text=text)
     assert len(result) == 1
     assert result[0].label == "relationship"
