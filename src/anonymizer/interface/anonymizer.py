@@ -65,6 +65,7 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
+from anonymizer.engine.private_row_verification import _InvocationRowVerifier
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -627,6 +628,8 @@ class Anonymizer:
         context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
+        verifier = _InvocationRowVerifier(context.dataframe)
+        context = context.with_dataframe(verifier.bind(context.dataframe))
         input_df = context.dataframe
         mode = "replace" if config.replace is not None else "rewrite"
         strategy = type(config.replace).__name__ if config.replace is not None else "Rewrite"
@@ -646,12 +649,20 @@ class Anonymizer:
                 preview_num_records=preview_num_records,
                 model_configs=self._model_configs,
             )
-            result = self._run_internal_impl(
-                config=config,
-                data=data,
-                context=context,
-                preview_num_records=preview_num_records,
-            )
+            try:
+                result = self._run_internal_impl(
+                    config=config,
+                    data=data,
+                    context=context,
+                    preview_num_records=preview_num_records,
+                    verifier=verifier,
+                )
+            except KeyboardInterrupt:
+                verifier.abort(cancelled=True)
+                raise
+            except Exception:
+                verifier.abort(cancelled=False)
+                raise
             measurement.update(
                 output_row_count=len(result.trace_dataframe),
                 failed_record_count=len(result.failed_records),
@@ -665,6 +676,7 @@ class Anonymizer:
         data: AnonymizerInput,
         context: ResolvedInput,
         preview_num_records: int | None,
+        verifier: _InvocationRowVerifier,
     ) -> AnonymizerResult:
         input_df = context.dataframe
         num_records = len(input_df)
@@ -722,6 +734,7 @@ class Anonymizer:
             preview_num_records=preview_num_records,
         )
         detection_elapsed = time.perf_counter() - t0
+        verifier.freeze_accepted_detections(detection_result.dataframe)
         entity_count = _count_entities(detection_result.dataframe)
         detection_failed = len(detection_result.failed_records)
         logger.info(
@@ -792,6 +805,7 @@ class Anonymizer:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
+        final_df = verifier.finish(final_df)
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
