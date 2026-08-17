@@ -401,8 +401,8 @@ def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
     assert result[0].score == 0.941
 
 
-def test_augmented_entities_does_not_displace_detector_on_same_span() -> None:
-    """Augmenter spans (score=1.0) must not overwrite a validated detector span at the same position."""
+def test_augmented_entities_does_not_use_synthetic_score_precedence() -> None:
+    """Mixed-source merging retains the default label tie-break instead of comparing scores."""
     detector = EntitySpan("email_0_5", "Alice", "email", 0, 5, 0.95, "detector")
     result = apply_augmented_entities(
         "Alice",
