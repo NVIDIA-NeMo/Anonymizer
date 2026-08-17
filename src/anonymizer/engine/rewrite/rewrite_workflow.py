@@ -20,6 +20,9 @@ from anonymizer.engine.constants import (
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_QA_REANSWER,
+    COL_QUALITY_QA_COMPARE,
+    COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
@@ -54,6 +57,12 @@ _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_NEEDS_HUMAN_REVIEW: False,
     COL_REPAIR_ITERATIONS: 0,
 }
+
+_EVALUATION_PAYLOAD_COLUMNS = (
+    COL_QUALITY_QA_REANSWER,
+    COL_PRIVACY_QA_REANSWER,
+    COL_QUALITY_QA_COMPARE,
+)
 
 
 def _detection_valid_fraction(row: pd.Series) -> float | None:
@@ -99,6 +108,12 @@ def _has_entities(entities_by_value: object) -> bool:
     if not isinstance(items, list):
         return False
     return len(items) > 0
+
+
+def _normalize_evaluation_payloads(df: pd.DataFrame) -> None:
+    for column in _EVALUATION_PAYLOAD_COLUMNS:
+        if column in df.columns:
+            df[column] = df[column].map(normalize_payload)
 
 
 def _join_new_columns(
@@ -367,6 +382,7 @@ class RewriteWorkflow:
             preview_num_records=preview_num_records,
         )
         df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=eval_seed_cols)
+        _normalize_evaluation_payloads(df)
         all_failed.extend(eval_result.failed_records)
 
         replacement_unavailable = (
@@ -429,6 +445,7 @@ class RewriteWorkflow:
             failing_rows = _join_new_columns(
                 failing_rows, eval_result.dataframe, overwrite=True, seed_cols=reeval_seed_cols
             )
+            _normalize_evaluation_payloads(failing_rows)
             all_failed.extend(eval_result.failed_records)
 
             df = pd.concat([passing_rows, failing_rows], ignore_index=True)

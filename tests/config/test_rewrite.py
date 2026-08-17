@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.rewrite import (
     EvaluationCriteria,
     PrivacyGoal,
@@ -73,6 +74,10 @@ def test_default_is_low() -> None:
     assert criteria.risk_tolerance == RiskTolerance.low
     assert criteria.repair_threshold == 1.0
     assert criteria.max_repair_iterations == 3
+
+
+def test_combined_graph_is_opt_in() -> None:
+    assert Rewrite().use_combined_graph is False
 
 
 def test_minimal_bundles_aggressive_review_flags() -> None:

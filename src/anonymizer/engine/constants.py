@@ -45,6 +45,7 @@ COL_TAGGED_TEXT = "tagged_text"
 COL_ENTITIES_BY_VALUE = "_entities_by_value"
 COL_REPLACED_TEXT = "__nemo_anonymizer_text_output__"
 COL_REPLACEMENT_MAP = "_replacement_map"
+COL_REPLACEMENT_MAP_RAW = COL_REPLACEMENT_MAP + "__raw"
 COL_REPLACEMENT_MAP_SOURCE = "_replacement_map_source"
 
 # LlmReplaceWorkflow internal prompt-construction columns. Created by
@@ -113,6 +114,7 @@ COL_MEANING_UNITS_SERIALIZED = "_meaning_units_serialized"
 COL_QUALITY_QA = "_quality_qa"
 COL_PRIVACY_QA = "_privacy_qa"
 COL_REWRITTEN_TEXT = "_rewritten_text"  # pre-repair intermediate; renamed to {text_col}_rewritten in user output
+COL_REWRITTEN_TEXT_INITIAL = COL_REWRITTEN_TEXT + "__initial"
 COL_QUALITY_QA_REANSWER = "_quality_qa_reanswer"
 COL_QUALITY_QA_COMPARE = "_quality_qa_compare"
 COL_PRIVACY_QA_REANSWER = "_privacy_qa_reanswer"
