@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -62,6 +63,27 @@ def test_real_local_redact_seam_strips_private_correlation_from_public_result() 
     assert PRIVATE_CORRELATION_COLUMN not in result.trace_dataframe
 
 
+def test_real_engine_seam_sanitizes_pipeline_exception() -> None:
+    secret = "synthetic-secret@example.test"
+    frame = pd.DataFrame({COL_TEXT: [secret]})
+    anonymizer = build_synthetic_anonymizer({secret: "email"})
+    cast(Any, anonymizer._detection_workflow).run = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError(secret)
+    )
+    context = ResolvedInput(frame, requested_text_column="text", resolved_text_column="text")
+
+    with pytest.raises(PrivateRowVerificationError) as exc_info:
+        anonymizer._run_internal(
+            config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+            data=AnonymizerInput(source=str(Path(__file__)), text_column="text"),
+            context=context,
+            preview_num_records=None,
+        )
+
+    assert "invocation_failed" in str(exc_info.value)
+    assert secret not in str(exc_info.value)
+
+
 def _detected_frame() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -75,10 +97,12 @@ def test_verifier_rejects_reordered_drop_duplicate_and_unknown_rows() -> None:
     base = _detected_frame()
     for transform, expected_code in (
         (lambda frame: frame.iloc[::-1].reset_index(drop=True), None),
-        (lambda frame: frame.iloc[:1].copy(), "terminal_row_mismatch"),
+        (lambda frame: frame.iloc[:1].copy(), None),
         (lambda frame: pd.concat([frame, frame.iloc[[0]]], ignore_index=True), "correlation_duplicate"),
         (
-            lambda frame: frame.assign(**{PRIVATE_CORRELATION_COLUMN: ["unknown", frame.iloc[1][PRIVATE_CORRELATION_COLUMN]]}),
+            lambda frame: frame.assign(
+                **{PRIVATE_CORRELATION_COLUMN: ["unknown", frame.iloc[1][PRIVATE_CORRELATION_COLUMN]]}
+            ),
             "correlation_unknown",
         ),
     ):
@@ -89,9 +113,47 @@ def test_verifier_rejects_reordered_drop_duplicate_and_unknown_rows() -> None:
         if expected_code is None:
             verified = verifier.finish(candidate)
             assert PRIVATE_CORRELATION_COLUMN not in verified
+            if len(candidate) == 1:
+                assert len(verified) == 1
+                outcomes = [outcome.value for outcome in verifier._outcomes.values()]
+                assert outcomes.count("failed") == 1
+                assert outcomes.count("success") == 1
         else:
             with pytest.raises(PrivateRowVerificationError, match=expected_code):
                 verifier.finish(candidate)
+
+
+def test_verifier_rejects_a_missing_correlation_instead_of_recovering_from_text() -> None:
+    base = _detected_frame()
+    verifier = _InvocationRowVerifier(base)
+    bound = verifier.bind(base)
+    verifier.freeze_accepted_detections(bound)
+
+    with pytest.raises(PrivateRowVerificationError, match="correlation_missing"):
+        verifier.finish(bound.drop(columns=[PRIVATE_CORRELATION_COLUMN]))
+
+
+def test_row_failure_precedes_invocation_cancellation() -> None:
+    base = _detected_frame()
+    verifier = _InvocationRowVerifier(base)
+    bound = verifier.bind(base)
+    verifier.freeze_accepted_detections(bound.iloc[:1].copy())
+    verifier.abort(cancelled=True)
+
+    outcomes = [outcome.value for outcome in verifier._outcomes.values()]
+    assert outcomes.count("failed") == 1
+    assert outcomes.count("cancelled") == 1
+
+
+def test_abort_sanitizes_underlying_failure_text() -> None:
+    verifier = _InvocationRowVerifier(_detected_frame())
+    secret = "provider replied with synthetic-secret and engine-id-8675309"
+
+    with pytest.raises(PrivateRowVerificationError) as exc_info:
+        verifier.abort_with_failure(stage="replace", cause=RuntimeError(secret))
+
+    assert "invocation_failed" in str(exc_info.value)
+    assert secret not in str(exc_info.value)
 
 
 def test_verifier_rejects_accepted_detection_tampering_and_closes_without_raw_values() -> None:

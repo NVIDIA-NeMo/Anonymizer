@@ -452,6 +452,14 @@ def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput)
     """When num_records < available rows, preview_num_records is forwarded as-is."""
     anonymizer = _make_logging_anonymizer()
     config = AnonymizerConfig(replace=Redact())
+    detection = _mock_method(anonymizer._detection_workflow.run)
+    replacement = _mock_method(anonymizer._replace_runner.run)
+    detection.side_effect = lambda dataframe, **_kwargs: EntityDetectionResult(
+        dataframe=detection.return_value.dataframe.iloc[: len(dataframe)].copy(), failed_records=[]
+    )
+    replacement.side_effect = lambda dataframe, **_kwargs: ReplacementResult(
+        dataframe=replacement.return_value.dataframe.iloc[: len(dataframe)].copy(), failed_records=[]
+    )
 
     # stub_input has 2 rows; num_records=1 fits, so no clamping
     anonymizer.preview(config=config, data=stub_input, num_records=1)

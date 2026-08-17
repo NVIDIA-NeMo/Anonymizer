@@ -456,9 +456,7 @@ def test_run_with_colliding_output_column_renames_input_and_warns(
             "bio_replaced__input": ["pre-existing"],
         }
     )
-    anonymizer, _, _, _ = _make_anonymizer(
-        replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
-    )
+    anonymizer, _, _, _ = _make_anonymizer(replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]))
 
     with caplog.at_level("WARNING", logger="anonymizer"):
         result = anonymizer.run(
@@ -496,6 +494,10 @@ def test_run_with_text_column_matching_static_output_preserves_both_columns(
         }
     )
     anonymizer, _, _, _ = _make_anonymizer(
+        detection_return=EntityDetectionResult(
+            dataframe=pd.DataFrame({COL_TEXT: ["Alice bio text"], COL_FINAL_ENTITIES: [entities_payload]}),
+            failed_records=[],
+        ),
         replace_return=ReplacementResult(dataframe=replace_df, failed_records=[]),
     )
 

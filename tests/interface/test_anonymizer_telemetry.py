@@ -17,6 +17,7 @@ from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substit
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REWRITTEN_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.private_row_verification import PrivateRowVerificationError
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
@@ -165,8 +166,10 @@ class TestRunEmitsTelemetry:
         anonymizer, detection_wf, _, _ = _make_anonymizer()
         detection_wf.run.side_effect = RuntimeError("kaboom")
 
-        with pytest.raises(RuntimeError, match="kaboom"):
+        with pytest.raises(PrivateRowVerificationError, match="invocation_failed") as exc_info:
             anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+        assert "kaboom" not in str(exc_info.value)
 
         assert len(captured_events) == 1
         assert captured_events[0].task_status == TaskStatusEnum.ERROR

@@ -660,9 +660,8 @@ class Anonymizer:
             except KeyboardInterrupt:
                 verifier.abort(cancelled=True)
                 raise
-            except Exception:
-                verifier.abort(cancelled=False)
-                raise
+            except Exception as exc:
+                verifier.abort_with_failure(stage="pipeline", cause=exc)
             measurement.update(
                 output_row_count=len(result.trace_dataframe),
                 failed_record_count=len(result.failed_records),
@@ -734,7 +733,8 @@ class Anonymizer:
             preview_num_records=preview_num_records,
         )
         detection_elapsed = time.perf_counter() - t0
-        verifier.freeze_accepted_detections(detection_result.dataframe)
+        detection_dataframe = verifier.bind_complete_stage_output(detection_result.dataframe)
+        verifier.freeze_accepted_detections(detection_dataframe)
         entity_count = _count_entities(detection_result.dataframe)
         detection_failed = len(detection_result.failed_records)
         logger.info(
@@ -754,7 +754,7 @@ class Anonymizer:
             logger.info("🔄 Running %s replacement", strategy_name)
             t0 = time.perf_counter()
             replace_result = self._replace_runner.run(
-                detection_result.dataframe,
+                detection_dataframe,
                 replace_method=config.replace,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
@@ -778,7 +778,7 @@ class Anonymizer:
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
             )
             rewrite_result = rewrite_runner.run(
-                detection_result.dataframe,
+                detection_dataframe,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.rewrite,
                 replace_model_selection=self._selected_models.replace,
@@ -797,7 +797,7 @@ class Anonymizer:
                 rewrite_elapsed,
             )
         else:
-            final_df = detection_result.dataframe
+            final_df = detection_dataframe
             post_detection_failures = []
 
         all_failures = [*detection_result.failed_records, *post_detection_failures]
@@ -805,7 +805,7 @@ class Anonymizer:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
-        final_df = verifier.finish(final_df)
+        final_df = verifier.finish(verifier.bind_complete_stage_output(final_df))
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))

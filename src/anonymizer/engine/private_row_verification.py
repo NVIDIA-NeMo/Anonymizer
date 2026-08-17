@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -64,12 +64,6 @@ class _InvocationRowVerifier:
             )
         self._active = True
         self._accepted = tuple(uuid.uuid4().hex for _ in range(len(dataframe)))
-        self._correlation_by_text_digest = {
-            _stable_digest(value): correlation
-            for correlation, value in zip(self._accepted, dataframe[COL_TEXT], strict=True)
-        }
-        if len(self._correlation_by_text_digest) != len(self._accepted):
-            self._correlation_by_text_digest = {}
         self._frozen: dict[str, str] = {}
         self._outcomes: dict[str, _TerminalOutcome] = {}
 
@@ -77,6 +71,23 @@ class _InvocationRowVerifier:
         self._require_active()
         bound = dataframe.copy()
         bound[PRIVATE_CORRELATION_COLUMN] = list(self._accepted)
+        return bound
+
+    def bind_complete_stage_output(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        """Attach correlations only to a complete, order-preserving legacy result.
+
+        This keeps older in-process workflow implementations compatible while
+        refusing to infer provenance for a dropped, duplicated, or partial
+        result. Real engine stages carry the column themselves.
+        """
+        self._require_active()
+        if PRIVATE_CORRELATION_COLUMN in dataframe.columns:
+            return dataframe
+        expected = tuple(correlation for correlation in self._accepted if correlation not in self._outcomes)
+        if len(dataframe) != len(expected):
+            raise self._error("correlation_missing", "stage_boundary", "invocation")
+        bound = dataframe.copy()
+        bound[PRIVATE_CORRELATION_COLUMN] = expected
         return bound
 
     def freeze_accepted_detections(self, dataframe: pd.DataFrame) -> None:
@@ -88,19 +99,22 @@ class _InvocationRowVerifier:
             correlation: _stable_digest(value)
             for correlation, value in zip(correlations, dataframe[COL_FINAL_ENTITIES], strict=True)
         }
+        self._mark_absent_as_failed(correlations)
 
     def finish(self, dataframe: pd.DataFrame, *, cancelled: bool = False) -> pd.DataFrame:
         """Verify terminal cardinality and accepted detections, then remove state."""
         self._require_active()
         try:
             correlations = self._validate_correlations(dataframe, stage="result")
-            if PRIVATE_CORRELATION_COLUMN in dataframe.columns and set(correlations) != set(self._frozen):
+            self._mark_absent_as_failed(correlations)
+            expected_successes = set(self._accepted) - set(self._outcomes)
+            if set(correlations) != expected_successes:
                 raise self._error("terminal_row_mismatch", "result", "row")
-            if PRIVATE_CORRELATION_COLUMN in dataframe.columns and COL_FINAL_ENTITIES in dataframe.columns:
+            if COL_FINAL_ENTITIES in dataframe.columns:
                 for correlation, value in zip(correlations, dataframe[COL_FINAL_ENTITIES], strict=True):
                     if self._frozen[correlation] != _stable_digest(value):
                         raise self._error("accepted_detection_tampered", "result", "row", correlation)
-            self._outcomes = {correlation: _TerminalOutcome.SUCCESS for correlation in self._accepted}
+            self._outcomes.update({correlation: _TerminalOutcome.SUCCESS for correlation in correlations})
             return dataframe.drop(columns=[PRIVATE_CORRELATION_COLUMN], errors="ignore")
         finally:
             self._active = False
@@ -110,44 +124,40 @@ class _InvocationRowVerifier:
         """Close an interrupted invocation with one terminal outcome per accepted row."""
         if not self._active:
             return
-        self._outcomes = {
-            correlation: _TerminalOutcome.CANCELLED if cancelled else _TerminalOutcome.FAILED
-            for correlation in self._accepted
-        }
+        terminal = _TerminalOutcome.CANCELLED if cancelled else _TerminalOutcome.FAILED
+        for correlation in self._accepted:
+            self._outcomes.setdefault(correlation, terminal)
         self._active = False
         self._frozen.clear()
 
+    def abort_with_failure(self, *, stage: str, cause: BaseException) -> None:
+        """Close an invocation and raise a failure that cannot expose ``cause``."""
+        del cause
+        self.abort(cancelled=False)
+        raise self._error("invocation_failed", stage, "invocation") from None
+
     def _validate_correlations(self, dataframe: pd.DataFrame, *, stage: str) -> list[str]:
         if PRIVATE_CORRELATION_COLUMN not in dataframe.columns:
-            correlations = self._recover_missing_correlations(dataframe, stage=stage)
-        else:
-            correlations = dataframe[PRIVATE_CORRELATION_COLUMN].tolist()
+            raise self._error("correlation_missing", stage, "invocation")
+        correlations = dataframe[PRIVATE_CORRELATION_COLUMN].tolist()
         if not all(isinstance(value, str) and value for value in correlations):
             raise self._error("correlation_invalid", stage, "row")
         if len(set(correlations)) != len(correlations):
             raise self._error("correlation_duplicate", stage, "row")
-        if PRIVATE_CORRELATION_COLUMN in dataframe.columns:
-            unknown = set(correlations) - set(self._accepted)
-            if unknown:
-                raise self._error("correlation_unknown", stage, "row")
+        unknown = set(correlations) - set(self._accepted)
+        if unknown:
+            raise self._error("correlation_unknown", stage, "row")
         return correlations
 
-    def _recover_missing_correlations(self, dataframe: pd.DataFrame, *, stage: str) -> list[str]:
-        """Bridge legacy test doubles that reconstruct frames without private columns.
+    def _mark_absent_as_failed(self, correlations: list[str]) -> None:
+        """Record dropped accepted rows before any invocation-wide terminal state.
 
-        Real engine stages preserve the correlation column.  This fallback is
-        deliberately limited to a unique hash of the unchanged internal input
-        text; it cannot resolve repeated, altered, or unknown rows.
+        Row failure has precedence over later cancellation or invocation failure.
+        A surviving row is never inferred from its contents; only its private
+        correlation proves provenance.
         """
-        if not self._correlation_by_text_digest or COL_TEXT not in dataframe.columns:
-            return [f"legacy-{index}" for index in range(len(dataframe))]
-        correlations: list[str] = []
-        for value in dataframe[COL_TEXT]:
-            correlation = self._correlation_by_text_digest.get(_stable_digest(value))
-            if correlation is None:
-                return [f"legacy-{index}" for index in range(len(dataframe))]
-            correlations.append(correlation)
-        return correlations
+        for correlation in set(self._accepted) - set(correlations):
+            self._outcomes.setdefault(correlation, _TerminalOutcome.FAILED)
 
     def _error(self, code: str, stage: str, scope: str, correlation: str | None = None) -> PrivateRowVerificationError:
         return PrivateRowVerificationError(_SafeFailure(code, stage, scope, correlation=correlation))
