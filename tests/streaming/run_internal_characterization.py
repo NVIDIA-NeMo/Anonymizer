@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import tracemalloc
 from pathlib import Path
+from types import FrameType
 
 import pandas as pd
 
@@ -64,30 +66,56 @@ def _run_arm(name: str, rows: list[str], *, suitable: bool = True) -> dict[str, 
     verifier = _InvocationRowVerifier(frame)
     bound = verifier.bind(frame)
     verifier.freeze_accepted_detections(bound)
+    # Count actual live references to the synthetic source objects through the
+    # private working frames.  This is an aggregate copy-pressure proxy, not a
+    # claim about allocator-level copies.
+    source_ids = {id(text) for text in rows}
+    provider_calls = 0
+
+    def profile_provider_calls(frame: FrameType, event: str, _arg: object) -> None:
+        nonlocal provider_calls
+        module_name = getattr(frame, "f_globals", {}).get("__name__", "")
+        if event == "call" and module_name.startswith(("data_designer", "openai")):
+            provider_calls += 1
+
+    previous_profiler = sys.getprofile()
     tracemalloc.start()
     started = time.perf_counter()
-    protected = apply_local_replace_strategy(bound, strategy=Redact())
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    sys.setprofile(profile_provider_calls)
+    try:
+        protected = apply_local_replace_strategy(bound, strategy=Redact())
+    finally:
+        sys.setprofile(previous_profiler)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
     verified = verifier.finish(protected)
     outputs = verified[COL_REPLACED_TEXT].astype(str).tolist()
     targets = sum(text.count("synthetic-secret") for text in rows)
+    input_bytes = sum(len(text.encode()) for text in rows)
+    output_bytes = sum(len(text.encode()) for text in outputs)
+    raw_copy_count = sum(
+        id(value) in source_ids
+        for dataframe in (frame, bound, protected, verified)
+        for value in dataframe[COL_TEXT].tolist()
+    )
+    structural_validity = len(verified) == len(rows) and len(outputs) == len(rows)
+    privacy_check = all("synthetic-secret" not in text for text in outputs)
     return {
         "arm": name,
         "status": "completed",
-        "input_bytes": sum(len(text.encode()) for text in rows),
-        "output_bytes": sum(len(text.encode()) for text in outputs),
+        "input_bytes": input_bytes,
+        "output_bytes": output_bytes,
         "rows": len(rows),
         "targets": targets,
-        "provider_calls": 0,
+        "provider_calls": provider_calls,
         "elapsed_ms": elapsed_ms,
         "peak_memory_bytes": peak,
-        "raw_copy_count": 0,
-        "artifact_delta_bytes": 0,
-        "structural_validity": len(verified) == len(rows),
-        "privacy_check": all("synthetic-secret" not in text for text in outputs),
-        "reconstruction_failures": 0,
+        "raw_copy_count": raw_copy_count,
+        "artifact_delta_bytes": output_bytes - input_bytes,
+        "structural_validity": structural_validity,
+        "privacy_check": privacy_check,
+        "reconstruction_failures": int(not structural_validity),
     }
 
 

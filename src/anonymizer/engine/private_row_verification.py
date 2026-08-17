@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -64,6 +64,7 @@ class _InvocationRowVerifier:
             )
         self._active = True
         self._accepted = tuple(uuid.uuid4().hex for _ in range(len(dataframe)))
+        self._legacy_input_order = tuple(_stable_digest(value) for value in dataframe[COL_TEXT])
         self._frozen: dict[str, str] = {}
         self._outcomes: dict[str, _TerminalOutcome] = {}
 
@@ -74,20 +75,26 @@ class _InvocationRowVerifier:
         return bound
 
     def bind_complete_stage_output(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        """Attach correlations only to a complete, order-preserving legacy result.
+        """Require a stage to preserve correlation or prove exact legacy order.
 
-        This keeps older in-process workflow implementations compatible while
-        refusing to infer provenance for a dropped, duplicated, or partial
-        result. Real engine stages carry the column themselves.
+        Legacy in-process doubles may reconstruct a complete frame without
+        unknown passthrough columns.  They are accepted only when the complete
+        input text fingerprint sequence is identical to the accepted sequence;
+        this is not positional recovery and rejects reordered, dropped,
+        duplicated, or altered rows.  Real stages carry the private column.
         """
         self._require_active()
         if PRIVATE_CORRELATION_COLUMN in dataframe.columns:
+            self._validate_correlations(dataframe, stage="stage_boundary")
             return dataframe
-        expected = tuple(correlation for correlation in self._accepted if correlation not in self._outcomes)
-        if len(dataframe) != len(expected):
+        if (
+            COL_TEXT not in dataframe.columns
+            or len(dataframe) != len(self._accepted)
+            or tuple(_stable_digest(value) for value in dataframe[COL_TEXT]) != self._legacy_input_order
+        ):
             raise self._error("correlation_missing", "stage_boundary", "invocation")
         bound = dataframe.copy()
-        bound[PRIVATE_CORRELATION_COLUMN] = expected
+        bound[PRIVATE_CORRELATION_COLUMN] = self._accepted
         return bound
 
     def freeze_accepted_detections(self, dataframe: pd.DataFrame) -> None:
@@ -116,6 +123,13 @@ class _InvocationRowVerifier:
                         raise self._error("accepted_detection_tampered", "result", "row", correlation)
             self._outcomes.update({correlation: _TerminalOutcome.SUCCESS for correlation in correlations})
             return dataframe.drop(columns=[PRIVATE_CORRELATION_COLUMN], errors="ignore")
+        except BaseException:
+            # A verifier rejection is an invocation failure for every row that
+            # did not already receive a terminal state.  Do this before the
+            # verifier is invalidated so the outer sanitizer cannot lose row
+            # accounting while translating the error.
+            self._complete_remaining(_TerminalOutcome.FAILED)
+            raise
         finally:
             self._active = False
             self._frozen.clear()
@@ -124,9 +138,7 @@ class _InvocationRowVerifier:
         """Close an interrupted invocation with one terminal outcome per accepted row."""
         if not self._active:
             return
-        terminal = _TerminalOutcome.CANCELLED if cancelled else _TerminalOutcome.FAILED
-        for correlation in self._accepted:
-            self._outcomes.setdefault(correlation, terminal)
+        self._complete_remaining(_TerminalOutcome.CANCELLED if cancelled else _TerminalOutcome.FAILED)
         self._active = False
         self._frozen.clear()
 
@@ -158,6 +170,10 @@ class _InvocationRowVerifier:
         """
         for correlation in set(self._accepted) - set(correlations):
             self._outcomes.setdefault(correlation, _TerminalOutcome.FAILED)
+
+    def _complete_remaining(self, terminal: _TerminalOutcome) -> None:
+        for correlation in self._accepted:
+            self._outcomes.setdefault(correlation, terminal)
 
     def _error(self, code: str, stage: str, scope: str, correlation: str | None = None) -> PrivateRowVerificationError:
         return PrivateRowVerificationError(_SafeFailure(code, stage, scope, correlation=correlation))
