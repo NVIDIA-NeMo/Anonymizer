@@ -37,7 +37,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
-from anonymizer.engine.rewrite.combined_workflow import (
+from anonymizer.engine.rewrite.combined_rewrite_workflow import (
     CombinedRewriteGraph,
     CombinedRewriteWorkflow,
     EvaluationState,

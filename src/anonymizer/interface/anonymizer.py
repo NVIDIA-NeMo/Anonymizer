@@ -68,7 +68,7 @@ from anonymizer.engine.ndd.model_loader import (
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
-from anonymizer.engine.rewrite.combined_workflow import CombinedRewriteWorkflow
+from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
