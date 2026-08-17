@@ -11,15 +11,21 @@ authors:
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-Let's return to the customer biographies from Part 1. Replace mode changed the explicit identifiers. Now suppose the data must meet a stricter privacy requirement: even after names and addresses are replaced, a rare occupation, an exact sequence of life events, or a distinctive combination of hometown and employer may still identify someone.
+Replace mode can hide a name and change an address, yet leave the person recognizable. Imagine a biography describing the only pediatric cardiologist in a small desert city who trained overseas, survived a rare cancer, and later founded a clinic after a major wildfire. None of those details is a direct identifier. Together, they form a fingerprint that may point to one person.
 
-With that stricter goal in mind, we recommend to use NeMo Anonymizer's Rewrite mode. It can account for latent entities and combinations of identifying clues by transforming the full record—not just explicit identifiers—while preserving the meaning that still matters. The challenge is to reduce identifying detail without losing useful information.
+Rewrite mode tackles that harder problem by transforming the entire record. But rewriting introduces a new risk: protect too little and identity clues remain; protect too much and the data loses its value.
 
-During `run()` or `preview()`, Rewrite checks each generated record for privacy leakage and meaning preservation. Leakage results determine whether a record enters the repair loop, while both leakage and utility contribute to the final human-review flag. After anonymization, an optional `evaluate()` call reviews entity coverage and the rewrite's privacy, quality, and style. Detection validity is separately opt-in.
+NeMo Anonymizer evaluates that tradeoff twice. During anonymization, it measures how much identifying information remains (leakage) and how much useful meaning is preserved (utility), then repairs failing rewrites. Afterward, optional LLM judges assess literal entity coverage and the rewrite's overall privacy, quality, and style.
 
-This is Part 2 of a two-part series on evaluation in Anonymizer. Part 1 covers Replace mode; this article explains the two evaluation layers used by **Rewrite mode**, what each score means, and how to inspect the results.
+This is Part 2 of a two-part series on evaluation in Anonymizer. [Part 1](evaluation-anonymizer-replace.md) covers Replace mode, while this article covers Rewrite mode.
 
 <!-- more -->
+
+<div style="text-align: center;" markdown>
+
+![An illustration of a personal record being rewritten to reduce identifying details while preserving useful information, then reviewed by a privacy-focused detective.](assets/evaluation-rewrite-hero.png){ loading=lazy }
+
+</div>
 
 ---
 
@@ -33,15 +39,13 @@ flowchart TD
     B --> C[Evaluate–repair loop\nUtility · leakage · repair]
     C --> D[Rewrite result]
     D --> E[Optional Anonymizer.evaluate]
-    E --> F[Post-hoc judge report\nCoverage · privacy · quality · style]
+    E --> F[Post-hoc evaluation\nCoverage · privacy · quality · style]
 ```
 
-Rewrite first scores each record for privacy leakage and utility. If leakage is too high, it rewrites the record and checks it again. When the evaluate–repair loop ends, it flags records that still need human review. Post-hoc judge evaluation is an optional, separate step that you run by calling `evaluate()` after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See [Part 1](evaluation-anonymizer-replace.md#anonymization-and-evaluation-as-separate-steps) for more about this workflow.
+Rewrite first scores each record for privacy leakage and utility. If leakage is too high, it rewrites the record and checks it again. When the evaluate–repair loop ends, it flags records that still need human review. Post-hoc evaluation is an optional, separate step that you run by calling `evaluate()` after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See [Part 1](evaluation-anonymizer-replace.md#anonymization-and-evaluation-as-separate-steps) for more about this workflow.
 
 ```python
-import pickle
-
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
 
 anonymizer = Anonymizer()
 
@@ -59,34 +63,46 @@ rewrite_metric_columns = [
 ]
 rewrite_scores = result.dataframe[rewrite_metric_columns]
 
-# To run the optional post-hoc evaluation immediately, use:
-# evaluated = anonymizer.evaluate(result)
+evaluated = anonymizer.evaluate(
+    result,
+    config=EvaluateConfig(compute_detection_validity=True),
+)
+posthoc_scores = evaluated.dataframe[
+    ["entity_coverage", "detection_valid", "judge_evaluation"]
+]
+```
 
-# To evaluate in a later session, save the complete result.
+To evaluate in a later session instead, save the complete result:
+
+```python
+import pickle
+
 with open("rewrite-result.pkl", "wb") as f:
     pickle.dump(result, f)
 
-# In the later session, reload the complete result before evaluating it.
+# In the later session:
 with open("rewrite-result.pkl", "rb") as f:
     saved_result = pickle.load(f)
 
-evaluated = anonymizer.evaluate(saved_result)
-posthoc_scores = evaluated.dataframe[["entity_coverage", "judge_evaluation"]]
+evaluated = anonymizer.evaluate(
+    saved_result,
+    config=EvaluateConfig(compute_detection_validity=True),
+)
 ```
 
-As in Replace mode, the completed result is reusable. You can run `evaluate()` immediately or save the complete `AnonymizerResult` or `PreviewResult` with Python's `pickle` module and evaluate it later. Save the result object—not just its `dataframe`—so the Rewrite configuration and evaluation context remain available.
+As in Replace mode, the completed result is reusable. Save the complete `AnonymizerResult` or `PreviewResult`—not just its `dataframe`—so the Rewrite configuration and evaluation context remain available.
 
 ---
 
 ## Evaluate–Repair Loop: Did the Rewrite Balance Privacy and Utility?
 
-During `run()` or `preview()`, Anonymizer creates quality questions from the original record and privacy questions from the detected entities and their sensitivity dispositions. It answers those questions against the rewritten text, computes per-record metrics, and repairs rows that exceed the configured privacy threshold.
+During `run()` or `preview()`, Anonymizer creates quality questions from the original record and privacy questions from the detected entities and the sensitivity and protection assigned to each one, called entity dispositions. It answers those questions against the rewritten text, computes per-record metrics, and repairs rows that exceed the configured privacy threshold or contain a high-sensitivity leak when required by the selected risk tolerance.
 
 ### Utility Score: Was Important Meaning Preserved?
 
 `utility_score` measures how well the rewritten text answers questions about the original record. Scores range from `0.0` to `1.0`; higher is better.
 
-Before rewriting, Anonymizer extracts pieces of information to preserve, called meaning units, and labels each one as `critical` or `important`. When computing `utility_score`, a critical meaning unit receives twice the weight of an important one:
+Before rewriting, Anonymizer extracts individual facts and relationships that the rewrite should preserve, called meaning units, and labels each one as `critical` or `important`. When computing `utility_score`, a critical meaning unit receives twice the weight of an important one:
 
 ```text
 utility_score = weighted mean of per-question answer scores
@@ -96,7 +112,7 @@ A high score means the rewrite retained the important facts and relationships. I
 
 ### Leakage Mass: What Identifying Information Remains?
 
-The privacy check tests whether each protected value can still be identified or inferred from the rewrite. Every leaked item contributes its sensitivity weight multiplied by the judge's confidence:
+The privacy check tests whether each protected value—a sensitive value the rewrite should conceal—can still be identified or inferred. Every leaked item contributes a numeric sensitivity weight multiplied by the judge's confidence:
 
 ```text
 leakage_mass = Σ(sensitivity_weight × leak_confidence)
@@ -125,16 +141,20 @@ It ranges from `0.0` to `1.0`. `any_high_leaked` separately records whether at l
 
 ### Repair Loop: Can a Failing Rewrite Be Improved?
 
-After the initial checks, rows above the repair threshold—or rows with a high-sensitivity leak when the selected risk tolerance requires it—enter the repair loop. Only failing rows are repaired and checked again. The loop stops when they pass or reach `max_repair_iterations`.
+After the initial checks, rows above the repair threshold—or rows with a high-sensitivity leak when the selected risk tolerance requires it—enter the repair loop. Only failing rows are repaired and checked again. The loop stops when they pass or reach `max_repair_iterations`; at that limit, Anonymizer keeps the latest rewrite and calculates its final human-review flag.
 
 ```mermaid
 flowchart LR
     A[Evaluate rewrite] --> B{Needs repair?}
-    B -->|No| C[Keep result]
-    B -->|Yes| D[Repair failing row]
+    B -->|No| F[Finalize result<br/>Set human-review flag]
+    B -->|Yes| C{Maximum iterations reached?}
+    C -->|Yes| F
+    C -->|No| D[Repair failing row]
     D --> E[Re-evaluate]
     E --> B
 ```
+
+For example, a rewrite might preserve that the person is a pediatric cardiologist who trained overseas and founded a clinic after a wildfire. That can score well on utility, but the distinctive combination may still produce high leakage. If it meets the repair criteria, Anonymizer rewrites and re-evaluates that row until it passes or reaches the iteration limit, then calculates the final human-review flag.
 
 `risk_tolerance` controls the repair and review thresholds. The default is `low`; use `minimal` for a stricter posture or `moderate` / `high` for more tolerance. Setting `max_repair_iterations=0` disables repair but still computes the rewrite metrics.
 
@@ -156,15 +176,15 @@ Records with no detected entities skip rewriting and pass through unchanged with
 
 ## Post-Hoc Evaluation: What Does an Independent Judge See?
 
-The post-hoc report includes entity coverage and a holistic rewrite judgment, with detection validity available as an opt-in audit.
+The report includes entity coverage and a holistic rewrite judgment, with detection validity available as an opt-in audit.
 
 ### Entity Coverage: Were All In-Scope Entities Detected?
 
-Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies in-scope candidates in the original text and measures how many Anonymizer detected. See [Part 1: Entity Coverage](evaluation-anonymizer-replace.md#entity-coverage-were-all-in-scope-entities-detected) for the calculation, output columns, and interpretation guidance.
+Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies literal sensitive values covered by the configured entity types and measures how many Anonymizer detected. It does not include latent entities—sensitive information implied rather than explicitly stated—or other clues that can only be inferred. See [Part 1: Entity Coverage](evaluation-anonymizer-replace.md#entity-coverage-were-all-in-scope-entities-detected) for the calculation, output columns, and interpretation guidance.
 
 ### Privacy: Did the Rewrite Reduce Linkage Risk?
 
-The privacy rubric compares the rewritten record with the original and estimates whether a realistic attacker could link them. It considers surviving direct identifiers and distinctive combinations of quasi-identifiers.
+The privacy rubric compares the rewritten record with the original and estimates whether a realistic attacker could link them. It considers surviving direct identifiers and details that may not identify someone alone but can do so when combined, called quasi-identifiers.
 
 - `high` — direct identifiers are removed and remaining details create low linkage risk.
 - `medium` — no obvious direct identifier remains, but a distinctive bundle creates noticeable risk.
@@ -220,11 +240,11 @@ To inspect the first record (row `0`):
 evaluated.display_record(0)
 ```
 
-The Rewrite report shows the original and rewritten text, rewrite utility and leakage metrics, the human-review flag, post-hoc privacy / quality / style scores, entity coverage, and the entity disposition used to guide protection. When detection validity is enabled, that score and any flagged detections also appear.
+The Rewrite report shows the original and rewritten text, rewrite utility and leakage metrics, the human-review flag, judge privacy / quality / style scores, entity coverage, and the entity dispositions used to guide protection. When detection validity is enabled, that score and any flagged detections also appear.
 
 <div style="text-align: center;" markdown>
 
-![Screenshot of display_record output for a Rewrite result showing original and rewritten text, rewrite metrics, post-hoc judge scores, entity coverage, and entity disposition.](assets/evaluate-rewrite-display-record.png){ loading=lazy }
+![Screenshot of display_record output for a Rewrite result showing original and rewritten text, rewrite metrics, post-hoc judge scores, entity coverage, and entity dispositions.](assets/evaluate-rewrite-display-record.png){ loading=lazy }
 
 </div>
 
@@ -237,7 +257,7 @@ evaluated.dataframe[[
     "weighted_leakage_rate",
     "needs_human_review",
     "entity_coverage",
-    "detection_valid",    # Disabled by default, added only when compute_detection_validity=True
+    "detection_valid",
     "judge_evaluation",
 ]]
 ```
@@ -258,7 +278,7 @@ The metrics and judges answer bounded questions. They do not certify that a rewr
 - **Leakage metrics** test known protected values and inferences; they do not model every possible attacker or external dataset.
 - **Entity coverage** depends on one judge's candidate extraction and is not ground truth.
 - **Detection validity** measures precision of detected entities, not whether all sensitive information was found.
-- **Privacy, quality, and style** are coarse holistic judgments, not guarantees.
+- **Privacy, quality, and style** provide broad LLM-based assessments rather than definitive guarantees.
 
 Use these signals together. Review representative records, inspect failures and entity dispositions, evaluate against annotated data when available, and apply human review where the risk requires it.
 
@@ -266,10 +286,10 @@ Use these signals together. Review representative records, inspect failures and 
 
 ## The Bottom Line
 
-Rewrite evaluation is not a single final score. The evaluate–repair loop measures utility and leakage, repairs failing rows, and flags unresolved risk. The optional post-hoc judge evaluation adds independent evidence about detection coverage and the rewrite's overall privacy, quality, and style.
+Rewrite evaluation is not a single final score. The evaluate–repair loop measures utility and leakage, repairs failing rows, and flags unresolved risk. The optional post-hoc evaluation adds independent evidence about detection coverage and the rewrite's overall privacy, quality, and style.
 
-The two layers serve different purposes: rewrite metrics guide repair during anonymization, while post-hoc judges provide a broader assessment of the completed results.
+The two layers serve different purposes: rewrite metrics guide repair during anonymization, while post-hoc evaluation provides a broader assessment of the completed results.
 
-Skipping post-hoc evaluation can leave detection gaps and holistic privacy, quality, or style problems unnoticed until affected records reach downstream systems.
+Skipping this optional evaluation can leave detection gaps and holistic privacy, quality, or style problems unnoticed until affected records reach downstream systems.
 
 For API details and the complete output schema, see [Evaluation](../../concepts/evaluation.md). For Rewrite configuration and risk tolerance, see [Rewrite](../../concepts/rewrite.md).
