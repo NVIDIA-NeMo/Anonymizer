@@ -17,7 +17,7 @@ from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substit
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REWRITTEN_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.private_row_verification import PrivateRowVerificationError
+from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN, PrivateRowVerificationError
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
@@ -41,19 +41,35 @@ def _make_anonymizer(
     replace_return: ReplacementResult | None = None,
     rewrite_return: RewriteResult | None = None,
 ) -> tuple[Anonymizer, Mock, Mock, Mock]:
+    def preserve_accepted_detections(dataframe: pd.DataFrame, result_dataframe: pd.DataFrame) -> pd.DataFrame:
+        output = result_dataframe.copy()
+        if PRIVATE_CORRELATION_COLUMN in dataframe and len(output) == len(dataframe):
+            output[PRIVATE_CORRELATION_COLUMN] = dataframe[PRIVATE_CORRELATION_COLUMN].to_numpy()
+        if COL_FINAL_ENTITIES not in output and len(output) == len(dataframe):
+            output[COL_FINAL_ENTITIES] = dataframe[COL_FINAL_ENTITIES].to_numpy()
+        return output
+
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
-    detection_workflow.run.return_value = detection_return or EntityDetectionResult(
+    detection_result = detection_return or EntityDetectionResult(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=[],
+    )
+    detection_workflow.run.side_effect = lambda dataframe, **_kwargs: EntityDetectionResult(
+        dataframe=preserve_accepted_detections(dataframe, detection_result.dataframe),
+        failed_records=detection_result.failed_records,
     )
     _replace_df = pd.DataFrame(
         {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
     )
     _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
-    replace_runner.run.return_value = replace_return or ReplacementResult(
+    replace_result = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],
+    )
+    replace_runner.run.side_effect = lambda dataframe, **_kwargs: ReplacementResult(
+        dataframe=preserve_accepted_detections(dataframe, replace_result.dataframe),
+        failed_records=replace_result.failed_records,
     )
     _rewrite_df = pd.DataFrame(
         {
@@ -68,9 +84,13 @@ def _make_anonymizer(
     )
     _rewrite_df.attrs["original_text_column"] = "text"
     rewrite_runner = Mock(spec=RewriteWorkflow)
-    rewrite_runner.run.return_value = rewrite_return or RewriteResult(
+    rewrite_result = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
         failed_records=[],
+    )
+    rewrite_runner.run.side_effect = lambda dataframe, **_kwargs: RewriteResult(
+        dataframe=preserve_accepted_detections(dataframe, rewrite_result.dataframe),
+        failed_records=rewrite_result.failed_records,
     )
     anonymizer = Anonymizer(
         detection_workflow=detection_workflow,

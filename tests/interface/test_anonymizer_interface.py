@@ -30,6 +30,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
+from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
@@ -48,18 +49,34 @@ def _make_anonymizer(
     replace_return: ReplacementResult | None = None,
     rewrite_return: RewriteResult | None = None,
 ) -> tuple[Anonymizer, Mock, Mock, Mock]:
+    def preserve_accepted_detections(dataframe: pd.DataFrame, result_dataframe: pd.DataFrame) -> pd.DataFrame:
+        output = result_dataframe.copy()
+        if PRIVATE_CORRELATION_COLUMN in dataframe and len(output) == len(dataframe):
+            output[PRIVATE_CORRELATION_COLUMN] = dataframe[PRIVATE_CORRELATION_COLUMN].to_numpy()
+        if COL_FINAL_ENTITIES not in output and len(output) == len(dataframe):
+            output[COL_FINAL_ENTITIES] = dataframe[COL_FINAL_ENTITIES].to_numpy()
+        return output
+
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
-    detection_workflow.run.return_value = detection_return or EntityDetectionResult(
+    detection_result = detection_return or EntityDetectionResult(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=[],
+    )
+    detection_workflow.run.side_effect = lambda dataframe, **_kwargs: EntityDetectionResult(
+        dataframe=preserve_accepted_detections(dataframe, detection_result.dataframe),
+        failed_records=detection_result.failed_records,
     )
     _replace_df = pd.DataFrame(
         {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
-    replace_runner.run.return_value = replace_return or ReplacementResult(
+    replace_result = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],
+    )
+    replace_runner.run.side_effect = lambda dataframe, **_kwargs: ReplacementResult(
+        dataframe=preserve_accepted_detections(dataframe, replace_result.dataframe),
+        failed_records=replace_result.failed_records,
     )
     _rewrite_df = pd.DataFrame(
         {
@@ -73,9 +90,13 @@ def _make_anonymizer(
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
-    rewrite_runner.run.return_value = rewrite_return or RewriteResult(
+    rewrite_result = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
         failed_records=[],
+    )
+    rewrite_runner.run.side_effect = lambda dataframe, **_kwargs: RewriteResult(
+        dataframe=preserve_accepted_detections(dataframe, rewrite_result.dataframe),
+        failed_records=rewrite_result.failed_records,
     )
     anonymizer = Anonymizer(
         detection_workflow=detection_workflow,
@@ -289,7 +310,7 @@ def test_run_exposes_trace_dataframe_and_filters_internal_columns(
     assert COL_REPLACEMENT_MAP in result.trace_dataframe.columns
     assert COL_DETECTED_ENTITIES not in result.dataframe.columns
     assert COL_REPLACEMENT_MAP not in result.dataframe.columns
-    assert set(result.dataframe.columns) == {"text", "text_replaced", "text_with_spans"}
+    assert set(result.dataframe.columns) == {"text", "text_replaced", "text_with_spans", COL_FINAL_ENTITIES}
 
 
 def test_preview_exposes_trace_dataframe_for_display(
@@ -715,7 +736,7 @@ def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInp
     config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     combined_runner = Mock(spec=RewriteWorkflow)
-    combined_runner.run.return_value = rewrite_runner.run.return_value
+    combined_runner.run.side_effect = rewrite_runner.run.side_effect
     anonymizer._combined_rewrite_runner = combined_runner
 
     anonymizer.run(config=config, data=stub_input)

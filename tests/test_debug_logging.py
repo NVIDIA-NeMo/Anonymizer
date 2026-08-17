@@ -49,6 +49,7 @@ def _stub_anonymizer() -> Anonymizer:
         {
             COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
             COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)

@@ -65,6 +65,7 @@ class _InvocationRowVerifier:
         self._active = True
         self._accepted = tuple(uuid.uuid4().hex for _ in range(len(dataframe)))
         self._legacy_input_order = tuple(_stable_digest(value) for value in dataframe[COL_TEXT])
+        self._legacy_identity_is_unambiguous = len(set(self._legacy_input_order)) == len(self._legacy_input_order)
         self._frozen: dict[str, str] = {}
         self._outcomes: dict[str, _TerminalOutcome] = {}
 
@@ -78,10 +79,11 @@ class _InvocationRowVerifier:
         """Require a stage to preserve correlation or prove exact legacy order.
 
         Legacy in-process doubles may reconstruct a complete frame without
-        unknown passthrough columns.  They are accepted only when the complete
-        input text fingerprint sequence is identical to the accepted sequence;
-        this is not positional recovery and rejects reordered, dropped,
-        duplicated, or altered rows.  Real stages carry the private column.
+        unknown passthrough columns. They are accepted only if every accepted
+        text fingerprint is unique and the complete fingerprint sequence is
+        identical to the accepted sequence. Duplicate texts make a reordered
+        legacy frame indistinguishable from the original, so they require the
+        private correlation column. Real stages carry that column.
         """
         self._require_active()
         if PRIVATE_CORRELATION_COLUMN in dataframe.columns:
@@ -90,6 +92,7 @@ class _InvocationRowVerifier:
         if (
             COL_TEXT not in dataframe.columns
             or len(dataframe) != len(self._accepted)
+            or not self._legacy_identity_is_unambiguous
             or tuple(_stable_digest(value) for value in dataframe[COL_TEXT]) != self._legacy_input_order
         ):
             raise self._error("correlation_missing", "stage_boundary", "invocation")
@@ -117,10 +120,11 @@ class _InvocationRowVerifier:
             expected_successes = set(self._accepted) - set(self._outcomes)
             if set(correlations) != expected_successes:
                 raise self._error("terminal_row_mismatch", "result", "row")
-            if COL_FINAL_ENTITIES in dataframe.columns:
-                for correlation, value in zip(correlations, dataframe[COL_FINAL_ENTITIES], strict=True):
-                    if self._frozen[correlation] != _stable_digest(value):
-                        raise self._error("accepted_detection_tampered", "result", "row", correlation)
+            if COL_FINAL_ENTITIES not in dataframe.columns:
+                raise self._error("accepted_detection_missing", "result", "invocation")
+            for correlation, value in zip(correlations, dataframe[COL_FINAL_ENTITIES], strict=True):
+                if self._frozen.get(correlation) != _stable_digest(value):
+                    raise self._error("accepted_detection_tampered", "result", "row", correlation)
             self._outcomes.update({correlation: _TerminalOutcome.SUCCESS for correlation in correlations})
             return dataframe.drop(columns=[PRIVATE_CORRELATION_COLUMN], errors="ignore")
         except BaseException:

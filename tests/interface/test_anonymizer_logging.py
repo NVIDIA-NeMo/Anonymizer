@@ -78,6 +78,7 @@ def _make_logging_anonymizer(
         {
             COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
             COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
@@ -93,6 +94,7 @@ def _make_logging_anonymizer(
             "leakage_mass": [0.3, 0.1],
             "any_high_leaked": [False, False],
             "needs_human_review": [False, False],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
@@ -519,6 +521,7 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
         {
             COL_TEXT: [f"Name{i} works here" for i in range(num_preview)],
             COL_REPLACED_TEXT: ["[REDACTED] works here" for _ in range(num_preview)],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)

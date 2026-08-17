@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,13 +16,14 @@ import pytest
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.private_row_verification import (
     PRIVATE_CORRELATION_COLUMN,
     PrivateRowVerificationError,
     _InvocationRowVerifier,
 )
+from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.resolved_input import ResolvedInput
 from tests.streaming.structured_trace_prototype import build_synthetic_anonymizer
 
@@ -130,6 +134,63 @@ def test_real_local_engine_seam_accounts_for_correlation_transformations(
         assert len(call().dataframe) == expected_rows
 
 
+def test_real_engine_seam_rejects_duplicate_reordered_legacy_detection_output() -> None:
+    secret = "synthetic-secret@example.test"
+    frame = pd.DataFrame({COL_TEXT: [secret, secret]})
+    anonymizer = build_synthetic_anonymizer({secret: "email"})
+    original_run = cast(Any, anonymizer._detection_workflow.run)
+
+    def reordered_legacy_run(*args: Any, **kwargs: Any) -> EntityDetectionResult:
+        result = original_run(*args, **kwargs)
+        legacy = result.dataframe.iloc[::-1].reset_index(drop=True)
+        return EntityDetectionResult(
+            dataframe=legacy.drop(columns=[PRIVATE_CORRELATION_COLUMN]),
+            failed_records=result.failed_records,
+        )
+
+    cast(Any, anonymizer._detection_workflow).run = reordered_legacy_run
+    context = ResolvedInput(frame, requested_text_column="text", resolved_text_column="text")
+
+    with pytest.raises(PrivateRowVerificationError) as exc_info:
+        anonymizer._run_internal(
+            config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+            data=AnonymizerInput(source=str(Path(__file__)), text_column="text"),
+            context=context,
+            preview_num_records=None,
+        )
+
+    assert "invocation_failed" in str(exc_info.value)
+    assert secret not in str(exc_info.value)
+
+
+def test_real_engine_seam_rejects_final_accepted_detection_removal() -> None:
+    secret = "synthetic-secret@example.test"
+    frame = pd.DataFrame({COL_TEXT: [secret]})
+    anonymizer = build_synthetic_anonymizer({secret: "email"})
+    original_run = cast(Any, anonymizer._replace_runner.run)
+
+    def remove_accepted_detection(*args: Any, **kwargs: Any) -> ReplacementResult:
+        result = original_run(*args, **kwargs)
+        return ReplacementResult(
+            dataframe=result.dataframe.drop(columns=[COL_FINAL_ENTITIES]),
+            failed_records=result.failed_records,
+        )
+
+    cast(Any, anonymizer._replace_runner).run = remove_accepted_detection
+    context = ResolvedInput(frame, requested_text_column="text", resolved_text_column="text")
+
+    with pytest.raises(PrivateRowVerificationError) as exc_info:
+        anonymizer._run_internal(
+            config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+            data=AnonymizerInput(source=str(Path(__file__)), text_column="text"),
+            context=context,
+            preview_num_records=None,
+        )
+
+    assert "invocation_failed" in str(exc_info.value)
+    assert secret not in str(exc_info.value)
+
+
 def _detected_frame() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -230,6 +291,16 @@ def test_verifier_rejects_accepted_detection_tampering_and_closes_without_raw_va
         verifier.finish(bound)
 
 
+def test_verifier_requires_frozen_accepted_detection_evidence_at_finish() -> None:
+    base = _detected_frame()
+    verifier = _InvocationRowVerifier(base)
+    bound = verifier.bind(base)
+    verifier.freeze_accepted_detections(bound)
+
+    with pytest.raises(PrivateRowVerificationError, match="accepted_detection_missing"):
+        verifier.finish(bound.drop(columns=[COL_FINAL_ENTITIES]))
+
+
 def test_verifier_is_nonserializable_and_cancellation_is_terminal() -> None:
     import pickle
 
@@ -239,3 +310,35 @@ def test_verifier_is_nonserializable_and_cancellation_is_terminal() -> None:
     verifier.abort(cancelled=True)
     with pytest.raises(PrivateRowVerificationError, match="invocation_closed"):
         verifier.bind(_detected_frame())
+
+
+def test_characterization_reports_governed_unavailability_without_zero_measurements() -> None:
+    completed = subprocess.run(
+        [sys.executable, "tests/streaming/run_internal_characterization.py"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(completed.stdout)
+    arms = {arm["arm"]: arm for arm in report["arms"]}
+    blocked = arms["generic_manifest"]
+
+    assert set(blocked) == set(arms["field_per_row"])
+    assert blocked["status"] == "blocked"
+    assert blocked["availability"] == "governed_unavailable"
+    assert blocked["reason_code"] == "source_specific_manifest_not_owned"
+    for metric in (
+        "input_bytes",
+        "output_bytes",
+        "rows",
+        "targets",
+        "provider_calls",
+        "elapsed_ms",
+        "peak_memory_bytes",
+        "raw_copy_count",
+        "artifact_delta_bytes",
+        "structural_validity",
+        "privacy_check",
+        "reconstruction_failures",
+    ):
+        assert blocked[metric] is None
