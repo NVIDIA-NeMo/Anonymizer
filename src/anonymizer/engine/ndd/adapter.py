@@ -363,6 +363,9 @@ class NddAdapter:
         started = time.perf_counter()
         private_execution = _PRIVATE_EXECUTION.get()
         collector = None if private_execution else current_collector()
+        task_trace_enabled = (
+            False if private_execution else True if collector and collector.dd_task_trace_enabled else None
+        )
         trace_plan = _DDMessageTracePlan.from_columns(
             columns=columns,
             model_configs=model_configs,
@@ -390,7 +393,11 @@ class NddAdapter:
             task_traces: list[_TaskTrace] = []
             workflow_error: AnonymizerWorkflowError | None = None
             try:
-                with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
+                with (
+                    self._run_lock,
+                    usage_probe,
+                    _temporary_dd_task_trace(self._data_designer, enabled=task_trace_enabled),
+                ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
@@ -1034,8 +1041,8 @@ def _model_trace_usage(response: Any) -> Any:
 
 
 @contextmanager
-def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
-    if collector is None or not collector.dd_task_trace_enabled:
+def _temporary_dd_task_trace(data_designer: DataDesigner, *, enabled: bool | None) -> Iterator[None]:
+    if enabled is None:
         yield
         return
 
@@ -1045,7 +1052,7 @@ def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | No
         yield
         return
 
-    traced_run_config = _run_config_with_async_trace(original_run_config)
+    traced_run_config = _run_config_with_async_trace(original_run_config, enabled=enabled)
     set_run_config(traced_run_config)
     try:
         yield
@@ -1053,12 +1060,12 @@ def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | No
         set_run_config(original_run_config)
 
 
-def _run_config_with_async_trace(run_config: Any) -> Any:
+def _run_config_with_async_trace(run_config: Any, *, enabled: bool) -> Any:
     model_copy = getattr(run_config, "model_copy", None)
     if callable(model_copy):
-        return model_copy(update={"async_trace": True})
+        return model_copy(update={"async_trace": enabled})
     if isinstance(run_config, RunConfig):
-        return run_config.model_copy(update={"async_trace": True})
+        return run_config.model_copy(update={"async_trace": enabled})
     return run_config
 
 

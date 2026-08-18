@@ -14,6 +14,7 @@ import pytest
 from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
+from data_designer.config.run_config import RunConfig
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.engine.ndd import adapter as ndd_adapter
@@ -212,8 +213,13 @@ def test_private_execution_uses_ephemeral_artifacts_and_suppresses_active_collec
 
     class PrivateDataDesigner:
         _artifact_path = durable_root
+        run_config = RunConfig(async_trace=True)
+
+        def set_run_config(self, run_config: RunConfig) -> None:
+            self.run_config = run_config
 
         def create(self, _builder: object, **kwargs: object) -> SimpleNamespace:
+            assert self.run_config.async_trace is False
             artifact_root = Path(cast(str, kwargs.get("artifact_path", self._artifact_path)))
             assert artifact_root != self._artifact_path
             artifact = artifact_root / "captured.txt"
@@ -228,7 +234,8 @@ def test_private_execution_uses_ephemeral_artifacts_and_suppresses_active_collec
             )
             return SimpleNamespace(load_dataset=lambda: output, task_traces=[])
 
-    adapter = NddAdapter(data_designer=cast(DataDesigner, PrivateDataDesigner()))
+    data_designer = PrivateDataDesigner()
+    adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
     collector = MeasurementCollector()
     with measurement_session(collector), adapter.private_execution():
         result = adapter.run_workflow(
@@ -245,6 +252,7 @@ def test_private_execution_uses_ephemeral_artifacts_and_suppresses_active_collec
         )
 
     assert result.dataframe.iloc[0]["output"] == "protected"
+    assert data_designer.run_config.async_trace is True
     assert not any(durable_root.rglob("*"))
     assert collector.records == []
 
