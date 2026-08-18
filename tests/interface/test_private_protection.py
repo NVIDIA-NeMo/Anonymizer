@@ -89,6 +89,19 @@ def test_outer_batch_is_rejected_before_admission(records: object, code: _BatchF
     assert repr(exc_info.value) == "<private protection batch error>"
 
 
+def test_malformed_nested_segment_is_rejected_before_admission() -> None:
+    forged = object.__new__(_ProtectionRecord)
+    object.__setattr__(forged, "ref", _RecordRef("a"))
+    object.__setattr__(forged, "segments", (object(),))
+
+    _, flow = _flow()
+    with pytest.raises(_ProtectionBatchError) as exc_info:
+        flow.protect((forged,))
+    assert exc_info.value.code is _BatchFailureCode.MALFORMED_BATCH
+    assert str(exc_info.value) == "private protection batch rejected"
+    assert repr(exc_info.value) == "<private protection batch error>"
+
+
 def test_invalid_ref_is_bounded_and_content_free() -> None:
     secret = "secret@example.test"
     with pytest.raises(ValueError) as exc_info:

@@ -245,9 +245,15 @@ def _build_operation_plan(plan: _ProtectionPlan, records: object) -> _OperationP
         raise _ProtectionBatchError(_BatchFailureCode.DUPLICATE_REF)
     total = 0
     for record in typed_records:
-        if len(record.segments) != 1:
+        segments = getattr(record, "segments", None)
+        if not isinstance(segments, tuple):
+            raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
+        if len(segments) != 1:
             raise _ProtectionBatchError(_BatchFailureCode.UNSUPPORTED_CARDINALITY)
-        size = len(record.segments[0].text.encode("utf-8"))
+        segment = segments[0]
+        if not isinstance(segment, _TextSegment):
+            raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
+        size = len(segment.text.encode("utf-8"))
         if size > plan.max_record_bytes:
             raise _ProtectionBatchError(_BatchFailureCode.RECORD_TOO_LARGE)
         total += size
