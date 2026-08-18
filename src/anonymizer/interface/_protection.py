@@ -238,6 +238,8 @@ def _build_operation_plan(plan: _ProtectionPlan, records: object) -> _OperationP
     if not all(isinstance(record, _ProtectionRecord) for record in records):
         raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
     typed_records = records
+    if not all(isinstance(record.ref, _RecordRef) for record in typed_records):
+        raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
     refs = [record.ref.value for record in typed_records]
     if len(set(refs)) != len(refs):
         raise _ProtectionBatchError(_BatchFailureCode.DUPLICATE_REF)
@@ -329,6 +331,9 @@ class _ProtectionFlow(_SafeRepr):
                 return self._fail_all(operation)
             has_detections = _has_accepted_detections(row[COL_FINAL_ENTITIES])
             if has_detections and not _redact_release_passed(row[COL_FINAL_ENTITIES], output):
+                outcomes.append(_Failed(record.ref, _failure(_FailureCode.ROW_FAILED, "release", "record")))
+                continue
+            if not has_detections and output != record.segments[0].text:
                 outcomes.append(_Failed(record.ref, _failure(_FailureCode.ROW_FAILED, "release", "record")))
                 continue
             disposition: _SuccessDisposition = _ProtectionApplied() if has_detections else _NoAcceptedDetections()

@@ -75,6 +75,10 @@ def test_compilation_is_closed_and_plan_is_content_free_and_immutable() -> None:
         (tuple(_record(str(index), "x" * 32_768) for index in range(33)), _BatchFailureCode.BATCH_TOO_LARGE),
         (tuple(_record(str(index), "x") for index in range(129)), _BatchFailureCode.TOO_MANY_RECORDS),
         ((_ProtectionRecord(_RecordRef("a"), ()),), _BatchFailureCode.UNSUPPORTED_CARDINALITY),
+        (
+            (_ProtectionRecord(cast(Any, "secret@example.test"), (_TextSegment("text"),)),),
+            _BatchFailureCode.MALFORMED_BATCH,
+        ),
     ],
 )
 def test_outer_batch_is_rejected_before_admission(records: object, code: _BatchFailureCode) -> None:
@@ -184,6 +188,22 @@ def test_release_predicate_prevents_raw_fallback() -> None:
 
     cast(Any, anonymizer._replace_runner).run = raw_fallback
     outcome = flow.protect((_record("a", secret),)).outcomes[0]
+    assert isinstance(outcome, _Failed)
+    assert not hasattr(outcome, "output")
+
+
+def test_no_accepted_detections_requires_output_unchanged_from_input() -> None:
+    anonymizer, flow = _flow()
+    original = cast(Any, anonymizer._replace_runner).run
+
+    def modified_without_detections(*args: Any, **kwargs: Any):
+        result = original(*args, **kwargs)
+        frame = result.dataframe.copy()
+        frame[COL_REPLACED_TEXT] = "modified"
+        return type(result)(dataframe=frame, failed_records=result.failed_records)
+
+    cast(Any, anonymizer._replace_runner).run = modified_without_detections
+    outcome = flow.protect((_record("a", "original"),)).outcomes[0]
     assert isinstance(outcome, _Failed)
     assert not hasattr(outcome, "output")
 
