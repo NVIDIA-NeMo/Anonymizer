@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Extensible SDK companion plans
 
 Status: Proposed design report, 2026-08-18. This document does not authorize a
@@ -560,7 +563,7 @@ test-only adapter.
 | Concern | Plan A: private and simpler | Plan B: fuller and composable |
 | --- | --- | --- |
 | Immediate purpose | Validate Intake and Python jobs | Stable multi-host and agent-legible SDK |
-| Public status | No new public API | Public only after all shipment gates |
+| Public status | No new public protection API | Public only after all shipment gates |
 | Input | One bounded text segment per record | The same record with bounded multiple segments |
 | Operations | Pure compile; synchronous protect; private bounded preview | Compile, preview, protect, explain, inspect, diagnose |
 | Plan | Frozen, content-free, local, non-serializable | Canonical portable semantics plus runtime-local activation |
