@@ -7,6 +7,7 @@ import pickle
 from dataclasses import FrozenInstanceError
 
 import pytest
+from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite
 from anonymizer.config.models import ModelSelection
@@ -50,3 +51,18 @@ def test_compiled_rewrite_uses_rewrite_evaluation_property(
     assert compiled.rewrite.evaluation == expected
     assert compiled.rewrite.use_combined_graph is True
     assert compiled.rewrite.strict_entity_protection is True
+
+
+def test_compiled_invocation_detaches_model_config_snapshot(
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    source_configs = [ModelConfig(alias="original", model="provider/original", provider="stub")]
+
+    compiled = _CompiledInvocation.compile(
+        AnonymizerConfig(replace=Redact()),
+        stub_slim_model_selection,
+        source_configs,
+    )
+    source_configs[0].model = "provider/mutated"
+
+    assert compiled.model_configs[0].model == "provider/original"

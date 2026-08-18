@@ -177,6 +177,23 @@ def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.Log
     assert "2 total failures" in messages
 
 
+def test_run_preserves_debug_input_and_failure_diagnostics(
+    stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
+) -> None:
+    anonymizer = _make_logging_anonymizer(
+        detection_failures=[FailedRecord(record_id="r1", step="detection", reason="timeout")],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+    messages = caplog.text
+    assert "input text lengths: min=" in messages
+    assert "detection config: threshold=0.30" in messages
+    assert "1 record(s) failed during pipeline processing." in messages
+    assert "r1 (detection: timeout)" in messages
+
+
 def test_run_without_replacement_skips_replace_logs(
     stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
 ) -> None:

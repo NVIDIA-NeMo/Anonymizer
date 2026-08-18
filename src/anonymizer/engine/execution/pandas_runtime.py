@@ -9,9 +9,9 @@ import logging
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeGuard
 
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_TEXT, DEFAULT_ENTITY_LABELS
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.private_row_verification import _InvocationRowVerifier
@@ -19,11 +19,24 @@ from anonymizer.engine.private_row_verification import _InvocationRowVerifier
 logger = logging.getLogger("anonymizer")
 
 
+class _ListConvertible(Protocol):
+    def tolist(self) -> object: ...
+
+
+def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
+    return callable(getattr(value, "tolist", None))
+
+
 def _entity_counts(dataframe: pd.DataFrame) -> Counter[str]:
     counts: Counter[str] = Counter()
     for raw in dataframe.get(COL_DETECTED_ENTITIES, []):
-        entities = raw.get("entities", []) if isinstance(raw, dict) else getattr(raw, "entities", [])
-        if callable(getattr(entities, "tolist", None)):
+        if isinstance(raw, dict):
+            entities = raw.get("entities", [])
+        elif isinstance(raw, list):
+            entities = raw
+        else:
+            entities = getattr(raw, "entities", [])
+        if _is_list_convertible(entities):
             entities = entities.tolist()
         if not isinstance(entities, list):
             continue
@@ -90,6 +103,27 @@ class _PandasRuntime:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
+        if logger.isEnabledFor(logging.DEBUG):
+            text_lengths = dataframe[COL_TEXT].astype(str).str.len()
+            logger.debug(
+                "input text lengths: min=%d, max=%d, mean=%.0f chars (%d records)",
+                text_lengths.min(),
+                text_lengths.max(),
+                text_lengths.mean(),
+                num_records,
+            )
+            logger.debug(
+                "detection config: threshold=%.2f, labels=%s",
+                invocation.gliner_detection_threshold,
+                invocation.entity_labels
+                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
+            )
+        else:
+            logger.info(
+                "detection labels in scope: %s",
+                invocation.entity_labels
+                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
+            )
         started = time.perf_counter()
         detection_result = self._detection_workflow.run(
             dataframe,
@@ -156,12 +190,21 @@ class _PandasRuntime:
             )
         else:
             final = verifier.finish(verifier.bind_complete_stage_output(detected))
+            if detection_result.failed_records:
+                logger.warning("%d record(s) failed during pipeline processing.", len(detection_result.failed_records))
+                for failure in detection_result.failed_records:
+                    logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
             logger.info(
                 "🎉 Pipeline complete — %d records processed, %d total failures",
                 num_records,
                 len(detection_result.failed_records),
             )
             return _PandasExecutionResult(dataframe=final, failed_records=detection_result.failed_records)
+        failed_records = [*detection_result.failed_records, *result.failed_records]
+        if failed_records:
+            logger.warning("%d record(s) failed during pipeline processing.", len(failed_records))
+            for failure in failed_records:
+                logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
         final = verifier.finish(verifier.bind_complete_stage_output(result.dataframe))
         logger.info(
             "🎉 Pipeline complete — %d records processed, %d total failures",
@@ -170,5 +213,5 @@ class _PandasRuntime:
         )
         return _PandasExecutionResult(
             dataframe=final,
-            failed_records=[*detection_result.failed_records, *result.failed_records],
+            failed_records=failed_records,
         )

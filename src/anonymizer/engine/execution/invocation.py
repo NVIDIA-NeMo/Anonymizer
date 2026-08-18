@@ -59,7 +59,7 @@ class _CompiledInvocation:
                 strict_entity_protection=rewrite.strict_entity_protection,
             )
         return cls(
-            model_configs=tuple(model_configs or ()),
+            model_configs=tuple(model_config.model_copy(deep=True) for model_config in model_configs or ()),
             selected_models=selected_models.model_copy(deep=True),
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
