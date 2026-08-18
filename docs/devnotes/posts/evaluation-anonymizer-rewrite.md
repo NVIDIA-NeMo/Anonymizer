@@ -31,18 +31,18 @@ This is Part 2 of a two-part series on evaluation in Anonymizer. [Part 1](evalua
 
 ## Rewrite Evaluation Has Two Layers
 
-Unlike Replace mode, Rewrite mode natively evaluates every generated rewrite as part of `preview()` or `run()`. A separate `evaluate()` call adds independent LLM-as-judge feedback:
+Unlike Replace mode, automatic rewrite evaluation runs for every generated rewrite during `preview()` or `run()`. A separate `evaluate()` call adds independent LLM-as-judge feedback:
 
 ```mermaid
 flowchart TD
     A[Source data] --> B[Anonymizer.preview / run\nDetect and rewrite]
-    B --> C[Evaluate–repair loop\nUtility · leakage · repair]
+    B --> C[Automatic rewrite evaluation\nUtility · leakage · repair]
     C --> D[Rewrite result]
     D --> E[Optional Anonymizer.evaluate]
     E --> F[Post-hoc evaluation\nCoverage · privacy · quality · style]
 ```
 
-Rewrite first scores each record for privacy leakage and utility. If leakage is too high, it rewrites the record and checks it again. When the evaluate–repair loop ends, it flags records that still need human review. Post-hoc evaluation is an optional, separate step that you run by calling `evaluate()` after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See [Part 1](evaluation-anonymizer-replace.md#anonymization-and-evaluation-as-separate-steps) for more about this workflow.
+Automatic rewrite evaluation scores each generated text for privacy leakage and preserved meaning. If leakage triggers the configured repair criteria, Anonymizer rewrites the text and evaluates it again, stopping when it passes or reaches the maximum number of repair iterations. It then flags outputs for human review when residual leakage or low utility meets the configured review criteria. Post-hoc evaluation is an optional, separate step that you run by calling `evaluate()` after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See [Part 1](evaluation-anonymizer-replace.md#anonymization-and-evaluation-as-separate-steps) for more about this workflow.
 
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
@@ -94,9 +94,9 @@ As in Replace mode, the completed result is reusable. Save the complete `Anonymi
 
 ---
 
-## Evaluate–Repair Loop: Did the Rewrite Balance Privacy and Utility?
+## Automatic Rewrite Evaluation: Did the Rewrite Balance Privacy and Utility?
 
-During `run()` or `preview()`, Anonymizer creates quality questions from the original record and privacy questions from the detected entities and the sensitivity and protection assigned to each one, called entity dispositions. It answers those questions against the rewritten text, computes per-record metrics, and repairs rows that exceed the configured privacy threshold or contain a high-sensitivity leak when required by the selected risk tolerance.
+During `run()` or `preview()`, Anonymizer creates quality questions from the original record and privacy questions from the detected entities and the sensitivity and protection assigned to each one, called entity dispositions. It answers those questions against the rewritten text: quality answers determine utility, while privacy answers determine leakage and whether repair is needed. Low utility can flag a record for human review, but does not trigger repair.
 
 ### Utility Score: Was Important Meaning Preserved?
 
@@ -139,9 +139,9 @@ It ranges from `0.0` to `1.0`. `any_high_leaked` separately records whether at l
 
 </div>
 
-### Repair Loop: Can a Failing Rewrite Be Improved?
+### Automated Repair Loop: Can a Failing Rewrite Be Improved?
 
-After the initial checks, rows above the repair threshold—or rows with a high-sensitivity leak when the selected risk tolerance requires it—enter the repair loop. Only failing rows are repaired and checked again. The loop stops when they pass or reach `max_repair_iterations`; at that limit, Anonymizer keeps the latest rewrite and calculates its final human-review flag.
+After the initial checks, rows above the repair threshold—or rows with a high-sensitivity leak when the selected risk tolerance requires it—enter the automated repair loop. Only failing rows are repaired and checked again. The loop stops when they pass or reach `max_repair_iterations`; at that limit, Anonymizer keeps the latest rewrite and calculates its final human-review flag.
 
 ```mermaid
 flowchart LR
@@ -286,7 +286,7 @@ Use these signals together. Review representative records, inspect failures and 
 
 ## The Bottom Line
 
-Rewrite evaluation is not a single final score. The evaluate–repair loop measures utility and leakage, repairs failing rows, and flags unresolved risk. The optional post-hoc evaluation adds independent evidence about detection coverage and the rewrite's overall privacy, quality, and style.
+Rewrite evaluation is not a single final score. Automatic rewrite evaluation measures utility and leakage, repairs rows that fail the privacy criteria, and flags residual leakage or low utility for human review. The optional post-hoc evaluation adds independent evidence about detection coverage and the rewrite's overall privacy, quality, and style.
 
 The two layers serve different purposes: rewrite metrics guide repair during anonymization, while post-hoc evaluation provides a broader assessment of the completed results.
 
