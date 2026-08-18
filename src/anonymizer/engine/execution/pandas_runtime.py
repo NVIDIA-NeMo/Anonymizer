@@ -1,0 +1,174 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""The single private pandas runtime for normalized anonymizer invocations."""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections import Counter
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from anonymizer.engine.constants import COL_DETECTED_ENTITIES
+from anonymizer.engine.execution.invocation import _CompiledInvocation
+from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.private_row_verification import _InvocationRowVerifier
+
+logger = logging.getLogger("anonymizer")
+
+
+def _entity_counts(dataframe: pd.DataFrame) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for raw in dataframe.get(COL_DETECTED_ENTITIES, []):
+        entities = raw.get("entities", []) if isinstance(raw, dict) else getattr(raw, "entities", [])
+        if callable(getattr(entities, "tolist", None)):
+            entities = entities.tolist()
+        if not isinstance(entities, list):
+            continue
+        for entity in entities:
+            label = entity.get("label") if isinstance(entity, dict) else getattr(entity, "label", None)
+            if isinstance(label, str):
+                counts[label] += 1
+    return counts
+
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+    from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+    from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+
+
+@dataclass(frozen=True)
+class _PandasExecutionResult:
+    dataframe: pd.DataFrame
+    failed_records: list[FailedRecord]
+
+
+class _PandasRuntime:
+    """Coordinate existing workflows over one normalized pandas dataframe."""
+
+    def __init__(
+        self,
+        *,
+        detection_workflow: EntityDetectionWorkflow,
+        replace_runner: ReplacementWorkflow,
+        rewrite_runner: RewriteWorkflow,
+        combined_rewrite_runner: CombinedRewriteWorkflow,
+    ) -> None:
+        self._detection_workflow = detection_workflow
+        self._replace_runner = replace_runner
+        self._rewrite_runner = rewrite_runner
+        self._combined_rewrite_runner = combined_rewrite_runner
+
+    def run(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        invocation: _CompiledInvocation,
+        data_summary: str | None,
+        preview_num_records: int | None,
+        verifier: _InvocationRowVerifier,
+    ) -> _PandasExecutionResult:
+        """Run detection then the compiled replacement or rewrite workflow."""
+        num_records = len(dataframe)
+        if preview_num_records is not None and preview_num_records != num_records:
+            effective_records = min(preview_num_records, num_records)
+            if effective_records < preview_num_records:
+                logger.info(
+                    "  |-- 🔍 Running entity detection on capped %d records (requested %d, available %d)",
+                    effective_records,
+                    preview_num_records,
+                    num_records,
+                )
+            else:
+                logger.info("  |-- 🔍 Running entity detection on %d of %d records", effective_records, num_records)
+            preview_num_records = effective_records
+        else:
+            logger.info("🔍 Running entity detection on %d records", num_records)
+        started = time.perf_counter()
+        detection_result = self._detection_workflow.run(
+            dataframe,
+            model_configs=list(invocation.model_configs),
+            selected_models=invocation.selected_models.detection,
+            gliner_detection_threshold=invocation.gliner_detection_threshold,
+            validation_max_entities_per_call=invocation.validation_max_entities_per_call,
+            validation_excerpt_window_chars=invocation.validation_excerpt_window_chars,
+            entity_labels=list(invocation.entity_labels) if invocation.entity_labels is not None else None,
+            privacy_goal=invocation.rewrite.privacy_goal if invocation.rewrite is not None else None,
+            data_summary=data_summary,
+            tag_latent_entities=invocation.rewrite is not None,
+            compute_grouped_entities=invocation.replace_method is not None or invocation.rewrite is not None,
+            preview_num_records=preview_num_records,
+        )
+        logger.info(
+            "  |-- 📋 Detection complete — %d entities found across %d records (%d failed) [%.1fs]",
+            sum(_entity_counts(detection_result.dataframe).values()),
+            len(detection_result.dataframe),
+            len(detection_result.failed_records),
+            time.perf_counter() - started,
+        )
+        label_counts = _entity_counts(detection_result.dataframe)
+        if label_counts:
+            logger.info(
+                "  |-- labels: %s", ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
+            )
+        detected = verifier.bind_complete_stage_output(detection_result.dataframe)
+        verifier.freeze_accepted_detections(detected)
+        if invocation.replace_method is not None:
+            logger.info("🔄 Running %s replacement", type(invocation.replace_method).__name__)
+            started = time.perf_counter()
+            result = self._replace_runner.run(
+                detected,
+                replace_method=invocation.replace_method,
+                model_configs=list(invocation.model_configs),
+                selected_models=invocation.selected_models.replace,
+                preview_num_records=preview_num_records,
+            )
+            logger.info(
+                "  |-- 📋 Replacement complete (%d failed) [%.1fs]",
+                len(result.failed_records),
+                time.perf_counter() - started,
+            )
+        elif invocation.rewrite is not None:
+            runner = self._combined_rewrite_runner if invocation.rewrite.use_combined_graph else self._rewrite_runner
+            logger.info("✏️ Running rewrite pipeline")
+            started = time.perf_counter()
+            result = runner.run(
+                detected,
+                model_configs=list(invocation.model_configs),
+                selected_models=invocation.selected_models.rewrite,
+                replace_model_selection=invocation.selected_models.replace,
+                privacy_goal=invocation.rewrite.privacy_goal,
+                evaluation=invocation.rewrite.evaluation,
+                data_summary=data_summary,
+                preview_num_records=preview_num_records,
+                strict_entity_protection=invocation.rewrite.strict_entity_protection,
+            )
+            logger.info(
+                "  |-- 📋 Rewrite complete (%d failed) [%.1fs]",
+                len(result.failed_records),
+                time.perf_counter() - started,
+            )
+        else:
+            final = verifier.finish(verifier.bind_complete_stage_output(detected))
+            logger.info(
+                "🎉 Pipeline complete — %d records processed, %d total failures",
+                num_records,
+                len(detection_result.failed_records),
+            )
+            return _PandasExecutionResult(dataframe=final, failed_records=detection_result.failed_records)
+        final = verifier.finish(verifier.bind_complete_stage_output(result.dataframe))
+        logger.info(
+            "🎉 Pipeline complete — %d records processed, %d total failures",
+            num_records,
+            len(detection_result.failed_records) + len(result.failed_records),
+        )
+        return _PandasExecutionResult(
+            dataframe=final,
+            failed_records=[*detection_result.failed_records, *result.failed_records],
+        )
