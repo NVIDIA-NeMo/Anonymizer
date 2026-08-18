@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Protocol, TypeGuard
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_TEXT, DEFAULT_ENTITY_LABELS
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.private_row_verification import _InvocationRowVerifier
+from anonymizer.engine.private_row_verification import _InvocationRowVerifier, _TerminalOutcome
 
 logger = logging.getLogger("anonymizer")
 
@@ -60,6 +60,8 @@ if TYPE_CHECKING:
 class _PandasExecutionResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    terminal_outcomes: tuple[tuple[str, _TerminalOutcome], ...] = ()
+    result_row_tokens: tuple[str, ...] = ()
 
 
 class _PandasRuntime:
@@ -199,7 +201,12 @@ class _PandasRuntime:
                 num_records,
                 len(detection_result.failed_records),
             )
-            return _PandasExecutionResult(dataframe=final, failed_records=detection_result.failed_records)
+            return _PandasExecutionResult(
+                dataframe=final,
+                failed_records=detection_result.failed_records,
+                terminal_outcomes=verifier.take_terminal_outcomes(),
+                result_row_tokens=verifier.take_result_order(),
+            )
         failed_records = [*detection_result.failed_records, *result.failed_records]
         if failed_records:
             logger.warning("%d record(s) failed during pipeline processing.", len(failed_records))
@@ -214,4 +221,6 @@ class _PandasRuntime:
         return _PandasExecutionResult(
             dataframe=final,
             failed_records=failed_records,
+            terminal_outcomes=verifier.take_terminal_outcomes(),
+            result_row_tokens=verifier.take_result_order(),
         )

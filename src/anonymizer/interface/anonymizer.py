@@ -639,6 +639,20 @@ class Anonymizer:
         """Validate that the active workflow config is compatible with model selections."""
         self._validate_preflight_config(config)
 
+    def _compile_protection_plan(self, config: AnonymizerConfig):
+        """Compile the private Plan A profile without performing effects."""
+        from anonymizer.interface._protection import _compile_protection_plan
+
+        return _compile_protection_plan(config, self._selected_models, self._model_configs)
+
+    def _open_protection_flow(self, plan):
+        """Open a private flow borrowing this facade's runtime resources."""
+        from anonymizer.interface._protection import _ProtectionFlow, _ProtectionPlan
+
+        if not isinstance(plan, _ProtectionPlan):
+            raise ValueError("private protection plan is not executable")
+        return _ProtectionFlow(self, plan)
+
     def _run_internal(
         self,
         *,

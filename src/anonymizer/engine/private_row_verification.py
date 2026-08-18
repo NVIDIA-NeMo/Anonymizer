@@ -68,6 +68,7 @@ class _InvocationRowVerifier:
         self._legacy_identity_is_unambiguous = len(set(self._legacy_input_order)) == len(self._legacy_input_order)
         self._frozen: dict[str, str] = {}
         self._outcomes: dict[str, _TerminalOutcome] = {}
+        self._result_order: tuple[str, ...] = ()
 
     def bind(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         self._require_active()
@@ -126,6 +127,7 @@ class _InvocationRowVerifier:
                 if self._frozen.get(correlation) != _stable_digest(value):
                     raise self._error("accepted_detection_tampered", "result", "row", correlation)
             self._outcomes.update({correlation: _TerminalOutcome.SUCCESS for correlation in correlations})
+            self._result_order = tuple(correlations)
             return dataframe.drop(columns=[PRIVATE_CORRELATION_COLUMN], errors="ignore")
         except BaseException:
             # A verifier rejection is an invocation failure for every row that
@@ -156,6 +158,23 @@ class _InvocationRowVerifier:
         del cause
         self.abort(cancelled=False)
         return self._error("invocation_failed", stage, "invocation")
+
+    def take_terminal_outcomes(self) -> tuple[tuple[str, _TerminalOutcome], ...]:
+        """Consume the invocation-private correlation accounting exactly once."""
+        if self._active:
+            raise self._error("invocation_active", "lifecycle", "invocation")
+        outcomes = tuple((correlation, self._outcomes[correlation]) for correlation in self._accepted)
+        self._accepted = ()
+        self._outcomes.clear()
+        return outcomes
+
+    def take_result_order(self) -> tuple[str, ...]:
+        """Consume verified successful-row correlations in dataframe order."""
+        if self._active:
+            raise self._error("invocation_active", "lifecycle", "invocation")
+        result_order = self._result_order
+        self._result_order = ()
+        return result_order
 
     def _validate_correlations(self, dataframe: pd.DataFrame, *, stage: str) -> list[str]:
         if PRIVATE_CORRELATION_COLUMN not in dataframe.columns:
