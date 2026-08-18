@@ -191,7 +191,8 @@ def test_run_preserves_debug_input_and_failure_diagnostics(
     assert "input text lengths: min=" in messages
     assert "detection config: threshold=0.30" in messages
     assert "1 record(s) failed during pipeline processing." in messages
-    assert "r1 (detection: timeout)" in messages
+    assert "r1" not in messages
+    assert "timeout" not in messages
 
 
 def test_run_without_replacement_skips_replace_logs(
@@ -309,7 +310,8 @@ def test_evaluate_debug_logs_config_and_failures_without_sensitive_context(
     assert "active evaluation judges: entity_coverage_judge" in messages
     assert "evaluation models:" in messages
     assert "1 evaluation failed record(s)" in messages
-    assert "r1 (entity-coverage-judge: timeout)" in messages
+    assert "r1" not in messages
+    assert "timeout" not in messages
     assert "confidential dataset description" not in messages
 
 

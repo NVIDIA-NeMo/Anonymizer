@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import secrets
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -127,13 +129,21 @@ class _FailureCode(str, Enum):
     ROW_FAILED = "row_failed"
 
 
+class _RetrySafety(str, Enum):
+    UNKNOWN = "unknown"
+
+
+class _RetryOwner(str, Enum):
+    UNASSIGNED = "unassigned"
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _SafeFailure(_SafeRepr):
     code: _FailureCode
     stage: str
     scope: str
-    retry_safe: bool
-    retry_owner: str = "caller"
+    retry_safety: _RetrySafety = _RetrySafety.UNKNOWN
+    retry_owner: _RetryOwner = _RetryOwner.UNASSIGNED
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -156,6 +166,8 @@ class _ProtectionReceipt(_SafeRepr):
     implementation_version: str
     terminal_accounting_verified: bool
     accepted_detections_verified: bool
+    plan_digest: str
+    attempt_id: str
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -222,12 +234,35 @@ def _compile_protection_plan(
     if config.replace.format_template != "[REDACTED_{label}]" or not config.replace.normalize_label:
         return _PlanRejected()
     invocation = _CompiledInvocation.compile(config, selected_models, model_configs)
-    digest_input = (
-        f"{_CONTRACT_VERSION}|{_PROFILE}|{invocation.gliner_detection_threshold}|"
-        f"{invocation.validation_max_entities_per_call}|{invocation.validation_excerpt_window_chars}|"
-        f"{invocation.entity_labels!r}"
-    ).encode()
-    return _ProtectionPlan(_PROFILE, hashlib.sha256(digest_input).hexdigest(), invocation)
+    return _ProtectionPlan(_PROFILE, _plan_fingerprint(invocation), invocation)
+
+
+def _plan_fingerprint(invocation: _CompiledInvocation) -> str:
+    """Fingerprint the complete allowlisted Plan A semantic snapshot."""
+    payload = {
+        "contract_version": _CONTRACT_VERSION,
+        "profile": _PROFILE,
+        "implementation_version": _IMPLEMENTATION_VERSION,
+        "limits": {
+            "max_records": _MAX_RECORDS,
+            "max_record_bytes": _MAX_RECORD_BYTES,
+            "max_batch_bytes": _MAX_BATCH_BYTES,
+        },
+        "invocation": {
+            "model_configs": [model.model_dump(mode="json") for model in invocation.model_configs],
+            "selected_models": invocation.selected_models.model_dump(mode="json"),
+            "gliner_detection_threshold": invocation.gliner_detection_threshold,
+            "validation_max_entities_per_call": invocation.validation_max_entities_per_call,
+            "validation_excerpt_window_chars": invocation.validation_excerpt_window_chars,
+            "entity_labels": invocation.entity_labels,
+            "replace_method": (
+                invocation.replace_method.model_dump(mode="json") if invocation.replace_method is not None else None
+            ),
+            "rewrite": None,
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _build_operation_plan(plan: _ProtectionPlan, records: object) -> _OperationPlan:
@@ -238,9 +273,18 @@ def _build_operation_plan(plan: _ProtectionPlan, records: object) -> _OperationP
     if not all(isinstance(record, _ProtectionRecord) for record in records):
         raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
     typed_records = records
-    if not all(isinstance(record.ref, _RecordRef) for record in typed_records):
-        raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
-    refs = [record.ref.value for record in typed_records]
+    refs: list[str] = []
+    for record in typed_records:
+        ref = getattr(record, "ref", None)
+        value = getattr(ref, "value", None)
+        if (
+            not isinstance(ref, _RecordRef)
+            or not isinstance(value, str)
+            or not value
+            or len(value.encode("utf-8")) > _MAX_REF_BYTES
+        ):
+            raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
+        refs.append(value)
     if len(set(refs)) != len(refs):
         raise _ProtectionBatchError(_BatchFailureCode.DUPLICATE_REF)
     total = 0
@@ -253,7 +297,10 @@ def _build_operation_plan(plan: _ProtectionPlan, records: object) -> _OperationP
         segment = segments[0]
         if not isinstance(segment, _TextSegment):
             raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
-        size = len(segment.text.encode("utf-8"))
+        text = getattr(segment, "text", None)
+        if not isinstance(text, str):
+            raise _ProtectionBatchError(_BatchFailureCode.MALFORMED_BATCH)
+        size = len(text.encode("utf-8"))
         if size > plan.max_record_bytes:
             raise _ProtectionBatchError(_BatchFailureCode.RECORD_TOO_LARGE)
         total += size
@@ -276,6 +323,7 @@ class _ProtectionFlow(_SafeRepr):
         self._guard = threading.Lock()
         self._state_lock = threading.Lock()
         self._closed = False
+        self._adapter = anonymizer._adapter
 
     def protect(self, records: object, *, cancelled_before_admission: bool = False) -> _ProtectionRunRecord:
         operation = _build_operation_plan(self._plan, records)
@@ -295,17 +343,20 @@ class _ProtectionFlow(_SafeRepr):
             self._guard.release()
 
     def _execute(self, operation: _OperationPlan) -> _ProtectionRunRecord:
+        if _plan_fingerprint(self._plan.invocation) != self._plan.digest:
+            return self._fail_all(operation)
         frame = pd.DataFrame({COL_TEXT: [record.segments[0].text for record in operation.records]})
         verifier = _InvocationRowVerifier(frame)
         bound = verifier.bind(frame)
         try:
-            execution = self._runtime.run(
-                bound,
-                invocation=self._plan.invocation,
-                data_summary=None,
-                preview_num_records=None,
-                verifier=verifier,
-            )
+            with self._adapter.private_execution():
+                execution = self._runtime.run(
+                    bound,
+                    invocation=self._plan.invocation,
+                    data_summary=None,
+                    preview_num_records=None,
+                    verifier=verifier,
+                )
         except Exception as cause:
             verifier.abort_with_failure(stage="pipeline", cause=cause)
             terminal = verifier.take_terminal_outcomes()
@@ -321,11 +372,21 @@ class _ProtectionFlow(_SafeRepr):
     def _materialize_outcomes(
         self, operation: _OperationPlan, execution: _PandasExecutionResult
     ) -> _ProtectionRunRecord:
+        if execution.failed_records:
+            return self._fail_all(operation)
         token_to_row = {
             token: row
             for token, (_, row) in zip(execution.result_row_tokens, execution.dataframe.iterrows(), strict=True)
         }
-        receipt = _ProtectionReceipt(_CONTRACT_VERSION, _PROFILE, _IMPLEMENTATION_VERSION, True, True)
+        receipt = _ProtectionReceipt(
+            _CONTRACT_VERSION,
+            _PROFILE,
+            _IMPLEMENTATION_VERSION,
+            True,
+            True,
+            self._plan.digest,
+            secrets.token_hex(16),
+        )
         outcomes: list[_RecordOutcome] = []
         for record, (token, status) in zip(operation.records, execution.terminal_outcomes, strict=True):
             if status is not _TerminalOutcome.SUCCESS:
@@ -335,7 +396,9 @@ class _ProtectionFlow(_SafeRepr):
             output = row[COL_REPLACED_TEXT]
             if not isinstance(output, str):
                 return self._fail_all(operation)
-            has_detections = _has_accepted_detections(row[COL_FINAL_ENTITIES])
+            valid_entities, has_detections = _accepted_detection_state(row[COL_FINAL_ENTITIES])
+            if not valid_entities:
+                return self._fail_all(operation)
             if has_detections and not _redact_release_passed(row[COL_FINAL_ENTITIES], output):
                 outcomes.append(_Failed(record.ref, _failure(_FailureCode.ROW_FAILED, "release", "record")))
                 continue
@@ -373,15 +436,23 @@ class _ProtectionFlow(_SafeRepr):
 
 
 def _failure(code: _FailureCode, stage: str, scope: str) -> _SafeFailure:
-    return _SafeFailure(code, stage, scope, retry_safe=True)
+    return _SafeFailure(code, stage, scope)
+
+
+def _accepted_detection_state(value: object) -> tuple[bool, bool]:
+    if isinstance(value, dict):
+        if "entities" not in value:
+            return False, False
+        entities = value["entities"]
+    else:
+        entities = getattr(value, "entities", None)
+    if not isinstance(entities, (list, tuple)):
+        return False, False
+    return True, bool(entities)
 
 
 def _has_accepted_detections(value: object) -> bool:
-    if isinstance(value, dict):
-        entities = value.get("entities", [])
-    else:
-        entities = getattr(value, "entities", [])
-    return bool(entities)
+    return _accepted_detection_state(value)[1]
 
 
 def _redact_release_passed(value: object, output: str) -> bool:

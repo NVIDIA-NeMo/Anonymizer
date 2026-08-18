@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
@@ -18,6 +19,7 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.engine.ndd import adapter as ndd_adapter
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.measurement import MeasurementCollector, measurement_session
 
 _FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
 
@@ -190,7 +192,7 @@ def test_run_workflow_accumulates_input_tokens_on_error() -> None:
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
 
-    with pytest.raises(AnonymizerWorkflowError, match="boom"):
+    with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
         adapter.run_workflow(
             input_df,
             model_configs=[_make_model_config()],
@@ -200,6 +202,51 @@ def test_run_workflow_accumulates_input_tokens_on_error() -> None:
         )
 
     assert adapter.total_input_tokens == 7
+
+
+def test_private_execution_uses_ephemeral_artifacts_and_suppresses_active_collector(tmp_path: Path) -> None:
+    private_canary = "PRIVATE-CORRELATION-CANARY"
+    raw_canary = "RAW-ROW-alice@example.test"
+    durable_root = tmp_path / "durable"
+    durable_root.mkdir()
+
+    class PrivateDataDesigner:
+        _artifact_path = durable_root
+
+        def create(self, _builder: object, **kwargs: object) -> SimpleNamespace:
+            artifact_root = Path(cast(str, kwargs.get("artifact_path", self._artifact_path)))
+            assert artifact_root != self._artifact_path
+            artifact = artifact_root / "captured.txt"
+            artifact.write_text(f"{private_canary}\n{raw_canary}")
+            output = pd.DataFrame(
+                {
+                    "text": [raw_canary],
+                    "__anonymizer_private_row_correlation__": [private_canary],
+                    RECORD_ID_COLUMN: ["record-a"],
+                    "output": ["protected"],
+                }
+            )
+            return SimpleNamespace(load_dataset=lambda: output, task_traces=[])
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, PrivateDataDesigner()))
+    collector = MeasurementCollector()
+    with measurement_session(collector), adapter.private_execution():
+        result = adapter.run_workflow(
+            pd.DataFrame(
+                {
+                    "text": [raw_canary],
+                    "__anonymizer_private_row_correlation__": [private_canary],
+                    RECORD_ID_COLUMN: ["record-a"],
+                }
+            ),
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="private-protection",
+        )
+
+    assert result.dataframe.iloc[0]["output"] == "protected"
+    assert not any(durable_root.rglob("*"))
+    assert collector.records == []
 
 
 def test_detect_missing_records_returns_missing_ids() -> None:
@@ -255,25 +302,21 @@ def test_preview_exception_wraps_in_workflow_error_and_logs(
             preview_num_records=3,
         )
 
-    assert isinstance(exc_info.value.__cause__, DataDesignerRuntimeError)
-    assert "endpoint unreachable" in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert str(exc_info.value) == "Workflow failed"
 
     warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "3" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "endpoint unreachable" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "endpoint unreachable" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "detect-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
 
-    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
-    assert len(debug_records) == 1
-    debug_msg = debug_records[0].getMessage()
-    assert "detect-workflow" in debug_msg
-    assert "output" in debug_msg
-    _assert_no_backend_reference(debug_msg)
+    assert not _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
 
 
 def test_create_exception_wraps_in_workflow_error_and_logs(
@@ -299,25 +342,21 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
             preview_num_records=None,
         )
 
-    assert isinstance(exc_info.value.__cause__, DataDesignerRuntimeError)
-    assert "quota exceeded" in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert str(exc_info.value) == "Workflow failed"
 
     warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "quota exceeded" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "quota exceeded" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
 
-    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
-    assert len(debug_records) == 1
-    debug_msg = debug_records[0].getMessage()
-    assert "replace-workflow" in debug_msg
-    assert "output" in debug_msg
-    _assert_no_backend_reference(debug_msg)
+    assert not _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
 
 
 def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
@@ -345,26 +384,22 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
             preview_num_records=None,
         )
 
-    assert isinstance(exc_info.value.__cause__, DataDesignerRuntimeError)
-    assert "corrupt parquet" in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert str(exc_info.value) == "Workflow failed"
 
     warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "corrupt parquet" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "corrupt parquet" not in warning_msg
     assert "Check local storage" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
 
-    debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
-    assert len(debug_records) == 1
-    debug_msg = debug_records[0].getMessage()
-    assert "replace-workflow" in debug_msg
-    assert "output" in debug_msg
-    _assert_no_backend_reference(debug_msg)
+    assert not _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
 
 
 def test_detect_missing_records_short_circuit_warns_when_input_missing_id(

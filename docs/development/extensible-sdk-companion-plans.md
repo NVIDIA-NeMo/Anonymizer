@@ -160,7 +160,8 @@ Expected failures are immutable domain data with:
 
 - a closed code;
 - coarse stage and scope;
-- retry safety and a declared retry owner or `Unassigned`;
+- closed `unknown` retry safety and `Unassigned` retry ownership until taxonomy
+  review assigns more specific semantics;
 - an optional bounded static message.
 
 They exclude raw input, protected output, caller references in rendered

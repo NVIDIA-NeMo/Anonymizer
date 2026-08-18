@@ -626,8 +626,6 @@ class Anonymizer:
 
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
-            for failure in result.failed_records:
-                logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
         logger.info(
             "🎉 Evaluation complete — %d records processed [%.1fs]",
             num_records,

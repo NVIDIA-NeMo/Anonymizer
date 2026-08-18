@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import FrozenInstanceError
 from typing import Any, cast
@@ -13,6 +14,7 @@ import pytest
 from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface._protection import (
     _BatchFailureCode,
     _Failed,
@@ -67,6 +69,42 @@ def test_compilation_is_closed_and_plan_is_content_free_and_immutable() -> None:
         setattr(plan, "profile", "changed")
 
 
+def test_plan_snapshot_detects_nested_tampering_and_digest_covers_models() -> None:
+    anonymizer = build_synthetic_anonymizer({})
+    config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+    first = anonymizer._compile_protection_plan(config)
+    cast(Redact, config.replace).format_template = "<{label}>"
+    assert first.invocation.replace_method.format_template == "[REDACTED_{label}]"
+
+    anonymizer._selected_models.detection.entity_detector = "materially-different"
+    second = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    assert first.digest != second.digest
+    second.invocation.selected_models.detection.entity_detector = "tampered-after-compile"
+    outcome = anonymizer._open_protection_flow(second).protect((_record("a", "text"),)).outcomes[0]
+    assert isinstance(outcome, _Failed)
+
+
+def test_plan_digest_separates_model_config_and_replacement_semantics() -> None:
+    anonymizer = build_synthetic_anonymizer({})
+    baseline = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    anonymizer._model_configs[0].model = "materially-different-model"
+    different_model = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    assert baseline.digest != different_model.digest
+
+    rejected_profile = anonymizer._compile_protection_plan(
+        AnonymizerConfig(replace=Redact(format_template="<{label}>", normalize_label=True), emit_telemetry=False)
+    )
+    assert isinstance(rejected_profile, _PlanRejected)
+
+
+def test_receipt_binds_plan_digest_and_fresh_attempt_identity() -> None:
+    _, flow = _flow()
+    first = cast(_ProtectionSucceeded, flow.protect((_record("a", "text"),)).outcomes[0]).receipt
+    second = cast(_ProtectionSucceeded, flow.protect((_record("a", "text"),)).outcomes[0]).receipt
+    assert first.plan_digest == second.plan_digest
+    assert first.attempt_id != second.attempt_id
+
+
 @pytest.mark.parametrize(
     "records, code",
     [
@@ -100,6 +138,21 @@ def test_malformed_nested_segment_is_rejected_before_admission() -> None:
     assert exc_info.value.code is _BatchFailureCode.MALFORMED_BATCH
     assert str(exc_info.value) == "private protection batch rejected"
     assert repr(exc_info.value) == "<private protection batch error>"
+
+
+def test_missing_nested_record_attributes_are_sanitized_batch_rejections() -> None:
+    _, flow = _flow()
+    missing_record = object.__new__(_ProtectionRecord)
+    missing_ref = object.__new__(_RecordRef)
+    missing_segment = object.__new__(_TextSegment)
+    forged_values = (
+        missing_record,
+        _ProtectionRecord(missing_ref, (_TextSegment("text"),)),
+        _ProtectionRecord(_RecordRef("a"), (missing_segment,)),
+    )
+    for forged in forged_values:
+        with pytest.raises(_ProtectionBatchError, match="private protection batch rejected"):
+            flow.protect((forged,))
 
 
 def test_invalid_ref_is_bounded_and_content_free() -> None:
@@ -186,6 +239,59 @@ def test_invocation_failure_suppresses_cause_and_emits_no_output() -> None:
     assert not hasattr(outcome, "output")
     assert secret not in repr(outcome)
     assert "private-ref" not in repr(outcome)
+
+
+def test_private_failure_logs_exclude_backend_exception_and_failed_record_canaries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    backend_canary = "BACKEND-SECRET-alice@example.test"
+    reason_canary = "FAILED-REASON-bob@example.test"
+    anonymizer, flow = _flow()
+    original = cast(Any, anonymizer._replace_runner).run
+
+    def failed_record(*args: Any, **kwargs: Any):
+        result = original(*args, **kwargs)
+        return type(result)(
+            dataframe=result.dataframe,
+            failed_records=[FailedRecord(record_id="PRIVATE-ID", step="replace", reason=reason_canary)],
+        )
+
+    cast(Any, anonymizer._replace_runner).run = failed_record
+    caplog.set_level(logging.DEBUG)
+    run = flow.protect((_record("a", "text"),))
+    assert isinstance(run.outcomes[0], _Failed)
+    rendered = repr(run) + "\n" + "\n".join(record.getMessage() for record in caplog.records)
+    assert reason_canary not in rendered
+    assert "PRIVATE-ID" not in rendered
+
+    cast(Any, anonymizer._detection_workflow).run = lambda *_a, **_k: (_ for _ in ()).throw(
+        RuntimeError(backend_canary)
+    )
+    flow.protect((_record("b", "raw"),))
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert backend_canary not in rendered
+
+
+def test_malformed_accepted_entities_fail_closed() -> None:
+    anonymizer, flow = _flow()
+    original = cast(Any, anonymizer._replace_runner).run
+
+    def malformed(*args: Any, **kwargs: Any):
+        result = original(*args, **kwargs)
+        frame = result.dataframe.copy()
+        frame.at[0, COL_FINAL_ENTITIES] = {"entities": object()}
+        return type(result)(dataframe=frame, failed_records=result.failed_records)
+
+    cast(Any, anonymizer._replace_runner).run = malformed
+    assert isinstance(flow.protect((_record("a", "text"),)).outcomes[0], _Failed)
+
+
+def test_failure_retry_taxonomy_is_unassigned_and_unknown() -> None:
+    _, flow = _flow()
+    flow.close()
+    failure = cast(_Rejected, flow.protect((_record("a", "text"),)).outcomes[0]).failure
+    assert failure.retry_safety.value == "unknown"
+    assert failure.retry_owner.value == "unassigned"
 
 
 def test_release_predicate_prevents_raw_fallback() -> None:

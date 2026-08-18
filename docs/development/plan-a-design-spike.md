@@ -21,6 +21,8 @@ Ownership: stay; owner=anonymizer.interface._protection release-policy helpers; 
 
 Ownership: stay; owner=anonymizer.interface._protection._SafeRepr; evidence=all new private domain values inherit the content-free rendering mixin; reason=one domain-local rendering policy prevents record content and references from entering repr, logs, or errors.
 
+Ownership: stay; owner=anonymizer.engine.ndd.adapter.NddAdapter.private_execution; evidence=the policy coordinates DataDesigner invocation artifacts and ambient measurement, message-trace, and task-trace collection across all engine workflows while preserving run_workflow as the sole execution boundary; reason=filesystem and collector isolation belong at the DataDesigner adapter boundary, with _ProtectionFlow activating the policy only for private execution.
+
 ## Test strategy
 
 Focused contract tests cover private value bounds, closed compilation outcomes,
@@ -35,3 +37,19 @@ DataDesigner or provider resources. The current runtime does not establish hard
 cancellation or deterministic dependency teardown, and this spike makes no such
 claim. Execution completion remains distinct from external data-handling and
 release or commit authority.
+
+The implemented private execution path gives each DataDesigner `create()` call
+an invocation-scoped temporary artifact root, loads its output before cleanup,
+and disables ambient Anonymizer measurement plus DataDesigner message and task
+traces for that scope. `preview()` retains its existing in-memory behavior.
+Adapter and flow canaries cover durable-root and collector isolation, backend
+exception and failed-record diagnostic safety, and fail-closed terminal
+accounting.
+
+The compiled plan deep-copies execution inputs and fingerprints the complete
+allowlisted Plan A semantic snapshot, including selected models, model configs,
+detection settings, replacement settings, profile, versions, and limits.
+Execution verifies that fingerprint before effects. Receipts bind the plan
+digest and a fresh content-independent attempt identity. Failure retry safety
+is `unknown` and retry ownership is `Unassigned`; this spike makes no stronger
+retry claim before taxonomy review.

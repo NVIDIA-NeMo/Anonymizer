@@ -194,8 +194,6 @@ class _PandasRuntime:
             final = verifier.finish(verifier.bind_complete_stage_output(detected))
             if detection_result.failed_records:
                 logger.warning("%d record(s) failed during pipeline processing.", len(detection_result.failed_records))
-                for failure in detection_result.failed_records:
-                    logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
             logger.info(
                 "🎉 Pipeline complete — %d records processed, %d total failures",
                 num_records,
@@ -210,8 +208,6 @@ class _PandasRuntime:
         failed_records = [*detection_result.failed_records, *result.failed_records]
         if failed_records:
             logger.warning("%d record(s) failed during pipeline processing.", len(failed_records))
-            for failure in failed_records:
-                logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
         final = verifier.finish(verifier.bind_complete_stage_output(result.dataframe))
         logger.info(
             "🎉 Pipeline complete — %d records processed, %d total failures",
