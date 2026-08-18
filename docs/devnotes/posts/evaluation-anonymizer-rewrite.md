@@ -31,7 +31,7 @@ This is Part 2 of a two-part series on evaluation in Anonymizer. [Part 1](evalua
 
 ## Rewrite Evaluation Has Two Layers
 
-Unlike Replace mode, Rewrite mode evaluates every generated rewrite as part of `preview()` or `run()`. A separate `evaluate()` call adds independent LLM-as-judge feedback:
+Unlike Replace mode, Rewrite mode natively evaluates every generated rewrite as part of `preview()` or `run()`. A separate `evaluate()` call adds independent LLM-as-judge feedback:
 
 ```mermaid
 flowchart TD
