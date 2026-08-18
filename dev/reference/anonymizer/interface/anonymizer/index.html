@@ -2218,6 +2218,8 @@
       
         
       
+        
+      
     
     
     
@@ -2274,14 +2276,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../devnotes/after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
+      <a href="../../../../devnotes/after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    After Anonymization — Part I: Evaluating Replace Mode
+    After Anonymization — Part II: Evaluating Rewrite Mode
   
 
     
@@ -2302,14 +2304,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="../../../../devnotes/after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+    After Anonymization — Part I: Evaluating Replace Mode
   
 
     
@@ -2357,6 +2359,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -2370,10 +2400,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_6" >
         
           
-          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7_6" id="__nav_7_6_label" tabindex="0">
             
   
   
@@ -2391,8 +2421,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_7_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2698,7 +2728,7 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, data_designer_run_config=None, detection_workflow=None, replace_runner=None, rewrite_runner=None) (anonymizer.interface.anonymizer.Anonymizer)" href="#anonymizer.interface.anonymizer.Anonymizer">Anonymizer</a></code></td>
+            <td><code><a class="autorefs autorefs-internal" title="              Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, data_designer_run_config=None, detection_workflow=None, replace_runner=None, rewrite_runner=None, combined_rewrite_runner=None) (anonymizer.interface.anonymizer.Anonymizer)" href="#anonymizer.interface.anonymizer.Anonymizer">Anonymizer</a></code></td>
             <td>
               <div class="doc-md-description">
                 <p>Public facade for anonymization workflows.</p>
@@ -2729,7 +2759,7 @@
 
 
 <h3 id="anonymizer.interface.anonymizer.Anonymizer" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, data_designer_run_config=None, detection_workflow=None, replace_runner=None, rewrite_runner=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">Anonymizer(*, model_configs=None, model_providers=None, artifact_path=None, data_designer=None, data_designer_run_config=None, detection_workflow=None, replace_runner=None, rewrite_runner=None, combined_rewrite_runner=None)</code>
 
 <a href="#anonymizer.interface.anonymizer.Anonymizer" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -2890,6 +2920,22 @@ instance. Use this for DataDesigner execution knobs such as
                   <code>None</code>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>combined_rewrite_runner</code>
+            </td>
+            <td>
+                  <code><span title="anonymizer.engine.rewrite.combined_rewrite_workflow.CombinedRewriteWorkflow">CombinedRewriteWorkflow</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Custom combined rewrite workflow (advanced/testing).</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -2979,6 +3025,7 @@ instance. Use this for DataDesigner execution knobs such as
     detection_workflow: EntityDetectionWorkflow | None = None,
     replace_runner: ReplacementWorkflow | None = None,
     rewrite_runner: RewriteWorkflow | None = None,
+    combined_rewrite_runner: CombinedRewriteWorkflow | None = None,
 ) -&gt; None:
     """Create an Anonymizer instance.
 
@@ -2999,6 +3046,7 @@ instance. Use this for DataDesigner execution knobs such as
         detection_workflow: Custom detection workflow (advanced/testing).
         replace_runner: Custom replacement workflow (advanced/testing).
         rewrite_runner: Custom rewrite workflow (advanced/testing).
+        combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
     """
     _initialize_logging()
     # Tag DataDesigner telemetry events so they're filterable as anonymizer traffic in
@@ -3047,7 +3095,8 @@ instance. Use this for DataDesigner execution knobs such as
         attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=self._adapter),
         adapter=self._adapter,
     )
-    self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)</code></pre>
+    self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
+    self._combined_rewrite_runner = combined_rewrite_runner or CombinedRewriteWorkflow(adapter=self._adapter)</code></pre>
                   </details>
 
 

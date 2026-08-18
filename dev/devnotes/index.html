@@ -16,7 +16,7 @@
         <link rel="prev" href="../reference/anonymizer/telemetry/">
       
       
-        <link rel="next" href="after-anonymization--part-i-evaluating-replace-mode/">
+        <link rel="next" href="after-anonymization--part-ii-evaluating-rewrite-mode/">
       
       
         
@@ -2073,6 +2073,8 @@
       
         
       
+        
+      
     
     
     
@@ -2129,14 +2131,14 @@
   
   
     <li class="md-nav__item">
-      <a href="after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
+      <a href="after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    After Anonymization — Part I: Evaluating Replace Mode
+    After Anonymization — Part II: Evaluating Rewrite Mode
   
 
     
@@ -2157,14 +2159,14 @@
   
   
     <li class="md-nav__item">
-      <a href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+    After Anonymization — Part I: Evaluating Replace Mode
   
 
     
@@ -2212,6 +2214,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -2225,10 +2255,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_6" >
         
           
-          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7_6" id="__nav_7_6_label" tabindex="0">
             
   
   
@@ -2246,8 +2276,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_7_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2329,6 +2359,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#after-anonymization-part-ii-evaluating-rewrite-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        After Anonymization — Part II: Evaluating Rewrite Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#after-anonymization-part-i-evaluating-replace-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2379,6 +2420,56 @@
 <h1 id="developer-notes">Developer Notes<a class="headerlink" href="#developer-notes" title="Permanent link">&para;</a></h1>
 <p>Updates and notes from the NeMo Anonymizer team.</p>
       </header>
+      
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://avatars.githubusercontent.com/u/259195479?v=4" alt="Marjan Emadi">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-08-07 00:00:00+00:00">August 7, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              10 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="after-anonymization-part-ii-evaluating-rewrite-mode"><a class="toclink" href="after-anonymization--part-ii-evaluating-rewrite-mode/"><strong>After Anonymization — Part II: Evaluating Rewrite Mode</strong></a></h2>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<p>Replace mode can hide a name and change an address, yet leave the person recognizable. Imagine a biography describing the only pediatric cardiologist in a small desert city who trained overseas, survived a rare cancer, and later founded a clinic after a major wildfire. None of those details is a direct identifier. Together, they form a fingerprint that may point to one person.</p>
+<p>Rewrite mode tackles that harder problem by transforming the entire record. But rewriting introduces a new risk: protect too little and identity clues remain; protect too much and the data loses its value.</p>
+<p>NeMo Anonymizer evaluates that tradeoff twice. During anonymization, it measures how much identifying information remains (leakage) and how much useful meaning is preserved (utility), then repairs failing rewrites. Afterward, optional LLM judges assess literal entity coverage and the rewrite's overall privacy, quality, and style.</p>
+<p>This is Part 2 of a two-part series on evaluation in Anonymizer. <a href="after-anonymization--part-i-evaluating-replace-mode/">Part 1</a> covers Replace mode, while this devnote covers Rewrite mode.</p>
+
+    
+      <nav class="md-post__action">
+        <a href="after-anonymization--part-ii-evaluating-rewrite-mode/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
       
         <article class="md-post md-post--excerpt">
   <header class="md-post__header">
@@ -2585,13 +2676,13 @@
         
         
           
-          <a href="after-anonymization--part-i-evaluating-replace-mode/" class="md-footer__link md-footer__link--next" aria-label="Next: After Anonymization — Part I: Evaluating Replace Mode">
+          <a href="after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-footer__link md-footer__link--next" aria-label="Next: After Anonymization — Part II: Evaluating Rewrite Mode">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                After Anonymization — Part I: Evaluating Replace Mode
+                After Anonymization — Part II: Evaluating Rewrite Mode
               </div>
             </div>
             <div class="md-footer__button md-icon">

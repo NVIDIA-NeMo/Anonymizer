@@ -10,13 +10,11 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/concepts/detection/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/after-anonymization--part-ii-evaluating-rewrite-mode/">
       
       
-        <link rel="prev" href="../models/">
+        <link rel="prev" href="../after-anonymization--part-i-evaluating-replace-mode/">
       
-      
-        <link rel="next" href="../replace/">
       
       
         
@@ -27,7 +25,7 @@
     
     
       
-        <title>Detect - NeMo Anonymizer</title>
+        <title>After Anonymization — Part II: Evaluating Rewrite Mode - NeMo Anonymizer</title>
       
     
     
@@ -84,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#detect" class="md-skip">
+        <a href="#after-anonymization-part-ii-evaluating-rewrite-mode" class="md-skip">
           Skip to content
         </a>
       
@@ -124,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Detect
+              After Anonymization — Part II: Evaluating Rewrite Mode
             
           </span>
         </div>
@@ -233,7 +231,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -296,10 +296,8 @@
       
   
   
-    
   
   
-  
     
     
       
@@ -321,11 +319,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -346,7 +344,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -364,7 +362,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../models/" class="md-nav__link">
+      <a href="../../concepts/models/" class="md-nav__link">
         
   
   
@@ -389,37 +387,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Detect
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../concepts/detection/" class="md-nav__link">
         
   
   
@@ -435,177 +406,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How it works
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="How it works">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#example-standard-vs-latent-entities" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Example: standard vs. latent entities
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Configuration">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#detect-fields" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Detect fields
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chunked-validation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chunked validation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Chunked validation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#validator-pools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validator pools
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Validator pools">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#what-happens-when-a-row-cant-be-validated" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What happens when a row can't be validated
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#entity-labels" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Entity labels
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Entity labels">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#custom-labels" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Custom labels
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tuning-the-threshold" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tuning the threshold
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#model-roles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Model roles
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -618,7 +418,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../replace/" class="md-nav__link">
+      <a href="../../concepts/replace/" class="md-nav__link">
         
   
   
@@ -646,7 +446,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rewrite/" class="md-nav__link">
+      <a href="../../concepts/rewrite/" class="md-nav__link">
         
   
   
@@ -674,7 +474,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../choosing-a-strategy/" class="md-nav__link">
+      <a href="../../concepts/choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -702,7 +502,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../evaluation/" class="md-nav__link">
+      <a href="../../concepts/evaluation/" class="md-nav__link">
         
   
   
@@ -730,7 +530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../self-hosting-gliner/" class="md-nav__link">
+      <a href="../../concepts/self-hosting-gliner/" class="md-nav__link">
         
   
   
@@ -2254,6 +2054,8 @@
       
   
   
+    
+  
   
   
     
@@ -2277,15 +2079,15 @@
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../devnotes/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2309,7 +2111,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2326,10 +2128,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../devnotes/after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    After Anonymization — Part II: Evaluating Rewrite Mode
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2345,6 +2174,214 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rewrite-evaluation-has-two-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rewrite Evaluation Has Two Layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automatic-rewrite-evaluation-did-the-rewrite-balance-privacy-and-utility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatic Rewrite Evaluation: Did the Rewrite Balance Privacy and Utility?
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Automatic Rewrite Evaluation: Did the Rewrite Balance Privacy and Utility?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#utility-score-was-important-meaning-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Utility Score: Was Important Meaning Preserved?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#leakage-mass-what-identifying-information-remains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Leakage Mass: What Identifying Information Remains?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automated-repair-loop-can-a-failing-rewrite-be-improved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automated Repair Loop: Can a Failing Rewrite Be Improved?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#human-review-which-records-still-need-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Human Review: Which Records Still Need Attention?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-hoc-evaluation-what-does-an-independent-judge-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-Hoc Evaluation: What Does an Independent Judge See?
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Post-Hoc Evaluation: What Does an Independent Judge See?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entity-coverage-were-all-in-scope-entities-detected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Coverage: Were All In-Scope Entities Detected?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#privacy-did-the-rewrite-reduce-linkage-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privacy: Did the Rewrite Reduce Linkage Risk?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quality-was-the-records-meaning-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality: Was the Record's Meaning Preserved?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#style-does-the-rewrite-read-naturally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Style: Does the Rewrite Read Naturally?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#detection-validity-were-the-detected-entities-valid-in-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection Validity: Were the Detected Entities Valid in Context?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the Report
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparing-judge-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparing Judge Models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-scores-do-not-prove" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the Scores Do Not Prove
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-bottom-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Bottom Line
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2357,7 +2394,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../devnotes/after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
+      <a href="../after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
         
   
   
@@ -2385,7 +2422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../devnotes/running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
+      <a href="../running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
         
   
   
@@ -2413,7 +2450,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
         
   
   
@@ -2494,7 +2531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../devnotes/archive/2026/" class="md-nav__link">
+      <a href="../archive/2026/" class="md-nav__link">
         
   
   
@@ -2538,6 +2575,8 @@
             
             
               
+                
+              
               <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
@@ -2557,22 +2596,66 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
+  <a href="#rewrite-evaluation-has-two-layers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How it works
+        Rewrite Evaluation Has Two Layers
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="How it works">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automatic-rewrite-evaluation-did-the-rewrite-balance-privacy-and-utility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatic Rewrite Evaluation: Did the Rewrite Balance Privacy and Utility?
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Automatic Rewrite Evaluation: Did the Rewrite Balance Privacy and Utility?">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example-standard-vs-latent-entities" class="md-nav__link">
+  <a href="#utility-score-was-important-meaning-preserved" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example: standard vs. latent entities
+        Utility Score: Was Important Meaning Preserved?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#leakage-mass-what-identifying-information-remains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Leakage Mass: What Identifying Information Remains?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automated-repair-loop-can-a-failing-rewrite-be-improved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automated Repair Loop: Can a Failing Rewrite Be Improved?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#human-review-which-records-still-need-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Human Review: Which Records Still Need Attention?
       
     </span>
   </a>
@@ -2585,22 +2668,66 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
+  <a href="#post-hoc-evaluation-what-does-an-independent-judge-see" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration
+        Post-Hoc Evaluation: What Does an Independent Judge See?
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Configuration">
+    <nav class="md-nav" aria-label="Post-Hoc Evaluation: What Does an Independent Judge See?">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#detect-fields" class="md-nav__link">
+  <a href="#entity-coverage-were-all-in-scope-entities-detected" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Detect fields
+        Entity Coverage: Were All In-Scope Entities Detected?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#privacy-did-the-rewrite-reduce-linkage-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privacy: Did the Rewrite Reduce Linkage Risk?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quality-was-the-records-meaning-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality: Was the Record's Meaning Preserved?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#style-does-the-rewrite-read-naturally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Style: Does the Rewrite Read Naturally?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#detection-validity-were-the-detected-entities-valid-in-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection Validity: Were the Detected Entities Valid in Context?
       
     </span>
   </a>
@@ -2613,83 +2740,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#chunked-validation" class="md-nav__link">
+  <a href="#reading-the-report" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chunked validation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Chunked validation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#validator-pools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validator pools
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Validator pools">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#what-happens-when-a-row-cant-be-validated" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What happens when a row can't be validated
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#entity-labels" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Entity labels
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Entity labels">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#custom-labels" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Custom labels
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tuning-the-threshold" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tuning the threshold
+        Reading the Report
       
     </span>
   </a>
@@ -2697,10 +2751,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#model-roles" class="md-nav__link">
+  <a href="#comparing-judge-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Model roles
+        Comparing Judge Models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-scores-do-not-prove" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the Scores Do Not Prove
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-bottom-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Bottom Line
       
     </span>
   </a>
@@ -2716,214 +2792,305 @@
             
           
           
-            <div class="md-content" data-md-component="content">
-              
+  <div class="md-content md-content--post" data-md-component="content">
+    <div class="md-sidebar md-sidebar--post" data-md-component="sidebar" data-md-type="navigation">
+      <div class="md-sidebar__scrollwrap">
+        <div class="md-sidebar__inner md-post">
+          <nav class="md-nav md-nav--primary">
+            <div class="md-post__back">
+              <div class="md-nav__title md-nav__container">
+                <a href="../" class="md-nav__link">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+                  <span class="md-ellipsis">
+                    Back to index
+                  </span>
+                </a>
+              </div>
+            </div>
+            
+              <div class="md-post__authors md-typeset">
                 
-
-
-
-  
-
-
-  <nav class="md-path" aria-label="Navigation" >
-    <ol class="md-path__list">
-      
-        
-  
-  
-    <li class="md-path__item">
-      <a href="../.." class="md-path__link">
-        
-  <span class="md-ellipsis">
-    Home
-  </span>
-
-      </a>
-    </li>
-  
-
-      
-      
-        
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../models/" class="md-path__link">
+                  <div class="md-profile md-post__profile">
+                    <span class="md-author md-author--long">
+                      <img src="https://avatars.githubusercontent.com/u/259195479?v=4" alt="Marjan Emadi">
+                    </span>
+                    <span class="md-profile__description">
+                      <strong>
+                        
+                          <a href="https://github.com/memadi-nv">Marjan Emadi</a>
+                        
+                      </strong>
+                      <br>
+                      Researcher at NVIDIA
+                    </span>
+                  </div>
+                
+              </div>
+            
+            <ul class="md-post__meta md-nav__list">
+              <li class="md-nav__item md-nav__item--section">
+                <div class="md-post__title">
+                  <span class="md-ellipsis">
+                    Metadata
+                  </span>
+                </div>
+                <nav class="md-nav">
+                  <ul class="md-nav__list">
+                    <li class="md-nav__item">
+                      <div class="md-nav__link">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 19H5V8h14m-3-7v2H8V1H6v2H5c-1.11 0-2 .89-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-1V1m-1 11h-5v5h5z"/></svg>
+                        <time datetime="2026-08-07 00:00:00+00:00" class="md-ellipsis">August 7, 2026</time>
+                      </div>
+                    </li>
+                    
+                    
+                    
+                      
+                      <li class="md-nav__item">
+                        <div class="md-nav__link">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 20a8 8 0 0 0 8-8 8 8 0 0 0-8-8 8 8 0 0 0-8 8 8 8 0 0 0 8 8m0-18a10 10 0 0 1 10 10 10 10 0 0 1-10 10C6.47 22 2 17.5 2 12A10 10 0 0 1 12 2m.5 5v5.25l4.5 2.67-.75 1.23L11 13V7z"/></svg>
+                          <span class="md-ellipsis">
+                            
+                              10 min read
+                            
+                          </span>
+                        </div>
+                      </li>
+                    
+                  </ul>
+                </nav>
+              </li>
+            </ul>
+            
+          </nav>
           
-  <span class="md-ellipsis">
-    Concepts
-  </span>
-
-        </a>
-      </li>
-    
-  
-
+        </div>
+      </div>
+    </div>
+    <article class="md-content__inner md-typeset">
       
-    </ol>
-  </nav>
+        
+  
 
-              
-              <article class="md-content__inner md-typeset">
-                
-                  
 
 
   
   
 
 
+<h1 id="after-anonymization-part-ii-evaluating-rewrite-mode"><strong>After Anonymization — Part II: Evaluating Rewrite Mode</strong><a class="headerlink" href="#after-anonymization-part-ii-evaluating-rewrite-mode" title="Permanent link">&para;</a></h1>
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-<h1 id="detect">Detect<a class="headerlink" href="#detect" title="Permanent link">&para;</a></h1>
-<p>Entity detection is the first stage of every Anonymizer pipeline. Both replace and rewrite modes depend on it.</p>
-<hr />
-<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p>Detection combines a lightweight NER model (GLiNER-PII) with LLM-based refinement. GLiNER PII produces an initial set of entity spans, then an LLM augments it with entities the NER missed and validates each detection -- keeping, reclassifying, or dropping entities based on context. </p>
-<p>When rewrite is configured, an additional step identifies <strong>latent entities</strong> -- sensitive information inferable from context but not explicitly stated in the text.</p>
-<h3 id="example-standard-vs-latent-entities">Example: standard vs. latent entities<a class="headerlink" href="#example-standard-vs-latent-entities" title="Permanent link">&para;</a></h3>
-<p>Consider this short passage:</p>
-<blockquote>
-<p>Sarah described her appointment. She's looking forward to ringing the bell soon and said the care team has been wonderful.</p>
-</blockquote>
-<table>
-<thead>
-<tr>
-<th>Type</th>
-<th>Value</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Standard entity</td>
-<td>Sarah</td>
-<td>A directly stated first name.</td>
-</tr>
-<tr>
-<td>Latent entity</td>
-<td>cancer treatment</td>
-<td>Inferred from context. The passage never explicitly says "cancer," but "ringing the bell" can imply nearing the end of cancer treatment.</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<p>Detection is configured via the <code>Detect</code> object on <code>AnonymizerConfig</code>:</p>
-<pre class="highlight"><code class="language-python">from anonymizer import AnonymizerConfig, Detect, Redact
+<p>Replace mode can hide a name and change an address, yet leave the person recognizable. Imagine a biography describing the only pediatric cardiologist in a small desert city who trained overseas, survived a rare cancer, and later founded a clinic after a major wildfire. None of those details is a direct identifier. Together, they form a fingerprint that may point to one person.</p>
+<p>Rewrite mode tackles that harder problem by transforming the entire record. But rewriting introduces a new risk: protect too little and identity clues remain; protect too much and the data loses its value.</p>
+<p>NeMo Anonymizer evaluates that tradeoff twice. During anonymization, it measures how much identifying information remains (leakage) and how much useful meaning is preserved (utility), then repairs failing rewrites. Afterward, optional LLM judges assess literal entity coverage and the rewrite's overall privacy, quality, and style.</p>
+<p>This is Part 2 of a two-part series on evaluation in Anonymizer. <a href="../after-anonymization--part-i-evaluating-replace-mode/">Part 1</a> covers Replace mode, while this devnote covers Rewrite mode.</p>
+<!-- more -->
 
-config = AnonymizerConfig(
-    detect=Detect(),
-    replace=Redact(),
+<div style="text-align: center;">
+<p><img alt="An illustration of a personal record being rewritten to reduce identifying details while preserving useful information, then reviewed by a privacy-focused detective." loading="lazy" src="../assets/evaluation-rewrite-hero.png" /></p>
+</div>
+<hr />
+<h2 id="rewrite-evaluation-has-two-layers">Rewrite Evaluation Has Two Layers<a class="headerlink" href="#rewrite-evaluation-has-two-layers" title="Permanent link">&para;</a></h2>
+<p>Unlike Replace mode, automatic rewrite evaluation runs for every generated rewrite during <code>preview()</code> or <code>run()</code>. A separate <code>evaluate()</code> call adds independent LLM-as-judge feedback:</p>
+<pre class="mermaid"><code>flowchart TD
+    A[Source data] --&gt; B[Anonymizer.preview / run\nDetect and rewrite]
+    B --&gt; C[Automatic rewrite evaluation\nUtility · leakage · repair]
+    C --&gt; D[Rewrite result]
+    D --&gt; E[Optional Anonymizer.evaluate]
+    E --&gt; F[Post-hoc evaluation\nCoverage · privacy · quality · style]</code></pre>
+<p>Automatic rewrite evaluation scores each generated text for privacy leakage and preserved meaning. If leakage triggers the configured repair criteria, Anonymizer rewrites the text and evaluates it again, stopping when it passes or reaches the maximum number of repair iterations. It then flags outputs for human review when residual leakage or low utility meets the configured review criteria. Post-hoc evaluation is an optional, separate step that you run by calling <code>evaluate()</code> after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See <a href="../after-anonymization--part-i-evaluating-replace-mode/#anonymization-and-evaluation-as-separate-steps">Part 1</a> for more about this workflow.</p>
+<pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
+
+anonymizer = Anonymizer()
+
+result = anonymizer.run(
+    config=AnonymizerConfig(rewrite=Rewrite()),
+    data=AnonymizerInput(source="records.csv", text_column="text"),
+)
+
+# Rewrite metrics are already present after run().
+rewrite_metric_columns = [
+    "utility_score",
+    "leakage_mass",
+    "weighted_leakage_rate",
+    "needs_human_review",
+]
+rewrite_scores = result.dataframe[rewrite_metric_columns]
+
+evaluated = anonymizer.evaluate(
+    result,
+    config=EvaluateConfig(compute_detection_validity=True),
+)
+posthoc_scores = evaluated.dataframe[
+    ["entity_coverage", "detection_valid", "judge_evaluation"]
+]</code></pre>
+<p>To evaluate in a later session instead, save the complete result:</p>
+<pre class="highlight"><code class="language-python">import pickle
+
+with open("rewrite-result.pkl", "wb") as f:
+    pickle.dump(result, f)
+
+# In the later session:
+with open("rewrite-result.pkl", "rb") as f:
+    saved_result = pickle.load(f)
+
+evaluated = anonymizer.evaluate(
+    saved_result,
+    config=EvaluateConfig(compute_detection_validity=True),
 )</code></pre>
-<h3 id="detect-fields"><code>Detect</code> fields<a class="headerlink" href="#detect-fields" title="Permanent link">&para;</a></h3>
+<p>As in Replace mode, the completed result is reusable. Save the complete <code>AnonymizerResult</code> or <code>PreviewResult</code>—not just its <code>dataframe</code>—so the Rewrite configuration and evaluation context remain available.</p>
+<hr />
+<h2 id="automatic-rewrite-evaluation-did-the-rewrite-balance-privacy-and-utility">Automatic Rewrite Evaluation: Did the Rewrite Balance Privacy and Utility?<a class="headerlink" href="#automatic-rewrite-evaluation-did-the-rewrite-balance-privacy-and-utility" title="Permanent link">&para;</a></h2>
+<p>During <code>run()</code> or <code>preview()</code>, Anonymizer creates quality questions from the original record and privacy questions from the detected entities and the sensitivity and protection assigned to each one, called entity dispositions. It answers those questions against the rewritten text: quality answers determine utility, while privacy answers determine leakage and whether repair is needed. Low utility can flag a record for human review, but does not trigger repair.</p>
+<h3 id="utility-score-was-important-meaning-preserved">Utility Score: Was Important Meaning Preserved?<a class="headerlink" href="#utility-score-was-important-meaning-preserved" title="Permanent link">&para;</a></h3>
+<p><code>utility_score</code> measures how well the rewritten text answers questions about the original record. Scores range from <code>0.0</code> to <code>1.0</code>; higher is better.</p>
+<p>Before rewriting, Anonymizer extracts individual facts and relationships that the rewrite should preserve, called meaning units, and labels each one as <code>critical</code> or <code>important</code>. When computing <code>utility_score</code>, a critical meaning unit receives twice the weight of an important one:</p>
+<pre class="highlight"><code class="language-text">utility_score = weighted mean of per-question answer scores</code></pre>
+<p>A high score means the rewrite retained the important facts and relationships. It does not require verbatim wording or every identifying detail to survive.</p>
+<h3 id="leakage-mass-what-identifying-information-remains">Leakage Mass: What Identifying Information Remains?<a class="headerlink" href="#leakage-mass-what-identifying-information-remains" title="Permanent link">&para;</a></h3>
+<p>The privacy check tests whether each protected value—a sensitive value the rewrite should conceal—can still be identified or inferred. Every leaked item contributes a numeric sensitivity weight multiplied by the judge's confidence:</p>
+<pre class="highlight"><code class="language-text">leakage_mass = Σ(sensitivity_weight × leak_confidence)</code></pre>
+<p>High-, medium-, and low-sensitivity items carry weights of <code>1.0</code>, <code>0.6</code>, and <code>0.3</code>. Lower leakage mass is better, but it is not bounded at <code>1.0</code> because several items can leak in one record.</p>
+<p><code>weighted_leakage_rate</code> normalizes that mass by the maximum possible leakage for the record:</p>
+<pre class="highlight"><code class="language-text">weighted_leakage_rate = leakage_mass / maximum_possible_leakage_mass</code></pre>
+<p>It ranges from <code>0.0</code> to <code>1.0</code>. <code>any_high_leaked</code> separately records whether at least one high-sensitivity item leaked.</p>
+<div class="output-columns-table">
 <table>
 <thead>
 <tr>
-<th>Field</th>
-<th>Default</th>
-<th>Description</th>
+<th>Output column</th>
+<th>Meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>entity_labels</code></td>
-<td><code>None</code> (all defaults)</td>
-<td>List of labels to detect. Leave unset (or pass <code>None</code>) to use the full default set.</td>
+<td><code>utility_score</code></td>
+<td>Meaning preservation from <code>0.0</code> to <code>1.0</code>; higher is better</td>
 </tr>
 <tr>
-<td><code>gliner_threshold</code></td>
-<td><code>0.3</code></td>
-<td>GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives.</td>
+<td><code>leakage_mass</code></td>
+<td>Confidence-weighted sum of leaked items; lower is better</td>
 </tr>
 <tr>
-<td><code>validation_max_entities_per_call</code></td>
-<td><code>100</code></td>
-<td>Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See <a href="#chunked-validation">Chunked validation</a>.</td>
+<td><code>weighted_leakage_rate</code></td>
+<td>Leakage normalized to the record's maximum possible mass</td>
 </tr>
 <tr>
-<td><code>validation_excerpt_window_chars</code></td>
-<td><code>500</code></td>
-<td>Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit.</td>
+<td><code>any_high_leaked</code></td>
+<td>Whether any high-sensitivity item leaked</td>
 </tr>
 </tbody>
 </table>
-<hr />
-<h2 id="chunked-validation">Chunked validation<a class="headerlink" href="#chunked-validation" title="Permanent link">&para;</a></h2>
-<p>When a row yields many entity candidates, validating them in a single LLM call can often exceed the model's context window or the provider's rate limits (tokens-per-minute or requests-per-minute quotas that many hosted models enforce). Anonymizer automatically splits validation for such rows: candidates are grouped in position order into chunks of at most <code>validation_max_entities_per_call</code>, and each chunk is validated independently with its own bounded text excerpt (<code>validation_excerpt_window_chars</code> before and after the chunk's span). Decisions are merged back into a single per-row set.</p>
-<p>The chunked path is always on; if a row has fewer candidates than the limit, it runs as a single call and is exactly equivalent to the unchunked behavior. Tuning guidance:</p>
-<ul>
-<li><strong>Raise <code>validation_max_entities_per_call</code></strong> if your validator has a large context window and you want fewer, larger calls.</li>
-<li><strong>Lower it</strong> if you hit provider rate limits or want more uniform per-call latency.</li>
-<li><strong>Raise <code>validation_excerpt_window_chars</code></strong> when short windows hide the context needed to disambiguate entities (e.g., <code>"John"</code> as first name vs. last name depends on surrounding text).</li>
-<li><strong>Lower it</strong> to reduce per-chunk prompt tokens, at the risk of lower validation quality on context-sensitive labels.</li>
-</ul>
-<h3 id="validator-pools">Validator pools<a class="headerlink" href="#validator-pools" title="Permanent link">&para;</a></h3>
-<p><code>entity_validator</code> can be a single alias (the default) or a list of aliases — a <strong>pool</strong>. When multiple aliases are configured, each chunk in a row is dispatched to the next alias in round-robin order, which lets you work around per-alias rate limits by spreading requests across equivalent endpoints.</p>
-<p>Pools also act as <strong>failover</strong>. If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A chunk only fails once every alias in the pool has failed for it. This is a cheap way to harden validation against any one endpoint having a bad day, on top of the load-spreading role.</p>
-<h4 id="what-happens-when-a-row-cant-be-validated">What happens when a row can't be validated<a class="headerlink" href="#what-happens-when-a-row-cant-be-validated" title="Permanent link">&para;</a></h4>
-<p>If validation can't get a complete answer for a row — every alias in the pool has failed on at least one of that row's chunks — the row is <strong>dropped from the output</strong> rather than passed through with some entities unvalidated. This is deliberate: the alternative would be writing the original text back out with those entities still un-scrubbed, which is an undesired outcome.</p>
-<p>Dropped rows show up on <code>result.failed_records</code> with <code>step="detection"</code>, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.</p>
-<p>See <a href="../models/#validator-pools">Validator pools</a> for the YAML syntax and caveats.</p>
-<h2 id="entity-labels">Entity labels<a class="headerlink" href="#entity-labels" title="Permanent link">&para;</a></h2>
-<p>Anonymizer ships with a comprehensive default label set covering:</p>
-<ul>
-<li><strong>Direct identifiers</strong> (e.g. <code>first_name</code>, <code>last_name</code>, <code>email</code>, <code>ssn</code>, <code>date_of_birth</code>, <code>street_address</code>)</li>
-<li><strong>Quasi-identifiers</strong> (e.g. <code>age</code>, <code>city</code>, <code>state</code>, <code>country</code>, <code>occupation</code>, <code>company_name</code>, <code>date</code>)</li>
-<li><strong>Technical data</strong> (e.g. <code>api_key</code>, <code>password</code>, <code>url</code>, <code>ipv4</code>, <code>ipv6</code>, <code>device_identifier</code>)</li>
-<li><strong>Demographics</strong> (e.g. <code>gender</code>, <code>race_ethnicity</code>, <code>religious_belief</code>, <code>political_view</code>, <code>language</code>)</li>
-<li><strong>Financial</strong> (e.g. <code>credit_debit_card</code>, <code>account_number</code>, <code>bank_routing_number</code>, <code>tax_id</code>)</li>
-</ul>
-<p>To inspect the full list:</p>
-<pre class="highlight"><code class="language-python">from anonymizer import DEFAULT_ENTITY_LABELS
-print(DEFAULT_ENTITY_LABELS)</code></pre>
-<h3 id="custom-labels">Custom labels<a class="headerlink" href="#custom-labels" title="Permanent link">&para;</a></h3>
-<p>When you pass <code>entity_labels</code> explicitly, the augmenter operates in <strong>strict mode</strong> -- it only outputs entities matching your list. When <code>entity_labels=None</code>, the augmenter can create additional labels beyond the defaults (e.g., <code>clinic_name</code>, <code>server_name</code>).</p>
-<pre class="highlight"><code class="language-python"># Strict: only detect these 3 labels
-Detect(entity_labels=["first_name", "last_name", "email"])
-
-# Permissive: detect all defaults + LLM can infer new label types
-Detect()  # entity_labels=None</code></pre>
-<h2 id="tuning-the-threshold">Tuning the threshold<a class="headerlink" href="#tuning-the-threshold" title="Permanent link">&para;</a></h2>
-<p>For <code>gliner_threshold</code>, start with the default <code>0.3</code>. If you're seeing too many false positives, raise it to <code>0.5</code>. If entities are being missed, try lowering to <code>0.2</code>. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.</p>
-<hr />
-<h2 id="model-roles">Model roles<a class="headerlink" href="#model-roles" title="Permanent link">&para;</a></h2>
-<p>The detection pipeline uses three model roles, each mapped to a model alias in the default config:</p>
+</div>
+<h3 id="automated-repair-loop-can-a-failing-rewrite-be-improved">Automated Repair Loop: Can a Failing Rewrite Be Improved?<a class="headerlink" href="#automated-repair-loop-can-a-failing-rewrite-be-improved" title="Permanent link">&para;</a></h3>
+<p>After the initial checks, rows above the repair threshold—or rows with a high-sensitivity leak when the selected risk tolerance requires it—enter the automated repair loop. Only failing rows are repaired and checked again. The loop stops when they pass or reach <code>max_repair_iterations</code>; at that limit, Anonymizer keeps the latest rewrite and calculates its final human-review flag.</p>
+<pre class="mermaid"><code>flowchart LR
+    A[Evaluate rewrite] --&gt; B{Needs repair?}
+    B --&gt;|No| F[Finalize result&lt;br/&gt;Set human-review flag]
+    B --&gt;|Yes| C{Maximum iterations reached?}
+    C --&gt;|Yes| F
+    C --&gt;|No| D[Repair failing row]
+    D --&gt; E[Re-evaluate]
+    E --&gt; B</code></pre>
+<p>For example, a rewrite might preserve that the person is a pediatric cardiologist who trained overseas and founded a clinic after a wildfire. That can score well on utility, but the distinctive combination may still produce high leakage. If it meets the repair criteria, Anonymizer rewrites and re-evaluates that row until it passes or reaches the iteration limit, then calculates the final human-review flag.</p>
+<p><code>risk_tolerance</code> controls the repair and review thresholds. The default is <code>low</code>; use <code>minimal</code> for a stricter posture or <code>moderate</code> / <code>high</code> for more tolerance. Setting <code>max_repair_iterations=0</code> disables repair but still computes the rewrite metrics.</p>
+<h3 id="human-review-which-records-still-need-attention">Human Review: Which Records Still Need Attention?<a class="headerlink" href="#human-review-which-records-still-need-attention" title="Permanent link">&para;</a></h3>
+<p>After repair ends, <code>needs_human_review</code> becomes <code>True</code> when the rewrite is missing, a high-sensitivity item still leaks, utility falls below the selected preset's threshold, or leakage mass exceeds its review threshold.</p>
+<div class="output-columns-table">
 <table>
 <thead>
 <tr>
-<th>Role</th>
-<th>Default alias</th>
-<th>Purpose</th>
+<th>Output column</th>
+<th>Meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>entity_detector</code></td>
-<td><a href="https://build.nvidia.com/nvidia/gliner-pii"><code>gliner-pii-detector</code></a></td>
-<td>GLiNER-PII NER model.</td>
-</tr>
-<tr>
-<td><code>entity_validator</code></td>
-<td><a href="https://build.nvidia.com/openai/gpt-oss-120b"><code>gpt-oss-120b</code></a></td>
-<td>Validates and reclassifies detected entities.</td>
-</tr>
-<tr>
-<td><code>entity_augmenter</code></td>
-<td><a href="https://build.nvidia.com/openai/gpt-oss-120b"><code>gpt-oss-120b</code></a></td>
-<td>Finds entities the NER model missed.</td>
-</tr>
-<tr>
-<td><code>latent_detector</code></td>
-<td><a href="https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b"><code>nemotron-30b-thinking</code></a></td>
-<td>Identifies inferable entities (rewrite only).</td>
+<td><code>needs_human_review</code></td>
+<td>Final review flag based on the rewrite metrics</td>
 </tr>
 </tbody>
 </table>
-<p>See <a href="../models/">Models</a> for how to override these.</p>
+</div>
+<p>Records with no detected entities skip rewriting and pass through unchanged with <code>utility_score=1.0</code>, <code>leakage_mass=0.0</code>, and <code>needs_human_review=False</code>.</p>
+<hr />
+<h2 id="post-hoc-evaluation-what-does-an-independent-judge-see">Post-Hoc Evaluation: What Does an Independent Judge See?<a class="headerlink" href="#post-hoc-evaluation-what-does-an-independent-judge-see" title="Permanent link">&para;</a></h2>
+<p>The report includes entity coverage and a holistic rewrite judgment, with detection validity available as an opt-in audit.</p>
+<h3 id="entity-coverage-were-all-in-scope-entities-detected">Entity Coverage: Were All In-Scope Entities Detected?<a class="headerlink" href="#entity-coverage-were-all-in-scope-entities-detected" title="Permanent link">&para;</a></h3>
+<p>Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies literal sensitive values covered by the configured entity types and measures how many Anonymizer detected. It does not include latent entities—sensitive information implied rather than explicitly stated—or other clues that can only be inferred. See <a href="../after-anonymization--part-i-evaluating-replace-mode/#entity-coverage-were-all-in-scope-entities-detected">Part 1: Entity Coverage</a> for the calculation, output columns, and interpretation guidance.</p>
+<h3 id="privacy-did-the-rewrite-reduce-linkage-risk">Privacy: Did the Rewrite Reduce Linkage Risk?<a class="headerlink" href="#privacy-did-the-rewrite-reduce-linkage-risk" title="Permanent link">&para;</a></h3>
+<p>The privacy rubric compares the rewritten record with the original and estimates whether a realistic attacker could link them. It considers surviving direct identifiers and details that may not identify someone alone but can do so when combined, called quasi-identifiers.</p>
+<ul>
+<li><code>high</code> — direct identifiers are removed and remaining details create low linkage risk.</li>
+<li><code>medium</code> — no obvious direct identifier remains, but a distinctive bundle creates noticeable risk.</li>
+<li><code>low</code> — the record remains easily or near-certainly linkable.</li>
+</ul>
+<h3 id="quality-was-the-records-meaning-preserved">Quality: Was the Record's Meaning Preserved?<a class="headerlink" href="#quality-was-the-records-meaning-preserved" title="Permanent link">&para;</a></h3>
+<p>The quality rubric evaluates important facts, relationships, chronology, and conclusions independently from privacy and writing style.</p>
+<ul>
+<li><code>high</code> — important meaning, facts, and structure are fully preserved.</li>
+<li><code>medium</code> — most content is preserved with minor loss or distortion.</li>
+<li><code>low</code> — important information is materially lost, contradicted, or distorted.</li>
+</ul>
+<h3 id="style-does-the-rewrite-read-naturally">Style: Does the Rewrite Read Naturally?<a class="headerlink" href="#style-does-the-rewrite-read-naturally" title="Permanent link">&para;</a></h3>
+<p>The style rubric evaluates fluency, grammar, clarity, coherence, and whether the result reads like human-written prose.</p>
+<ul>
+<li><code>high</code> — fluent, coherent, and natural.</li>
+<li><code>medium</code> — readable with isolated awkward phrasing.</li>
+<li><code>low</code> — noticeably unnatural, broken, or placeholder-like.</li>
+</ul>
+<p>All three rubric results are stored together in <code>judge_evaluation</code>. To retrieve the value for the first record:</p>
+<pre class="highlight"><code class="language-python">judge_evaluation = evaluated.dataframe.loc[0, "judge_evaluation"]</code></pre>
+<p>An example value looks like this:</p>
+<pre class="highlight"><code class="language-json">{
+  "privacy": {"score": "high", "reasoning": "..."},
+  "quality": {"score": "medium", "reasoning": "..."},
+  "style": {"score": "high", "reasoning": "..."}
+}</code></pre>
+<p>The <code>reasoning</code> field explains why the selected rubric level applies, using evidence from the original and rewritten text.</p>
+<p>These rubric scores are informational. They do not trigger repair and do not modify <code>needs_human_review</code>.</p>
+<h3 id="detection-validity-were-the-detected-entities-valid-in-context">Detection Validity: Were the Detected Entities Valid in Context?<a class="headerlink" href="#detection-validity-were-the-detected-entities-valid-in-context" title="Permanent link">&para;</a></h3>
+<p>Detection validity uses the same opt-in judge as Replace mode to check whether detected <code>(value, label)</code> pairs are valid in context. Rewrite reports the fraction that passed from <code>0.0</code> to <code>1.0</code>, aligning it with Rewrite's numeric scoring, whereas Replace reports whether all detections passed as a boolean. See <a href="../after-anonymization--part-i-evaluating-replace-mode/#detection-validity-were-the-detected-entities-valid-in-context">Part 1: Detection Validity</a> for what it flags and how to enable it.</p>
+<hr />
+<h2 id="reading-the-report">Reading the Report<a class="headerlink" href="#reading-the-report" title="Permanent link">&para;</a></h2>
+<p>To inspect the first record (row <code>0</code>):</p>
+<pre class="highlight"><code class="language-python">evaluated.display_record(0)</code></pre>
+<p>The Rewrite report shows the original and rewritten text, rewrite utility and leakage metrics, the human-review flag, judge privacy / quality / style scores, entity coverage, and the entity dispositions used to guide protection. When detection validity is enabled, that score and any flagged detections also appear.</p>
+<div style="text-align: center;">
+<p><img alt="Screenshot of display_record output for a Rewrite result showing original and rewritten text, rewrite metrics, post-hoc judge scores, entity coverage, and entity dispositions." loading="lazy" src="../assets/evaluate-rewrite-display-record.png" /></p>
+</div>
+<p>For a tabular summary across records:</p>
+<pre class="highlight"><code class="language-python">evaluated.dataframe[[
+    "utility_score",
+    "leakage_mass",
+    "weighted_leakage_rate",
+    "needs_human_review",
+    "entity_coverage",
+    "detection_valid",
+    "judge_evaluation",
+]]</code></pre>
+<hr />
+<h2 id="comparing-judge-models">Comparing Judge Models<a class="headerlink" href="#comparing-judge-models" title="Permanent link">&para;</a></h2>
+<p>Judge models are configured and compared the same way as in <a href="../after-anonymization--part-i-evaluating-replace-mode/#comparing-judge-models">Part 1: Comparing Judge Models</a>: run <code>evaluate()</code> on the same result with different model configurations, without rerunning anonymization. See <a href="../../concepts/evaluation/#model-roles">Evaluation: Model Roles</a> for the default model used by each evaluation step, which you can treat as the baseline when comparing candidate models.</p>
+<hr />
+<h2 id="what-the-scores-do-not-prove">What the Scores Do Not Prove<a class="headerlink" href="#what-the-scores-do-not-prove" title="Permanent link">&para;</a></h2>
+<p>The metrics and judges answer bounded questions. They do not certify that a rewrite is anonymous.</p>
+<ul>
+<li><strong>Utility score</strong> measures preservation through generated questions; it can miss meaning that no question captured.</li>
+<li><strong>Leakage metrics</strong> test known protected values and inferences; they do not model every possible attacker or external dataset.</li>
+<li><strong>Entity coverage</strong> depends on one judge's candidate extraction and is not ground truth.</li>
+<li><strong>Detection validity</strong> measures precision of detected entities, not whether all sensitive information was found.</li>
+<li><strong>Privacy, quality, and style</strong> provide broad LLM-based assessments rather than definitive guarantees.</li>
+</ul>
+<p>Use these signals together. Review representative records, inspect failures and entity dispositions, evaluate against annotated data when available, and apply human review where the risk requires it.</p>
+<hr />
+<h2 id="the-bottom-line">The Bottom Line<a class="headerlink" href="#the-bottom-line" title="Permanent link">&para;</a></h2>
+<p>Rewrite evaluation is not a single final score. Automatic rewrite evaluation measures utility and leakage, repairs rows that fail the privacy criteria, and flags residual leakage or low utility for human review. The optional post-hoc evaluation adds independent evidence about detection coverage and the rewrite's overall privacy, quality, and style.</p>
+<p>The two layers serve different purposes: rewrite metrics guide repair during anonymization, while post-hoc evaluation provides a broader assessment of the completed results.</p>
+<p>Skipping this optional evaluation can leave detection gaps and holistic privacy, quality, or style problems unnoticed until affected records reach downstream systems.</p>
+<p>For API details and the complete output schema, see <a href="../../concepts/evaluation/">Evaluation</a>. For Rewrite configuration and risk tolerance, see <a href="../../concepts/rewrite/">Rewrite</a>.</p>
 
 
 
@@ -2931,15 +3098,20 @@ Detect()  # entity_labels=None</code></pre>
 
 
 
+  
+  
 
 
 
 
+  
 
-                
-              </article>
-            </div>
-          
+
+
+      
+    </article>
+  </div>
+
           
   <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
 
@@ -2958,10 +3130,12 @@ Detect()  # entity_labels=None</code></pre>
   
     
       
+        
+      
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../models/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Models">
+          <a href="../after-anonymization--part-i-evaluating-replace-mode/" class="md-footer__link md-footer__link--prev" aria-label="Previous: After Anonymization — Part I: Evaluating Replace Mode">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -2971,27 +3145,11 @@ Detect()  # entity_labels=None</code></pre>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Models
+                After Anonymization — Part I: Evaluating Replace Mode
               </div>
             </div>
           </a>
         
-        
-          
-          <a href="../replace/" class="md-footer__link md-footer__link--next" aria-label="Next: Replace">
-            <div class="md-footer__title">
-              <span class="md-footer__direction">
-                Next
-              </span>
-              <div class="md-ellipsis">
-                Replace
-              </div>
-            </div>
-            <div class="md-footer__button md-icon">
-              
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
-            </div>
-          </a>
         
       </nav>
     
