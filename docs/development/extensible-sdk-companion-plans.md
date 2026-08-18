@@ -118,7 +118,7 @@ or that the output contains zero PII.
 
 ### Closed terminal outcomes
 
-Both plans use the same four exhaustive submission outcomes:
+Both plans target the same four exhaustive submission outcomes:
 
 ```python
 RecordOutcome = (
@@ -143,6 +143,8 @@ RecordOutcome = (
 `Rejected` is pre-execution; the other three variants are execution-terminal
 for accepted work. Cancellation before admission is
 `Rejected(reason=cancelled_before_admission)`. Only success contains output.
+The current Plan A design spike does not implement accepted-work cancellation;
+between-stage cancellation remains a requirement for later validation.
 If the outer envelope is invalid, no records are admitted and the call returns
 or raises one sanitized batch error. In every returned run record, each valid,
 unique submitted `RecordRef` has exactly one outcome. A crash or transport loss
@@ -150,9 +152,9 @@ returns no run record, so the adapter must withhold the complete source item or
 retry under its own policy. `RecordRef`, not output order, is authoritative.
 
 `Omitted` is not an Anonymizer outcome. A source adapter or Relay maps a
-rejected, failed, or cancelled outcome—or a transport-lost invocation—to its own item
-rejection or omission behavior. That preserves ownership of complete-item
-atomicity and fail-closed publication.
+rejected, failed, or cancelled outcome—and a transport-lost invocation—to its
+own item-rejection or omission behavior. That preserves ownership of
+complete-item atomicity and fail-closed publication.
 
 ### Safe failures
 
@@ -355,11 +357,11 @@ or edge. The exact call site remains unselected pending boundary review.
 ### Plan A exit gate
 
 Plan A is complete when the consuming-product owner has selected the boundary
-and Intake dispatches approved synthetic or governed workloads through the
-private path, every source item is reconstructed or withheld according to its
-declared atomicity, resource behavior is bounded, diagnostics remain
-content-free, and the reviewed provenance contract is implemented. This does
-not satisfy the public shipment gate.
+and a reviewed validation deployment dispatches approved synthetic or governed
+workloads through the private path, every source item is reconstructed or
+withheld according to its declared atomicity, resource behavior is bounded,
+diagnostics remain content-free, and the reviewed provenance contract is
+implemented. This does not satisfy the public shipment gate.
 
 ## Plan B: composable multi-host SDK
 
@@ -588,12 +590,15 @@ not by turning Plan A's fields into ambiguous option bags.
 
 ## Intake workload validation
 
+The current-behavior column is established by the immutable Intake references
+linked from each format; the proposed protection target is design work.
+
 | Format | Current Intake behavior | Proposed protection target |
 | --- | --- | --- |
-| ATIF | Accepts v1.0–v1.7 | Probe v1.0 and v1.7 first, then validate every accepted version; protect and reconstruct complete trajectories while preserving hierarchy and ordering |
-| OpenAI-compatible chat completion | Accepts extension-tolerant nested request and response models | Classify provider extensions and tool or content leaves under a closed policy while preserving pre-protection identities |
-| OTLP/HTTP protobuf | Collects per-span errors | Preserve partial acceptance while replacing exception-derived strings with sanitized codes |
-| Provider-neutral direct spans | Validates batches of 1–1,000 structured spans before conversion and write | Use a request-level protection unit without claiming transactional persistence atomicity |
+| [ATIF](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L32-L72) | Accepts v1.0–v1.7 | Probe v1.0 and v1.7 first, then validate every accepted version; protect and reconstruct complete trajectories while preserving hierarchy and ordering |
+| [OpenAI-compatible chat completion](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L80-L87) | Accepts extension-tolerant nested request and response models | Classify provider extensions and tool or content leaves under a closed policy while preserving pre-protection identities |
+| [OTLP/HTTP protobuf](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L120-L127) | Collects per-span errors | Preserve partial acceptance while replacing exception-derived strings with sanitized codes |
+| [Provider-neutral direct spans](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L91-L118) | Validates batches of 1–1,000 structured spans before conversion and write | Use a request-level protection unit without claiming transactional persistence atomicity |
 
 Several formats in one Intake process remain one semantic runtime. They validate
 shape and adapter semantics, not the two-semantic-implementation public gate.
@@ -646,8 +651,8 @@ deployment owns withholding every non-success outcome at the boundary.
 
 | Decision | Blocks Plan A implementation | Blocks Intake validation | Blocks Plan B public shipment | Decision authority |
 | --- | ---: | ---: | ---: | --- |
-| Earliest raw-PII boundary | No for private type work | Yes | Yes | Consuming-product owner |
-| Release predicate and first profile | Yes | Yes | Yes | Must be named |
+| Earliest raw-PII boundary | No for private type work | Yes | Yes | Unresolved; consuming-product owner must select and record it |
+| Release predicate and first profile | Yes | Yes | Yes | Unresolved; Anonymizer interface owner and named Intake adopter must review |
 | Failure and retry taxonomy | Yes | Yes | Yes | Anonymizer interface owner plus adopter review |
 | Resource limits and cancellation | Yes for the flow | Yes | Yes | Runtime owners |
 | Policy, corpus, and compliance ownership | No | No | Yes | Unresolved |
@@ -671,7 +676,7 @@ companion plans remain proposals pending review.
 - [Intake ATIF normalization boundary](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/services/intake/src/nmp/intake/spans/ingest/atif.py#L100-L138)
 - [Intake OTLP/HTTP receiver](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/services/intake/src/nmp/intake/spans/ingest/otlp.py#L57-L122)
 - [Intake chat-completion normalization](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/services/intake/src/nmp/intake/spans/ingest/chat_completions.py#L143-L163)
-- [NeMo Relay runtime and bindings](https://github.com/NVIDIA/NeMo-Relay/blob/c37b551b98f0d3e890c32503bb2edf69445ad3c4/README.md)
+- [NeMo Relay runtime and observability surfaces](https://github.com/NVIDIA/NeMo-Relay/blob/c37b551b98f0d3e890c32503bb2edf69445ad3c4/README.md)
 - [OpenShell OTLP/gRPC export](https://github.com/NVIDIA/OpenShell/blob/600bbae845f96c3ef94222c5531965227c65dfcc/docs/reference/gateway-config.mdx#L213-L258)
 - [OpenShell OCSF inference events](https://github.com/NVIDIA/OpenShell/blob/600bbae845f96c3ef94222c5531965227c65dfcc/docs/observability/ocsf-json-export.mdx#L145-L169)
 
