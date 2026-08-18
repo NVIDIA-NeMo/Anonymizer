@@ -146,11 +146,16 @@ class _InvocationRowVerifier:
         self._active = False
         self._frozen.clear()
 
-    def abort_with_failure(self, *, stage: str, cause: BaseException) -> None:
-        """Close an invocation and raise a failure that cannot expose ``cause``."""
+    def abort_with_failure(self, *, stage: str, cause: BaseException) -> PrivateRowVerificationError:
+        """Close an invocation and return a failure that cannot expose ``cause``.
+
+        The caller raises the returned error after leaving its exception handler.
+        This prevents Python from retaining the original exception through the
+        otherwise-accessible ``__context__`` attribute.
+        """
         del cause
         self.abort(cancelled=False)
-        raise self._error("invocation_failed", stage, "invocation") from None
+        return self._error("invocation_failed", stage, "invocation")
 
     def _validate_correlations(self, dataframe: pd.DataFrame, *, stage: str) -> list[str]:
         if PRIVATE_CORRELATION_COLUMN not in dataframe.columns:

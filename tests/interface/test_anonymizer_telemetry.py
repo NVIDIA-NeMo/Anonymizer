@@ -17,10 +17,11 @@ from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substit
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REWRITTEN_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN, PrivateRowVerificationError
+from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.telemetry import (
     NOT_APPLICABLE,
     AnonymizerEvent,
@@ -184,12 +185,15 @@ class TestRunEmitsTelemetry:
         stub_input: AnonymizerInput,
     ) -> None:
         anonymizer, detection_wf, _, _ = _make_anonymizer()
-        detection_wf.run.side_effect = RuntimeError("kaboom")
+        secret = "provider failure containing synthetic-secret@example.test"
+        detection_wf.run.side_effect = RuntimeError(secret)
 
-        with pytest.raises(PrivateRowVerificationError, match="invocation_failed") as exc_info:
+        with pytest.raises(AnonymizerWorkflowError, match="Anonymization pipeline failed") as exc_info:
             anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
-        assert "kaboom" not in str(exc_info.value)
+        assert secret not in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
 
         assert len(captured_events) == 1
         assert captured_events[0].task_status == TaskStatusEnum.ERROR
@@ -221,6 +225,25 @@ class TestPreviewEmitsTelemetry:
         assert len(captured_events) == 1
         assert captured_events[0].task == TaskEnum.PREVIEW
         assert captured_events[0].task_status == TaskStatusEnum.COMPLETED
+
+    def test_preview_emits_error_event_and_raises_public_sanitized_error(
+        self,
+        captured_events: list[AnonymizerEvent],
+        stub_input: AnonymizerInput,
+    ) -> None:
+        anonymizer, detection_wf, _, _ = _make_anonymizer()
+        secret = "provider failure containing synthetic-secret@example.test"
+        detection_wf.run.side_effect = RuntimeError(secret)
+
+        with pytest.raises(AnonymizerWorkflowError, match="Anonymization pipeline failed") as exc_info:
+            anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input, num_records=5)
+
+        assert secret not in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
+        assert len(captured_events) == 1
+        assert captured_events[0].task == TaskEnum.PREVIEW
+        assert captured_events[0].task_status == TaskStatusEnum.ERROR
 
 
 # =============================================================================

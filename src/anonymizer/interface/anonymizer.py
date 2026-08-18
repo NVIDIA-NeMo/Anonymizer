@@ -66,14 +66,14 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
-from anonymizer.engine.private_row_verification import _InvocationRowVerifier
+from anonymizer.engine.private_row_verification import PrivateRowVerificationError, _InvocationRowVerifier
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesByValueSchema
-from anonymizer.interface.errors import InvalidConfigError
+from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
 from anonymizer.measurement import (
@@ -99,6 +99,8 @@ if TYPE_CHECKING:
     from data_designer.config.config_builder import DataDesignerConfigBuilder
 
 logger = logging.getLogger("anonymizer")
+
+_PUBLIC_PIPELINE_FAILURE_MESSAGE = "Anonymization pipeline failed."
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:
@@ -255,12 +257,15 @@ class Anonymizer:
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
+        public_error: AnonymizerWorkflowError | None = None
         try:
             result = self._run_internal(config=config, data=data, context=context, preview_num_records=None)
-            return result
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
             raise
+        except PrivateRowVerificationError:
+            status = TaskStatusEnum.ERROR
+            public_error = AnonymizerWorkflowError(_PUBLIC_PIPELINE_FAILURE_MESSAGE)
         except Exception:
             status = TaskStatusEnum.ERROR
             raise
@@ -274,6 +279,11 @@ class Anonymizer:
                 result=result,
                 duration_sec=time.perf_counter() - t_start,
             )
+        if public_error is not None:
+            raise public_error from None
+        if result is None:  # pragma: no cover - defensive typing guard
+            raise RuntimeError("Anonymizer pipeline returned no result")
+        return result
 
     def export_detection_config(
         self,
@@ -368,22 +378,15 @@ class Anonymizer:
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
+        public_error: AnonymizerWorkflowError | None = None
         try:
             result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
-            return PreviewResult(
-                dataframe=result.dataframe,
-                trace_dataframe=result.trace_dataframe,
-                resolved_text_column=result.resolved_text_column,
-                failed_records=result.failed_records,
-                preview_num_records=num_records,
-                replace_method=config.replace,
-                rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
-                entity_labels=config.detect.entity_labels,
-                data_summary=result.data_summary,
-            )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
             raise
+        except PrivateRowVerificationError:
+            status = TaskStatusEnum.ERROR
+            public_error = AnonymizerWorkflowError(_PUBLIC_PIPELINE_FAILURE_MESSAGE)
         except Exception:
             status = TaskStatusEnum.ERROR
             raise
@@ -397,6 +400,21 @@ class Anonymizer:
                 result=result,
                 duration_sec=time.perf_counter() - t_start,
             )
+        if public_error is not None:
+            raise public_error from None
+        if result is None:  # pragma: no cover - defensive typing guard
+            raise RuntimeError("Anonymizer preview pipeline returned no result")
+        return PreviewResult(
+            dataframe=result.dataframe,
+            trace_dataframe=result.trace_dataframe,
+            resolved_text_column=result.resolved_text_column,
+            failed_records=result.failed_records,
+            preview_num_records=num_records,
+            replace_method=config.replace,
+            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+            entity_labels=config.detect.entity_labels,
+            data_summary=result.data_summary,
+        )
 
     def evaluate(
         self,
@@ -634,23 +652,25 @@ class Anonymizer:
         input_df = context.dataframe
         mode = "replace" if config.replace is not None else "rewrite"
         strategy = type(config.replace).__name__ if config.replace is not None else "Rewrite"
-        with stage_timer(
-            "Anonymizer._run_internal",
-            mode=mode,
-            strategy=strategy,
-            input_row_count=len(input_df),
-            preview_num_records=preview_num_records,
-        ) as measurement:
-            record_run_metadata(
-                config=config,
-                data=data,
+        result: AnonymizerResult | None = None
+        pipeline_error: PrivateRowVerificationError | None = None
+        try:
+            with stage_timer(
+                "Anonymizer._run_internal",
                 mode=mode,
                 strategy=strategy,
                 input_row_count=len(input_df),
                 preview_num_records=preview_num_records,
-                model_configs=self._model_configs,
-            )
-            try:
+            ) as measurement:
+                record_run_metadata(
+                    config=config,
+                    data=data,
+                    mode=mode,
+                    strategy=strategy,
+                    input_row_count=len(input_df),
+                    preview_num_records=preview_num_records,
+                    model_configs=self._model_configs,
+                )
                 result = self._run_internal_impl(
                     config=config,
                     data=data,
@@ -658,16 +678,20 @@ class Anonymizer:
                     preview_num_records=preview_num_records,
                     verifier=verifier,
                 )
-            except KeyboardInterrupt:
-                verifier.abort(cancelled=True)
-                raise
-            except Exception as exc:
-                verifier.abort_with_failure(stage="pipeline", cause=exc)
-            measurement.update(
-                output_row_count=len(result.trace_dataframe),
-                failed_record_count=len(result.failed_records),
-            )
-            return result
+                measurement.update(
+                    output_row_count=len(result.trace_dataframe),
+                    failed_record_count=len(result.failed_records),
+                )
+        except KeyboardInterrupt:
+            verifier.abort(cancelled=True)
+            raise
+        except Exception as exc:
+            pipeline_error = verifier.abort_with_failure(stage="pipeline", cause=exc)
+        if pipeline_error is not None:
+            raise pipeline_error from None
+        if result is None:  # pragma: no cover - defensive typing guard
+            raise RuntimeError("Private anonymizer pipeline returned no result")
+        return result
 
     def _run_internal_impl(
         self,

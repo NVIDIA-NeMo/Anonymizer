@@ -55,6 +55,13 @@ except Exception as exc:
     raise AnonymizerWorkflowError("Workflow failed")
 ```
 
+Privacy-sensitive public boundaries are the narrow exception. When an
+underlying exception may contain input values, private correlations, prompts,
+or backend details, translate it to a generic canonical interface error after
+leaving the active exception handler. The public error must have neither an
+accessible ``__cause__`` nor ``__context__``; ``raise ... from None`` inside an
+``except`` block only suppresses display and still retains ``__context__``.
+
 Don't use defensive `try/except` on trusted internal calls that shouldn't fail — only catch at module boundaries. `RewriteWorkflow._run_final_judge` is the intentional exception: it's explicitly non-critical and catches broadly, logging with `exc_info=True` and substituting safe defaults.
 
 **Error messages** must identify the actual bad value. Use `!r` to make interpolated values unambiguous:

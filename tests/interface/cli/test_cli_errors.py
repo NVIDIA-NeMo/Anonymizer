@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from anonymizer.interface.cli.main import app
-from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
+from anonymizer.interface.errors import AnonymizerIOError, AnonymizerWorkflowError, InvalidConfigError
 
 
 def test_invalid_source_exits(tmp_path: Path) -> None:
@@ -54,6 +54,7 @@ def csv_file(tmp_path: Path) -> Path:
     [
         InvalidConfigError("bad config"),
         AnonymizerIOError("io error"),
+        AnonymizerWorkflowError("Anonymization pipeline failed."),
         ValueError("bad value"),
     ],
 )

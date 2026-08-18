@@ -37,6 +37,13 @@ from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
 
 
+def test_workflow_error_is_part_of_the_top_level_public_error_contract() -> None:
+    import anonymizer
+
+    assert hasattr(anonymizer, "AnonymizerWorkflowError")
+    assert issubclass(anonymizer.AnonymizerWorkflowError, anonymizer.AnonymizerError)
+
+
 @pytest.fixture
 def stub_input(tmp_path: Path) -> AnonymizerInput:
     csv_path = tmp_path / "input.csv"

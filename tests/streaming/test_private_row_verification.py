@@ -87,6 +87,8 @@ def test_real_engine_seam_sanitizes_pipeline_exception() -> None:
 
     assert "invocation_failed" in str(exc_info.value)
     assert secret not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
 
 
 @pytest.mark.parametrize(
@@ -267,11 +269,15 @@ def test_abort_sanitizes_underlying_failure_text() -> None:
     verifier = _InvocationRowVerifier(_detected_frame())
     secret = "provider replied with synthetic-secret and engine-id-8675309"
 
+    error = verifier.abort_with_failure(stage="replace", cause=RuntimeError(secret))
+
     with pytest.raises(PrivateRowVerificationError) as exc_info:
-        verifier.abort_with_failure(stage="replace", cause=RuntimeError(secret))
+        raise error
 
     assert "invocation_failed" in str(exc_info.value)
     assert secret not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
 
 
 def test_verifier_rejects_accepted_detection_tampering_and_closes_without_raw_values() -> None:

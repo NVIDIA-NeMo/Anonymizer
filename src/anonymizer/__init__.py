@@ -25,6 +25,7 @@ from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS as _DEFAULT_ENTITY
 from anonymizer.interface.errors import (
     AnonymizerError,
     AnonymizerIOError,
+    AnonymizerWorkflowError,
     InvalidConfigError,
     InvalidInputError,
 )
@@ -52,6 +53,7 @@ __all__ = [
     "AnonymizerError",
     "AnonymizerInput",
     "AnonymizerIOError",
+    "AnonymizerWorkflowError",
     "Annotate",
     "DEFAULT_ENTITY_LABELS",
     "Detect",
