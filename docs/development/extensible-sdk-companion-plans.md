@@ -4,6 +4,10 @@ Status: Proposed design report, 2026-08-18. This document does not authorize a
 public API, a production Intake integration, a Relay integration, or a release
 claim. Names are provisional.
 
+Except where a sentence cites an online repository revision as current
+behavior, every type, operation, ownership boundary, gate, and lifecycle
+statement below is proposed.
+
 ## Decision
 
 Develop one semantic protection core through two companion plans:
@@ -21,7 +25,7 @@ target. Plan A must leave a clean expansion path, but it must not contain empty
 protocols, speculative wire models, or optional fields that impersonate future
 semantics.
 
-Both plans preserve these invariants:
+This proposal sets these design constraints:
 
 - Existing `Anonymizer.run()`, `preview()`, `evaluate()`, and CLI behavior
   remains the compatibility baseline.
@@ -34,10 +38,12 @@ Both plans preserve these invariants:
 - Intake owns durable staging, replay, leases, commits, retention, purge, and
   delivery. Relay owns queueing, saturation, omission, plugin or worker
   lifecycle, and subscriber delivery.
-- Public API shipment remains gated on two materially different validated
-  runtimes and reviewed provenance and PII-boundary decisions.
-- Current OpenShell telemetry is test evidence, not the second runtime and not
-  authorization to change OpenShell.
+- Public portable-contract shipment remains gated on an independently
+  implemented second semantic runtime and reviewed provenance and PII-boundary
+  decisions. A process-backed Python host supplies lifecycle evidence only.
+- Current OpenShell telemetry is architecture evidence only. The Anonymizer
+  OCSF adapter remains test-only; neither artifact is a second runtime or
+  authority to change OpenShell.
 
 ## Why the design is layered
 
@@ -53,10 +59,10 @@ boundary parser
 immutable intent and compiled plan
         |
         v
-effectful protection runner
+effectful protection flow
         |
         v
-complete safe run record
+bounded public run record
         |
         v
 compatibility, wire, or bounded agent projection
@@ -70,30 +76,34 @@ effect or adapter boundaries.
 The architecture has two nested compilation chains:
 
 ```text
-ProtectionIntent
+ProtectionSpec
   -> compile against declared capabilities
   -> ProtectionPlan
   -> open under host authority
-  -> ProtectionRunner
+  -> ProtectionFlow
 
-ProtectionRequest
-  -> validate and lower
+ProtectionBatch
+  -> validate within plan ceilings
   -> OperationPlan
-  -> execute through ProtectionRunner
+  -> execute through ProtectionFlow
   -> ProtectionRunRecord
 ```
 
-The second chain is necessary because record bounds, data summaries, deadlines,
-and approved invocation context can vary between uses of one reusable runner.
-Anything that changes prompts or protection semantics must appear in the
-operation plan and receipt rather than ambient mutable state.
+The second chain is necessary because record bounds, deadlines, and approved
+invocation context can vary between uses of one reusable flow. Anything that
+changes prompts or protection semantics must be immutable, invocation-private
+input bound to the operation plan. A receipt records only allowlisted public
+identifiers and non-content verification claims; it never copies or hashes raw
+summaries, caller context, or record content.
 
 ## Shared domain rules
 
 ### Protection is narrower than transformation
 
-The new `protect` operation is protection-only. A plan may compile only when it
-has a reviewed release predicate for the chosen strategy and profile.
+The new `protect` operation is protection-only. A release predicate is a
+machine-checkable condition for marking output eligible under a named strategy
+and profile; it is not proof of exhaustive PII detection. A plan may compile
+only when it has a reviewed release predicate for that strategy and profile.
 `Annotate`, an unsupported release predicate, or another non-releasing
 configuration is rejected during compilation. The existing general-purpose
 `run()` surface continues to support its established transformation behavior.
@@ -105,7 +115,7 @@ or that the output contains zero PII.
 
 ### Closed terminal outcomes
 
-Both plans use the same four terminal alternatives:
+Both plans use the same four exhaustive submission outcomes:
 
 ```python
 RecordOutcome = (
@@ -116,20 +126,28 @@ RecordOutcome = (
 )
 ```
 
-- `ProtectionSucceeded` contains the caller reference, releasable output, and
-  a content-safe protection receipt.
+- `ProtectionSucceeded` contains the `RecordRef`, policy-qualified output, an
+  allowlisted protection receipt, and exactly one `SuccessDisposition`:
+  `ProtectionApplied` or `NoAcceptedDetections`. Success establishes execution
+  and policy-postcondition completion, not release authority.
 - `Rejected` means the submitted record was not accepted for execution.
-- `Failed` means execution was accepted but produced no verified releasable
+- `Failed` means execution was accepted but produced no policy-qualified
   output.
-- `Cancelled` means accepted work stopped under the runtime's documented
-  cancellation capability.
+- `Cancelled` means accepted work was observed to stop under the runtime's
+  documented cancellation capability. Cleanup is reported independently as
+  `CleanupComplete` or `CleanupIncomplete`.
 
-Only success contains output. Each submitted reference in a valid batch gets
-exactly one outcome; each accepted reference gets exactly one execution
-terminal state. Caller references, not output order, are authoritative.
+`Rejected` is pre-execution; the other three variants are execution-terminal
+for accepted work. Cancellation before admission is
+`Rejected(reason=cancelled_before_admission)`. Only success contains output.
+If the outer envelope is invalid, no records are admitted and the call returns
+or raises one sanitized batch error. In every returned run record, each valid,
+unique submitted `RecordRef` has exactly one outcome. A crash or transport loss
+returns no run record, so the adapter must withhold the complete source item or
+retry under its own policy. `RecordRef`, not output order, is authoritative.
 
 `Omitted` is not an Anonymizer outcome. A source adapter or Relay maps a
-rejected, failed, cancelled, missing, or transport-lost result to its own item
+rejected, failed, or cancelled outcome—or a transport-lost invocation—to its own item
 rejection or omission behavior. That preserves ownership of complete-item
 atomicity and fail-closed publication.
 
@@ -139,29 +157,32 @@ Expected failures are immutable domain data with:
 
 - a closed code;
 - coarse stage and scope;
-- retry safety and retry owner;
+- retry safety and a declared retry owner or `Unassigned`;
 - an optional bounded static message.
 
 They exclude raw input, protected output, caller references in rendered
 messages, provider text, prompts, detections, workflow names, engine IDs,
-tracebacks, exception causes, and arbitrary detail dictionaries. Unexpected
-SDK defects raise the canonical safe public exception.
+tracebacks, exception causes, and arbitrary detail dictionaries. At the
+proposed SDK boundary, unexpected defects must become
+`AnonymizerWorkflowError` with a bounded static message and no arbitrary backend
+cause. This is stricter than the [current public error contract](https://github.com/NVIDIA-NeMo/Anonymizer/blob/3eab7d1b6005b85e7d415b704e27a20dc41ba71e/src/anonymizer/interface/errors.py#L23-L28),
+whose adapter currently [preserves and interpolates the cause](https://github.com/NVIDIA-NeMo/Anonymizer/blob/3eab7d1b6005b85e7d415b704e27a20dc41ba71e/src/anonymizer/engine/ndd/adapter.py#L400-L431).
 
-### Private provenance
+### Proposed private provenance
 
-The first provenance mechanism is a one-shot invocation-private verification
+Plan A proposes a one-shot invocation-private verification
 envelope:
 
 ```text
-caller reference outside dataframe
+RecordRef outside dataframe
   -> random invocation row token
   -> private accepted-detection evidence
   -> verified terminal outcome
   -> private evidence cleared
 ```
 
-Caller references, adapter item or segment keys, engine row tokens, and receipt
-IDs remain distinct. Caller references are opaque but may still contain PII;
+`RecordRef`, adapter item or segment keys, invocation-private `RowToken`, and
+`ReceiptId` remain distinct. `RecordRef` is opaque but may still contain PII;
 Anonymizer bounds and echoes them only where required and never logs,
 interprets, or sends them to a model.
 
@@ -173,10 +194,12 @@ values, offsets, prompts, replacement maps, private correlations, or a general
 ### External authority
 
 Successful execution does not prove that the caller was authorized to provide
-raw content. Processing authority originates in Intake, Relay, the host, or a
-deployment control plane. Plan A makes this an explicit non-claim. Plan B may
-refer to an externally validated authority-use receipt, but Anonymizer cannot
-mint authority or let portable configuration widen it.
+raw content or disclose output. The design distinguishes execution authority
+(providers, credentials, files, and resources), data-handling authorization
+(which actors may receive raw content), and release or commit authority (which
+output may cross a selected boundary). An external product or deployment
+authority grants and enforces those permissions. Anonymizer may record an
+opaque `AuthorityReference`; it cannot mint, validate, or reinterpret one.
 
 ## Plan A: private Intake-first protection runtime
 
@@ -188,10 +211,11 @@ a public record API or cross-runtime protocol.
 ### Private vocabulary
 
 ```text
-_ProtectionIntent
+_ProtectionSpec
 _ProtectionPlan
-_ProtectionRunner
-_TextRecord
+_ProtectionFlow
+_ProtectionRecord
+_TextSegment
 _OperationPlan
 _ProtectionRunRecord
 _ProtectionReceipt
@@ -202,29 +226,31 @@ Compilation copies and normalizes it, resolves model selections, validates a
 static support matrix, attaches explicit limits, and produces an immutable,
 content-free, non-serializable plan and digest.
 
-The current `_CompiledInvocation` remains the lower, NDD-specific operation
-description. It is not the portable flow plan and must not be serialized as a
-wire contract.
+The implementation may use a private runtime-local lowering. It is not the
+portable flow plan and must never become a wire contract.
 
 ### Input and output
 
-Plan A accepts a finite sequence of scalar records:
+Both plans share one atomic record model:
 
 ```python
 @dataclass(frozen=True, slots=True, repr=False)
-class TextRecord:
+class ProtectionRecord:
     ref: RecordRef
-    text: str
+    segments: tuple[TextSegment, ...]
 ```
 
-The source adapter projects each declared text leaf into one record and retains
+Plan A admits exactly one segment per record; Plan B may broaden supported
+cardinality without changing outcome atomicity. The source adapter projects
+each declared text leaf into a segment and retains
 its complete source item, grouping, alias destinations, and reconstruction
 manifest privately. A valid batch is bounded before dataframe construction by
 record count, UTF-8 bytes per record, aggregate bytes, and admission deadline.
 
 The batch result is a complete `ProtectionRunRecord`, not a convenience list of
-successes. It contains ordered terminal outcomes, safe counts, plan and runtime
-versions, attempt identity, and coarse effect receipts. It does not expose
+successes. It contains ordered terminal outcomes, reviewed aggregate counts,
+plan and runtime versions, attempt identity, `ProtectionReceipt` records, and
+an `OperationReceipt`. It does not expose
 dataframes or `FailedRecord`.
 
 ### Compilation and execution
@@ -239,31 +265,42 @@ Use separate names for pure compilation and effectful sampling:
   but produces a noncommitting result type that an adapter cannot pass to its
   commit function.
 
-Compilation returns a closed result such as `PlanReady`, `PlanInvalid`,
-`PlanUnsupported`, or `PlanRejected`. It never silently falls back to a weaker
+Compilation returns a closed result: `PlanInvalid` for malformed or internally
+contradictory specifications, `PlanUnsupported` for valid semantics absent
+from declared capabilities, or `PlanRejected` for technically supported
+semantics forbidden by the closed release policy. External authorization is
+checked during effectful opening or admission, not compilation. Compilation
+never silently falls back to a weaker
 strategy, detector, evaluation mode, model, or release predicate.
 
 ### Runtime and lifecycle
 
-`ProtectionRunner` is an identity-bearing resource owner, not a frozen value.
-It owns or exclusively borrows one DataDesigner-backed runtime and provides:
+`_ProtectionFlow` is an identity-bearing lifecycle boundary, not a frozen
+value. It holds an Anonymizer-created runtime or an exclusively leased caller
+runtime. Exclusivity is the caller's obligation. It must provide:
 
-- explicit `close()` and context-manager behavior;
+- idempotent `close()` and context-manager behavior;
 - one whole-invocation admission guard;
 - default capacity of one active invocation;
 - explicit artifact, telemetry, logging, and provider policies;
 - invocation-local usage accounting;
-- no process environment or host logging mutation;
+- no process-environment or host-logging mutation in the new private path;
 - honest owned, borrowed, and partially cleanable resource status.
 
-Concurrent callers may wait only through a bounded host-selected admission
-policy or receive a safe busy rejection. The runner does not maintain an
-unbounded queue. Hosts scale with independently owned runners.
+`close()` must stop new admission, use a documented drain-or-reject policy, and
+release only demonstrably owned resources. Borrowed resources are never closed.
+Dependency cleanup and owned-artifact cleanup are separate effects; unsupported
+DataDesigner teardown must be reported as incomplete rather than implied.
 
-Plan A is synchronous. It supports cancellation before admission and checks
-between stages. It does not claim hard cancellation of an in-flight
-DataDesigner or model call. `Cancelled` is terminal only after work stops and
-cleanup completes.
+Concurrent callers may wait only through a bounded host-selected admission
+policy or receive a sanitized busy rejection. The flow does not maintain an
+unbounded queue. Hosts scale with independently owned flows.
+
+Plan A is synchronous. A caller may withdraw before admission. Between-stage
+cancellation is an implementation requirement, not current behavior. An
+in-flight DataDesigner or model call must not be described as hard-cancellable
+unless the runtime can observe that execution stopped. Waiter cancellation must
+not masquerade as operation cancellation.
 
 ### Intake composition
 
@@ -276,15 +313,17 @@ both                         -> Intake protection plan
 ```
 
 The Intake plan records protection and mapping digests, declared item boundary,
-semantic fidelity, and selected trust boundary. Its source policy assigns each
-relevant field `target`, `context`, `preserve`, `structural`, or `reject`.
+semantic fidelity, and selected trust boundary. Its initial source policy
+assigns each relevant field `target`, `preserve`, `structural`, or `reject`.
+Content-bearing prompt context is deferred until its exposure and output
+semantics receive separate review.
 
-The recommended in-process placement is after existing Intake normalization
-and identity derivation but immediately before `ingest_batch()`. This preserves
-current trace and span identity while supporting only the posture in which raw
-content may exist in Intake memory but not cross the selected persistence or
-read boundary. A requirement to protect before Intake needs the adapter at a
-producer or edge process.
+If the consuming-product owner selects protection before persistence or
+consumer-visible reads, one candidate in-process seam is after Intake
+normalization and identity derivation and before `ingest_batch()`. This report
+does not authorize that placement. It is valid only when raw content may exist
+in Intake memory; a before-Intake requirement needs protection at the producer
+or edge. The exact call site remains unselected pending boundary review.
 
 ### Plan A milestones
 
@@ -293,15 +332,16 @@ producer or edge process.
 2. Define the private closed outcomes, safe failure taxonomy, acceptance point,
    release predicate, bounds, receipt claims, and one-shot verification
    envelope.
-3. Add pure private compilation and retain `_CompiledInvocation` as the
-   NDD-specific lowering.
-4. Add the private synchronous runner with whole-invocation admission and
+3. Add pure private compilation and a private runtime-local NDD lowering.
+4. Add the private synchronous flow with whole-invocation admission and
    host-neutral logging, environment, telemetry, and artifact behavior.
-5. Route private scalar records through one dataframe and the existing engine;
+5. Route private single-segment records through one dataframe and the existing
+   engine;
    keep legacy `run()` and `preview()` compatible.
-6. Validate ATIF v1.0 and v1.7 first, then chat completions and OTLP/HTTP
-   protobuf through Intake-owned adapters. Treat direct spans as follow-on
-   evidence.
+6. Validate ATIF v1.0 and v1.7 as boundary probes, then v1.1 through v1.6
+   before claiming Intake's accepted v1.0–v1.7 range. Then validate chat
+   completions and OTLP/HTTP protobuf through Intake-owned adapters. Treat
+   direct spans as follow-on evidence.
 7. Exercise reordering, drops, duplicates, unknown rows, provider failures,
    cancellation requests, overload, shutdown, artifact cleanup, resource soak,
    PII-canary diagnostics, reconstruction, and no-raw-fallback behavior.
@@ -310,7 +350,8 @@ producer or edge process.
 
 ### Plan A exit gate
 
-Plan A is complete when Intake dispatches representative workloads through the
+Plan A is complete when the consuming-product owner has selected the boundary
+and Intake dispatches approved synthetic or governed workloads through the
 private path, every source item is reconstructed or withheld according to its
 declared atomicity, resource behavior is bounded, diagnostics remain
 content-free, and the reviewed provenance contract is implemented. This does
@@ -322,42 +363,37 @@ not satisfy the public shipment gate.
 
 Expose a small, agent-legible SDK language for Intake, Python jobs, a
 process-backed Relay client, and eventually a native conforming implementation,
-without creating a second semantic engine.
+while preserving a single Python/DataDesigner execution path inside
+Anonymizer. A future native conforming implementation remains a separately
+owned runtime, not a second execution path inside Anonymizer.
 
 ### Public semantic layers
 
 Candidate roles are:
 
 ```text
-ProtectionIntent
+ProtectionSpec
 ProtectionPlan
 PlanPreview
 CapabilityReport
 ProtectionFlow
-Record and Scalar
-ProtectionRequest
+ProtectionRecord and TextSegment
+ProtectionBatch
 OperationPlan
 ProtectionRunRecord
 RecordOutcome
-EffectReceipt
+ProtectionReceipt, OperationReceipt, and ProjectionReceipt
 BoundedRecordView
 ```
 
 Names remain provisional. Public Pydantic or wire models parse once into a
 closed immutable domain. Materializers lower the domain plan into a local
-runtime plan. The Python materializer produces `_CompiledInvocation`; another
-runtime may produce a different local representation.
+runtime plan. The Python materializer produces a private runtime-local lowering;
+another runtime may produce a different local representation.
 
-Plan B adds bounded multi-scalar records as a sibling to Plan A's scalar
-operation rather than silently changing `TextRecord`:
-
-```text
-Record
-  ref
-  tuple[TextScalar, ...]
-```
-
-A record is the Anonymizer atomic outcome unit. The source adapter still chooses
+Plan B broadens the shared `ProtectionRecord` from exactly one `TextSegment` to
+bounded multiple segments. A record remains the Anonymizer atomic outcome unit.
+The source adapter still chooses
 the source commit unit and performs source reconstruction. It may map one source
 item to one record or withhold a larger item when any of several record outcomes
 fails.
@@ -368,13 +404,20 @@ Optional analysis and projections do not add nullable fields to terminal
 outcomes. They use a separate closed algebra:
 
 ```python
-Projection[T] = Available[T] | NotRequested | Inapplicable | Unavailable
+type Projection[T] = (
+    Available[T]
+    | NotRequested
+    | Inapplicable[InapplicableReason]
+    | Unavailable[SafeFailure]
+)
 ```
 
 This distinguishes a value, an omitted request, a valid mode where the value
 has no meaning, and a requested computation that failed. It is suitable for
 evaluation, diagnostics, release assessments on general transformations, and
-other companion views. It is not the terminal execution state.
+other companion views. It is not the terminal execution state. A mandatory
+protection release check can never be `NotRequested` or `Inapplicable`; failure
+to perform it prevents `ProtectionSucceeded`.
 
 ### Agent task surface
 
@@ -382,27 +425,28 @@ The fuller SDK exposes a small task language over the same semantic handlers:
 
 - `compile`: create a complete immutable plan or a closed compile outcome.
 - `preview`: run a bounded, noncommitting sample through the same executor.
-- `protect`: execute a declared batch and return the complete safe run record.
-- `explain`: explain plan resolution or an outcome from existing safe evidence;
+- `protect`: execute a declared batch and return the bounded public run record.
+- `explain`: explain plan resolution or an outcome from allowlisted evidence;
   it does not rerun protection.
 - `inspect`: expose versions, effective policy, provenance, limits,
-  capabilities, lifecycle, and safe record structure.
+  capabilities, lifecycle, and bounded record structure.
 - `diagnose`: classify a failure, retry safety, likely owner, and next checks;
   it does not retry or probe without separately authorized effects.
 
 Each task returns structured records before prose rendering. Agent-facing views
-are deterministic bounded projections over the complete safe record. They
+are deterministic bounded projections over the bounded public record. They
 declare included and omitted material, counts, continuation state, and content
-disposition. They cannot be used for reconstruction or commit, and protected
-text is excluded by default unless caller authority and policy permit it.
+disposition. Official reconstruction and commit functions reject these view
+types. This cannot stop a holder from copying included content. Protected text
+is excluded unless the projection layer receives an externally validated
+disclosure scope.
 
 ### Capabilities and cross-runtime design
 
 Static requirements and live readiness remain separate:
 
 ```text
-compile(intent, declared capabilities)  # pure
-negotiate(plan, runtime snapshot)        # pure
+compile(spec, declared capabilities)    # pure
 open(plan, host authority)               # effect
 check readiness                          # effect
 ```
@@ -417,20 +461,20 @@ The cross-runtime design separates portable and local state:
 ```text
 portable policy bundle
   -> runtime-local compilation
-  -> activated local plan
+  -> opened local plan
   -> bounded batch execution
   -> exhaustive wire outcomes and receipts
 ```
 
 The capability vocabulary covers operation, detection class, taxonomy,
-language and platform qualification, scalar or multi-scalar support, context,
+language and platform qualification, single- or multi-segment support, context,
 evaluation, verification, bounds, cancellation, artifact handling, provider
 handling, and receipt versions.
 
 Contract schema, policy schema, capability vocabulary, implementation, and
-model versions remain distinct. Activation selects an exact compatible
+model versions remain distinct. Opening selects an exact compatible
 contract and policy digest. Unknown required capabilities, incompatible major
-versions, policy drift, or silent model substitution fail activation.
+versions, policy drift, or silent model substitution fail opening.
 
 Wire encoding is not selected until Python and Rust implementations measure a
 real boundary. Internal frozen unions do not double as Pydantic, protobuf, or
@@ -450,9 +494,8 @@ method and callers need observable state:
 PendingAdmission
 Running
 CancelRequested
-Succeeded
-Failed
-Cancelled
+Settled
+Aborted
 ```
 
 `CancelRequested` is not terminal. Cancelling an async waiter does not claim
@@ -465,33 +508,38 @@ operation semantics rather than preceding them.
 
 ### Relay realization
 
-Relay should not embed Python. The current path remains Relay-owned native
-Rampart consuming shared policy and conformance artifacts. If Relay later needs
-the full Anonymizer engine, the preferred host shape is a supervised local
-worker with bounded IPC.
+This proposal does not require Relay to embed Python. NeMo Relay exposes a
+Rust-centered multi-language runtime with middleware, plugin, event, and
+observability surfaces. Relay continues to own runtime, queue, subscriber,
+export, and saturation lifecycle. Shared policy and conformance artifacts are a
+future boundary blocked on accepted owners, repository, schema authority,
+corpus governance, and release thresholds. If Relay later needs the full
+Anonymizer engine, a supervised bounded local worker is one candidate, not a
+selected implementation.
 
-A Rust client to a Python worker validates transport, crash isolation,
+A Rust client to a Python worker validates hosting, IPC, crash isolation,
 backpressure, version negotiation, and Relay lifecycle. It does not by itself
-prove a second semantic protection implementation. A native conforming runtime
+prove a second semantic protection implementation or satisfy that shipment
+gate. An independently implemented native conforming runtime
 justifies an open implementation protocol only when it consumes the same policy
 bundle, advertises the same capability vocabulary, passes shared conformance
 fixtures for its claimed subset, and produces the same outcome algebra.
 
-Relay continues to map unresolved or failed selected content to omission. A
-transport break produces no safe output and never permits raw fallback.
+Any Relay integration must map unresolved or failed selected content under its
+reviewed omission policy. A
+transport break produces no policy-qualified output and never permits raw fallback.
 
 ### Plan B milestones
 
 1. Complete Plan A and preserve its four terminal variants and versioned
    discriminators.
-2. Validate a process-backed or native production-intent runtime with bounded
-   admission, crash, timeout, malformed response, version drift, shutdown, and
-   no-raw-fallback tests.
-3. Compare at least two implementations before extracting an open runtime or
+2. Validate a process-backed production-intent host for transport and lifecycle
+   evidence. Separately validate an independent native semantic implementation.
+3. Compare at least two semantic implementations before extracting an open runtime or
    adapter protocol.
 4. Freeze the smallest demonstrated policy, capability, record, outcome,
    receipt, and wire schemas.
-5. Add full safe run records and deterministic bounded views.
+5. Add bounded public run records and deterministic bounded views.
 6. Add `explain`, `inspect`, and `diagnose` over those records without a second
    analysis engine.
 7. Add operation handles and async waiting only where cancellation, ownership,
@@ -513,22 +561,22 @@ test-only adapter.
 | --- | --- | --- |
 | Immediate purpose | Validate Intake and Python jobs | Stable multi-host and agent-legible SDK |
 | Public status | No new public API | Public only after all shipment gates |
-| Input | One bounded text scalar per record | Bounded multi-scalar records plus scalar compatibility |
+| Input | One bounded text segment per record | The same record with bounded multiple segments |
 | Operations | Pure compile; synchronous protect; private bounded preview | Compile, preview, protect, explain, inspect, diagnose |
 | Plan | Frozen, content-free, local, non-serializable | Canonical portable semantics plus runtime-local activation |
-| Runtime | One concrete Python runner, capacity one | Local, pooled, process-backed, or remote flows |
+| Runtime | One private Python flow, capacity one | Local, pooled, process-backed, or remote flows |
 | Outcomes | Success, rejected, failed, cancelled | Same stable terminal core |
 | Optional results | Deferred | Separate applicability/projection algebra |
-| Provenance | Private envelope and minimal receipt | Safe plan, effect, projection, and authority-use receipts |
+| Provenance | Private envelope and allowlisted receipt | Protection, operation, projection, and authority-use receipts |
 | Authority | Explicit non-claim | Reference to externally validated authority only |
 | Capabilities | Static reviewed support matrix | Required/offered negotiation and versioning |
 | Protocol | None | Extracted only after two substitutable implementations |
 | Wire format | None | Selected after real Python and Rust measurements |
 | Agent support | Structured tags, safe failures, retry ownership | Task-shaped operations and bounded views |
 | Async | None | Waiting over explicit operation semantics only |
-| Cancellation | Before admission and between stages | Capability-negotiated cooperative or process cancellation |
+| Cancellation | Exact supported capability must be measured | Capability-negotiated cooperative or process cancellation |
 | Main risk | Under-specifying release and provenance semantics | Over-modeling an unvalidated language |
-| Latest safe stop | Reviewed private Intake vertical slice | Reviewed public contract backed by two runtimes |
+| Latest bounded stop | Reviewed private Intake vertical slice | Reviewed public contract backed by two semantic runtimes |
 
 Plan A is intentionally not a reduced version of every Plan B feature. It is a
 complete narrow operation. Plan B grows through sibling algebras and adapters,
@@ -536,21 +584,23 @@ not by turning Plan A's fields into ambiguous option bags.
 
 ## Intake workload validation
 
-| Format | Initial role | Contract pressure |
+| Format | Current Intake behavior | Proposed protection target |
 | --- | --- | --- |
-| ATIF v1.0 and v1.7 | First complete adapter validation | Recursive item atomicity, nested text, aliases, hierarchy, ordering |
-| OpenAI-compatible chat completion | Second initial adapter | Simple item path, tool calls, provider-extension rejection, identity preservation |
-| OTLP/HTTP protobuf | Third initial adapter | Per-span partial acceptance, semantic precedence, sanitized failures |
-| Provider-neutral direct spans | Follow-on evidence | Open-ended source profiles, arbitrary JSON attributes, request atomicity |
+| ATIF | Accepts v1.0–v1.7 | Probe v1.0 and v1.7 first, then validate every accepted version; protect and reconstruct complete trajectories while preserving hierarchy and ordering |
+| OpenAI-compatible chat completion | Accepts extension-tolerant nested request and response models | Classify provider extensions and tool or content leaves under a closed policy while preserving pre-protection identities |
+| OTLP/HTTP protobuf | Collects per-span errors | Preserve partial acceptance while replacing exception-derived strings with sanitized codes |
+| Provider-neutral direct spans | Validates batches of 1–1,000 structured spans before conversion and write | Use a request-level protection unit without claiming transactional persistence atomicity |
 
-Several formats in one Intake process remain one runtime. They validate shape
-and adapter semantics, not the two-runtime public gate.
+Several formats in one Intake process remain one semantic runtime. They validate
+shape and adapter semantics, not the two-semantic-implementation public gate.
+OpenShell's OTLP/gRPC exporter is not directly equivalent to Intake's OTLP/HTTP
+protobuf receiver; any collector bridge remains outside these plans.
 
-## Ownership and trust boundary
+## Proposed ownership and trust boundary
 
-| Owner | Responsibility |
+| Owner | Responsibility this SDK leaves outside Anonymizer core |
 | --- | --- |
-| Anonymizer | Protection intent and plan semantics, Python execution, safe outcomes, private verification, taxonomy, quality methods |
+| Anonymizer | Python execution, protection-plan semantics, sanitized outcomes, and private verification; cross-runtime taxonomy and quality governance only if formally accepted |
 | Source adapter | Codec, closed field roles, projection, aliases, manifest, fidelity, reconstruction, schema validation, output mapping |
 | Intake | Authentication, staging, quotas, leases, replay, durable commit, retention, purge, delivery |
 | Relay | Event selection, queue and drain, saturation, omission, activation, worker or plugin lifecycle, subscriber delivery |
@@ -563,10 +613,12 @@ raw storage. The deployment record must name every raw-data actor, including
 model providers, artifacts, logs, and crash dumps. A receipt reports execution
 under a policy; it does not assert where the deployment boundary sits.
 
-An absolute zero-PII guarantee is not supported. The enforceable claim is that
-no content violating a reviewed release predicate under a named closed policy
-crosses the selected boundary, subject to documented residual risk and
-unsupported-content behavior.
+A successful protection outcome attests only that the named implementation
+completed the receipt's checks under the named policy and execution profile. It
+does not establish exhaustive detection, absence of PII, authority to disclose
+the output, or compliance with a deployment boundary. After the
+consuming-product owner selects a boundary and accepts residual risk, that
+deployment owns withholding every non-success outcome at the boundary.
 
 ## Rejected shortcuts
 
@@ -586,34 +638,40 @@ unsupported-content behavior.
 - Async wrappers that imply cancellation unsupported by the underlying work.
 - Durable Intake or Relay lifecycle state inside Anonymizer.
 
-## Open decisions
+## Decision gates
 
-1. The customer-selected earliest boundary that unprotected PII may cross and
-   the accepted residual-risk definition.
-2. The reviewed release predicates and first supported protection profiles.
-3. The final safe failure codes, stage vocabulary, retry classification, and
-   retry owners.
-4. Canonical byte, memory, call, token, repair, wall-time, and artifact limits.
-5. Deterministic DataDesigner teardown and the exact cancellation capability by
-   supported version.
-6. Which metrics are stable enough for safe public projections.
-7. Whether a cross-process receipt needs authenticated-channel binding or a
-   durable signature.
-8. The named owner or co-owners for portable policy artifacts, qualification
-   corpora, and compliance-facing claims.
-9. Which production-intent runtime supplies the second validation and which
-   narrower capability subset it implements.
+| Decision | Blocks Plan A implementation | Blocks Intake validation | Blocks Plan B public shipment | Decision authority |
+| --- | ---: | ---: | ---: | --- |
+| Earliest raw-PII boundary | No for private type work | Yes | Yes | Consuming-product owner |
+| Release predicate and first profile | Yes | Yes | Yes | Must be named |
+| Failure and retry taxonomy | Yes | Yes | Yes | Anonymizer interface owner plus adopter review |
+| Resource limits and cancellation | Yes for the flow | Yes | Yes | Runtime owners |
+| Policy, corpus, and compliance ownership | No | No | Yes | Unresolved |
+| Second semantic implementation | No | No | Yes | Anonymizer and adopter architecture owners |
 
-## Evidence and authority
+Further gated decisions include stable public projections, authenticated
+cross-process receipt binding, and the capability subset of the second semantic
+implementation. Unresolved owners are not inferred.
 
-This report follows the current Anonymizer and Rampart ownership decision and
-the streaming continuation plan. It incorporates the current Intake main
-behavior, the current OpenShell trace-export evidence, the reviewed canonical
-public error mapping, the test-only structured projection prototype, the
-Scala-like Python type-safety guide, and the agent-accessible inference SDK
-design note.
+## Public implementation references
 
-The ownership decision remains authoritative. Its historical branch snapshot
-does not override the current Anonymizer branch state. Work Packet 1 remains in
-progress until the opaque provenance mechanism and PII boundary receive the
-required reviews.
+These immutable repository sources establish current implementation behavior;
+the ownership split, shipment gates, provenance contract, trust boundary, and
+companion plans remain proposals pending review.
+
+- [Anonymizer facade and `run()` path](https://github.com/NVIDIA-NeMo/Anonymizer/blob/3eab7d1b6005b85e7d415b704e27a20dc41ba71e/src/anonymizer/interface/anonymizer.py#L151-L257)
+- [Anonymizer DataDesigner execution boundary](https://github.com/NVIDIA-NeMo/Anonymizer/blob/3eab7d1b6005b85e7d415b704e27a20dc41ba71e/src/anonymizer/engine/ndd/adapter.py#L267-L328)
+- [DataDesigner runtime interface](https://github.com/NVIDIA-NeMo/DataDesigner/blob/90c14379e78285be2baa4bc0f233eff8a3e1340e/packages/data-designer/src/data_designer/interface/data_designer.py)
+- [Intake formats](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L32-L161)
+- [Intake normalized span model](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/services/intake/src/nmp/intake/spans/domain.py#L41-L61)
+- [Intake ATIF normalization boundary](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/services/intake/src/nmp/intake/spans/ingest/atif.py#L100-L138)
+- [Intake OTLP/HTTP receiver](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/services/intake/src/nmp/intake/spans/ingest/otlp.py#L57-L122)
+- [Intake chat-completion normalization](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/services/intake/src/nmp/intake/spans/ingest/chat_completions.py#L143-L163)
+- [NeMo Relay runtime and bindings](https://github.com/NVIDIA/NeMo-Relay/blob/c37b551b98f0d3e890c32503bb2edf69445ad3c4/README.md)
+- [OpenShell OTLP/gRPC export](https://github.com/NVIDIA/OpenShell/blob/600bbae845f96c3ef94222c5531965227c65dfcc/docs/reference/gateway-config.mdx#L213-L258)
+- [OpenShell OCSF inference events](https://github.com/NVIDIA/OpenShell/blob/600bbae845f96c3ef94222c5531965227c65dfcc/docs/observability/ocsf-json-export.mdx#L145-L169)
+
+The branch-local error mapping and structured projection prototype are not
+public evidence until their commits are reachable in an online Git repository.
+Unpublished ownership records and design guides informed this proposal but are
+neither normative dependencies nor cited evidence.
