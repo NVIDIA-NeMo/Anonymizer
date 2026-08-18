@@ -26,14 +26,18 @@ We recommend using a virtual environment to manage dependencies.
     uv venv .venv
     source .venv/bin/activate
 
-    # Install Anonymizer + notebook tooling
-    uv pip install nemo-anonymizer jupyter ipykernel
+    # Install Anonymizer + notebook tooling + the local GLiNER runtime
+    uv pip install --torch-backend cpu \
+      nemo-anonymizer jupyter ipykernel fastapi gliner uvicorn
 
     # Register this env as a notebook kernel (one-time)
     python -m ipykernel install --user --name anonymizer-venv
 
     # Set API key before launching Jupyter
     export NVIDIA_API_KEY="your-nvidia-api-key"
+
+    # Start the local GLiNER detector
+    python tools/serve_gliner.py > gliner-server.log 2>&1 &
 
     # Launch Jupyter
     uv run jupyter notebook
@@ -46,14 +50,17 @@ We recommend using a virtual environment to manage dependencies.
     python -m venv .venv
     source .venv/bin/activate
 
-    # Install Anonymizer + notebook tooling
-    pip install nemo-anonymizer jupyter ipykernel
+    # Install Anonymizer + notebook tooling + the local GLiNER runtime
+    pip install nemo-anonymizer jupyter ipykernel fastapi gliner uvicorn
 
     # Optional: register this env as a named kernel for Jupyter/VS Code
     python -m ipykernel install --user --name anonymizer-venv
 
     # Set API key before launching Jupyter
     export NVIDIA_API_KEY="your-nvidia-api-key"
+
+    # Start the local GLiNER detector
+    python tools/serve_gliner.py > gliner-server.log 2>&1 &
 
     # Launch Jupyter
     jupyter notebook

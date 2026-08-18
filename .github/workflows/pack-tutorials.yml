@@ -23,6 +23,12 @@ jobs:
           name: notebooks
           path: anonymizer_tutorial
 
+      - name: Download local GLiNER notebook runtime
+        uses: actions/download-artifact@v5
+        with:
+          name: notebook-runtime
+          path: anonymizer_tutorial
+
       - name: Set up environment variables
         run: |
           echo "SOURCE_FOLDER_PATH=anonymizer_tutorial" >> $GITHUB_ENV

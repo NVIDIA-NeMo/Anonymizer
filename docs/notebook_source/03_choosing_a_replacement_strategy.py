@@ -43,12 +43,14 @@
 #   - The default `build.nvidia.com` (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
 #   - Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint for production data and usage.
 # - Import all four strategy classes: `Redact`, `Annotate`, `Hash`, `Substitute`.
-# - `Anonymizer()` initializes with the default model provider -- no extra config needed.
+# - Before launching Jupyter, start `python tools/serve_gliner.py` for entity detection; the first run downloads the model.
+# - Generative model calls continue to use NVIDIA Build through `NVIDIA_API_KEY`.
 # - `configure_logging(LoggingConfig.default())` keeps logs at INFO. Switch to `LoggingConfig.debug()` when troubleshooting.
 
 # %%
 import getpass
 import os
+from pathlib import Path
 
 if not os.getenv("NVIDIA_API_KEY"):
     key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
@@ -71,7 +73,11 @@ from anonymizer import (
 
 configure_logging(LoggingConfig.default())
 # %%
-anonymizer = Anonymizer()
+notebook_root = next(path for path in (Path.cwd(), *Path.cwd().parents) if (path / "docs/notebook_config").is_dir())
+anonymizer = Anonymizer(
+    model_providers=str(notebook_root / "docs/notebook_config/providers.yaml"),
+    model_configs=str(notebook_root / "docs/notebook_config/models.yaml"),
+)
 
 # %% [markdown]
 # ## 📦 Input data

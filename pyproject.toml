@@ -48,10 +48,14 @@ docs = [
 ]
 notebooks = [
     "datasets>=4.0.0,<6",
+    "fastapi>=0.115,<1",
+    "gliner>=0.2.24,<0.3",
     "ipykernel>=6.29.0,<8",
     "jupyter>=1.0.0,<2",
     "jupytext>=1.16.0,<2",
     "pillow>=12.0.0,<13",
+    "torch>=2.7,<3",
+    "uvicorn>=0.30,<1",
 ]
 
 [build-system]
@@ -79,6 +83,16 @@ constraint-dependencies = [
   "python-dotenv>=1.2.2",  # CVE-2026-28684
   "pyjwt>=2.13.0",  # CVE-2026-48524, CVE-2026-48522, CVE-2026-48525, CVE-2026-48526
 ]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

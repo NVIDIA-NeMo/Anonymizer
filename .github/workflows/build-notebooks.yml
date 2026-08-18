@@ -21,10 +21,45 @@ jobs:
           version: "0.9.5"
       - name: Set up Python
         run: uv python install 3.11
+      - name: Start local GLiNER server
+        run: |
+          uv run --group notebooks python tools/serve_gliner.py \
+            > "$RUNNER_TEMP/gliner-server.log" 2>&1 &
+          echo "GLINER_SERVER_PID=$!" >> "$GITHUB_ENV"
+
+          for attempt in {1..300}; do
+            if curl --silent --fail http://127.0.0.1:8001/v1/models > /dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$GLINER_SERVER_PID" 2>/dev/null; then
+              cat "$RUNNER_TEMP/gliner-server.log"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          cat "$RUNNER_TEMP/gliner-server.log"
+          exit 1
       - name: Convert and execute notebooks
         run: make convert-notebooks
+      - name: Show local GLiNER log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/gliner-server.log"
       - name: Upload notebooks as artifacts
         uses: actions/upload-artifact@v4
         with:
           name: notebooks
           path: docs/notebooks
+      - name: Upload local GLiNER notebook runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebook-runtime
+          path: |
+            docs/notebook_config
+            tools/serve_gliner.py
+      - name: Stop local GLiNER server
+        if: always()
+        run: |
+          if [[ -n "${GLINER_SERVER_PID:-}" ]]; then
+            kill "$GLINER_SERVER_PID" 2>/dev/null || true
+          fi

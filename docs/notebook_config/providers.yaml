@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+providers:
+  - name: local-gliner
+    endpoint: http://127.0.0.1:8001/v1
+    provider_type: openai
+    api_key: EMPTY
+
+  - name: nvidia
+    endpoint: https://integrate.api.nvidia.com/v1
+    provider_type: openai
+    api_key: NVIDIA_API_KEY
