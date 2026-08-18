@@ -17,7 +17,7 @@ Rewrite mode tackles that harder problem by transforming the entire record. But 
 
 NeMo Anonymizer evaluates that tradeoff twice. During anonymization, it measures how much identifying information remains (leakage) and how much useful meaning is preserved (utility), then repairs failing rewrites. Afterward, optional LLM judges assess literal entity coverage and the rewrite's overall privacy, quality, and style.
 
-This is Part 2 of a two-part series on evaluation in Anonymizer. [Part 1](evaluation-anonymizer-replace.md) covers Replace mode, while this article covers Rewrite mode.
+This is Part 2 of a two-part series on evaluation in Anonymizer. [Part 1](evaluation-anonymizer-replace.md) covers Replace mode, while this devnote covers Rewrite mode.
 
 <!-- more -->
 
