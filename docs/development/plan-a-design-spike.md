@@ -7,6 +7,12 @@ This record covers the private, synchronous protection slice only. It does not
 authorize a public SDK, Intake integration, release decision, or alternate
 engine path.
 
+The Intake team is the named adopter. The project owner accepted the canonical
+cause-free `AnonymizerWorkflowError` mapping for pipeline failures that cross
+the private row-verification boundary. The customer or consumer PII boundary
+remains unresolved and must be recorded by the consuming-product owner before
+a production validation placement is selected.
+
 ## Ownership verdicts
 
 Ownership: stay; owner=anonymizer.interface._protection._compile_protection_plan; evidence=the helper consumes AnonymizerConfig, ModelSelection, and ModelConfig and returns a distinct private plan; reason=cross-domain release-policy compilation is not a same-type config transform.
@@ -53,3 +59,17 @@ Execution verifies that fingerprint before effects. Receipts bind the plan
 digest and a fresh content-independent attempt identity. Failure retry safety
 is `unknown` and retry ownership is `Unassigned`; this spike makes no stronger
 retry claim before taxonomy review.
+
+## Intake-format validation
+
+The synthetic validation corpus covers ATIF v1.0 and v1.7, an
+extension-bearing chat-completion request and response, a real OTLP protobuf
+batch, and an Intake-shaped local CHAIN-to-LLM trace. Every declared target
+runs through the private Plan A flow with deterministic local detection and
+`Redact`. Tests verify reconstruction, structural and topology preservation,
+closed field handling, and complete-item withholding after invalid OTLP spans
+or non-success outcomes.
+
+This is adapter and execution evidence only. It does not run the Intake
+service, persist records, call an external provider, use customer data, or
+establish ATIF, chat-completion, or OTLP production support.

@@ -1,0 +1,41 @@
+{
+  "resource_attributes": {
+    "service.name": "intake-spans-smoke"
+  },
+  "scope": {
+    "name": "nmp.intake.spans.sample",
+    "version": "1.0.0"
+  },
+  "spans": [
+    {
+      "trace_id": "00000000000000000000000000000001",
+      "span_id": "0000000000000001",
+      "name": "sample-chain",
+      "start_time_unix_nano": 1787097600000000000,
+      "end_time_unix_nano": 1787097601000000000,
+      "attributes": {
+        "openinference.span.kind": "CHAIN",
+        "gen_ai.conversation.id": "sample-session"
+      }
+    },
+    {
+      "trace_id": "00000000000000000000000000000001",
+      "span_id": "0000000000000002",
+      "parent_span_id": "0000000000000001",
+      "name": "sample-llm",
+      "start_time_unix_nano": 1787097600100000000,
+      "end_time_unix_nano": 1787097600900000000,
+      "attributes": {
+        "openinference.span.kind": "LLM",
+        "gen_ai.conversation.id": "sample-session",
+        "gen_ai.system": "openai",
+        "gen_ai.request.model": "gpt-validation",
+        "gen_ai.usage.input_tokens": 12,
+        "gen_ai.usage.output_tokens": 8,
+        "gen_ai.usage.total_tokens": 20,
+        "input.value": "{\"messages\":[{\"role\":\"user\",\"content\":\"Email Dave at dave@example.test\"}]}",
+        "output.value": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Dave works at Acme\"}}]}"
+      }
+    }
+  ]
+}

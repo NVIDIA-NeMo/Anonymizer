@@ -1,0 +1,68 @@
+{
+  "request": {
+    "model": "gpt-validation",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Keep answers brief"
+      },
+      {
+        "role": "user",
+        "content": "Find Carol at carol@example.test"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call-chat-1",
+            "type": "function",
+            "function": {
+              "name": "lookup_contact",
+              "arguments": "{\"email\":\"carol@example.test\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call-chat-1",
+        "content": "Carol works at Acme"
+      }
+    ],
+    "temperature": 0.2,
+    "provider_extension": {
+      "region": "us-west",
+      "request_class": "validation"
+    }
+  },
+  "response": {
+    "id": "chatcmpl-validation-1",
+    "object": "chat.completion",
+    "model": "gpt-validation-2026-08-19",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Carol can be reached at carol@example.test"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 32,
+      "completion_tokens": 9,
+      "total_tokens": 41
+    },
+    "provider_response_id": "provider-validation-1"
+  },
+  "session_id": "chat-session-1",
+  "trace_id": "chat-trace-1",
+  "provider": "validation-provider",
+  "cost_usd": 0.0003,
+  "evaluation_context": {
+    "evaluation_id": "sdk-validation",
+    "test_case_id": "chat-completion"
+  }
+}

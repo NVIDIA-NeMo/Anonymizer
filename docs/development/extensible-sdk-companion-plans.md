@@ -11,6 +11,20 @@ Except where a sentence cites an online repository revision as current
 behavior, every type, operation, ownership boundary, gate, and lifecycle
 statement below is proposed.
 
+## Recorded adoption decisions
+
+As of 2026-08-19, the Intake team is the named Plan A adopter. The project owner
+accepted the canonical error contract implemented by this design spike:
+pipeline failures that cross the private row-verification boundary become a
+cause-free `AnonymizerWorkflowError` at public `run()` and `preview()` entry
+points. Preflight, configuration, and input failures raised before that
+boundary retain their established behavior.
+
+The customer or consumer PII boundary remains deliberately unresolved. The
+Intake team owns routing that decision to the consuming-product owner, who must
+record whether raw content may exist in Intake memory and which actors may
+receive it before any production validation placement is selected.
+
 ## Decision
 
 Develop one semantic protection core through two companion plans:
@@ -605,6 +619,14 @@ shape and adapter semantics, not the two-semantic-implementation public gate.
 OpenShell's OTLP/gRPC exporter is not directly equivalent to Intake's OTLP/HTTP
 protobuf receiver; any collector bridge remains outside these plans.
 
+The branch-local 2026-08-19 validation corpus exercises synthetic ATIF v1.0 and
+v1.7, extension-bearing chat-completion JSON, real OTLP protobuf bytes, and an
+Intake-shaped local CHAIN-to-LLM trace through the private Plan A flow and local
+`Redact`. It verifies complete-item reconstruction, topology preservation,
+closed field policy, and withholding on invalid spans or non-success outcomes.
+It does not run an Intake service, provider-backed detection, durable commit,
+or customer data, and it does not claim production format support.
+
 ## Proposed ownership and trust boundary
 
 | Owner | Responsibility this SDK leaves outside Anonymizer core |
@@ -651,8 +673,8 @@ deployment owns withholding every non-success outcome at the boundary.
 
 | Decision | Blocks Plan A implementation | Blocks Intake validation | Blocks Plan B public shipment | Decision authority |
 | --- | ---: | ---: | ---: | --- |
-| Earliest raw-PII boundary | No for private type work | Yes | Yes | Unresolved; consuming-product owner must select and record it |
-| Release predicate and first profile | Yes | Yes | Yes | Unresolved; Anonymizer interface owner and named Intake adopter must review |
+| Earliest raw-PII boundary | No for private type work | Yes | Yes | Unresolved; Intake team routes to consuming-product owner for a recorded decision |
+| Release predicate and first profile | Yes | Yes | Yes | Anonymizer interface owner and Intake team |
 | Failure and retry taxonomy | Yes | Yes | Yes | Anonymizer interface owner plus adopter review |
 | Resource limits and cancellation | Yes for the flow | Yes | Yes | Runtime owners |
 | Policy, corpus, and compliance ownership | No | No | Yes | Unresolved |
