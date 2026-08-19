@@ -503,7 +503,7 @@ def _materialize_final_entities(
     raw: object,
     *,
     allowed_labels: set[str] | None,
-    excluded_entity_labels: set[str] | None,
+    excluded_entity_labels: set[str] | None = None,
 ) -> dict:
     """Build COL_FINAL_ENTITIES, applying the configured label scope."""
     parsed = EntitiesSchema.from_raw(raw)
