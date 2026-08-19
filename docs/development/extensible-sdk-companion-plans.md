@@ -653,6 +653,19 @@ topology and semantic fields. The OTLP fixture now preserves
 `gen_ai.agent.name`, and Intake's exact `agent_name` filter returned the matching
 protected LLM span.
 
+A second opt-in path consumed a completed, successful Codex session from an
+isolated Sandbox run. The real agent handled a synthetic prompt, created and
+read a file, and emitted messages and shell-command output containing the
+declared synthetic PII. A test-only, closed Sandbox adapter mapped the copied
+prompt and reviewed completed-item types to ATIF v1.0. The private Plan A flow
+protected that document before its HTTP request crossed into Intake; Intake's
+read model exposed the protected trajectory with parent-child topology and none
+of the declared values. The adapter rejects unreviewed completed-item types and
+does not launch or manage Sandbox. Raw Sandbox artifacts remain on the producer
+side of the provisional boundary. This run used deterministic local detection,
+so it validates a real agent execution and the protection boundary, not
+provider-backed detection quality or production Sandbox support.
+
 The live test also established a material atomicity mismatch. For one request
 with two valid spans and one invalid span, the test adapter rejected the whole
 request and emitted no bytes. Intake accepted the same source request with HTTP

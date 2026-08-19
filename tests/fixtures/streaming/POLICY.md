@@ -64,3 +64,20 @@ a chat item that lacks a stable creation time.
 The test owns only its synthetic requests and unique identifiers: it does not
 provision, configure, stop, or clean up Intake, ClickHouse, containers, or data.
 Its persisted synthetic rows remain under the operator's retention policy.
+
+## Sandbox session export
+
+`tests/streaming/sandbox_session_export.py` is a test-only adapter for a
+completed, successful Sandbox Codex run. It reads the run's copied prompt and
+Codex JSONL output, maps the reviewed message, shell-command, and file-change
+items to ATIF v1.0, and fails closed on other completed item types. Raw session
+artifacts remain on the producer side of the provisional before-Intake boundary.
+
+Set `ANONYMIZER_SANDBOX_DOGFOOD_RUN_DIR` with
+`ANONYMIZER_INTAKE_DOGFOOD_BASE_URL` to exercise the opt-in live path. The test
+consumes an operator-owned run created from the synthetic
+`sandbox_agent_prompt.md` fixture; it does not launch, configure, stop, or
+remove a Sandbox session. Only protected ATIF bytes cross into Intake. The
+current test uses declared synthetic PII and deterministic local detection, so
+it validates the execution and data boundary but does not establish
+provider-backed detection quality or production Sandbox support.

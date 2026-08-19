@@ -35,11 +35,13 @@ from tests.streaming.intake_format_validation import (
     protect_chat_completion,
     protect_otlp_request,
 )
+from tests.streaming.sandbox_session_export import export_codex_session_to_atif
 from tests.streaming.structured_trace_prototype import build_synthetic_anonymizer
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "streaming"
 _BASE_URL_ENV = "ANONYMIZER_INTAKE_DOGFOOD_BASE_URL"
 _ALLOW_RAW_ENV = "ANONYMIZER_INTAKE_DOGFOOD_ALLOW_RAW"
+_SANDBOX_RUN_DIR_ENV = "ANONYMIZER_SANDBOX_DOGFOOD_RUN_DIR"
 
 pytestmark = pytest.mark.integration
 
@@ -542,6 +544,38 @@ def test_atif_exact_retry_deduplicates(
         expected_count=4,
         expected_parent_count=3,
     )
+
+
+def test_completed_sandbox_session_is_protected_before_intake(
+    intake_base_url: str,
+    dogfood_run_id: str,
+) -> None:
+    run_dir_value = os.environ.get(_SANDBOX_RUN_DIR_ENV)
+    if run_dir_value is None:
+        pytest.skip(f"set {_SANDBOX_RUN_DIR_ENV} to export a completed Sandbox Codex run")
+    entities = {
+        "Mira Testperson": "person",
+        "mira.sandbox@example.test": "email",
+        "555-0109": "phone_number",
+        "Acme Validation Lab": "organization",
+    }
+    session_id = f"sdk-dogfood-{dogfood_run_id}-sandbox"
+    source = export_codex_session_to_atif(Path(run_dir_value), session_id=session_id)
+    assert all(value.encode() in source for value in entities)
+    body = protect_atif(source, flow=_flow(entities), emit=lambda _: None)
+    _assert_safe_outbound(body, tuple(entities))
+
+    status, _ = _deliver(
+        intake_base_url,
+        "/ingest/atif",
+        body=body,
+        content_type="application/json",
+    )
+
+    assert status == 201
+    stored = _assert_visibility(intake_base_url, session_id, tuple(entities), expect_sensitive=False)
+    assert len(stored) >= 2
+    assert any(span.get("parent_span_id") is not None for span in stored)
 
 
 def test_chat_exact_retry_deduplicates(
