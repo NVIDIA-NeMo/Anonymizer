@@ -490,8 +490,8 @@ def _resolve_detection_labels(
 ) -> list[str]:
     labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
     if excluded_entity_labels:
-        excluded = {label.casefold() for label in excluded_entity_labels}
-        labels = [label for label in labels if label.casefold() not in excluded]
+        excluded = {label.strip().casefold() for label in excluded_entity_labels}
+        labels = [label for label in labels if label.strip().casefold() not in excluded]
     if not labels:
         logger.warning(
             "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
@@ -507,8 +507,8 @@ def _materialize_final_entities(
 ) -> dict:
     """Build COL_FINAL_ENTITIES, applying the configured label scope."""
     parsed = EntitiesSchema.from_raw(raw)
-    allowed = {label.casefold() for label in allowed_labels} if allowed_labels is not None else None
-    excluded = {label.casefold() for label in excluded_entity_labels or []}
+    allowed = {label.strip().casefold() for label in allowed_labels} if allowed_labels is not None else None
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
     kept = [
         e
         for e in parsed.entities
@@ -519,7 +519,7 @@ def _materialize_final_entities(
 
 def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[str] | None) -> object:
     """Remove excluded latent labels while preserving the structured payload shape."""
-    excluded = {label.casefold() for label in excluded_entity_labels or []}
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
     if not excluded:
         return raw
 

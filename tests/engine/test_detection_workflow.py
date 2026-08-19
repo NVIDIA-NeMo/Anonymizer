@@ -169,14 +169,14 @@ def test_latent_prompt_excludes_configured_labels() -> None:
     assert "Do NOT return latent entities with these labels: health_condition, occupation." in prompt
 
 
-def test_filter_excluded_latent_entities_is_case_insensitive() -> None:
+def test_filter_excluded_latent_entities_normalizes_configured_labels() -> None:
     raw = {
         "latent_entities": [
             {"label": "Health_Condition", "value": "diabetes"},
             {"label": "employer", "value": "Acme"},
         ]
     }
-    result = _filter_excluded_latent_entities(raw, ["health_condition"])
+    result = _filter_excluded_latent_entities(raw, [" HEALTH_CONDITION "])
     assert result == {"latent_entities": [{"label": "employer", "value": "Acme"}]}
 
 
@@ -535,8 +535,8 @@ def test_resolve_detection_labels_exclusions_remove_labels() -> None:
     assert "city" in labels
 
 
-def test_resolve_detection_labels_exclusions_are_case_insensitive() -> None:
-    labels = _resolve_detection_labels(["first_name", "Email"], excluded_entity_labels={"EMAIL"})
+def test_resolve_detection_labels_exclusions_normalize_configured_labels() -> None:
+    labels = _resolve_detection_labels(["first_name", " Email "], excluded_entity_labels={" EMAIL "})
     assert labels == ["first_name"]
 
 
@@ -559,7 +559,7 @@ def test_resolve_detection_labels_empty_result_warns(caplog: pytest.LogCaptureFi
     assert "No entities will be detected" in caplog.text
 
 
-def test_materialize_final_entities_applies_label_filters_case_insensitively() -> None:
+def test_materialize_final_entities_normalizes_configured_labels() -> None:
     raw = {
         "entities": [
             {"value": "Alice", "label": "First_Name", "start_position": 0, "end_position": 5},
@@ -570,8 +570,8 @@ def test_materialize_final_entities_applies_label_filters_case_insensitively() -
 
     result = _materialize_final_entities(
         raw,
-        allowed_labels={"first_name", "email"},
-        excluded_entity_labels={"EMAIL"},
+        allowed_labels={" first_name ", " email "},
+        excluded_entity_labels={" EMAIL "},
     )
 
     final = EntitiesSchema.from_raw(result)
