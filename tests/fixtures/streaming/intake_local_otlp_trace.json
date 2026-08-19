@@ -27,6 +27,7 @@
       "end_time_unix_nano": 1787097600900000000,
       "attributes": {
         "openinference.span.kind": "LLM",
+        "gen_ai.agent.name": "sdk-validation-agent",
         "gen_ai.conversation.id": "sample-session",
         "gen_ai.system": "openai",
         "gen_ai.request.model": "gpt-validation",

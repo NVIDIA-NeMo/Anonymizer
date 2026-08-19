@@ -39,6 +39,7 @@
   "response": {
     "id": "chatcmpl-validation-1",
     "object": "chat.completion",
+    "created": 1767225600,
     "model": "gpt-validation-2026-08-19",
     "choices": [
       {

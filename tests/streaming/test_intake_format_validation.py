@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,7 @@ def test_chat_completion_preserves_extensions_and_protects_declared_content() ->
     assert result["request"]["model"] == original["request"]["model"]
     assert result["request"]["provider_extension"] == original["request"]["provider_extension"]
     assert result["response"]["provider_response_id"] == original["response"]["provider_response_id"]
+    assert result["response"]["created"] == original["response"]["created"]
     assert result["response"]["usage"] == original["response"]["usage"]
     assert result["session_id"] == original["session_id"]
     rendered = json.dumps(result)
@@ -106,6 +108,7 @@ def test_local_chain_llm_otlp_protobuf_round_trips_through_plan_a() -> None:
     assert otlp_topology(protected) == original_topology
     result_attributes = otlp_string_attributes(protected)
     assert result_attributes["0000000000000001"] == original_attributes["0000000000000001"]
+    assert result_attributes["0000000000000002"]["gen_ai.agent.name"] == "sdk-validation-agent"
     assert result_attributes["0000000000000002"]["gen_ai.request.model"] == "gpt-validation"
     rendered = json.dumps(result_attributes)
     assert all(value not in rendered for value in entities)
@@ -162,6 +165,31 @@ def test_chat_completion_rejects_unreviewed_nested_provider_content() -> None:
         protect_chat_completion(json.dumps(document).encode(), flow=_flow({}), emit=lambda _: None)
 
 
+def test_chat_completion_requires_stable_creation_time() -> None:
+    document: dict[str, Any] = json.loads((FIXTURES / "intake_chat_completion.json").read_bytes())
+    del document["response"]["created"]
+
+    with pytest.raises(IntakeValidationError, match="chat completion rejected"):
+        protect_chat_completion(json.dumps(document).encode(), flow=_flow({}), emit=lambda _: None)
+
+
+@pytest.mark.parametrize("created", [True, 0, 10**100])
+def test_chat_completion_rejects_invalid_creation_time(created: object) -> None:
+    document: dict[str, Any] = json.loads((FIXTURES / "intake_chat_completion.json").read_bytes())
+    document["response"]["created"] = created
+
+    with pytest.raises(IntakeValidationError, match="chat completion rejected"):
+        protect_chat_completion(json.dumps(document).encode(), flow=_flow({}), emit=lambda _: None)
+
+
+def test_chat_completion_rejects_future_creation_time() -> None:
+    document: dict[str, Any] = json.loads((FIXTURES / "intake_chat_completion.json").read_bytes())
+    document["response"]["created"] = int(time.time()) + 3_600
+
+    with pytest.raises(IntakeValidationError, match="chat completion rejected"):
+        protect_chat_completion(json.dumps(document).encode(), flow=_flow({}), emit=lambda _: None)
+
+
 def test_atif_rejects_unreviewed_image_content_part() -> None:
     document: dict[str, Any] = json.loads((FIXTURES / "intake_atif_v17.json").read_bytes())
     document["steps"][0]["message"].append(
@@ -188,6 +216,31 @@ def test_otlp_rejects_unreviewed_resource_and_event_content() -> None:
     event_attribute = event.attributes.add()
     event_attribute.key = "exception.message"
     event_attribute.value.string_value = "alice@example.test"
+
+    with pytest.raises(IntakeValidationError, match="OTLP batch rejected"):
+        protect_otlp_request(request.SerializeToString(), flow=_flow({}), emit=lambda _: None)
+
+
+@pytest.mark.parametrize("invalid_value", ["", False])
+def test_otlp_rejects_invalid_agent_name(invalid_value: str | bool) -> None:
+    request = ExportTraceServiceRequest.FromString(build_local_otlp_request(FIXTURES / "intake_local_otlp_trace.json"))
+    attributes = request.resource_spans[0].scope_spans[0].spans[1].attributes
+    agent_name = next(attribute for attribute in attributes if attribute.key == "gen_ai.agent.name")
+    if isinstance(invalid_value, str):
+        agent_name.value.string_value = invalid_value
+    else:
+        agent_name.value.bool_value = invalid_value
+
+    with pytest.raises(IntakeValidationError, match="OTLP batch rejected"):
+        protect_otlp_request(request.SerializeToString(), flow=_flow({}), emit=lambda _: None)
+
+
+def test_otlp_rejects_duplicate_attribute_keys() -> None:
+    request = ExportTraceServiceRequest.FromString(build_local_otlp_request(FIXTURES / "intake_local_otlp_trace.json"))
+    attributes = request.resource_spans[0].scope_spans[0].spans[1].attributes
+    duplicate = attributes.add()
+    duplicate.key = "input.value"
+    duplicate.value.string_value = "duplicate"
 
     with pytest.raises(IntakeValidationError, match="OTLP batch rejected"):
         protect_otlp_request(request.SerializeToString(), flow=_flow({}), emit=lambda _: None)

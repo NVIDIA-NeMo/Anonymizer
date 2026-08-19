@@ -247,6 +247,13 @@ class Anonymizer:
         No LLM evaluation judges run here — call :meth:`evaluate` on the
         result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
+        The call publishes one complete :class:`AnonymizerResult` or raises;
+        exceptions never carry a partial result. Records dropped by an
+        underlying workflow are instead reported explicitly in a successful
+        result's ``failed_records``. This result-publication contract does not
+        make external providers, telemetry, source ingestion, or persistence
+        transactional.
+
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
@@ -366,6 +373,13 @@ class Anonymizer:
 
         No LLM evaluation judges run here — call :meth:`evaluate` on the
         result's ``trace_dataframe`` when you want the Judge Agreement scores.
+
+        The call publishes one complete :class:`PreviewResult` for the selected
+        subset or raises; exceptions never carry a partial result. Records
+        dropped by an underlying workflow are instead reported explicitly in a
+        successful result's ``failed_records``. This result-publication contract
+        does not make external providers, telemetry, source ingestion, or
+        persistence transactional.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.

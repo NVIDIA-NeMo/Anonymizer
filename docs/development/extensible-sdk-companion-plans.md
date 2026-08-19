@@ -3,7 +3,7 @@
 
 # Extensible SDK companion plans
 
-Status: Proposed design report, 2026-08-18. This document does not authorize a
+Status: Proposed design report, updated 2026-08-19. This document does not authorize a
 public API, a production Intake integration, a Relay integration, or a release
 claim. Names are provisional.
 
@@ -20,10 +20,19 @@ cause-free `AnonymizerWorkflowError` at public `run()` and `preview()` entry
 points. Preflight, configuration, and input failures raised before that
 boundary retain their established behavior.
 
-The customer or consumer PII boundary remains deliberately unresolved. The
-Intake team owns routing that decision to the consuming-product owner, who must
-record whether raw content may exist in Intake memory and which actors may
-receive it before any production validation placement is selected.
+The same review records a narrow atomicity contract for those public calls.
+`run()` and `preview()` publish one complete Python result or raise without a
+partial result attached to the exception. `failed_records` are explicit dropped
+records in an otherwise successful result. This is result-publication
+atomicity, not a transaction over model providers, telemetry, source ingestion,
+or durable storage.
+
+For current design and validation planning, use **before Intake** as the
+provisional PII boundary: no unprotected payload may enter the Intake service
+process. This is a working assumption, not a customer-approved requirement.
+The Intake team still owns routing the final decision to the consuming-product
+owner. Raw dogfood requests remain synthetic characterization evidence and do
+not validate a deployment against this assumed boundary.
 
 ## Decision
 
@@ -185,8 +194,17 @@ messages, provider text, prompts, detections, workflow names, engine IDs,
 tracebacks, exception causes, and arbitrary detail dictionaries. At the
 proposed SDK boundary, unexpected defects must become
 `AnonymizerWorkflowError` with a bounded static message and no arbitrary backend
-cause. This is stricter than the [current public error contract](https://github.com/NVIDIA-NeMo/Anonymizer/blob/3eab7d1b6005b85e7d415b704e27a20dc41ba71e/src/anonymizer/interface/errors.py#L23-L28),
-whose adapter currently [preserves and interpolates the cause](https://github.com/NVIDIA-NeMo/Anonymizer/blob/3eab7d1b6005b85e7d415b704e27a20dc41ba71e/src/anonymizer/engine/ndd/adapter.py#L400-L431).
+cause. The branch-local public `run()` and `preview()` paths now implement that
+mapping after leaving the active private exception handler, so the public error
+has neither an accessible `__cause__` nor `__context__`. Preflight errors raised
+before private row verification retain their established canonical types.
+
+That mapping aborts result publication for the invocation. It does not roll
+back provider calls or telemetry already attempted, and it does not define a
+source adapter's commit unit. A successfully returned `AnonymizerResult` or
+`PreviewResult` may contain `failed_records`; those are explicit NDD row drops,
+not a partial result recovered from an exception. The caller owns whether such
+a degraded result is publishable, withheld, or retried.
 
 ### Proposed private provenance
 
@@ -338,12 +356,12 @@ assigns each relevant field `target`, `preserve`, `structural`, or `reject`.
 Content-bearing prompt context is deferred until its exposure and output
 semantics receive separate review.
 
-If the consuming-product owner selects protection before persistence or
-consumer-visible reads, one candidate in-process seam is after Intake
-normalization and identity derivation and before `ingest_batch()`. This report
-does not authorize that placement. It is valid only when raw content may exist
-in Intake memory; a before-Intake requirement needs protection at the producer
-or edge. The exact call site remains unselected pending boundary review.
+Under the provisional before-Intake assumption, an in-process seam after Intake
+normalization is not a valid deployment placement. Protection, reconstruction,
+and source-schema validation must complete at the producer or an authorized
+edge component before the request crosses into the Intake service process.
+The exact producer or edge component remains unselected, as do its deployment,
+credential, retry, logging, and retention contracts.
 
 ### Plan A milestones
 
@@ -611,7 +629,7 @@ linked from each format; the proposed protection target is design work.
 | --- | --- | --- |
 | [ATIF](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L32-L72) | Accepts v1.0–v1.7 | Probe v1.0 and v1.7 first, then validate every accepted version; protect and reconstruct complete trajectories while preserving hierarchy and ordering |
 | [OpenAI-compatible chat completion](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L80-L87) | Accepts extension-tolerant nested request and response models | Classify provider extensions and tool or content leaves under a closed policy while preserving pre-protection identities |
-| [OTLP/HTTP protobuf](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L120-L127) | Collects per-span errors | Preserve partial acceptance while replacing exception-derived strings with sanitized codes |
+| [OTLP/HTTP protobuf](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L120-L127) | Collects per-span errors and persists valid spans from a mixed-validity request | Resolve whether the source adapter preserves per-span acceptance or declares a stricter complete-request commit unit; use sanitized adapter-owned errors either way |
 | [Provider-neutral direct spans](https://github.com/NVIDIA-NeMo/nemo-platform/blob/e1057736703bb8b167a4bd9013cea0caae2df63a/packages/nemo_platform_ext/src/nemo_platform_ext/skills/nemo-intake/references/ingest-formats.md#L91-L118) | Validates batches of 1–1,000 structured spans before conversion and write | Use a request-level protection unit without claiming transactional persistence atomicity |
 
 Several formats in one Intake process remain one semantic runtime. They validate
@@ -622,10 +640,72 @@ protobuf receiver; any collector bridge remains outside these plans.
 The branch-local 2026-08-19 validation corpus exercises synthetic ATIF v1.0 and
 v1.7, extension-bearing chat-completion JSON, real OTLP protobuf bytes, and an
 Intake-shaped local CHAIN-to-LLM trace through the private Plan A flow and local
-`Redact`. It verifies complete-item reconstruction, topology preservation,
-closed field policy, and withholding on invalid spans or non-success outcomes.
-It does not run an Intake service, provider-backed detection, durable commit,
-or customer data, and it does not claim production format support.
+`Redact`. Its hermetic tests verify complete-item reconstruction, topology
+preservation, closed field policy, and withholding on invalid spans or
+non-success outcomes. They do not run provider-backed detection, durable
+commit, or customer data, and they do not claim production format support.
+
+An opt-in test-only dogfood also ran against a real local Intake service backed
+by ClickHouse 26.3. Raw and protected ATIF v1.0, ATIF v1.7, chat-completion JSON,
+and OTLP/protobuf round-tripped through public Intake routes. Protected read
+models contained none of the declared synthetic PII and retained the asserted
+topology and semantic fields. The OTLP fixture now preserves
+`gen_ai.agent.name`, and Intake's exact `agent_name` filter returned the matching
+protected LLM span.
+
+The live test also established a material atomicity mismatch. For one request
+with two valid spans and one invalid span, the test adapter rejected the whole
+request and emitted no bytes. Intake accepted the same source request with HTTP
+200, returned one per-span error, and persisted the two valid spans. This does
+not violate the public `run()` or `preview()` contract: those APIs govern Python
+result publication, while the source adapter and Intake own their respective
+commit units. It does mean complete-request withholding is only a proposed
+test-adapter policy and requires adopter review before an Intake integration
+contract can be claimed.
+
+The checked-in dogfood owns neither service nor storage lifecycle. It is skipped
+unless `ANONYMIZER_INTAKE_DOGFOOD_BASE_URL` names an operator-owned deployment,
+uses only synthetic unique identifiers, and does not provision, configure,
+stop, or clean up Intake, ClickHouse, containers, or persisted rows. Its default
+before-Intake profile sends only protected requests after checking that the
+declared synthetic PII is absent from the outbound bytes. Sending raw fixtures
+or reproducing Intake's mixed-validity OTLP partial write requires the separate
+`ANONYMIZER_INTAKE_DOGFOOD_ALLOW_RAW=1` opt-in on an approved isolated
+deployment; those cases characterize Intake and do not satisfy the assumed
+deployment boundary. The protected-only failure probe wires invalid OTLP to a
+real Intake emitter, verifies that adapter rejection prevents the emitter call,
+and confirms that Intake stores no span for the withheld session.
+
+Protected-delivery dogfood further separated protection success from transport
+outcomes. A pre-connect failure produced a bounded, cause-free test error,
+created no Intake row, and left the exact protected bytes available to the
+test adapter for retry. The probe then sent that same byte string successfully
+and observed one stable public row. A commit-then-forget approximation modeled
+a request that may have committed before the caller could act on its response,
+then sent the same protected bytes again. The test waited for stable read-model
+snapshots after both deliveries. Intake's public read model collapsed the exact
+ATIF and OTLP retries for these fixtures. The original chat-completion fixture
+lacked a source timestamp, so its retry appeared as two rows with the same
+external span ID because Intake assigned a new start time at each ingestion.
+
+Adopter review resolved that duplicate chat rows are unacceptable. The
+test-only chat contract therefore requires a positive, representable,
+non-future integer `response.created`, preserves it unchanged through
+protection, and rejects a chat item when Intake would fall back from that value.
+Intake uses the accepted source value as the span start time. The live exact-byte
+retry then collapsed to one public chat row. The dogfood assigns the timestamp
+once when it constructs each unique synthetic capture so the record remains
+inside Intake's default query window; it does not regenerate the value for a
+retry.
+
+This is format-specific read-model behavior, not evidence of transactional
+idempotency, rollback, or one physical ClickHouse write. Anonymizer protects one
+in-memory dataframe invocation and publishes one result or error; it does not
+own delivery state, retry scheduling, or adopter idempotency keys. A source
+adapter must retain protected bytes when retry is allowed, define stable
+identity fields, classify retryable transport failures, and treat any duplicate
+public row as a failed idempotency postcondition. Intake owns the persistence
+and read-model semantics after it accepts a request.
 
 ## Proposed ownership and trust boundary
 
@@ -638,18 +718,23 @@ or customer data, and it does not claim production format support.
 | Host authority | Providers, credentials, endpoints, allowed paths, model provisioning, resource ceilings, audit sinks |
 | Shared governance | Policy schema, conformance corpora, thresholds, support matrix, compliance-facing claims; owner remains unresolved |
 
-The customer-required PII boundary remains unknown. The same SDK may run at the
-source or edge, inside Intake before persistence, or downstream of controlled
-raw storage. The deployment record must name every raw-data actor, including
-model providers, artifacts, logs, and crash dumps. A receipt reports execution
-under a policy; it does not assert where the deployment boundary sits.
+The customer-required PII boundary is not yet confirmed. Until the
+consuming-product owner decides otherwise, this report uses a before-Intake
+working posture: only protected payloads and policy-approved preserved fields
+may enter the Intake service process. Protection therefore runs at the producer
+or an authorized edge component, not inside Intake or downstream of raw Intake
+storage. The deployment record must still name every actor that can access raw
+data before that boundary, including model providers, artifacts, logs, and
+crash dumps. A receipt reports execution under a policy; it does not prove that
+the deployment placed or enforced the boundary correctly.
 
 A successful protection outcome attests only that the named implementation
 completed the receipt's checks under the named policy and execution profile. It
 does not establish exhaustive detection, absence of PII, authority to disclose
 the output, or compliance with a deployment boundary. After the
-consuming-product owner selects a boundary and accepts residual risk, that
-deployment owns withholding every non-success outcome at the boundary.
+consuming-product owner confirms or replaces the working boundary and accepts
+residual risk, that deployment owns withholding every non-success outcome at
+the selected boundary.
 
 ## Rejected shortcuts
 
@@ -673,7 +758,7 @@ deployment owns withholding every non-success outcome at the boundary.
 
 | Decision | Blocks Plan A implementation | Blocks Intake validation | Blocks Plan B public shipment | Decision authority |
 | --- | ---: | ---: | ---: | --- |
-| Earliest raw-PII boundary | No for private type work | Yes | Yes | Unresolved; Intake team routes to consuming-product owner for a recorded decision |
+| Earliest raw-PII boundary | No for private type work | Yes | Yes | Working assumption: before Intake; Intake team routes final approval to the consuming-product owner |
 | Release predicate and first profile | Yes | Yes | Yes | Anonymizer interface owner and Intake team |
 | Failure and retry taxonomy | Yes | Yes | Yes | Anonymizer interface owner plus adopter review |
 | Resource limits and cancellation | Yes for the flow | Yes | Yes | Runtime owners |

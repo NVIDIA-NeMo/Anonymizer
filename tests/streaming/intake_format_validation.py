@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -49,6 +50,7 @@ _CHAT_ROLES = {"user", "system", "assistant", "developer", "tool", "function"}
 _OTLP_TARGET_ATTRIBUTES = {"input.value", "output.value", "exception.message"}
 _OTLP_STRUCTURAL_ATTRIBUTES = {
     "openinference.span.kind",
+    "gen_ai.agent.name",
     "gen_ai.conversation.id",
     "gen_ai.system",
     "gen_ai.request.model",
@@ -190,7 +192,7 @@ def _atif_target(tokens: list[str]) -> bool:
 
 def _chat_role(pointer: str, value: object) -> FieldRole:
     tokens = pointer.split("/")[1:]
-    if pointer in {"/session_id", "/trace_id"}:
+    if pointer in {"/session_id", "/trace_id", "/response/id", "/response/created"}:
         return FieldRole.STRUCTURAL
     if _chat_target(tokens, value):
         return FieldRole.TARGET
@@ -346,9 +348,12 @@ def _validate_chat_message(message: dict[str, Any]) -> None:
 
 
 def _validate_chat_response(response: dict[str, Any]) -> None:
-    allowed = {"id", "object", "model", "choices", "error", "usage", "provider_response_id"}
+    _require_keys(response, {"created"})
+    allowed = {"id", "object", "created", "model", "choices", "error", "usage", "provider_response_id"}
     if set(response) - allowed:
         raise ValueError("unreviewed response extension")
+    if not _valid_intake_timestamp(response["created"]):
+        raise ValueError("stable response creation time required")
     for value in response.get("choices") or []:
         choice = _as_dict(value)
         if set(choice) - {"index", "message", "finish_reason"}:
@@ -362,6 +367,16 @@ def _validate_chat_response(response: dict[str, Any]) -> None:
         "total_tokens",
     }:
         raise ValueError("unreviewed usage field")
+
+
+def _valid_intake_timestamp(value: object) -> bool:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return False
+    try:
+        parsed = datetime.fromtimestamp(value, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return False
+    return parsed <= datetime.now(tz=timezone.utc)
 
 
 def _require_keys(value: Mapping[str, object], required: set[str]) -> None:
@@ -472,8 +487,16 @@ def _otlp_targets(request: ExportTraceServiceRequest) -> dict[str, str]:
     targets: dict[str, str] = {}
     for span in _spans(request):
         span_id = span.span_id.hex()
+        attribute_keys: set[str] = set()
         for attribute in span.attributes:
             if attribute.key not in _OTLP_TARGET_ATTRIBUTES | _OTLP_STRUCTURAL_ATTRIBUTES:
+                raise IntakeValidationError("OTLP batch rejected")
+            if attribute.key in attribute_keys:
+                raise IntakeValidationError("OTLP batch rejected")
+            attribute_keys.add(attribute.key)
+            if attribute.key == "gen_ai.agent.name" and (
+                attribute.value.WhichOneof("value") != "string_value" or not attribute.value.string_value
+            ):
                 raise IntakeValidationError("OTLP batch rejected")
             if attribute.key in _OTLP_TARGET_ATTRIBUTES:
                 if attribute.value.WhichOneof("value") != "string_value":
