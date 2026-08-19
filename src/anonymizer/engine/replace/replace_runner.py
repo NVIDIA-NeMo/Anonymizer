@@ -119,7 +119,7 @@ class ReplacementWorkflow:
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
         entity_labels: list[str] | None = None,
-        entity_label_denylist: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         compute_detection_validity: bool = False,
         data_summary: str | None = None,
     ) -> ReplacementResult:
@@ -130,7 +130,7 @@ class ReplacementWorkflow:
         Detection validity runs only when ``compute_detection_validity=True``.
         All active judges are submitted as columns of one DataDesigner workflow.
 
-        ``entity_labels`` and ``entity_label_denylist`` together define the label
+        ``entity_labels`` and ``excluded_entity_labels`` together define the label
         scope passed to the coverage judge — only entities whose labels were in
         scope during detection are evaluated.
 
@@ -156,7 +156,7 @@ class ReplacementWorkflow:
         entity_coverage_judge = EntityCoverageWorkflow(
             adapter=self._adapter,  # type: ignore[arg-type]
             entity_labels=entity_labels,
-            entity_label_denylist=entity_label_denylist,
+            excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
         )
         failed_records: list[FailedRecord] = []

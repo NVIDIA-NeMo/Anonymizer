@@ -472,7 +472,7 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
     assert run_record["input_has_data_summary"] is False
     assert run_record["detect"]["entity_label_source"] == "default"
     assert run_record["detect"]["entity_label_count"] > 0
-    assert run_record["detect"]["entity_label_denylist"] is None
+    assert run_record["detect"]["excluded_entity_labels"] is None
     assert run_record["replace"]["strategy"] == "Redact"
     assert run_record["replace"]["normalize_label"] is True
     assert len(run_record["source_hash"]) == 64
@@ -483,21 +483,21 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
     assert str(input_csv) not in serialized
 
 
-def test_detect_config_metadata_includes_entity_label_denylist() -> None:
+def test_detect_config_metadata_includes_excluded_entity_labels() -> None:
     from anonymizer.measurement.records.run import _detect_config_metadata
 
-    detect = Detect(entity_labels=["first_name", "email"], entity_label_denylist=["email"])
+    detect = Detect(entity_labels=["first_name", "email"], excluded_entity_labels=["email"])
     metadata = _detect_config_metadata(detect)
-    assert metadata["entity_label_denylist"] == ["email"]
+    assert metadata["excluded_entity_labels"] == ["email"]
     assert metadata["entity_labels"] == ["email", "first_name"]
 
 
-def test_detect_config_metadata_denylist_none_when_not_set() -> None:
+def test_detect_config_metadata_exclusions_none_when_not_set() -> None:
     from anonymizer.measurement.records.run import _detect_config_metadata
 
     detect = Detect()
     metadata = _detect_config_metadata(detect)
-    assert metadata["entity_label_denylist"] is None
+    assert metadata["excluded_entity_labels"] is None
 
 
 def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:

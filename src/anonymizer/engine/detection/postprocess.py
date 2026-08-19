@@ -160,12 +160,14 @@ def apply_augmented_entities(
     text: str,
     entities: list[EntitySpan],
     augmented_output: dict | str,
+    excluded_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
-    """Add augmented entities, split full names, and resolve overlaps on merged set."""
+    """Add allowed augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
     augmented = payload.get("entities", []) if isinstance(payload, dict) else []
     if not isinstance(augmented, list):
         augmented = []
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or set()}
 
     merged = list(entities)
     for idx, suggestion in enumerate(augmented):
@@ -173,7 +175,7 @@ def apply_augmented_entities(
             continue
         value = str(suggestion.get("value", "")).strip()
         label = str(suggestion.get("label", "")).strip()
-        if not value or not label:
+        if not value or not label or label.casefold() in excluded:
             continue
         for start, end in _find_all_occurrences(text=text, needle=value):
             entity_id = _build_entity_id(label=label, start=start, end=end)

@@ -79,11 +79,11 @@ class Detect(BaseModel):
             "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
         ),
     )
-    entity_label_denylist: list[str] | None = Field(
+    excluded_entity_labels: list[str] | None = Field(
         default=None,
         description=(
             "Entity labels to never detect, even if present in entity_labels or the default set. "
-            "Denied labels are excluded before GLiNER and LLM prompts run, and are also filtered "
+            "Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered "
             "from the final entity output as a safety net."
         ),
     )
@@ -122,26 +122,26 @@ class Detect(BaseModel):
             logger.warning("entity_labels contained duplicates, removed automatically.")
         return deduped
 
-    @field_validator("entity_label_denylist")
+    @field_validator("excluded_entity_labels")
     @classmethod
-    def validate_entity_label_denylist(cls, value: list[str] | None) -> list[str] | None:
+    def validate_excluded_entity_labels(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
         cleaned = [label.strip().lower() for label in value if label.strip()]
         if not cleaned:
-            raise ValueError("entity_label_denylist must not be empty. Use None to disable the deny list.")
+            raise ValueError("excluded_entity_labels must not be empty. Use None to disable exclusions.")
         deduped = sorted(set(cleaned))
         if len(deduped) != len(cleaned):
-            logger.warning("entity_label_denylist contained duplicates, removed automatically.")
+            logger.warning("excluded_entity_labels contained duplicates, removed automatically.")
         return deduped
 
     @model_validator(mode="after")
-    def warn_on_allowlist_denylist_overlap(self) -> "Detect":
-        if self.entity_labels is not None and self.entity_label_denylist is not None:
-            overlap = sorted(set(self.entity_labels) & set(self.entity_label_denylist))
+    def warn_on_entity_label_overlap(self) -> "Detect":
+        if self.entity_labels is not None and self.excluded_entity_labels is not None:
+            overlap = sorted(set(self.entity_labels) & set(self.excluded_entity_labels))
             if overlap:
                 logger.warning(
-                    "entity_labels and entity_label_denylist share labels that will never be detected: %s",
+                    "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
                     overlap,
                 )
         return self

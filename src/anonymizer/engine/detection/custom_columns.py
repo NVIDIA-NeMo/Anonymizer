@@ -75,7 +75,11 @@ def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
     required_columns=[COL_TEXT, COL_VALIDATED_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
     side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
 )
-def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
+def merge_and_build_candidates(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
     """Merge validated seed + augmented entities, then build tagged text and validation candidates.
 
     Contract:
@@ -88,6 +92,7 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
         text=text,
         entities=seed_spans,
         augmented_output=row.get(COL_AUGMENTED_ENTITIES, {}),
+        excluded_entity_labels=set(excluded_entity_labels or []),
     )
     merged_entities = [entity.as_dict() for entity in merged]
     row[COL_MERGED_ENTITIES] = EntitiesSchema(entities=merged_entities).model_dump(mode="json")

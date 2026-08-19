@@ -443,23 +443,23 @@ def test_filter_out_of_scope_entities_is_case_insensitive() -> None:
     assert result == entities
 
 
-# ── entity_label_denylist ─────────────────────────────────────────────────────
+# ── excluded_entity_labels ────────────────────────────────────────────────────
 
 
-def test_effective_entity_labels_no_denylist_returns_entity_labels_unchanged() -> None:
+def test_effective_entity_labels_no_exclusions_returns_entity_labels_unchanged() -> None:
     assert _effective_entity_labels(["email", "city"], None) == ["email", "city"]
 
 
-def test_effective_entity_labels_none_labels_none_denylist_returns_none() -> None:
+def test_effective_entity_labels_none_labels_none_exclusions_returns_none() -> None:
     assert _effective_entity_labels(None, None) is None
 
 
-def test_effective_entity_labels_subtracts_denylist_from_explicit_labels() -> None:
+def test_effective_entity_labels_subtracts_exclusions_from_explicit_labels() -> None:
     result = _effective_entity_labels(["first_name", "email", "city"], ["email"])
     assert result == ["first_name", "city"]
 
 
-def test_effective_entity_labels_preserves_permissive_scope_with_denylist() -> None:
+def test_effective_entity_labels_preserves_permissive_scope_with_exclusions() -> None:
     result = _effective_entity_labels(None, ["ssn", "first_name"])
     assert result is None
 
@@ -469,7 +469,7 @@ def test_effective_entity_labels_is_case_insensitive() -> None:
     assert result == ["first_name"]
 
 
-def test_coverage_prompt_excludes_denied_labels_from_scope() -> None:
+def test_coverage_prompt_excludes_configured_labels_from_scope() -> None:
     effective = _effective_entity_labels(["first_name", "email", "city"], ["email"])
     prompt = _coverage_prompt(entity_labels=effective)
     assert "email" not in prompt
@@ -477,8 +477,8 @@ def test_coverage_prompt_excludes_denied_labels_from_scope() -> None:
     assert "city" in prompt
 
 
-def test_coverage_prompt_keeps_permissive_scope_and_names_denied_labels() -> None:
-    prompt = _coverage_prompt(entity_labels=None, entity_label_denylist=["email"])
+def test_coverage_prompt_keeps_permissive_scope_and_names_excluded_labels() -> None:
+    prompt = _coverage_prompt(entity_labels=None, excluded_entity_labels=["email"])
     assert "Evaluate for all PII and sensitive entity types." in prompt
     assert "explicitly excluded entity labels: email" in prompt
     assert "This list is not exhaustive." in prompt
@@ -487,17 +487,17 @@ def test_coverage_prompt_keeps_permissive_scope_and_names_denied_labels() -> Non
     assert "Return labels exactly as they appear" not in prompt
 
 
-def test_filter_out_of_scope_entities_keeps_novel_non_denied_labels() -> None:
+def test_filter_out_of_scope_entities_keeps_novel_non_excluded_labels() -> None:
     entities = [
         {"value": "Example Clinic", "label": "clinic_name", "reasoning": "clinic"},
         {"value": "alice@example.com", "label": "Email", "reasoning": "email"},
     ]
-    result = _filter_out_of_scope_entities(entities, entity_labels=None, entity_label_denylist=["email"])
+    result = _filter_out_of_scope_entities(entities, entity_labels=None, excluded_entity_labels=["email"])
     assert result == [entities[0]]
 
 
-def test_entity_coverage_workflow_excludes_denied_labels_from_postprocess() -> None:
-    """Permissive postprocessing keeps novel labels while excluding denied labels."""
+def test_entity_coverage_workflow_excludes_configured_labels_from_postprocess() -> None:
+    """Permissive postprocessing keeps novel labels while applying exclusions."""
     raw_judge_output = [
         {"value": "Alice", "label": "first_name", "reasoning": "not replaced"},
         {"value": "Example Clinic", "label": "clinic_name", "reasoning": "not replaced"},
@@ -515,7 +515,7 @@ def test_entity_coverage_workflow_excludes_denied_labels_from_postprocess() -> N
     workflow = EntityCoverageWorkflow(
         adapter=Mock(),
         entity_labels=None,
-        entity_label_denylist=["email"],
+        excluded_entity_labels=["email"],
     )
     result_df = workflow.postprocess(workflow.prepare(input_df))
     missed = result_df[COL_MISSED_ENTITIES].iloc[0]

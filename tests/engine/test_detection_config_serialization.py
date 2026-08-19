@@ -53,6 +53,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         validation_max_entities_per_call=7,
         validation_excerpt_window_chars=321,
         entity_labels=["first_name", "email"],
+        excluded_entity_labels=["email"],
         data_summary="Customer support messages",
         job_index=1,
         num_jobs=3,
@@ -77,6 +78,12 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
 
     transforms = [column for column in columns if isinstance(column, DetectionTransformConfig)]
     assert {DetectionTransformOperation(column.operation) for column in transforms} == set(DetectionTransformOperation)
+    merge_transform = next(
+        column
+        for column in transforms
+        if DetectionTransformOperation(column.operation) == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES
+    )
+    assert merge_transform.excluded_entity_labels == ["email"]
 
     validation = next(column for column in columns if column.name == COL_VALIDATION_DECISIONS)
     assert isinstance(validation, ChunkedValidationConfig)
@@ -102,7 +109,7 @@ def _get_gliner_labels_from_builder(builder: DataDesignerConfigBuilder) -> list[
     return gliner["inference_parameters"]["extra_body"]["labels"]
 
 
-def test_build_detection_builder_for_seed_respects_entity_label_denylist(tmp_path: Path) -> None:
+def test_build_detection_builder_for_seed_respects_excluded_entity_labels(tmp_path: Path) -> None:
     seed_path = tmp_path / "seed.parquet"
     pd.DataFrame({COL_TEXT: ["Alice"]}).to_parquet(seed_path, index=False)
 
@@ -114,7 +121,7 @@ def test_build_detection_builder_for_seed_respects_entity_label_denylist(tmp_pat
         selected_models=parsed_models.selected_models.detection,
         gliner_detection_threshold=0.3,
         entity_labels=["first_name", "email", "city"],
-        entity_label_denylist=["email"],
+        excluded_entity_labels=["email"],
     )
 
     labels = _get_gliner_labels_from_builder(builder)
@@ -123,7 +130,7 @@ def test_build_detection_builder_for_seed_respects_entity_label_denylist(tmp_pat
     assert "city" in labels
 
 
-def test_build_detection_config_respects_entity_label_denylist(tmp_path: Path) -> None:
+def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) -> None:
     seed_path = tmp_path / "seed.parquet"
     input_df = pd.DataFrame({COL_TEXT: ["Alice"]})
     input_df.to_parquet(seed_path, index=False)
@@ -137,7 +144,7 @@ def test_build_detection_config_respects_entity_label_denylist(tmp_path: Path) -
         selected_models=parsed_models.selected_models.detection,
         gliner_detection_threshold=0.3,
         entity_labels=["first_name", "email", "city"],
-        entity_label_denylist=["email"],
+        excluded_entity_labels=["email"],
     )
 
     labels = _get_gliner_labels_from_builder(builder)

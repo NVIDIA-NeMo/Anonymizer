@@ -44,7 +44,7 @@ config = AnonymizerConfig(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
-| `entity_label_denylist` | `None` | List of labels to **never** detect, even if present in `entity_labels` or the default set. Denied labels are excluded before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net. |
+| `excluded_entity_labels` | `None` | List of labels to **never** detect, even if present in `entity_labels` or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
@@ -106,20 +106,20 @@ Detect(entity_labels=["first_name", "last_name", "email"])
 Detect()  # entity_labels=None
 ```
 
-### Excluding labels with a deny list
+### Excluding entity labels
 
-Use `entity_label_denylist` to exclude specific labels from detection without having to enumerate the entire allowlist. Denied labels are removed before GLiNER runs and before the LLM prompts are built, so they are never detected or augmented.
+Use `excluded_entity_labels` to omit specific labels from detection without having to enumerate the entire allowlist. Excluded labels are removed before GLiNER runs and before the LLM prompts are built, so they are never detected or augmented.
 
 ```python
 # Detect all defaults except occupation and gender
-Detect(entity_label_denylist=["occupation", "gender"])
+Detect(excluded_entity_labels=["occupation", "gender"])
 
-# Combine with an explicit allowlist — denylist always wins
-Detect(entity_labels=["first_name", "email", "city"], entity_label_denylist=["city"])
+# Combine with an explicit allowlist — exclusions always win
+Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
 ```
 
 !!! warning
-    If every label in `entity_labels` is also in `entity_label_denylist`, the effective detection set is empty and no entities will be detected. Anonymizer logs a warning when this happens.
+    If every label in `entity_labels` is also in `excluded_entity_labels`, the effective detection set is empty and no entities will be detected. Anonymizer logs a warning when this happens.
 ## Tuning the threshold
 
 For `gliner_threshold`, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.

@@ -99,6 +99,39 @@ def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:
     assert isinstance(result[COL_VALIDATION_CANDIDATES]["candidates"], list)
 
 
+def test_merge_filters_denied_augmentation_before_overlap_resolution() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "Alice Johnson",
+        COL_VALIDATED_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 0.95,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_AUGMENTED_ENTITIES: {
+            "entities": [
+                {
+                    "value": "Alice Johnson",
+                    "label": " Full_Name ",
+                    "reason": "longer overlapping span",
+                }
+            ]
+        },
+    }
+
+    result = merge_and_build_candidates(row, excluded_entity_labels=["full_name"])
+
+    merged = result[COL_MERGED_ENTITIES]["entities"]
+    assert [(entity["value"], entity["label"]) for entity in merged] == [("Alice", "first_name")]
+
+
 def test_enrich_validation_decisions_adds_value_from_candidates() -> None:
     row = {
         COL_VALIDATION_DECISIONS: {

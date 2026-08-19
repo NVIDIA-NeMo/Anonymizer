@@ -68,9 +68,9 @@ class AnonymizerResult(_DisplayMixin):
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means all default
             labels were in scope.
-        entity_label_denylist: Labels that were explicitly excluded from
+        excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
-            not penalise the output for not anonymizing denied labels.
+            not penalise the output for not anonymizing excluded labels.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
@@ -83,7 +83,7 @@ class AnonymizerResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
-    entity_label_denylist: list[str] | None = None
+    excluded_entity_labels: list[str] | None = None
     data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
@@ -122,9 +122,9 @@ class PreviewResult(_DisplayMixin):
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means all default
             labels were in scope.
-        entity_label_denylist: Labels that were explicitly excluded from
+        excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
-            not penalise the output for not anonymizing denied labels.
+            not penalise the output for not anonymizing excluded labels.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
@@ -138,7 +138,7 @@ class PreviewResult(_DisplayMixin):
     replace_method: ReplaceMethod | None = None
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
-    entity_label_denylist: list[str] | None = None
+    excluded_entity_labels: list[str] | None = None
     data_summary: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 

@@ -70,32 +70,32 @@ class EntityCoverageSchema(BaseModel):
 
 def _effective_entity_labels(
     entity_labels: list[str] | None,
-    entity_label_denylist: list[str] | None,
+    excluded_entity_labels: list[str] | None,
 ) -> list[str] | None:
     """Return the effective allowlist for prompt and filter scope.
 
     ``None`` remains permissive so coverage includes novel labels introduced by
-    augmentation. Denied labels are applied independently by the prompt and
+    augmentation. Excluded labels are applied independently by the prompt and
     postprocessing filter.
     """
     if entity_labels is None:
         return None
-    if not entity_label_denylist:
+    if not excluded_entity_labels:
         return entity_labels
-    denied = {label.casefold() for label in entity_label_denylist}
-    effective = [label for label in entity_labels if label.casefold() not in denied]
+    excluded = {label.casefold() for label in excluded_entity_labels}
+    effective = [label for label in entity_labels if label.casefold() not in excluded]
     return effective
 
 
 def _entity_type_scope_block(
     entity_labels: list[str] | None,
-    entity_label_denylist: list[str] | None = None,
+    excluded_entity_labels: list[str] | None = None,
 ) -> str:
     if entity_labels is None:
-        denied = sorted({label.strip().casefold() for label in entity_label_denylist or [] if label.strip()})
+        excluded = sorted({label.strip().casefold() for label in excluded_entity_labels or [] if label.strip()})
         exclusion = (
-            f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(denied)}."
-            if denied
+            f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(excluded)}."
+            if excluded
             else ""
         )
         return f"<entity_type_scope>\nEvaluate for all PII and sensitive entity types.{exclusion}\n</entity_type_scope>"
@@ -125,10 +125,10 @@ def _data_summary_block(data_summary: str | None) -> str:
 def _coverage_prompt(
     *,
     entity_labels: list[str] | None,
-    entity_label_denylist: list[str] | None = None,
+    excluded_entity_labels: list[str] | None = None,
     data_summary: str | None = None,
 ) -> str:
-    entity_scope_block = _entity_type_scope_block(entity_labels, entity_label_denylist)
+    entity_scope_block = _entity_type_scope_block(entity_labels, excluded_entity_labels)
     data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
 
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
@@ -392,12 +392,12 @@ def _normalize_literal_text(value: object) -> str:
 def _filter_out_of_scope_entities(
     entities: list[_CandidateT],
     entity_labels: list[str] | None,
-    entity_label_denylist: list[str] | None = None,
+    excluded_entity_labels: list[str] | None = None,
 ) -> list[_CandidateT]:
     """Drop entities with empty labels or labels outside the configured scope.
 
     When ``entity_labels`` is None all labels are in scope; only empty labels
-    and explicitly denied labels are dropped. This mirrors the prompt's scope
+    and explicitly excluded labels are dropped. This mirrors the prompt's scope
     instruction deterministically so a model that returns out-of-scope labels
     does not lower the coverage score.
 
@@ -409,14 +409,14 @@ def _filter_out_of_scope_entities(
     meaningfully risking false negatives on well-formed responses.
     """
     allowed = {label.casefold() for label in entity_labels} if entity_labels is not None else None
-    denied = {label.casefold() for label in entity_label_denylist or []}
+    excluded = {label.casefold() for label in excluded_entity_labels or []}
     result = []
     for entity in entities:
         label = str(entity.get("label", "")).strip()
         if not label:
             continue
         normalized_label = label.casefold()
-        if (allowed is not None and normalized_label not in allowed) or normalized_label in denied:
+        if (allowed is not None and normalized_label not in allowed) or normalized_label in excluded:
             continue
         result.append(entity)
     return result
@@ -460,9 +460,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     scope. Deterministic postprocessing removes nonliteral and already-covered findings.
 
     ``entity_labels`` scopes evaluation to a specific allowlist of labels (``None`` means
-    all labels). ``entity_label_denylist`` further excludes specific labels from
-    scope regardless of ``entity_labels``. Both are applied to the LLM prompt and the
-    postprocess filter so denied labels are never penalised in the coverage score.
+    all labels). ``excluded_entity_labels`` removes specific labels from scope
+    regardless of ``entity_labels``. Both are applied to the LLM prompt and the
+    postprocess filter so excluded labels are never penalised in the coverage score.
 
     Output columns:
       ``COL_ENTITY_COVERAGE`` (float|None) — covered / total unique candidate values
@@ -484,12 +484,12 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         adapter: NddAdapter,
         *,
         entity_labels: list[str] | None = None,
-        entity_label_denylist: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> None:
         super().__init__(adapter)
         self._entity_labels = entity_labels
-        self._entity_label_denylist = entity_label_denylist
+        self._excluded_entity_labels = excluded_entity_labels
         self._data_summary = data_summary
 
     # ------------------------------------------------------------------ hooks
@@ -524,12 +524,12 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
 
     def column_config(self, selected_models: EvaluateModelSelection) -> LLMStructuredColumnConfig:
         """Override to inject instance-specific entity_labels and data_summary."""
-        effective_labels = _effective_entity_labels(self._entity_labels, self._entity_label_denylist)
+        effective_labels = _effective_entity_labels(self._entity_labels, self._excluded_entity_labels)
         return LLMStructuredColumnConfig(
             name=self.RAW_COL,
             prompt=_coverage_prompt(
                 entity_labels=effective_labels,
-                entity_label_denylist=self._entity_label_denylist,
+                excluded_entity_labels=self._excluded_entity_labels,
                 data_summary=self._data_summary,
             ),
             model_alias=resolve_model_alias(self.MODEL_ROLE, selected_models),
@@ -554,8 +554,8 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             else:
                 candidates = _filter_out_of_scope_entities(
                     candidates,
-                    _effective_entity_labels(self._entity_labels, self._entity_label_denylist),
-                    self._entity_label_denylist,
+                    _effective_entity_labels(self._entity_labels, self._excluded_entity_labels),
+                    self._excluded_entity_labels,
                 )
                 candidates = _filter_nonliteral_entities(candidates, out[COL_TEXT].loc[idx])
                 candidates = _deduplicate_candidate_values(candidates)

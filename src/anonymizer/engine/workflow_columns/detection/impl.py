@@ -100,6 +100,11 @@ class _AsyncBridgedModelFacade:
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
+        if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:
+            return merge_and_build_candidates(
+                data,
+                excluded_entity_labels=self.config.excluded_entity_labels,
+            )
         return _TRANSFORMS[operation](data)
 
 
