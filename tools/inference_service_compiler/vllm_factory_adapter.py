@@ -18,6 +18,8 @@ from inference_service_compiler.models import FactoryPlugin, parse_factory_plugi
 
 DEFAULT_CHUNK_LENGTH = 384
 DEFAULT_OVERLAP = 128
+MAX_CHUNKS_PER_REQUEST = 256
+MAX_CONCURRENT_POOLING_CALLS_PER_REQUEST = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,19 +81,11 @@ async def anonymizer_chat_compatibility(
             handler = request.app.state.serving_pooling
             if handler is None:
                 raise RuntimeError("vLLM pooling handler is unavailable")
-            results = await asyncio.gather(
-                *(
-                    invoke_pooling(
-                        handler=handler,
-                        model=detection.model,
-                        plugin=plugin,
-                        text=chunk.text,
-                        labels=detection.labels,
-                        threshold=detection.threshold,
-                        flat_ner=detection.flat_ner,
-                    )
-                    for chunk in chunks
-                )
+            results = await invoke_pooling_chunks(
+                handler=handler,
+                plugin=plugin,
+                detection=detection,
+                chunks=chunks,
             )
             entities = merge_entities(
                 plugin=plugin,
@@ -143,9 +137,13 @@ def parse_detection_request(value: object) -> DetectionRequest:
     flat_ner = body.get("flat_ner", False)
     if not isinstance(flat_ner, bool):
         raise ValueError("flat_ner must be a boolean")
+    text = extract_text(body.get("messages"))
+    chunk_count = _count_text_chunks(len(text), chunk_length, overlap)
+    if labels_value and chunk_count > MAX_CHUNKS_PER_REQUEST:
+        raise ValueError(f"detector requests may contain at most {MAX_CHUNKS_PER_REQUEST} chunks")
     return DetectionRequest(
         model=model,
-        text=extract_text(body.get("messages")),
+        text=text,
         labels=tuple(cast(list[str], labels_value)),
         threshold=threshold,
         chunk_length=chunk_length,
@@ -175,6 +173,14 @@ def extract_text(messages: object) -> str:
     raise ValueError("message content must be a string or list")
 
 
+def _count_text_chunks(text_length: int, chunk_length: int, overlap: int) -> int:
+    """Calculate the number of chunks without materializing their text."""
+    if text_length <= chunk_length:
+        return 1
+    stride = chunk_length - overlap
+    return 1 + (text_length - chunk_length + stride - 1) // stride
+
+
 def split_text(text: str, chunk_length: int, overlap: int) -> list[TextChunk]:
     """Split text with the same character-offset contract as the native runtime."""
     if not text:
@@ -187,6 +193,34 @@ def split_text(text: str, chunk_length: int, overlap: int) -> list[TextChunk]:
             break
         start += chunk_length - overlap
     return chunks
+
+
+async def invoke_pooling_chunks(
+    *,
+    handler: Any,
+    plugin: FactoryPlugin,
+    detection: DetectionRequest,
+    chunks: Sequence[TextChunk],
+) -> list[object]:
+    """Process admitted chunks with a bounded asynchronous worker frontier."""
+    results = [object() for _ in chunks]
+    pending = iter(enumerate(chunks))
+
+    async def worker() -> None:
+        for index, chunk in pending:
+            results[index] = await invoke_pooling(
+                handler=handler,
+                model=detection.model,
+                plugin=plugin,
+                text=chunk.text,
+                labels=detection.labels,
+                threshold=detection.threshold,
+                flat_ner=detection.flat_ner,
+            )
+
+    worker_count = min(len(chunks), MAX_CONCURRENT_POOLING_CALLS_PER_REQUEST)
+    await asyncio.gather(*(worker() for _ in range(worker_count)))
+    return results
 
 
 async def invoke_pooling(
