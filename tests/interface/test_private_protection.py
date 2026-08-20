@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.ndd.adapter import FailedRecord
@@ -57,6 +58,45 @@ def test_private_redact_applies_and_no_detection_success_is_explicit() -> None:
     assert result.failure_count == 0
     assert not hasattr(result, "trace_dataframe")
     assert "row_token" not in repr(result).lower()
+
+
+def test_trivial_graph_path_matches_public_run_output(tmp_path: Path) -> None:
+    secret = "alice@example.test"
+    anonymizer = build_synthetic_anonymizer({secret: "email"})
+    config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+    source = tmp_path / "parity.csv"
+    pd.DataFrame({"text": [f"mail {secret}", "ordinary text"]}).to_csv(source, index=False)
+
+    public = anonymizer.run(config=config, data=AnonymizerInput(source=str(source), text_column="text"))
+    plan = anonymizer._compile_protection_plan(config)
+    private = anonymizer._open_protection_flow(plan).protect(
+        (_record("a", f"mail {secret}"), _record("b", "ordinary text"))
+    )
+
+    assert [cast(_ProtectionSucceeded, outcome).output for outcome in private.outcomes] == public.dataframe[
+        "text_replaced"
+    ].tolist()
+
+
+def test_graph_outcomes_are_rejoined_by_private_datum_identity() -> None:
+    secret = "alice@example.test"
+    _, flow = _flow(entities={secret: "email"})
+    original = flow._runtime.protect
+
+    def reordered(*args: Any, **kwargs: Any):
+        result = original(*args, **kwargs)
+        return replace(result, outcomes=tuple(reversed(result.outcomes)))
+
+    flow._runtime.protect = reordered
+    result = flow.protect((_record("private-a", secret), _record("private-b", "plain")))
+
+    first, second = result.outcomes
+    assert isinstance(first, _ProtectionSucceeded)
+    assert first.ref.value == "private-a"
+    assert first.output == "[REDACTED_EMAIL]"
+    assert isinstance(second, _ProtectionSucceeded)
+    assert second.ref.value == "private-b"
+    assert second.output == "plain"
 
 
 def test_compilation_is_closed_and_plan_is_content_free_and_immutable() -> None:
@@ -170,14 +210,14 @@ def test_cancel_before_admission_and_overlap_are_rejections() -> None:
 
     entered = threading.Event()
     release = threading.Event()
-    original = flow._runtime.run
+    original = flow._runtime.protect
 
     def blocked(*args: Any, **kwargs: Any):
         entered.set()
         release.wait(timeout=5)
         return original(*args, **kwargs)
 
-    flow._runtime.run = blocked
+    flow._runtime.protect = blocked
     worker = threading.Thread(target=lambda: flow.protect((_record("one", "text"),)))
     worker.start()
     assert entered.wait(timeout=5)

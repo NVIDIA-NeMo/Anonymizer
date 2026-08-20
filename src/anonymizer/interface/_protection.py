@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Private Plan A protection domain and synchronous lifecycle boundary."""
+"""Private graph-native protection domain and synchronous lifecycle boundary."""
 
 from __future__ import annotations
 
@@ -13,16 +13,21 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-import pandas as pd
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig
 from anonymizer.config.models import ModelSelection
 from anonymizer.config.replace_strategies import Annotate, Redact
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.execution.graph import _DatumId, _GraphLimits, _TextDatum, _trivial_graph
+from anonymizer.engine.execution.graph_runtime import _TrivialGraphRuntime
 from anonymizer.engine.execution.invocation import _CompiledInvocation
-from anonymizer.engine.execution.pandas_runtime import _PandasExecutionResult, _PandasRuntime
-from anonymizer.engine.private_row_verification import _InvocationRowVerifier, _TerminalOutcome
+from anonymizer.engine.execution.pandas_runtime import _PandasRuntime
+from anonymizer.engine.execution.protection_service import (
+    _GraphProtectionFailed,
+    _GraphProtectionResult,
+    _GraphProtectionSucceeded,
+    _TrivialRedactProtectionService,
+)
 
 if TYPE_CHECKING:
     from anonymizer.interface.anonymizer import Anonymizer
@@ -224,7 +229,7 @@ def _compile_protection_plan(
     selected_models: ModelSelection,
     model_configs: list[ModelConfig],
 ) -> _CompileResult:
-    """Purely compile the one release-qualified Plan A profile."""
+    """Compile the one release-qualified private Redact profile."""
     if not isinstance(config, AnonymizerConfig):
         return _PlanInvalid()
     if isinstance(config.replace, Annotate):
@@ -238,7 +243,7 @@ def _compile_protection_plan(
 
 
 def _plan_fingerprint(invocation: _CompiledInvocation) -> str:
-    """Fingerprint the complete allowlisted Plan A semantic snapshot."""
+    """Fingerprint the complete allowlisted private Redact snapshot."""
     payload = {
         "contract_version": _CONTRACT_VERSION,
         "profile": _PROFILE,
@@ -314,11 +319,15 @@ class _ProtectionFlow(_SafeRepr):
 
     def __init__(self, anonymizer: Anonymizer, plan: _ProtectionPlan) -> None:
         self._plan = plan
-        self._runtime = _PandasRuntime(
-            detection_workflow=anonymizer._detection_workflow,
-            replace_runner=anonymizer._replace_runner,
-            rewrite_runner=anonymizer._rewrite_runner,
-            combined_rewrite_runner=anonymizer._combined_rewrite_runner,
+        self._runtime = _TrivialRedactProtectionService(
+            _TrivialGraphRuntime(
+                _PandasRuntime(
+                    detection_workflow=anonymizer._detection_workflow,
+                    replace_runner=anonymizer._replace_runner,
+                    rewrite_runner=anonymizer._rewrite_runner,
+                    combined_rewrite_runner=anonymizer._combined_rewrite_runner,
+                )
+            )
         )
         self._guard = threading.Lock()
         self._state_lock = threading.Lock()
@@ -345,23 +354,25 @@ class _ProtectionFlow(_SafeRepr):
     def _execute(self, operation: _OperationPlan) -> _ProtectionRunRecord:
         if _plan_fingerprint(self._plan.invocation) != self._plan.digest:
             return self._fail_all(operation)
-        frame = pd.DataFrame({COL_TEXT: [record.segments[0].text for record in operation.records]})
-        verifier = _InvocationRowVerifier(frame)
-        bound = verifier.bind(frame)
+        graph = _trivial_graph(
+            tuple(
+                _TextDatum(_DatumId(f"datum-{index}"), record.segments[0].text)
+                for index, record in enumerate(operation.records)
+            )
+        )
         try:
             with self._adapter.private_execution():
-                execution = self._runtime.run(
-                    bound,
+                execution = self._runtime.protect(
+                    graph,
+                    limits=_GraphLimits(
+                        max_datums=self._plan.max_records,
+                        max_datum_bytes=self._plan.max_record_bytes,
+                        max_graph_bytes=self._plan.max_batch_bytes,
+                    ),
                     invocation=self._plan.invocation,
-                    data_summary=None,
-                    preview_num_records=None,
-                    verifier=verifier,
                 )
-        except Exception as cause:
-            verifier.abort_with_failure(stage="pipeline", cause=cause)
-            terminal = verifier.take_terminal_outcomes()
-            del cause
-            return self._failed_from_terminal(operation, terminal)
+        except Exception:
+            return self._fail_all(operation)
 
         try:
             return self._materialize_outcomes(operation, execution)
@@ -370,14 +381,19 @@ class _ProtectionFlow(_SafeRepr):
             return self._fail_all(operation)
 
     def _materialize_outcomes(
-        self, operation: _OperationPlan, execution: _PandasExecutionResult
+        self,
+        operation: _OperationPlan,
+        execution: _GraphProtectionResult,
     ) -> _ProtectionRunRecord:
-        if execution.failed_records:
+        expected_ids = tuple(_DatumId(f"datum-{index}") for index in range(len(operation.records)))
+        outcome_by_id = {}
+        for graph_outcome in execution.outcomes:
+            datum_id = getattr(graph_outcome, "datum_id", None)
+            if not isinstance(datum_id, _DatumId) or datum_id in outcome_by_id:
+                return self._fail_all(operation)
+            outcome_by_id[datum_id] = graph_outcome
+        if set(outcome_by_id) != set(expected_ids):
             return self._fail_all(operation)
-        token_to_row = {
-            token: row
-            for token, (_, row) in zip(execution.result_row_tokens, execution.dataframe.iterrows(), strict=True)
-        }
         receipt = _ProtectionReceipt(
             _CONTRACT_VERSION,
             _PROFILE,
@@ -388,32 +404,21 @@ class _ProtectionFlow(_SafeRepr):
             secrets.token_hex(16),
         )
         outcomes: list[_RecordOutcome] = []
-        for record, (token, status) in zip(operation.records, execution.terminal_outcomes, strict=True):
-            if status is not _TerminalOutcome.SUCCESS:
-                outcomes.append(_Failed(record.ref, _failure(_FailureCode.ROW_FAILED, "pipeline", "record")))
-                continue
-            row = token_to_row[token]
-            output = row[COL_REPLACED_TEXT]
-            if not isinstance(output, str):
+        for record, datum_id in zip(operation.records, expected_ids, strict=True):
+            graph_outcome = outcome_by_id[datum_id]
+            if isinstance(graph_outcome, _GraphProtectionFailed):
+                code = (
+                    _FailureCode.INVOCATION_FAILED if graph_outcome.scope == "invocation" else _FailureCode.ROW_FAILED
+                )
+                scope = "record" if graph_outcome.scope == "datum" else graph_outcome.scope
+                outcomes.append(_Failed(record.ref, _failure(code, graph_outcome.stage, scope)))
+            elif isinstance(graph_outcome, _GraphProtectionSucceeded):
+                disposition: _SuccessDisposition
+                disposition = _ProtectionApplied() if graph_outcome.applied else _NoAcceptedDetections()
+                outcomes.append(_ProtectionSucceeded(record.ref, graph_outcome.output, disposition, receipt))
+            else:
                 return self._fail_all(operation)
-            valid_entities, has_detections = _accepted_detection_state(row[COL_FINAL_ENTITIES])
-            if not valid_entities:
-                return self._fail_all(operation)
-            if has_detections and not _redact_release_passed(row[COL_FINAL_ENTITIES], output):
-                outcomes.append(_Failed(record.ref, _failure(_FailureCode.ROW_FAILED, "release", "record")))
-                continue
-            if not has_detections and output != record.segments[0].text:
-                outcomes.append(_Failed(record.ref, _failure(_FailureCode.ROW_FAILED, "release", "record")))
-                continue
-            disposition: _SuccessDisposition = _ProtectionApplied() if has_detections else _NoAcceptedDetections()
-            outcomes.append(_ProtectionSucceeded(record.ref, output, disposition, receipt))
         return _ProtectionRunRecord(tuple(outcomes))
-
-    def _failed_from_terminal(
-        self, operation: _OperationPlan, terminal: tuple[tuple[str, _TerminalOutcome], ...]
-    ) -> _ProtectionRunRecord:
-        del terminal
-        return self._fail_all(operation)
 
     def _fail_all(self, operation: _OperationPlan) -> _ProtectionRunRecord:
         failure = _failure(_FailureCode.INVOCATION_FAILED, "pipeline", "invocation")
@@ -437,32 +442,3 @@ class _ProtectionFlow(_SafeRepr):
 
 def _failure(code: _FailureCode, stage: str, scope: str) -> _SafeFailure:
     return _SafeFailure(code, stage, scope)
-
-
-def _accepted_detection_state(value: object) -> tuple[bool, bool]:
-    if isinstance(value, dict):
-        if "entities" not in value:
-            return False, False
-        entities = value["entities"]
-    else:
-        entities = getattr(value, "entities", None)
-    if not isinstance(entities, (list, tuple)):
-        return False, False
-    return True, bool(entities)
-
-
-def _has_accepted_detections(value: object) -> bool:
-    return _accepted_detection_state(value)[1]
-
-
-def _redact_release_passed(value: object, output: str) -> bool:
-    """Require every accepted entity value to be absent from released text."""
-    if isinstance(value, dict):
-        entities = value.get("entities", [])
-    else:
-        entities = getattr(value, "entities", [])
-    for entity in entities:
-        raw = entity.get("value") if isinstance(entity, dict) else getattr(entity, "value", None)
-        if not isinstance(raw, str) or not raw or raw in output:
-            return False
-    return True
