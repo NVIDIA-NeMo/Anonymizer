@@ -1,7 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Private Plan A design-spike record
+# Historical private protection design-spike record
+
+Status: historical branch-local implementation evidence. This record predates
+and is subordinate to the current
+[graph-native technical proposal](graph-native-anonymizer-sdk-technical-proposal.md);
+its former “Plan A” vocabulary is retained only where needed to describe the
+implemented checkpoint and test lineage.
 
 This record covers the private, synchronous protection slice only. It does not
 authorize a public SDK, Intake integration, release decision, or alternate

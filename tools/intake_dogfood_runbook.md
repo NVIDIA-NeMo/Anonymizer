@@ -287,5 +287,5 @@ ClickHouse HTTP 127.0.0.1:32768 -> 8123/tcp
 The deployment stored protected ATIF, chat-completion, and OTLP/protobuf
 fixtures, plus a protected ATIF trajectory derived from a real Sandbox Codex
 session. See the
-[`extensible SDK companion report`](../docs/development/extensible-sdk-companion-plans.md#intake-workload-validation)
+[Intake workload validation evidence](../docs/development/intake-workload-validation-evidence.md)
 for the validated behavior and remaining contract limits.
