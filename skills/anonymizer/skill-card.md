@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to anonymize text datasets, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable personal information for privacy compliance. <br>
+Developers and data engineers who need to anonymize text datasets containing PII for downstream model training, analytics, or data sharing. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,20 +25,22 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [NeMo Anonymizer Documentation](https://nvidia-nemo.github.io/Anonymizer/) <br>
-- [Choosing a Strategy](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/) <br>
-- [Detection Concepts](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/detection/) <br>
-- [Evaluation Concepts](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/) <br>
-- [Self-hosting GLiNER](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/) <br>
+- [Interactive workflow reference](references/interactive.md) <br>
+- [NeMo Anonymizer documentation](https://nvidia-nemo.github.io/Anonymizer/) <br>
+- [Choosing a strategy](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/) <br>
+- [Detection guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/detection/) <br>
+- [Evaluation guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/) <br>
+- [Models guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/) <br>
 - [Troubleshooting](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/) <br>
-- [GitHub Repository](https://github.com/NVIDIA-NeMo/Anonymizer.git) <br>
+- [Self-hosting GLiNER](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/) <br>
+- [GitHub repository](https://github.com/NVIDIA-NeMo/Anonymizer.git) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Code] <br>
 **Output Format:** [Python script] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [None] <br>
+**Other Properties Related to Output:** [Runnable script with CLI flags for preview, full run, and evaluation] <br>
 
 ## Evaluation Agents Used: <br>
 - Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
@@ -47,18 +49,18 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-6 evaluation tasks (4 positive, 2 negative) run in isolated sandbox pods with 1 attempt per task. <br>
+6 evaluation tasks (4 positive, 2 negative) from skill-evaluator-dataset-snapshot/1. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Checks final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was found and executed when needed. <br>
-- Effectiveness: Checks goal completion (50%) and expected workflow adherence (50%). <br>
-- Efficiency: Checks routing quality, workspace-aware skill reads, and productive tool use. <br>
+- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Whether the final answer is correct against the reference answer. <br>
+- Discoverability: Whether the right skill is found and executed when needed. <br>
+- Effectiveness: Whether the skill helps complete the user's goal (goal completion + expected workflow adherence). <br>
+- Efficiency: Whether the skill avoids wasted tool or skill usage (routing quality and productive tool use). <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - `skill_execution`: Whether the expected skill was found and executed. <br>
 - `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
@@ -70,15 +72,15 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 58% → 94% (+36 points) | 68% → 93% (+25 points) |
-| Security | 100% → 92% (-8 points) | 83% → 83% (±0 points) |
-| Correctness | 50% → 100% (+50 points) | 83% → 97% (+13 points) |
-| Discoverability | 50% → 99% (+49 points) | 67% → 94% (+27 points) |
-| Effectiveness | 52% → 89% (+38 points) | 65% → 93% (+28 points) |
-| Efficiency | 38% → 89% (+51 points) | 42% → 97% (+55 points) |
+| Overall | 65% → 95% (+30 points) | 72% → 93% (+21 points) |
+| Security | 100% → 100% (±0 points) | 83% → 83% (±0 points) |
+| Correctness | 73% → 97% (+23 points) | 90% → 100% (+10 points) |
+| Discoverability | 50% → 98% (+48 points) | 67% → 92% (+25 points) |
+| Effectiveness | 54% → 87% (+33 points) | 69% → 92% (+23 points) |
+| Efficiency | 50% → 94% (+44 points) | 50% → 100% (+50 points) |
 
 ## Skill Version(s): <br>
-e3b99da (source: git SHA, committed 2026-08-11) <br>
+318cc15 (source: git SHA, committed 2026-08-19) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

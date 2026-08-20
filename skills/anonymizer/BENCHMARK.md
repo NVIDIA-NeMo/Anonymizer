@@ -9,16 +9,27 @@ Recommended for publication based on the completed evaluation evidence in this r
 ## Evaluation Metadata
 
 - Skill: `anonymizer`
-- Evaluation date: 2026-08-12
-- Evaluator version: `1.2.4`
+- Evaluation date: 2026-08-20
+- Evaluator version: `1.3.2`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 6 evaluation tasks (4 positive, 2 negative)
 - Dataset digest: `sha256:c2c13b2d794c6117dac0402f1261bd2d80972085c5e716426bedff6b3d59b8ae` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
-- Environment: `k8s-sandbox`
+- Environment: `local`
 - Tier 3 evidence: required for publication
 
-Each task attempt ran in its own isolated sandbox pod.
+Tasks ran on the trusted local host; local mode is not sandboxed.
+
+## Execution and Provenance
+
+- Validation status: `passed`
+- Report generation: `complete`
+- Evaluator version: `1.3.2`
+- Git commit: `0117bc2e3e54da4244a656466526c5b1b5a559ea`
+- Content type: requested `auto`, detected `skill`
+- Container image: `gitlab-master.nvidia.com:5005/nvcarps/ci-group/nvcarps-ci/skillevaluator-ci:sha-0117bc2e3e54da4244a656466526c5b1b5a559ea`
+- Container image digest: `not recorded`
+- Tier 3: requested `true`, executed `true`, status `succeeded`
 
 ## What This Report Answers
 
@@ -34,12 +45,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 58% → 94% (+36 points) | 68% → 93% (+25 points) |
-| Security | 100% → 92% (-8 points) | 83% → 83% (±0 points) |
-| Correctness | 50% → 100% (+50 points) | 83% → 97% (+13 points) |
-| Discoverability | 50% → 99% (+49 points) | 67% → 94% (+27 points) |
-| Effectiveness | 52% → 89% (+38 points) | 65% → 93% (+28 points) |
-| Efficiency | 38% → 89% (+51 points) | 42% → 97% (+55 points) |
+| Overall | 65% → 95% (+30 points) | 72% → 93% (+21 points) |
+| Security | 100% → 100% (±0 points) | 83% → 83% (±0 points) |
+| Correctness | 73% → 97% (+23 points) | 90% → 100% (+10 points) |
+| Discoverability | 50% → 98% (+48 points) | 67% → 92% (+25 points) |
+| Effectiveness | 54% → 87% (+33 points) | 69% → 92% (+23 points) |
+| Efficiency | 50% → 94% (+44 points) | 50% → 100% (+50 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Uplift is `skill score - baseline score`, shown in percentage points.
 
