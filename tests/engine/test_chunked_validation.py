@@ -459,6 +459,45 @@ class TestChunkedValidateRowPoolOfOne:
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
         assert {d["id"]: d["decision"] for d in decisions} == {"a": "keep", "b": "drop"}
 
+    def test_numeric_value_echo_does_not_fail_response_parsing(self) -> None:
+        text = "Reference 42."
+        spans = [_entity_span("id1", "42", "account_number", 10, 12)]
+        candidates = _candidates_schema(("id1", "42", "account_number"))
+        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        facade = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {
+                        "id": "id1",
+                        "value": 42,
+                        "decision": "keep",
+                        "proposed_label": "",
+                        "reason": "numeric identifier",
+                    }
+                ]
+            },
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=10,
+            excerpt_window_chars=100,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        out = chunked_validate_row(row, params, {"v0": facade})
+
+        assert out[COL_VALIDATION_DECISIONS]["decisions"] == [
+            {
+                "id": "id1",
+                "value": "42",
+                "label": "account_number",
+                "decision": "keep",
+                "proposed_label": "",
+                "reason": "numeric identifier",
+            }
+        ]
+
     def test_single_chunk_sends_single_chunk_tagged_text_not_windowed_excerpt(self) -> None:
         """Single-chunk rows must receive the fully tagged document, not a windowed excerpt.
 
