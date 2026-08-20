@@ -368,6 +368,55 @@ def test_resolve_overlaps_empty_input() -> None:
     assert resolve_overlaps([]) == []
 
 
+def test_resolve_overlaps_same_span_keeps_highest_score() -> None:
+    """prefer_highest_score=True: highest-scoring label wins on exact same span."""
+    last_name = EntitySpan("last_name_120_123", "Mum", "last_name", 120, 123, 0.719, "detector")
+    relationship = EntitySpan("relationship_120_123", "Mum", "relationship", 120, 123, 0.941, "detector")
+    resolved = resolve_overlaps([last_name, relationship], prefer_highest_score=True)
+    assert len(resolved) == 1
+    assert resolved[0].label == "relationship"
+
+
+def test_resolve_overlaps_default_uses_label_not_score() -> None:
+    """Default (prefer_highest_score=False): label alphabetical order wins, not score."""
+    low_score = EntitySpan("a_0_3", "Mum", "aaa_label", 0, 3, 0.5, "detector")
+    high_score = EntitySpan("z_0_3", "Mum", "zzz_label", 0, 3, 1.0, "augmenter")
+    resolved = resolve_overlaps([low_score, high_score])
+    assert len(resolved) == 1
+    assert resolved[0].label == "aaa_label"
+
+
+def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
+    """Regression: relationship (0.941) should beat last_name (0.719) on same span."""
+    text = "She called Mum every day."
+    raw = json.dumps(
+        {
+            "entities": [
+                {"text": "Mum", "label": "last_name", "start": 11, "end": 14, "score": 0.719},
+                {"text": "Mum", "label": "relationship", "start": 11, "end": 14, "score": 0.941},
+            ]
+        }
+    )
+    result = parse_raw_entities(raw_response=raw, text=text)
+    assert len(result) == 1
+    assert result[0].label == "relationship"
+    assert result[0].score == 0.941
+
+
+def test_augmented_entities_does_not_use_synthetic_score_precedence() -> None:
+    """Mixed-source merging retains the default label tie-break instead of comparing scores."""
+    detector = EntitySpan("email_0_5", "Alice", "email", 0, 5, 0.95, "detector")
+    result = apply_augmented_entities(
+        "Alice",
+        [detector],
+        {"entities": [{"value": "Alice", "label": "last_name"}]},
+    )
+    at_span = [e for e in result if e.start_position == 0 and e.end_position == 5]
+    assert len(at_span) == 1
+    assert at_span[0].label == "email"
+    assert at_span[0].source == "detector"
+
+
 def test_validation_decisions_from_json_string() -> None:
     """Validation output arrives as JSON string after parquet round-trip."""
     entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
@@ -622,6 +671,18 @@ def test_expand_resolves_overlaps_with_longer_span() -> None:
     johns = [e for e in expanded if e.value == "John"]
     assert len(johns) == 1
     assert johns[0].start_position == 13
+
+
+def test_expand_preserves_detector_provenance_at_original_position() -> None:
+    """Expansion must not replace a detector span with a propagation copy at the same position."""
+    text = "Alice works here. Alice volunteers too."
+    entities = [EntitySpan("e1", "Alice", "first_name", 0, 5, 0.85, "detector")]
+    expanded = expand_entity_occurrences(text=text, entities=entities)
+    at_origin = next(e for e in expanded if e.start_position == 0)
+    at_second = next(e for e in expanded if e.start_position == 18)
+    assert at_origin.source == "detector"
+    assert at_origin.score == 0.85
+    assert at_second.source == "propagation"
 
 
 def test_expand_handles_empty_entities() -> None:
