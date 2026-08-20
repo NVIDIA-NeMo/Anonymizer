@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_APPLICATION
 from anonymizer.engine.execution.graph import _DatumId, _GraphLimits
 from anonymizer.engine.execution.graph_runtime import _GraphExecutionResult
 from anonymizer.engine.execution.invocation import _CompiledInvocation
@@ -114,7 +114,12 @@ class _TrivialRedactProtectionService:
             valid_entities, has_detections = _accepted_detection_state(row[COL_FINAL_ENTITIES])
             if not valid_entities:
                 return self._fail_all(execution.datum_ids)
-            if has_detections and not _redact_release_passed(row[COL_FINAL_ENTITIES], output):
+            if not _redact_release_passed(
+                row[COL_FINAL_ENTITIES],
+                row[COL_REPLACEMENT_APPLICATION],
+                input_text,
+                output,
+            ):
                 outcomes.append(_GraphProtectionFailed(datum_id, "release", "datum"))
                 continue
             if not has_detections and output != input_text:
@@ -173,14 +178,69 @@ def _accepted_detection_state(value: object) -> tuple[bool, bool]:
     return True, bool(entities)
 
 
-def _redact_release_passed(value: object, output: str) -> bool:
-    """Require every accepted entity value to be absent from released text."""
+def _redact_release_passed(value: object, application: object, input_text: str, output: str) -> bool:
+    """Require complete Redact accounting and removal of authoritative source spans."""
     if isinstance(value, dict):
         entities = value.get("entities", [])
     else:
         entities = getattr(value, "entities", [])
+    if not isinstance(entities, (list, tuple)) or not _replacement_application_passed(application, len(entities)):
+        return False
+    spans: list[tuple[int, int, str]] = []
     for entity in entities:
         raw = entity.get("value") if isinstance(entity, dict) else getattr(entity, "value", None)
-        if not isinstance(raw, str) or not raw or raw in output:
+        label = entity.get("label") if isinstance(entity, dict) else getattr(entity, "label", None)
+        start = entity.get("start_position") if isinstance(entity, dict) else getattr(entity, "start_position", None)
+        end = entity.get("end_position") if isinstance(entity, dict) else getattr(entity, "end_position", None)
+        if (
+            not isinstance(raw, str)
+            or not isinstance(label, str)
+            or not label
+            or type(start) is not int
+            or type(end) is not int
+            or start < 0
+            or end <= start
+            or end > len(input_text)
+            or input_text[start:end] != raw
+        ):
             return False
+        spans.append((start, end, input_text[start:end]))
+    previous_end = 0
+    for start, end, source_slice in sorted(spans):
+        if start < previous_end or source_slice in output:
+            return False
+        previous_end = end
     return True
+
+
+def _replacement_application_passed(value: object, entity_count: int) -> bool:
+    if not isinstance(value, dict):
+        return False
+    expected_keys = {
+        "targeted_span_count",
+        "applied_span_count",
+        "skipped_span_count",
+        "skipped_span_label_counts",
+    }
+    if set(value) != expected_keys:
+        return False
+    targeted = value["targeted_span_count"]
+    applied = value["applied_span_count"]
+    skipped = value["skipped_span_count"]
+    skipped_by_label = value["skipped_span_label_counts"]
+    if (
+        type(targeted) is not int
+        or type(applied) is not int
+        or type(skipped) is not int
+        or targeted < 0
+        or applied < 0
+        or skipped < 0
+        or not isinstance(skipped_by_label, dict)
+    ):
+        return False
+    if any(
+        not isinstance(label, str) or not label or type(count) is not int or count <= 0
+        for label, count in skipped_by_label.items()
+    ):
+        return False
+    return targeted == entity_count and applied == targeted and skipped == 0 and not skipped_by_label
