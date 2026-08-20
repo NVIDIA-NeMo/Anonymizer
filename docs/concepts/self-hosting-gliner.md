@@ -74,11 +74,19 @@ inference itself. It handles two wire-level responsibilities:
    entities with document offsets and overlap deduplication.
 
 ```python title="tools/inference_service_compiler/vllm_factory_adapter.py (excerpt)"
-results = await asyncio.gather(
-    *(invoke_pooling(handler=handler, text=chunk, ...) for chunk, offset in chunks)
+results = await invoke_pooling_chunks(
+    handler=handler,
+    detection=detection,
+    chunks=chunks,
+    ...
 )
 entities = merge_entities(plugin=plugin, chunks=chunks, results=results, ...)
 ```
+
+The adapter rejects a labeled request that would produce more than 256 chunks
+before it materializes chunk text or calls vLLM. Accepted requests run at most
+eight pooling calls concurrently; the remaining admitted chunks wait for a
+worker.
 
 When `flat_ner` is `false` (Anonymizer's default), the adapter removes nested
 subset spans before score-based deduplication across chunk overlaps. A request
