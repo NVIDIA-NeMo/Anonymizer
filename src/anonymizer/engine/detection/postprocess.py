@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from typing import SupportsFloat, SupportsIndex, SupportsInt
@@ -37,6 +38,17 @@ class EntitySpan:
             "score": self.score,
             "source": self.source,
         }
+
+
+def filter_excluded_entity_spans(
+    entities: list[EntitySpan],
+    excluded_entity_labels: Iterable[str] | None,
+) -> list[EntitySpan]:
+    """Remove entity spans whose normalized labels are explicitly excluded."""
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
+    if not excluded:
+        return list(entities)
+    return [entity for entity in entities if entity.label.strip().casefold() not in excluded]
 
 
 class TagNotation(str, Enum):
@@ -169,7 +181,7 @@ def apply_augmented_entities(
         augmented = []
     excluded = {label.strip().casefold() for label in excluded_entity_labels or set()}
 
-    merged = list(entities)
+    merged = filter_excluded_entity_spans(entities, excluded)
     for idx, suggestion in enumerate(augmented):
         if not isinstance(suggestion, dict):
             continue

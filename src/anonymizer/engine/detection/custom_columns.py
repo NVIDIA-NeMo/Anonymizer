@@ -42,6 +42,7 @@ from anonymizer.engine.detection.postprocess import (
     build_tagged_text,
     build_validation_candidates,
     expand_entity_occurrences,
+    filter_excluded_entity_spans,
     get_tag_notation,
     parse_raw_entities,
 )
@@ -107,7 +108,11 @@ def merge_and_build_candidates(
     required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
     side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
 )
-def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
+def apply_validation_to_seed_entities(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
     """Apply validation decisions to detector entities before augmentation."""
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
@@ -115,6 +120,7 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
         entities=seed_spans,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
+    validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
@@ -169,7 +175,11 @@ def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
     required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
     side_effect_columns=[COL_TAGGED_TEXT],
 )
-def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
+def apply_validation_and_finalize(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
     """Apply keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
     text = str(row.get(COL_TEXT, ""))
     merged = _parse_entity_spans(row.get(COL_MERGED_ENTITIES, {}))
@@ -177,6 +187,7 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
         entities=merged,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
+    validated = filter_excluded_entity_spans(validated, excluded_entity_labels)
     expanded = expand_entity_occurrences(text=text, entities=validated)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
         mode="json"

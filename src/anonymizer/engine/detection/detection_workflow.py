@@ -213,6 +213,7 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES_JSON,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
@@ -230,6 +231,7 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_DETECTED_ENTITIES,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
             ],
         )

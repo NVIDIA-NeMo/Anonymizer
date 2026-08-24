@@ -83,7 +83,20 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         for column in transforms
         if DetectionTransformOperation(column.operation) == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES
     )
+    seed_validation_transform = next(
+        column
+        for column in transforms
+        if DetectionTransformOperation(column.operation)
+        == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES
+    )
+    finalize_transform = next(
+        column
+        for column in transforms
+        if DetectionTransformOperation(column.operation) == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE
+    )
+    assert seed_validation_transform.excluded_entity_labels == ["email"]
     assert merge_transform.excluded_entity_labels == ["email"]
+    assert finalize_transform.excluded_entity_labels == ["email"]
 
     validation = next(column for column in columns if column.name == COL_VALIDATION_DECISIONS)
     assert isinstance(validation, ChunkedValidationConfig)
