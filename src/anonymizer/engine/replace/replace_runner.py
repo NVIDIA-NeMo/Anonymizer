@@ -20,6 +20,7 @@ from anonymizer.config.replace_strategies import (
 )
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
+    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -223,8 +224,14 @@ class ReplacementWorkflow:
         prepared = adapter._attach_record_ids(prepared)
 
         try:
+            # Replacement application telemetry can contain an all-empty nested
+            # ``skipped_span_label_counts`` mapping. PyArrow cannot represent that
+            # as a Parquet struct with no child fields, and the judges do not read
+            # this diagnostic column. Keep it on ``prepared`` for the returned
+            # trace, but omit it from DataDesigner's temporary seed dataframe.
+            workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
             run_result = adapter.run_workflow(
-                prepared,
+                workflow_input,
                 model_configs=model_configs,
                 columns=[judge.column_config(selected_models) for judge in active],
                 workflow_name="replace-judges",
