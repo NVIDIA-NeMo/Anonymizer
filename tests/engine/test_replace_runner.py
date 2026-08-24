@@ -207,6 +207,14 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
                     ]
                 }
             ],
+            COL_REPLACEMENT_APPLICATION: [
+                {
+                    "targeted_span_count": 2,
+                    "applied_span_count": 2,
+                    "skipped_span_count": 0,
+                    "skipped_span_label_counts": {},
+                }
+            ],
         }
     )
 
@@ -218,6 +226,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
     }
 
     def fake_run_workflow(df: pd.DataFrame, *, columns, **_: object) -> WorkflowRunResult:
+        assert COL_REPLACEMENT_APPLICATION not in df.columns
         out = df.copy()
         for column in columns:
             out[column.name] = [judge_defaults[column.name]] * len(out)
@@ -258,6 +267,12 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
     # Entity coverage is a float (1.0 = full coverage); replace judges use bool True.
     assert COL_ENTITY_COVERAGE in result.dataframe.columns
     assert result.dataframe[COL_ENTITY_COVERAGE].iloc[0] == 1.0
+    assert result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0] == {
+        "targeted_span_count": 2,
+        "applied_span_count": 2,
+        "skipped_span_count": 0,
+        "skipped_span_label_counts": {},
+    }
     for col in (
         COL_TYPE_FIDELITY_VALID,
         COL_RELATIONAL_CONSISTENCY_VALID,

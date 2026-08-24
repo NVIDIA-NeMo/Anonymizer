@@ -15,6 +15,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_JUDGE,
     COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_MISSED_ENTITIES,
+    COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
 )
 from anonymizer.engine.evaluation.entity_coverage_judge import (
@@ -396,12 +397,46 @@ def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> 
     )
 
     result, failed_records = workflow.run_non_critical(
-        pd.DataFrame({"input_value": ["scored", "dropped"]}),
+        pd.DataFrame(
+            {
+                "input_value": ["scored", "dropped"],
+                COL_REPLACEMENT_APPLICATION: [
+                    {
+                        "targeted_span_count": 1,
+                        "applied_span_count": 1,
+                        "skipped_span_count": 0,
+                        "skipped_span_label_counts": {},
+                    },
+                    {
+                        "targeted_span_count": 2,
+                        "applied_span_count": 2,
+                        "skipped_span_count": 0,
+                        "skipped_span_label_counts": {},
+                    },
+                ],
+            }
+        ),
         model_configs=[],
         selected_models=_stub_evaluate_selection(),
     )
 
+    evaluation_input = workflow.evaluate.call_args.args[0]
+    assert COL_REPLACEMENT_APPLICATION not in evaluation_input.columns
     assert result["input_value"].tolist() == ["scored", "dropped"]
+    assert result[COL_REPLACEMENT_APPLICATION].tolist() == [
+        {
+            "targeted_span_count": 1,
+            "applied_span_count": 1,
+            "skipped_span_count": 0,
+            "skipped_span_label_counts": {},
+        },
+        {
+            "targeted_span_count": 2,
+            "applied_span_count": 2,
+            "skipped_span_count": 0,
+            "skipped_span_label_counts": {},
+        },
+    ]
     assert result.loc[0, COL_ENTITY_COVERAGE] == 1.0
     assert result.loc[1, COL_ENTITY_COVERAGE] is None
     assert result[COL_MISSED_ENTITIES].tolist() == [[], []]

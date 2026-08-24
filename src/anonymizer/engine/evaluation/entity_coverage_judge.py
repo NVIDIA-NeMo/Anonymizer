@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_JUDGE,
     COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_MISSED_ENTITIES,
+    COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
     _jinja,
@@ -528,8 +529,13 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             had_record_ids = RECORD_ID_COLUMN in dataframe.columns
             adapter = cast(NddAdapter, self._adapter)
             prepared = adapter._attach_record_ids(dataframe)
+            # Keep replacement application telemetry in the final trace, but do
+            # not serialize it into the judge's temporary Parquet seed. Its
+            # all-empty nested skipped-label mapping is not representable as a
+            # Parquet struct, and entity coverage does not consume this column.
+            workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
             result = self.evaluate(
-                prepared,
+                workflow_input,
                 model_configs=model_configs,
                 selected_models=selected_models,
                 preview_num_records=preview_num_records,
