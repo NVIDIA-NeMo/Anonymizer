@@ -1,21 +1,37 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Source-neutral release service for the first trivial-graph profile."""
+"""Redact verification and compatibility projection over terminal accounting."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol, assert_never
+
+import pandas as pd
 
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REPLACEMENT_APPLICATION
-from anonymizer.engine.execution.graph import _DatumId, _GraphLimits
-from anonymizer.engine.execution.graph_runtime import _GraphExecutionResult
+from anonymizer.engine.execution.accounting_admission import (
+    _AccountingAdmissionResult,
+    _compile_accounting_plan,
+)
+from anonymizer.engine.execution.accounting_outcomes import (
+    _CauseCode,
+    _DatumBlocked,
+    _DatumCancelled,
+    _DatumFailed,
+    _DatumInconsistent,
+    _DatumLost,
+    _DatumOutcome,
+    _DatumQualified,
+    _GroupReleased,
+    _InvocationCompleted,
+)
+from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _AccountingPlan
+from anonymizer.engine.execution.graph import _DatumId, _TextDatum
+from anonymizer.engine.execution.graph_runtime import _AccountingGraphExecution
 from anonymizer.engine.execution.invocation import _CompiledInvocation
-from anonymizer.engine.private_row_verification import _TerminalOutcome
-
-if TYPE_CHECKING:
-    import pandas as pd
 
 
 class _PrivateProtectionValue:
@@ -24,6 +40,13 @@ class _PrivateProtectionValue:
 
     def __reduce__(self) -> str | tuple[object, ...]:
         raise TypeError("private protection results are not serializable")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _RedactCandidate(_PrivateProtectionValue):
+    output: str
+    applied: bool
+    release_qualified: bool
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -51,119 +74,106 @@ class _GraphProtectionResult(_PrivateProtectionValue):
 class _GraphRuntimeBackend(Protocol):
     def run(
         self,
-        graph: object,
+        plan: _AccountingPlan,
         *,
-        limits: _GraphLimits,
         invocation: _CompiledInvocation,
         data_summary: str | None,
         preview_num_records: int | None,
-    ) -> _GraphExecutionResult: ...
+        hydrate: Callable[[_TextDatum, pd.Series], _RedactCandidate],
+        datum_release_predicate: Callable[[_DatumId, _RedactCandidate], bool],
+    ) -> _AccountingGraphExecution[_RedactCandidate]: ...
 
 
-class _TrivialRedactProtectionService:
-    """Protect and release independently scoped text datums without source types."""
+class _RedactProtectionService:
+    """Protect text datums and project accounting into the compatibility result."""
 
     def __init__(self, runtime: _GraphRuntimeBackend) -> None:
         self._runtime = runtime
 
-    def protect(
-        self,
+    @staticmethod
+    def admit(
         graph: object,
         *,
-        limits: _GraphLimits,
+        limits: _AccountingLimits,
+    ) -> _AccountingAdmissionResult:
+        """Compile the complete graph before any execution context opens."""
+        return _compile_accounting_plan(graph, limits=limits)
+
+    def protect(
+        self,
+        plan: _AccountingPlan,
+        *,
         invocation: _CompiledInvocation,
     ) -> _GraphProtectionResult:
         execution = self._runtime.run(
-            graph,
-            limits=limits,
+            plan,
             invocation=invocation,
             data_summary=None,
             preview_num_records=None,
+            hydrate=_hydrate_redact_candidate,
+            datum_release_predicate=lambda _datum_id, candidate: candidate.release_qualified,
         )
-        try:
-            return self._release(execution)
-        except Exception:
-            return self._fail_all(execution.datum_ids)
+        return _materialize(execution)
 
-    def _release(self, execution: _GraphExecutionResult) -> _GraphProtectionResult:
-        dataframe_result = execution.dataframe_result
-        if dataframe_result.failed_records:
-            return self._fail_all(execution.datum_ids)
-        terminal_by_token = _index_terminal_outcomes(execution)
-        if terminal_by_token is None:
-            return self._fail_all(execution.datum_ids)
-        row_by_token = _index_success_rows(execution, terminal_by_token)
-        if row_by_token is None:
-            return self._fail_all(execution.datum_ids)
-        outcomes: list[_GraphProtectionOutcome] = []
-        graph_outcomes = zip(
-            execution.datum_ids,
-            execution.input_texts,
-            execution.datum_row_tokens,
-            strict=True,
+
+def _hydrate_redact_candidate(datum: _TextDatum, row: pd.Series) -> _RedactCandidate:
+    output = row[COL_REPLACED_TEXT]
+    if not isinstance(output, str):
+        raise TypeError("private redact result is malformed")
+    valid_entities, has_detections = _accepted_detection_state(row[COL_FINAL_ENTITIES])
+    release_qualified = (
+        valid_entities
+        and _redact_release_passed(
+            row[COL_FINAL_ENTITIES],
+            row[COL_REPLACEMENT_APPLICATION],
+            datum.text,
+            output,
         )
-        for datum_id, input_text, token in graph_outcomes:
-            status = terminal_by_token[token]
-            if status is not _TerminalOutcome.SUCCESS:
-                outcomes.append(_GraphProtectionFailed(datum_id, "pipeline", "datum"))
-                continue
-            row = row_by_token[token]
-            output = row[COL_REPLACED_TEXT]
-            if not isinstance(output, str):
-                return self._fail_all(execution.datum_ids)
-            valid_entities, has_detections = _accepted_detection_state(row[COL_FINAL_ENTITIES])
-            if not valid_entities:
-                return self._fail_all(execution.datum_ids)
-            if not _redact_release_passed(
-                row[COL_FINAL_ENTITIES],
-                row[COL_REPLACEMENT_APPLICATION],
-                input_text,
-                output,
-            ):
-                outcomes.append(_GraphProtectionFailed(datum_id, "release", "datum"))
-                continue
-            if not has_detections and output != input_text:
-                outcomes.append(_GraphProtectionFailed(datum_id, "release", "datum"))
-                continue
-            outcomes.append(_GraphProtectionSucceeded(datum_id, output, applied=has_detections))
-        return _GraphProtectionResult(tuple(outcomes))
-
-    @staticmethod
-    def _fail_all(datum_ids: tuple[_DatumId, ...]) -> _GraphProtectionResult:
-        return _GraphProtectionResult(
-            tuple(_GraphProtectionFailed(datum_id, "pipeline", "invocation") for datum_id in datum_ids)
-        )
+        and (has_detections or output == datum.text)
+    )
+    return _RedactCandidate(output, has_detections, release_qualified)
 
 
-def _index_terminal_outcomes(execution: _GraphExecutionResult) -> dict[str, _TerminalOutcome] | None:
-    datum_row_tokens = execution.datum_row_tokens
-    if len(datum_row_tokens) != len(execution.datum_ids) or len(set(datum_row_tokens)) != len(datum_row_tokens):
-        return None
-    terminal_by_token: dict[str, _TerminalOutcome] = {}
-    for token, status in execution.dataframe_result.terminal_outcomes:
-        if not isinstance(token, str) or not isinstance(status, _TerminalOutcome) or token in terminal_by_token:
-            return None
-        terminal_by_token[token] = status
-    return terminal_by_token if set(terminal_by_token) == set(datum_row_tokens) else None
-
-
-def _index_success_rows(
-    execution: _GraphExecutionResult,
-    terminal_by_token: dict[str, _TerminalOutcome],
-) -> dict[str, pd.Series] | None:
-    dataframe_result = execution.dataframe_result
-    row_by_token = {
-        token: row
-        for token, (_, row) in zip(
-            dataframe_result.result_row_tokens,
-            dataframe_result.dataframe.iterrows(),
-            strict=True,
-        )
+def _materialize(execution: _AccountingGraphExecution[_RedactCandidate]) -> _GraphProtectionResult:
+    if not isinstance(execution.accounting.invocation, _InvocationCompleted):
+        return _fail_all(tuple(datum.id for datum in execution.plan.datums))
+    released = {
+        datum_id: candidate
+        for group in execution.accounting.groups
+        if isinstance(group, _GroupReleased)
+        for datum_id, candidate in group.outputs
     }
-    successful_tokens = {token for token, status in terminal_by_token.items() if status is _TerminalOutcome.SUCCESS}
-    if len(row_by_token) != len(dataframe_result.result_row_tokens) or set(row_by_token) != successful_tokens:
-        return None
-    return row_by_token
+    datum_outcomes = {outcome.datum_id: outcome for outcome in execution.accounting.datums}
+    return _GraphProtectionResult(
+        tuple(
+            _materialize_datum(datum.id, released.get(datum.id), datum_outcomes[datum.id])
+            for datum in execution.plan.datums
+        )
+    )
+
+
+def _materialize_datum(
+    datum_id: _DatumId,
+    candidate: _RedactCandidate | None,
+    outcome: _DatumOutcome[_RedactCandidate],
+) -> _GraphProtectionOutcome:
+    if candidate is not None:
+        return _GraphProtectionSucceeded(datum_id, candidate.output, candidate.applied)
+    match outcome:
+        case _DatumFailed(causes=causes) if any(cause.code is _CauseCode.RELEASE_PREDICATE_FAILED for cause in causes):
+            return _GraphProtectionFailed(datum_id, "release", "datum")
+        case _DatumQualified():
+            return _GraphProtectionFailed(datum_id, "release", "group")
+        case _DatumFailed() | _DatumBlocked() | _DatumCancelled() | _DatumLost() | _DatumInconsistent():
+            return _GraphProtectionFailed(datum_id, "pipeline", "datum")
+        case unreachable:
+            assert_never(unreachable)
+
+
+def _fail_all(datum_ids: tuple[_DatumId, ...]) -> _GraphProtectionResult:
+    return _GraphProtectionResult(
+        tuple(_GraphProtectionFailed(datum_id, "pipeline", "invocation") for datum_id in datum_ids)
+    )
 
 
 def _accepted_detection_state(value: object) -> tuple[bool, bool]:

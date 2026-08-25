@@ -7,7 +7,7 @@ Status: evidence record as of 2026-08-20. This tab validates workload pressure o
 
 ## Scope and interpretation
 
-The evidence covers NeMo Platform Intake at commit `e1057736703bb8b167a4bd9013cea0caae2df63a`, the Anonymizer worktree at `d39e74f17ef090e84ca9c4fb86f47e6cee2ecd4d` plus uncommitted graph changes, and dated synthetic dogfood. Consequential claims use the same labels as the proposal: **[Published current behavior]**, **[Branch-local implementation]**, **[Dated dogfood observation]**, **[Proposal]**, and **[Unresolved gate]**.
+The evidence covers NeMo Platform Intake at commit `e1057736703bb8b167a4bd9013cea0caae2df63a`, the Anonymizer draft research branch at `702f43a988cf3673d16f40be5c59bc784737e1a3`, and dated synthetic dogfood anchored to the revisions named below. Consequential claims use the same labels as the proposal: **[Published current behavior]**, **[Branch-local implementation]**, **[Dated dogfood observation]**, **[Proposal]**, and **[Unresolved gate]**.
 
 **[Proposal]** Several formats passing through one Intake service provide varied workload evidence. They do not constitute a second semantic runtime for Anonymizer’s stable-public-API gate.
 
@@ -59,6 +59,20 @@ The operator-backed observations in this section are historical run evidence ret
 
 **[Proposal]** Unsupported context, coherence, atomicity, or dependency semantics must be rejected. Treating related datums as independent rows would erase the workload property being validated.
 
+**[Proposal]** Phase 4 selects a flat exact atomic partition as Anonymizer's first supported release model. That capability does not choose Intake's source-item or per-span grouping: the adapter and Intake owners must still review that mapping, and nested or overlapping groups remain unsupported.
+
+**[Proposal]** The reviewed phase 5 design keeps target and context in separate source-neutral
+frames under an immutable bounded capability. It does not select which ATIF, OTLP, or chat
+fields become targets or context; the source adapter and adopter owners retain that field
+policy. The first profile also requires provider retention to be disabled. Any future
+retention-enabled profile needs separate customer-owned privacy-boundary authorization.
+
+**[Proposal]** The reviewed phase 6 design anchors every mention and patch to authoritative
+target offsets. Context may inform a reviewed validation, augmentation, or resolution task,
+but it cannot supply a mention endpoint or replacement span. Source-field mapping,
+reconstruction, source commit units, persistence, retries, destination deduplication, and
+delivery therefore remain downstream responsibilities.
+
 ## Open gates
 
 **[Unresolved gate]** The customer or consuming-product owner has not selected the earliest boundary that unprotected content may cross. “Before Intake” remains a provisional test posture, not approval. The decision must name the source adapter, optional edge component, Intake process, durable storage, operator-facing APIs and UI, and downstream consumers.
@@ -92,7 +106,10 @@ The operator-backed observations in this section are historical run evidence ret
 - [Branch-local validation tests at `d39e74f17ef090e84ca9c4fb86f47e6cee2ecd4d`](https://github.com/NVIDIA-NeMo/Anonymizer/tree/d39e74f17ef090e84ca9c4fb86f47e6cee2ecd4d/tests/streaming)
 - [Retained local dogfood run record](https://github.com/NVIDIA-NeMo/Anonymizer/blob/d39e74f17ef090e84ca9c4fb86f47e6cee2ecd4d/tools/intake_dogfood_runbook.md#L274-L291)
 - [Technical proposal](graph-native-anonymizer-sdk-technical-proposal.md)
+- [Phase 5 target and bounded-context workframe design](phase-5-target-context-workframe-design.md)
+- [Phase 6 anchored-mention, resolution, and local-verification design](phase-6-anchored-mention-resolution-design.md)
 
 ## Next evidence action
 
 Have the Intake owner review bounded workloads, field roles, source commit units, retry identity, and partial reconstruction for the three initial formats. Then run cross-repository compatibility tests and rerun opt-in dogfood only in an operator-owned environment under the selected privacy boundary.
+These are future adapter-adoption gates; they do not block the authorized private Phase 4 branch implementation. The RFC and its public or production adoption remain under review.

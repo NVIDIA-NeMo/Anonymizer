@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import Any, cast
@@ -12,6 +13,7 @@ from typing import Any, cast
 import pandas as pd
 import pytest
 
+import anonymizer.interface._protection as protection_module
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
@@ -165,6 +167,25 @@ def test_outer_batch_is_rejected_before_admission(records: object, code: _BatchF
         flow.protect(cast(Any, records))
     assert exc_info.value.code is code
     assert repr(exc_info.value) == "<private protection batch error>"
+
+
+def test_graph_admission_rejects_before_private_execution_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    anonymizer, flow = _flow()
+    entered = False
+
+    @contextmanager
+    def effect_spy():
+        nonlocal entered
+        entered = True
+        yield
+
+    monkeypatch.setattr(protection_module, "_trivial_graph", lambda _datums: object())
+    monkeypatch.setattr(anonymizer._adapter, "private_execution", effect_spy)
+
+    result = flow.protect((_record("a", "text"),))
+
+    assert isinstance(result.outcomes[0], _Failed)
+    assert not entered
 
 
 def test_malformed_nested_segment_is_rejected_before_admission() -> None:

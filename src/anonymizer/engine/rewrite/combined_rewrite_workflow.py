@@ -526,6 +526,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             result = RewriteResult(
                 dataframe=merge_and_reorder(entity_rows, passthrough_rows),
                 failed_records=run_result.failed_records,
+                failed_row_evidence=run_result.failed_row_evidence,
             )
             measurement.update(
                 output_row_count=len(result.dataframe),

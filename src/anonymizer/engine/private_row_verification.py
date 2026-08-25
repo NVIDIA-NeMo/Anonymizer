@@ -37,7 +37,6 @@ class _SafeFailure:
     code: str
     stage: str
     scope: str
-    correlation: str | None = None
     retry_owner: str = "anonymizer"
     message: str = "private row verification failed"
 
@@ -47,28 +46,37 @@ class PrivateRowVerificationError(RuntimeError):
 
     def __init__(self, failure: _SafeFailure) -> None:
         self.failure = failure
-        correlation = f" correlation={failure.correlation}" if failure.correlation is not None else ""
         super().__init__(
             f"private_row_verification code={failure.code} stage={failure.stage} "
-            f"scope={failure.scope} retry_owner={failure.retry_owner}{correlation}: {failure.message}"
+            f"scope={failure.scope} retry_owner={failure.retry_owner}: {failure.message}"
         )
 
 
 class _InvocationRowVerifier:
     """One-shot verifier for one private engine invocation."""
 
-    def __init__(self, dataframe: pd.DataFrame) -> None:
+    def __init__(self, dataframe: pd.DataFrame, *, correlations: tuple[str, ...] | None = None) -> None:
         if PRIVATE_CORRELATION_COLUMN in dataframe.columns:
             raise PrivateRowVerificationError(
                 _SafeFailure("private_column_collision", "accept", "invocation", message="reserved private column")
             )
+        accepted = correlations if correlations is not None else tuple(uuid.uuid4().hex for _ in range(len(dataframe)))
+        if (
+            len(accepted) != len(dataframe)
+            or len(set(accepted)) != len(accepted)
+            or not all(isinstance(value, str) and value for value in accepted)
+        ):
+            raise PrivateRowVerificationError(
+                _SafeFailure("correlation_invalid", "accept", "invocation", message="invalid private correlations")
+            )
         self._active = True
-        self._accepted = tuple(uuid.uuid4().hex for _ in range(len(dataframe)))
+        self._accepted = accepted
         self._legacy_input_order = tuple(_stable_digest(value) for value in dataframe[COL_TEXT])
         self._legacy_identity_is_unambiguous = len(set(self._legacy_input_order)) == len(self._legacy_input_order)
         self._frozen: dict[str, str] = {}
         self._outcomes: dict[str, _TerminalOutcome] = {}
         self._result_order: tuple[str, ...] = ()
+        self._result_fingerprints: dict[str, str] = {}
 
     def bind(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         self._require_active()
@@ -125,10 +133,19 @@ class _InvocationRowVerifier:
                 raise self._error("accepted_detection_missing", "result", "invocation")
             for correlation, value in zip(correlations, dataframe[COL_FINAL_ENTITIES], strict=True):
                 if self._frozen.get(correlation) != _stable_digest(value):
-                    raise self._error("accepted_detection_tampered", "result", "row", correlation)
+                    raise self._error("accepted_detection_tampered", "result", "row")
             self._outcomes.update({correlation: _TerminalOutcome.SUCCESS for correlation in correlations})
             self._result_order = tuple(correlations)
-            return dataframe.drop(columns=[PRIVATE_CORRELATION_COLUMN], errors="ignore")
+            public_result = dataframe.drop(columns=[PRIVATE_CORRELATION_COLUMN], errors="ignore")
+            self._result_fingerprints = {
+                correlation: _stable_digest(row.to_dict())
+                for correlation, (_index, row) in zip(
+                    correlations,
+                    public_result.iterrows(),
+                    strict=True,
+                )
+            }
+            return public_result
         except BaseException:
             # A verifier rejection is an invocation failure for every row that
             # did not already receive a terminal state.  Do this before the
@@ -176,6 +193,19 @@ class _InvocationRowVerifier:
         self._result_order = ()
         return result_order
 
+    def verify_returned_rows(self, dataframe: pd.DataFrame, result_order: tuple[str, ...]) -> None:
+        """Verify token-to-row binding after the backend returns from ``finish``."""
+        if self._active:
+            raise self._error("invocation_active", "lifecycle", "invocation")
+        try:
+            if len(result_order) != len(dataframe) or set(result_order) != set(self._result_fingerprints):
+                raise self._error("returned_row_mismatch", "return", "invocation")
+            for token, (_index, row) in zip(result_order, dataframe.iterrows(), strict=True):
+                if self._result_fingerprints.get(token) != _stable_digest(row.to_dict()):
+                    raise self._error("returned_row_tampered", "return", "row")
+        finally:
+            self._result_fingerprints.clear()
+
     def _validate_correlations(self, dataframe: pd.DataFrame, *, stage: str) -> list[str]:
         if PRIVATE_CORRELATION_COLUMN not in dataframe.columns:
             raise self._error("correlation_missing", stage, "invocation")
@@ -203,8 +233,8 @@ class _InvocationRowVerifier:
         for correlation in self._accepted:
             self._outcomes.setdefault(correlation, terminal)
 
-    def _error(self, code: str, stage: str, scope: str, correlation: str | None = None) -> PrivateRowVerificationError:
-        return PrivateRowVerificationError(_SafeFailure(code, stage, scope, correlation=correlation))
+    def _error(self, code: str, stage: str, scope: str) -> PrivateRowVerificationError:
+        return PrivateRowVerificationError(_SafeFailure(code, stage, scope))
 
     def _require_active(self) -> None:
         if not self._active:

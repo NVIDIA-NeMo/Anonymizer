@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -42,7 +42,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, _FailedRowEvidence
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import (
@@ -75,6 +75,7 @@ _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fie
 class EntityDetectionResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    failed_row_evidence: tuple[_FailedRowEvidence, ...] = field(default=(), repr=False)
 
 
 class EntityDetectionWorkflow:
@@ -123,7 +124,11 @@ class EntityDetectionWorkflow:
             preview_num_records=preview_num_records,
         )
         detected_df = detection_result.dataframe.copy()
-        return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
+        return EntityDetectionResult(
+            dataframe=detected_df,
+            failed_records=detection_result.failed_records,
+            failed_row_evidence=detection_result.failed_row_evidence,
+        )
 
     def _build_detection_spec(
         self,
@@ -347,7 +352,11 @@ class EntityDetectionWorkflow:
             workflow_name="latent-entity-detection",
             preview_num_records=preview_num_records,
         )
-        return EntityDetectionResult(dataframe=latent_result.dataframe, failed_records=latent_result.failed_records)
+        return EntityDetectionResult(
+            dataframe=latent_result.dataframe,
+            failed_records=latent_result.failed_records,
+            failed_row_evidence=latent_result.failed_row_evidence,
+        )
 
     def run(
         self,
@@ -407,9 +416,14 @@ class EntityDetectionWorkflow:
                 )
                 final_df = latent_result.dataframe.copy()
                 final_failures = [*detected_result.failed_records, *latent_result.failed_records]
+                final_failure_evidence = (
+                    *detected_result.failed_row_evidence,
+                    *latent_result.failed_row_evidence,
+                )
             else:
                 final_df = detected_result.dataframe.copy()
                 final_failures = detected_result.failed_records
+                final_failure_evidence = detected_result.failed_row_evidence
 
             # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
             # the augmenter is strict and out-of-scope labels are filtered.
@@ -425,6 +439,7 @@ class EntityDetectionWorkflow:
             result = EntityDetectionResult(
                 dataframe=final_df,
                 failed_records=final_failures,
+                failed_row_evidence=final_failure_evidence,
             )
             measurement.update(
                 output_row_count=len(result.dataframe),

@@ -18,15 +18,17 @@ from data_designer.config.models import ModelConfig
 from anonymizer.config.anonymizer_config import AnonymizerConfig
 from anonymizer.config.models import ModelSelection
 from anonymizer.config.replace_strategies import Annotate, Redact
-from anonymizer.engine.execution.graph import _DatumId, _GraphLimits, _TextDatum, _trivial_graph
-from anonymizer.engine.execution.graph_runtime import _TrivialGraphRuntime
+from anonymizer.engine.execution.accounting_admission import _AccountingRejected
+from anonymizer.engine.execution.accounting_plan import _AccountingLimits
+from anonymizer.engine.execution.graph import _DatumId, _TextDatum, _trivial_graph
+from anonymizer.engine.execution.graph_runtime import _AccountingGraphRuntime
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.execution.pandas_runtime import _PandasRuntime
 from anonymizer.engine.execution.protection_service import (
     _GraphProtectionFailed,
     _GraphProtectionResult,
     _GraphProtectionSucceeded,
-    _TrivialRedactProtectionService,
+    _RedactProtectionService,
 )
 
 if TYPE_CHECKING:
@@ -319,8 +321,8 @@ class _ProtectionFlow(_SafeRepr):
 
     def __init__(self, anonymizer: Anonymizer, plan: _ProtectionPlan) -> None:
         self._plan = plan
-        self._runtime = _TrivialRedactProtectionService(
-            _TrivialGraphRuntime(
+        self._runtime = _RedactProtectionService(
+            _AccountingGraphRuntime(
                 _PandasRuntime(
                     detection_workflow=anonymizer._detection_workflow,
                     replace_runner=anonymizer._replace_runner,
@@ -361,14 +363,19 @@ class _ProtectionFlow(_SafeRepr):
             )
         )
         try:
+            admitted = self._runtime.admit(
+                graph,
+                limits=_AccountingLimits(
+                    max_datums=self._plan.max_records,
+                    max_datum_bytes=self._plan.max_record_bytes,
+                    max_graph_bytes=self._plan.max_batch_bytes,
+                ),
+            )
+            if isinstance(admitted, _AccountingRejected):
+                return self._fail_all(operation)
             with self._adapter.private_execution():
                 execution = self._runtime.protect(
-                    graph,
-                    limits=_GraphLimits(
-                        max_datums=self._plan.max_records,
-                        max_datum_bytes=self._plan.max_record_bytes,
-                        max_graph_bytes=self._plan.max_batch_bytes,
-                    ),
+                    admitted,
                     invocation=self._plan.invocation,
                 )
         except Exception:

@@ -29,6 +29,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 from anonymizer.measurement.session import suppress_measurement
@@ -55,12 +56,54 @@ class FailedRecord:
     reason: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, repr=False)
+class _FailedRowEvidence:
+    """Private binding between one opaque row token and one public failure."""
+
+    row_token: str
+    record: FailedRecord
+
+    def __repr__(self) -> str:
+        return "<private failed row evidence>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private failed row evidence is not serializable")
+
+
+@dataclass(frozen=True, repr=False)
 class WorkflowRunResult:
     """Result of a single NDD workflow execution."""
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    failed_row_evidence: tuple[_FailedRowEvidence, ...] = ()
+
+    @property
+    def failed_row_tokens(self) -> tuple[str, ...]:
+        return tuple(evidence.row_token for evidence in self.failed_row_evidence)
+
+    def __repr__(self) -> str:
+        return "<private workflow run result>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private workflow results are not serializable")
+
+
+def _missing_private_row_tokens(input_df: pd.DataFrame, output_df: pd.DataFrame) -> tuple[str, ...]:
+    """Return missing opaque tokens without consulting public record identifiers."""
+    if PRIVATE_CORRELATION_COLUMN not in input_df.columns or PRIVATE_CORRELATION_COLUMN not in output_df.columns:
+        return ()
+    expected = tuple(input_df[PRIVATE_CORRELATION_COLUMN].tolist())
+    observed = tuple(output_df[PRIVATE_CORRELATION_COLUMN].tolist())
+    if (
+        not all(isinstance(token, str) and token for token in (*expected, *observed))
+        or len(set(expected)) != len(expected)
+        or len(set(observed)) != len(observed)
+        or not set(observed).issubset(expected)
+    ):
+        return ()
+    observed_set = set(observed)
+    return tuple(token for token in expected if token not in observed_set)
 
 
 @dataclass(frozen=True)
@@ -460,13 +503,14 @@ class NddAdapter:
             usage_probe.flush_private_trace_records()
 
         logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
+        accounted_input_df = (
+            workflow_input_df.iloc[:preview_num_records].copy()
+            if preview_num_records is not None
+            else workflow_input_df
+        )
         failed_records = self._detect_missing_records(
             workflow_name=workflow_name,
-            input_df=(
-                workflow_input_df.iloc[:preview_num_records].copy()
-                if preview_num_records is not None
-                else workflow_input_df
-            ),
+            input_df=accounted_input_df,
             output_df=output_df,
         )
         _success_model_usage = usage_probe.model_usage()
@@ -486,7 +530,19 @@ class NddAdapter:
                 column_names=col_names,
                 model_usage=_success_model_usage,
             )
-        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
+        missing_tokens = _missing_private_row_tokens(accounted_input_df, output_df)
+        failed_row_evidence = (
+            tuple(
+                _FailedRowEvidence(token, record) for token, record in zip(missing_tokens, failed_records, strict=True)
+            )
+            if len(missing_tokens) == len(failed_records)
+            else ()
+        )
+        return WorkflowRunResult(
+            dataframe=output_df,
+            failed_records=failed_records,
+            failed_row_evidence=failed_row_evidence,
+        )
 
     def build_config(
         self,

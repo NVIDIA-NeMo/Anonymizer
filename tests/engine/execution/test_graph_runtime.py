@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import pickle
-from dataclasses import FrozenInstanceError, replace
-from typing import Any
+from dataclasses import FrozenInstanceError
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -19,41 +19,39 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
 )
+from anonymizer.engine.execution.accounting_admission import _compile_accounting_plan
+from anonymizer.engine.execution.accounting_outcomes import _GroupWithheld, _InvocationInconsistent, _InvocationLost
+from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _AccountingPlan
 from anonymizer.engine.execution.graph import (
-    _AtomicGroup,
-    _CoherenceScope,
-    _compile_trivial_graph,
-    _ContextScope,
     _DatumId,
-    _DatumLink,
-    _GraphLimits,
-    _GraphValidationCode,
-    _GraphValidationError,
     _ProtectionGraph,
-    _RelationKind,
     _TextDatum,
     _trivial_graph,
 )
-from anonymizer.engine.execution.graph_runtime import _GraphExecutionResult, _TrivialGraphRuntime
+from anonymizer.engine.execution.graph_runtime import _AccountingGraphRuntime
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.execution.pandas_runtime import _PandasExecutionResult
 from anonymizer.engine.execution.protection_service import (
     _GraphProtectionFailed,
     _GraphProtectionResult,
     _GraphProtectionSucceeded,
-    _TrivialRedactProtectionService,
+    _RedactProtectionService,
 )
 from anonymizer.engine.private_row_verification import (
-    PrivateRowVerificationError,
     _InvocationRowVerifier,
-    _TerminalOutcome,
 )
 
-_LIMITS = _GraphLimits(max_datums=4, max_datum_bytes=64, max_graph_bytes=128)
+_LIMITS = _AccountingLimits(max_datums=4, max_datum_bytes=64, max_graph_bytes=128)
 
 
 def _graph(*texts: str) -> _ProtectionGraph:
     return _trivial_graph(tuple(_TextDatum(_DatumId(f"datum-{index}"), text) for index, text in enumerate(texts)))
+
+
+def _plan(*texts: str) -> _AccountingPlan:
+    compiled = _compile_accounting_plan(_graph(*texts), limits=_LIMITS)
+    assert isinstance(compiled, _AccountingPlan)
+    return compiled
 
 
 class _SuccessfulBackend:
@@ -88,37 +86,42 @@ def _protect_release_row(
     model_selection: ModelSelection,
 ) -> tuple[_ProtectionGraph, _GraphProtectionResult]:
     graph = _graph(input_text)
-    token = "token-single"
-    dataframe_result = _PandasExecutionResult(
-        dataframe=pd.DataFrame([row]),
-        failed_records=[],
-        terminal_outcomes=((token, _TerminalOutcome.SUCCESS),),
-        result_row_tokens=(token,),
-    )
 
-    class _StaticRuntime:
-        def run(self, *_args: Any, **_kwargs: Any) -> _GraphExecutionResult:
-            return _GraphExecutionResult(
-                (graph.datums[0].id,),
-                (graph.datums[0].text,),
-                dataframe_result,
-                (token,),
+    class _StaticBackend:
+        def run(
+            self,
+            dataframe: pd.DataFrame,
+            *,
+            invocation: _CompiledInvocation,
+            data_summary: str | None,
+            preview_num_records: int | None,
+            verifier: _InvocationRowVerifier,
+        ) -> _PandasExecutionResult:
+            del invocation, data_summary, preview_num_records
+            detected = dataframe.assign(**{name: [value] for name, value in row.items()})
+            verifier.freeze_accepted_detections(detected)
+            final = verifier.finish(detected)
+            return _PandasExecutionResult(
+                dataframe=final,
+                failed_records=[],
+                terminal_outcomes=verifier.take_terminal_outcomes(),
+                result_row_tokens=verifier.take_result_order(),
             )
 
-    result = _TrivialRedactProtectionService(_StaticRuntime()).protect(
-        graph,
-        limits=_LIMITS,
+    service = _RedactProtectionService(_AccountingGraphRuntime(_StaticBackend()))
+    plan = service.admit(graph, limits=_LIMITS)
+    assert isinstance(plan, _AccountingPlan)
+    result = service.protect(
+        plan,
         invocation=_CompiledInvocation.compile(AnonymizerConfig(replace=Redact()), model_selection),
     )
     return graph, result
 
 
-def test_trivial_graph_is_immutable_and_compiles_in_datum_order() -> None:
+def test_trivial_graph_is_immutable_and_preserves_datum_order() -> None:
     graph = _graph("first", "second")
 
-    compiled = _compile_trivial_graph(graph, limits=_LIMITS)
-
-    assert [datum.text for datum in compiled.datums] == ["first", "second"]
+    assert [datum.text for datum in graph.datums] == ["first", "second"]
     with pytest.raises(FrozenInstanceError):
         setattr(graph.datums[0], "text", "changed")
     with pytest.raises(TypeError, match="not serializable"):
@@ -126,151 +129,147 @@ def test_trivial_graph_is_immutable_and_compiles_in_datum_order() -> None:
     assert "first" not in repr(graph)
 
 
-@pytest.mark.parametrize(
-    ("mutation", "code"),
-    [
-        (
-            lambda graph: replace(
-                graph,
-                links=(_DatumLink(graph.datums[0].id, graph.datums[1].id, _RelationKind.RELATED),),
-            ),
-            _GraphValidationCode.UNSUPPORTED_RELATIONSHIPS,
-        ),
-        (
-            lambda graph: replace(
-                graph,
-                context_scopes=(_ContextScope(graph.datums[0].id, (graph.datums[1].id,)),),
-            ),
-            _GraphValidationCode.UNSUPPORTED_CONTEXT,
-        ),
-        (
-            lambda graph: replace(
-                graph,
-                coherence_scopes=(_CoherenceScope(tuple(datum.id for datum in graph.datums)),),
-            ),
-            _GraphValidationCode.UNSUPPORTED_COHERENCE,
-        ),
-        (
-            lambda graph: replace(
-                graph,
-                atomic_groups=(_AtomicGroup(tuple(datum.id for datum in graph.datums)),),
-            ),
-            _GraphValidationCode.UNSUPPORTED_ATOMICITY,
-        ),
-    ],
-)
-def test_first_compiler_rejects_related_record_semantics(
-    mutation: Any,
-    code: _GraphValidationCode,
-) -> None:
-    graph = mutation(_graph("first", "second"))
-
-    with pytest.raises(_GraphValidationError) as exc_info:
-        _compile_trivial_graph(graph, limits=_LIMITS)
-
-    assert exc_info.value.code is code
-    assert repr(exc_info.value) == "<private protection graph error>"
-
-
-def test_compiler_rejects_duplicate_ids_and_forged_graphs_without_content() -> None:
-    duplicate_id = _DatumId("same")
-    duplicate = _trivial_graph((_TextDatum(duplicate_id, "secret-a"), _TextDatum(duplicate_id, "secret-b")))
-    with pytest.raises(_GraphValidationError) as exc_info:
-        _compile_trivial_graph(duplicate, limits=_LIMITS)
-    assert exc_info.value.code is _GraphValidationCode.DUPLICATE_DATUM_ID
-    assert "secret" not in str(exc_info.value)
-
-    forged = object.__new__(_ProtectionGraph)
-    with pytest.raises(_GraphValidationError) as exc_info:
-        _compile_trivial_graph(forged, limits=_LIMITS)
-    assert exc_info.value.code is _GraphValidationCode.MALFORMED_GRAPH
-
-
 def test_graph_runtime_lowers_only_text_and_preserves_graph_identity(
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     backend = _SuccessfulBackend()
     graph = _graph("first", "second")
-
-    result = _TrivialGraphRuntime(backend).run(
-        graph,
-        limits=_LIMITS,
+    plan = _compile_accounting_plan(graph, limits=_LIMITS)
+    assert isinstance(plan, _AccountingPlan)
+    result = _AccountingGraphRuntime(backend).run(
+        plan,
         invocation=_CompiledInvocation.compile(AnonymizerConfig(replace=Redact()), stub_slim_model_selection),
         data_summary=None,
         preview_num_records=None,
+        hydrate=lambda datum, row: (datum.id, row[COL_TEXT]),
     )
 
-    assert result.datum_ids == tuple(datum.id for datum in graph.datums)
-    assert result.dataframe_result.dataframe[COL_TEXT].tolist() == ["first", "second"]
+    assert tuple(datum.id.value for datum in result.plan.datums) == ("datum-0", "datum-1")
     assert backend.frame is not None
     assert list(backend.frame.columns) == [COL_TEXT, "__anonymizer_private_row_correlation__"]
     assert all(datum.id.value not in backend.frame.to_string() for datum in graph.datums)
 
 
-def test_graph_runtime_sanitizes_backend_failure(stub_slim_model_selection: ModelSelection) -> None:
+def test_graph_runtime_rejects_rows_swapped_after_verification(
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    class _PostVerificationSwapBackend:
+        def run(
+            self,
+            dataframe: pd.DataFrame,
+            *,
+            invocation: _CompiledInvocation,
+            data_summary: str | None,
+            preview_num_records: int | None,
+            verifier: _InvocationRowVerifier,
+        ) -> _PandasExecutionResult:
+            del invocation, data_summary, preview_num_records
+            detected = dataframe.assign(**{COL_FINAL_ENTITIES: [{"entities": []}, {"entities": []}]})
+            verifier.freeze_accepted_detections(detected)
+            final = verifier.finish(detected)
+            return _PandasExecutionResult(
+                dataframe=final.iloc[::-1].reset_index(drop=True),
+                failed_records=[],
+                terminal_outcomes=verifier.take_terminal_outcomes(),
+                result_row_tokens=verifier.take_result_order(),
+            )
+
+    execution = _AccountingGraphRuntime(_PostVerificationSwapBackend()).run(
+        _plan("first", "second"),
+        invocation=_CompiledInvocation.compile(AnonymizerConfig(replace=Redact()), stub_slim_model_selection),
+        data_summary=None,
+        preview_num_records=None,
+        hydrate=lambda datum, row: (datum.id.value, row[COL_TEXT]),
+    )
+
+    assert isinstance(execution.accounting.invocation, _InvocationInconsistent)
+    assert all(isinstance(group, _GroupWithheld) for group in execution.accounting.groups)
+
+
+def test_graph_runtime_accounts_backend_failure_as_lost_without_content(
+    stub_slim_model_selection: ModelSelection,
+) -> None:
     secret = "backend-secret@example.test"
 
     class _FailingBackend:
         def run(self, *_args: Any, **_kwargs: Any) -> _PandasExecutionResult:
             raise RuntimeError(secret)
 
-    with pytest.raises(PrivateRowVerificationError) as exc_info:
-        _TrivialGraphRuntime(_FailingBackend()).run(
-            _graph("input-secret@example.test"),
-            limits=_LIMITS,
+    execution = _AccountingGraphRuntime(_FailingBackend()).run(
+        _plan("input-secret@example.test"),
+        invocation=_CompiledInvocation.compile(AnonymizerConfig(replace=Redact()), stub_slim_model_selection),
+        data_summary=None,
+        preview_num_records=None,
+        hydrate=lambda datum, row: (datum.id, row[COL_TEXT]),
+    )
+
+    assert isinstance(execution.accounting.invocation, _InvocationLost)
+    assert secret not in repr(execution)
+
+
+def test_graph_runtime_rejects_raw_graph_before_backend_effects(
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    class _NeverRunsBackend:
+        def run(self, *_args: Any, **_kwargs: Any) -> _PandasExecutionResult:
+            raise AssertionError("raw graphs must not reach the backend")
+
+    with pytest.raises(TypeError, match="private accounting plan"):
+        _AccountingGraphRuntime(_NeverRunsBackend()).run(
+            cast(_AccountingPlan, _graph("uncompiled")),
             invocation=_CompiledInvocation.compile(AnonymizerConfig(replace=Redact()), stub_slim_model_selection),
             data_summary=None,
             preview_num_records=None,
+            hydrate=lambda datum, row: (datum.id, row[COL_TEXT]),
         )
-
-    assert secret not in str(exc_info.value)
-    assert exc_info.value.__cause__ is None
 
 
 def test_release_reconciles_reordered_terminal_outcomes_by_private_token(
     stub_slim_model_selection: ModelSelection,
 ) -> None:
     graph = _graph("first", "second")
-    tokens = ("token-first", "token-second")
-    dataframe_result = _PandasExecutionResult(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["first", "second"],
-                COL_REPLACED_TEXT: ["first", "second"],
-                COL_FINAL_ENTITIES: [{"entities": []}, {"entities": []}],
-                COL_REPLACEMENT_APPLICATION: [
-                    {
-                        "targeted_span_count": 0,
-                        "applied_span_count": 0,
-                        "skipped_span_count": 0,
-                        "skipped_span_label_counts": {},
-                    },
-                    {
-                        "targeted_span_count": 0,
-                        "applied_span_count": 0,
-                        "skipped_span_count": 0,
-                        "skipped_span_label_counts": {},
-                    },
-                ],
-            }
-        ),
-        failed_records=[],
-        terminal_outcomes=tuple((token, _TerminalOutcome.SUCCESS) for token in reversed(tokens)),
-        result_row_tokens=tokens,
-    )
 
-    class _ReorderedRuntime:
-        def run(self, *_args: Any, **_kwargs: Any) -> _GraphExecutionResult:
-            return _GraphExecutionResult(
-                tuple(datum.id for datum in graph.datums),
-                tuple(datum.text for datum in graph.datums),
-                dataframe_result,
-                tokens,
+    class _ReorderedBackend:
+        def run(
+            self,
+            dataframe: pd.DataFrame,
+            *,
+            invocation: _CompiledInvocation,
+            data_summary: str | None,
+            preview_num_records: int | None,
+            verifier: _InvocationRowVerifier,
+        ) -> _PandasExecutionResult:
+            del invocation, data_summary, preview_num_records
+            detected = dataframe.assign(
+                **{
+                    COL_REPLACED_TEXT: dataframe[COL_TEXT],
+                    COL_FINAL_ENTITIES: [{"entities": []} for _ in range(len(dataframe))],
+                    COL_REPLACEMENT_APPLICATION: [
+                        {
+                            "targeted_span_count": 0,
+                            "applied_span_count": 0,
+                            "skipped_span_count": 0,
+                            "skipped_span_label_counts": {},
+                        }
+                        for _ in range(len(dataframe))
+                    ],
+                }
+            )
+            verifier.freeze_accepted_detections(detected)
+            final = verifier.finish(detected).iloc[::-1].reset_index(drop=True)
+            tokens = tuple(reversed(verifier.take_result_order()))
+            return _PandasExecutionResult(
+                dataframe=final,
+                failed_records=[],
+                terminal_outcomes=tuple(reversed(verifier.take_terminal_outcomes())),
+                result_row_tokens=tokens,
             )
 
-    result = _TrivialRedactProtectionService(_ReorderedRuntime()).protect(
-        graph,
-        limits=_LIMITS,
+    service = _RedactProtectionService(_AccountingGraphRuntime(_ReorderedBackend()))
+    plan = service.admit(graph, limits=_LIMITS)
+    assert isinstance(plan, _AccountingPlan)
+    result = service.protect(
+        plan,
         invocation=_CompiledInvocation.compile(AnonymizerConfig(replace=Redact()), stub_slim_model_selection),
     )
 

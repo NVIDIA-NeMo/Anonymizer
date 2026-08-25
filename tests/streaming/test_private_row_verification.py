@@ -297,6 +297,23 @@ def test_verifier_rejects_accepted_detection_tampering_and_closes_without_raw_va
         verifier.finish(bound)
 
 
+def test_verifier_exception_never_exposes_private_correlation() -> None:
+    token = "private-row-token-canary"
+    base = _detected_frame()
+    verifier = _InvocationRowVerifier(base, correlations=(token, "private-row-token-peer"))
+    bound = verifier.bind(base)
+    verifier.freeze_accepted_detections(bound)
+    tampered = bound.copy()
+    tampered.at[0, COL_FINAL_ENTITIES] = {"entities": [{"value": "different"}]}
+
+    with pytest.raises(PrivateRowVerificationError) as exc_info:
+        verifier.finish(tampered)
+
+    assert token not in str(exc_info.value)
+    assert token not in repr(exc_info.value)
+    assert token not in repr(exc_info.value.failure)
+
+
 def test_verifier_requires_frozen_accepted_detection_evidence_at_finish() -> None:
     base = _detected_frame()
     verifier = _InvocationRowVerifier(base)

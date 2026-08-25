@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import pickle
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -270,6 +271,39 @@ def test_detect_missing_records_returns_missing_ids() -> None:
 
     assert len(failed_records) == 1
     assert failed_records[0].step == "replace-workflow"
+
+
+def test_run_workflow_attributes_missing_rows_only_by_private_correlation() -> None:
+    input_df = pd.DataFrame(
+        {
+            "text": ["same", "same"],
+            "__anonymizer_private_row_correlation__": ["opaque-a", "opaque-b"],
+            RECORD_ID_COLUMN: ["public-a", "public-b"],
+        },
+        index=pd.Index([None, None]),
+    )
+
+    class DroppingDataDesigner:
+        def create(self, _builder: object, **_kwargs: object) -> SimpleNamespace:
+            output = input_df.iloc[[1]].copy()
+            return SimpleNamespace(load_dataset=lambda: output, task_traces=[])
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, DroppingDataDesigner()))
+
+    with adapter.private_execution():
+        result = adapter.run_workflow(
+            input_df,
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+        )
+
+    assert [record.record_id for record in result.failed_records] == ["public-a"]
+    assert result.failed_row_tokens == ("opaque-a",)
+    assert "opaque-a" not in repr(result)
+    assert "opaque-a" not in repr(result.failed_row_evidence[0])
+    with pytest.raises(TypeError, match="not serializable"):
+        pickle.dumps(result.failed_row_evidence[0])
 
 
 def test_detect_missing_records_for_preview_subset_has_no_false_failures() -> None:
