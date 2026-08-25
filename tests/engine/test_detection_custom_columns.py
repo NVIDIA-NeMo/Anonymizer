@@ -120,6 +120,39 @@ def test_enrich_validation_decisions_adds_value_from_candidates() -> None:
     assert decisions[1]["value"] == "name"
 
 
+def test_enrich_validation_decisions_ignores_numeric_value_echo() -> None:
+    row = {
+        COL_VALIDATION_DECISIONS: {
+            "decisions": [
+                {
+                    "id": "id1",
+                    "value": 42,
+                    "decision": "keep",
+                    "proposed_label": "",
+                    "reason": "numeric identifier",
+                }
+            ]
+        },
+        COL_SEED_VALIDATION_CANDIDATES: {
+            "candidates": [
+                {
+                    "id": "id1",
+                    "value": "42",
+                    "label": "account_number",
+                    "context_before": "",
+                    "context_after": "",
+                }
+            ]
+        },
+    }
+
+    result = enrich_validation_decisions(row)
+
+    decisions = result[COL_VALIDATED_ENTITIES]["decisions"]
+    assert len(decisions) == 1
+    assert decisions[0]["value"] == "42"
+
+
 def test_enrich_validation_decisions_filters_unknown_ids() -> None:
     row = {
         COL_VALIDATION_DECISIONS: {"decisions": [{"id": "unknown_id", "decision": "keep", "proposed_label": ""}]},
