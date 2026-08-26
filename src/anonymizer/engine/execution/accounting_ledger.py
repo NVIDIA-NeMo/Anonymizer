@@ -147,6 +147,8 @@ class _AccountingLedger(Generic[T]):
         self._cancellation_requested = False
         self._global_inconsistent = False
         self._invocation_lost = False
+        self._cleanup_failed = False
+        self._cleanup_unconfirmed = False
 
     @_serialized
     def open(self) -> None:
@@ -162,19 +164,46 @@ class _AccountingLedger(Generic[T]):
         return tuple(task for task in self._plan.tasks if isinstance(self._states[task], _Ready))
 
     @_serialized
-    def dispatch(self, task: _TaskKey) -> _Dispatch:
+    def dispatch(self, task: _TaskKey, *, row_token_value: str | None = None) -> _Dispatch:
         self._require_active()
         self._advance_planned()
         if not isinstance(self._states.get(task), _Ready) or self._invocation_id is None:
             raise _LedgerStateError
+        row_token = self._next_identity() if row_token_value is None else self._claim_identity(row_token_value)
         dispatch = _Dispatch(
             self._invocation_id,
             task,
             _AttemptId(self._next_identity()),
-            _RowToken(self._next_identity()),
+            _RowToken(row_token),
         )
         self._states[task] = _Dispatched(dispatch)
         return dispatch
+
+    @_serialized
+    def dispatch_batch(
+        self,
+        tasks: tuple[_TaskKey, ...],
+        *,
+        row_token_values: tuple[str, ...],
+    ) -> tuple[_Dispatch, ...]:
+        """Atomically commit one context frontier after workframe construction."""
+        self._require_active()
+        self._advance_planned()
+        if (
+            self._invocation_id is None
+            or len(tasks) != len(row_token_values)
+            or len(set(tasks)) != len(tasks)
+            or not all(isinstance(self._states.get(task), _Ready) for task in tasks)
+        ):
+            raise _LedgerStateError
+        row_tokens = tuple(self._claim_identity(value) for value in row_token_values)
+        dispatches = tuple(
+            _Dispatch(self._invocation_id, task, _AttemptId(self._next_identity()), _RowToken(row_token))
+            for task, row_token in zip(tasks, row_tokens, strict=True)
+        )
+        for dispatch in dispatches:
+            self._states[dispatch.task] = _Dispatched(dispatch)
+        return dispatches
 
     @_serialized
     def accept_success(self, dispatch: _Dispatch, candidate: T) -> _EvidenceAcceptance:
@@ -281,6 +310,38 @@ class _AccountingLedger(Generic[T]):
         self._close_globally_inconsistent(code)
 
     @_serialized
+    def mark_task_inconsistent(self, task: _TaskKey, code: _CauseCode) -> None:
+        """Close one attributable task without widening context-derived dependencies."""
+        self._require_active()
+        if code not in {_CauseCode.MISSING, _CauseCode.DUPLICATE, _CauseCode.CONTRADICTORY}:
+            raise _LedgerStateError
+        state = self._states.get(task)
+        if state is None:
+            self._close_globally_inconsistent(_CauseCode.PLAN_MISMATCH)
+        elif not _is_terminal(state):
+            self._states[task] = _TaskInconsistent(task, _causes(code))
+
+    @_serialized
+    def mark_task_failed(self, task: _TaskKey) -> None:
+        """Close one known pre-dispatch construction failure locally."""
+        self._require_active()
+        state = self._states.get(task)
+        if state is None:
+            self._close_globally_inconsistent(_CauseCode.PLAN_MISMATCH)
+        elif isinstance(state, (_Planned, _Ready)):
+            self._states[task] = _TaskFailed(task, _causes(_CauseCode.KNOWN_FAILURE))
+
+    @_serialized
+    def mark_cleanup_failed(self) -> None:
+        self._require_active()
+        self._cleanup_failed = True
+
+    @_serialized
+    def mark_cleanup_unconfirmed(self) -> None:
+        self._require_active()
+        self._cleanup_unconfirmed = True
+
+    @_serialized
     def finish(
         self,
         *,
@@ -305,6 +366,8 @@ class _AccountingLedger(Generic[T]):
                 cancellation_requested=self._cancellation_requested,
                 global_inconsistent=self._global_inconsistent,
                 invocation_lost=self._invocation_lost,
+                cleanup_failed=self._cleanup_failed,
+                cleanup_unconfirmed=self._cleanup_unconfirmed,
             )
         except Exception:
             result = _construction_failed_result(self._plan, tasks)
@@ -485,6 +548,9 @@ class _AccountingLedger(Generic[T]):
 
     def _next_identity(self) -> str:
         value = self._identity_factory()
+        return self._claim_identity(value)
+
+    def _claim_identity(self, value: object) -> str:
         if not isinstance(value, str) or not value or value in self._used_identities:
             raise _LedgerStateError
         self._used_identities.add(value)
@@ -553,6 +619,8 @@ def _reduce_result(
     cancellation_requested: bool,
     global_inconsistent: bool,
     invocation_lost: bool,
+    cleanup_failed: bool,
+    cleanup_unconfirmed: bool,
 ) -> _AccountingResult[T]:
     datums = tuple(_reduce_datum(plan, datum.id, tasks, datum_release_predicate) for datum in plan.datums)
     datum_by_id = {outcome.datum_id: outcome for outcome in datums}
@@ -567,15 +635,24 @@ def _reduce_result(
     )
     stages = tuple(_reduce_stage(stage, tasks) for stage in plan.stages)
     qualified = frozenset(outcome.datum_id for outcome in datums if isinstance(outcome, _DatumQualified))
-    if global_inconsistent or invocation_lost or cancellation_requested:
+    if global_inconsistent or invocation_lost or cancellation_requested or cleanup_failed or cleanup_unconfirmed:
         qualified = frozenset()
     decision = _qualify_release(plan, qualified)
     groups = tuple(
         _reduce_group(plan, group.key, datum_by_id, decision.released_groups, group_release_predicate)
         for group in plan.atomic_groups
     )
+    cleanup_code = (
+        _CauseCode.CLEANUP_UNCONFIRMED if cleanup_unconfirmed else _CauseCode.CLEANUP_FAILED if cleanup_failed else None
+    )
+    if cleanup_code is not None:
+        groups = tuple(_GroupWithheld(group.key, _causes(cleanup_code)) for group in plan.atomic_groups)
     all_causes = _cause_union((*tasks, *datums, *dependencies, *stages, *groups))
-    if global_inconsistent:
+    if cleanup_unconfirmed:
+        invocation = _InvocationInconsistent(all_causes | _causes(_CauseCode.CLEANUP_UNCONFIRMED))
+    elif cleanup_failed:
+        invocation = _InvocationFailed(all_causes | _causes(_CauseCode.CLEANUP_FAILED))
+    elif global_inconsistent:
         invocation = _InvocationInconsistent(all_causes | _causes(_CauseCode.CONTRADICTORY))
     elif invocation_lost:
         invocation = _InvocationLost(all_causes | _causes(_CauseCode.TRANSPORT_LOST))

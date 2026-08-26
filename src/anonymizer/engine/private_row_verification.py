@@ -17,13 +17,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TARGET_WORK_ID, COL_TEXT
 
 if TYPE_CHECKING:
     import pandas as pd
 
 
-PRIVATE_CORRELATION_COLUMN = "__anonymizer_private_row_correlation__"
+PRIVATE_CORRELATION_COLUMN = COL_TARGET_WORK_ID
 
 
 class _TerminalOutcome(str, Enum):

@@ -8,10 +8,33 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol, TypeGuard
 
-from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_TEXT, DEFAULT_ENTITY_LABELS
+from anonymizer.engine.constants import (
+    COL_CONTEXT_BINDING_ID,
+    COL_CONTEXT_ORDINAL,
+    COL_CONTEXT_OWNER_WORK_ID,
+    COL_CONTEXT_TEXT,
+    COL_DETECTED_ENTITIES,
+    COL_TEXT,
+    DEFAULT_ENTITY_LABELS,
+)
+from anonymizer.engine.execution.context_contract import (
+    _BackendArtifactClass,
+    _ContextBackendCapability,
+    _ContextLimits,
+    _ContextOrdering,
+    _ContextProfile,
+    _ContextSchemaVersion,
+    _RetentionPosture,
+)
+from anonymizer.engine.execution.context_workframes import (
+    _BackendArtifactId,
+    _BackendClosureAttestation,
+    _ContextBindingEvidence,
+    _make_context_binding_evidence,
+)
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.ndd.adapter import FailedRecord, _FailedRowEvidence
 from anonymizer.engine.private_row_verification import _InvocationRowVerifier, _TerminalOutcome
@@ -64,6 +87,8 @@ class _PandasExecutionResult:
     result_row_tokens: tuple[str, ...] = ()
     failed_row_evidence: tuple[_FailedRowEvidence, ...] = ()
     trusted_stop_tokens: tuple[str, ...] = ()
+    context_binding_evidence: tuple[_ContextBindingEvidence, ...] = ()
+    closure_attestations: tuple[_BackendClosureAttestation, ...] = ()
 
     def __repr__(self) -> str:
         return "<private pandas execution result>"
@@ -87,6 +112,66 @@ class _PandasRuntime:
         self._replace_runner = replace_runner
         self._rewrite_runner = rewrite_runner
         self._combined_rewrite_runner = combined_rewrite_runner
+
+    def context_capability(self) -> _ContextBackendCapability:
+        """Declare the bounded framing profile supported by this private runtime."""
+        return _ContextBackendCapability(
+            profile=_ContextProfile.TARGET_CONTEXT_V1,
+            schema_version=_ContextSchemaVersion.V1,
+            limits=_ContextLimits(
+                max_context_members_per_target=128,
+                max_context_bytes_per_target=1_048_576,
+                max_total_context_references=16_384,
+                max_expanded_frame_bytes=2_097_152,
+            ),
+            allow_target_as_context=True,
+            ordering=_ContextOrdering.DECLARED,
+            artifact_classes=(_BackendArtifactClass.CONTEXT_REQUEST,),
+            retention=_RetentionPosture.DISABLED,
+        )
+
+    def run_context(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        context_dataframe: pd.DataFrame,
+        artifact_id: _BackendArtifactId,
+        invocation: _CompiledInvocation,
+        data_summary: str | None,
+        preview_num_records: int | None,
+        verifier: _InvocationRowVerifier,
+    ) -> _PandasExecutionResult:
+        """Execute targets unchanged and attest consumption of the separate context frame.
+
+        Phase 5 qualifies framing only. Context is therefore reconciled as typed
+        input evidence but is not added to a prompt or used for entity decisions.
+        """
+        required = {COL_CONTEXT_BINDING_ID, COL_CONTEXT_OWNER_WORK_ID, COL_CONTEXT_ORDINAL}
+        if set(context_dataframe.columns) != {*required, COL_CONTEXT_TEXT}:
+            raise TypeError("private context frame is malformed")
+        evidence = tuple(
+            _make_context_binding_evidence(
+                row[COL_CONTEXT_BINDING_ID],
+                row[COL_CONTEXT_OWNER_WORK_ID],
+                row[COL_CONTEXT_ORDINAL],
+                row[COL_CONTEXT_TEXT],
+            )
+            for _index, row in context_dataframe.iterrows()
+        )
+        result = self.run(
+            dataframe,
+            invocation=invocation,
+            data_summary=data_summary,
+            preview_num_records=preview_num_records,
+            verifier=verifier,
+        )
+        return replace(
+            result,
+            context_binding_evidence=evidence,
+            closure_attestations=(
+                _BackendClosureAttestation(artifact_id, _BackendArtifactClass.CONTEXT_REQUEST, True),
+            ),
+        )
 
     def run(
         self,

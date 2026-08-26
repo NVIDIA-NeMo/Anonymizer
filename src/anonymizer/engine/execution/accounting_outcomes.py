@@ -46,6 +46,8 @@ class _CauseCode(str, Enum):
     PLAN_MISMATCH = "plan_mismatch"
     PREREQUISITE = "prerequisite"
     RESULT_CONSTRUCTION_FAILED = "result_construction_failed"
+    CLEANUP_FAILED = "cleanup_failed"
+    CLEANUP_UNCONFIRMED = "cleanup_unconfirmed"
 
 
 @final

@@ -24,6 +24,7 @@ class _DatumId(_PrivateGraphValue):
 
 class _DatumPurpose(str, Enum):
     TARGET = "target"
+    CONTEXT_ONLY = "context_only"
 
 
 class _RelationKind(str, Enum):

@@ -20,6 +20,15 @@ from anonymizer.config.models import ModelSelection
 from anonymizer.config.replace_strategies import Annotate, Redact
 from anonymizer.engine.execution.accounting_admission import _AccountingRejected
 from anonymizer.engine.execution.accounting_plan import _AccountingLimits
+from anonymizer.engine.execution.context_admission import _ContextRejected
+from anonymizer.engine.execution.context_contract import (
+    _BackendArtifactClass,
+    _ContextExecutionContract,
+    _ContextLimits,
+    _ContextOrdering,
+    _ContextProfile,
+    _ContextSchemaVersion,
+)
 from anonymizer.engine.execution.graph import _DatumId, _TextDatum, _trivial_graph
 from anonymizer.engine.execution.graph_runtime import _AccountingGraphRuntime
 from anonymizer.engine.execution.invocation import _CompiledInvocation
@@ -363,15 +372,28 @@ class _ProtectionFlow(_SafeRepr):
             )
         )
         try:
-            admitted = self._runtime.admit(
+            admitted = self._runtime.admit_context(
                 graph,
-                limits=_AccountingLimits(
+                accounting_limits=_AccountingLimits(
                     max_datums=self._plan.max_records,
                     max_datum_bytes=self._plan.max_record_bytes,
                     max_graph_bytes=self._plan.max_batch_bytes,
                 ),
+                contract=_ContextExecutionContract(
+                    profile=_ContextProfile.TARGET_CONTEXT_V1,
+                    schema_version=_ContextSchemaVersion.V1,
+                    limits=_ContextLimits(
+                        max_context_members_per_target=0,
+                        max_context_bytes_per_target=0,
+                        max_total_context_references=0,
+                        max_expanded_frame_bytes=self._plan.max_batch_bytes,
+                    ),
+                    allow_target_as_context=False,
+                    ordering=_ContextOrdering.DECLARED,
+                    required_artifacts=(_BackendArtifactClass.CONTEXT_REQUEST,),
+                ),
             )
-            if isinstance(admitted, _AccountingRejected):
+            if isinstance(admitted, (_AccountingRejected, _ContextRejected)):
                 return self._fail_all(operation)
             with self._adapter.private_execution():
                 execution = self._runtime.protect(

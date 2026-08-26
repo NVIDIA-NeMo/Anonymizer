@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import threading
 from contextlib import contextmanager
@@ -32,6 +33,9 @@ from anonymizer.interface._protection import (
     _Rejected,
     _TextSegment,
 )
+from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.cli import main as cli_main
+from anonymizer.measurement import MeasurementCollector, measurement_session
 from tests.streaming.structured_trace_prototype import build_synthetic_anonymizer
 
 
@@ -60,6 +64,102 @@ def test_private_redact_applies_and_no_detection_success_is_explicit() -> None:
     assert result.failure_count == 0
     assert not hasattr(result, "trace_dataframe")
     assert "row_token" not in repr(result).lower()
+
+
+def test_phase5_adds_no_public_context_or_graph_parameters() -> None:
+    for entrypoint in (Anonymizer.run, Anonymizer.preview, Anonymizer.evaluate, cli_main.run, cli_main.preview):
+        public_parameters = inspect.signature(entrypoint).parameters
+        assert "context" not in public_parameters
+        assert "graph" not in public_parameters
+
+
+def test_context_workframe_observations_are_paired_bounded_and_content_free() -> None:
+    target_canary = "TARGET-CANARY-alice@example.test"
+    source_canary = "SOURCE-CANARY-7843"
+    _, flow = _flow(entities={target_canary: "email"})
+    collector = MeasurementCollector(run_id="phase5-observation-test")
+
+    with measurement_session(collector):
+        result = flow.protect((_record(source_canary, target_canary),))
+
+    assert isinstance(result.outcomes[0], _ProtectionSucceeded)
+    records = [record for record in collector.records if record["record_type"] == "context_workframe"]
+    boundaries = {record["boundary"] for record in records}
+    assert {
+        "preflight",
+        "capability_recheck",
+        "workframe_construction",
+        "dispatch",
+        "backend_execution",
+        "reconciliation",
+        "cleanup",
+        "release",
+    }.issubset(boundaries)
+    for boundary in boundaries:
+        paired = [record for record in records if record["boundary"] == boundary]
+        assert [record["event"] for record in paired] == ["start", "terminal"]
+        assert paired[-1]["duration_sec"] >= 0
+        assert isinstance(paired[-1]["target_count_bucket"], str)
+        assert isinstance(paired[-1]["context_count_bucket"], str)
+    rendered = repr(records)
+    assert target_canary not in rendered
+    assert source_canary not in rendered
+    assert "__anonymizer_private_row_correlation__" not in rendered
+
+
+def test_throwing_context_observer_cannot_change_release() -> None:
+    class ThrowingCollector(MeasurementCollector):
+        def record(self, record_type: str, **fields: Any) -> None:
+            if record_type == "context_workframe":
+                raise RuntimeError("observer unavailable")
+            super().record(record_type, **fields)
+
+    _, flow = _flow()
+    with measurement_session(ThrowingCollector()):
+        result = flow.protect((_record("a", "ordinary text"),))
+
+    assert isinstance(result.outcomes[0], _ProtectionSucceeded)
+
+
+def test_base_exception_from_context_observer_cannot_change_release() -> None:
+    class InterruptingCollector(MeasurementCollector):
+        def record(self, record_type: str, **fields: Any) -> None:
+            if record_type == "context_workframe":
+                raise KeyboardInterrupt
+            super().record(record_type, **fields)
+
+    _, flow = _flow()
+    with measurement_session(InterruptingCollector()):
+        result = flow.protect((_record("a", "ordinary text"),))
+
+    assert isinstance(result.outcomes[0], _ProtectionSucceeded)
+
+
+def test_reentrant_context_observer_is_bounded_and_cannot_change_release() -> None:
+    _, flow = _flow()
+
+    class ReentrantCollector(MeasurementCollector):
+        entered = False
+
+        def record(self, record_type: str, **fields: Any) -> None:
+            if record_type == "context_workframe" and not self.entered:
+                self.entered = True
+                nested = flow.protect((_record("nested", "ordinary text"),))
+                assert isinstance(nested.outcomes[0], _ProtectionSucceeded)
+            super().record(record_type, **fields)
+
+    collector = ReentrantCollector()
+    with measurement_session(collector):
+        result = flow.protect((_record("outer", "ordinary text"),))
+
+    assert isinstance(result.outcomes[0], _ProtectionSucceeded)
+    context_records = [record for record in collector.records if record["record_type"] == "context_workframe"]
+    assert 0 < len(context_records) <= 16
+    assert all(
+        sum(record["boundary"] == boundary and record["event"] == event for record in context_records) <= 1
+        for boundary in {record["boundary"] for record in context_records}
+        for event in ("start", "terminal")
+    )
 
 
 def test_trivial_graph_path_matches_public_run_output(tmp_path: Path) -> None:
@@ -172,6 +272,7 @@ def test_outer_batch_is_rejected_before_admission(records: object, code: _BatchF
 def test_graph_admission_rejects_before_private_execution_context(monkeypatch: pytest.MonkeyPatch) -> None:
     anonymizer, flow = _flow()
     entered = False
+    collector = MeasurementCollector()
 
     @contextmanager
     def effect_spy():
@@ -182,10 +283,16 @@ def test_graph_admission_rejects_before_private_execution_context(monkeypatch: p
     monkeypatch.setattr(protection_module, "_trivial_graph", lambda _datums: object())
     monkeypatch.setattr(anonymizer._adapter, "private_execution", effect_spy)
 
-    result = flow.protect((_record("a", "text"),))
+    with measurement_session(collector):
+        result = flow.protect((_record("a", "text"),))
 
     assert isinstance(result.outcomes[0], _Failed)
     assert not entered
+    observations = [record for record in collector.records if record["record_type"] == "context_workframe"]
+    assert [(record["boundary"], record["event"]) for record in observations] == [
+        ("preflight", "start"),
+        ("preflight", "terminal"),
+    ]
 
 
 def test_malformed_nested_segment_is_rejected_before_admission() -> None:

@@ -23,7 +23,24 @@ from anonymizer.engine.execution.accounting_evidence import (
 )
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_outcomes import _AccountingResult, _CauseCode
-from anonymizer.engine.execution.accounting_plan import _AccountingPlan, _is_admitted_accounting_plan
+from anonymizer.engine.execution.accounting_plan import _AccountingPlan, _is_admitted_accounting_plan, _TaskKey
+from anonymizer.engine.execution.context_admission import (
+    _ContextAdmissionCode,
+    _ContextPlan,
+    _is_admitted_context_plan,
+)
+from anonymizer.engine.execution.context_contract import _capability_satisfies, _ContextBackendCapability
+from anonymizer.engine.execution.context_observations import _observe_context_boundary
+from anonymizer.engine.execution.context_workframes import (
+    _BackendArtifactId,
+    _BackendClosureAttestation,
+    _ContextBindingFault,
+    _ContextCleanupStatus,
+    _ContextReconciliationStatus,
+    _ContextWorkframes,
+    _lower_context_workframes,
+    _WorkframeConstructionError,
+)
 from anonymizer.engine.execution.graph import _DatumId, _TextDatum
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.execution.pandas_runtime import _PandasExecutionResult
@@ -51,6 +68,22 @@ class _FrameExecutionBackend(Protocol):
     ) -> _PandasExecutionResult: ...
 
 
+class _ContextFrameExecutionBackend(_FrameExecutionBackend, Protocol):
+    def context_capability(self) -> _ContextBackendCapability: ...
+
+    def run_context(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        context_dataframe: pd.DataFrame,
+        artifact_id: _BackendArtifactId,
+        invocation: _CompiledInvocation,
+        data_summary: str | None,
+        preview_num_records: int | None,
+        verifier: _InvocationRowVerifier,
+    ) -> _PandasExecutionResult: ...
+
+
 class _AccountingGraphAdmissionError(TypeError):
     def __init__(self, code: _AccountingAdmissionCode) -> None:
         self.code = code
@@ -58,6 +91,15 @@ class _AccountingGraphAdmissionError(TypeError):
 
     def __repr__(self) -> str:
         return "<private accounting graph error>"
+
+
+class _ContextGraphAdmissionError(TypeError):
+    def __init__(self, code: _ContextAdmissionCode) -> None:
+        self.code = code
+        super().__init__("compatible private context plan and backend required")
+
+    def __repr__(self) -> str:
+        return "<private context graph error>"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -70,15 +112,44 @@ class _AccountingGraphExecution(Generic[T]):
         return "<private accounting graph execution>"
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _PreparedRuntimePlan:
+    accounting: _AccountingPlan
+    context: _ContextPlan | None
+    context_count: int
+    context_runner: Callable[..., object] | None
+
+
+@dataclass(slots=True, repr=False)
+class _ExecutionFrontier:
+    ready: tuple[_TaskKey, ...]
+    dispatches: tuple[_Dispatch, ...]
+    verifier: _InvocationRowVerifier
+    bound: pd.DataFrame
+    workframes: _ContextWorkframes | None
+    context_runner: Callable[..., object] | None
+
+
 class _AccountingGraphRuntime:
     """Schedule a compiled task DAG through bounded pandas frontiers."""
 
     def __init__(self, backend: _FrameExecutionBackend) -> None:
         self._backend = backend
 
+    def context_capability(self) -> _ContextBackendCapability | None:
+        """Take one typed preflight snapshot from the selected backend."""
+        capability_getter = getattr(self._backend, "context_capability", None)
+        if not callable(capability_getter):
+            return None
+        try:
+            capability = capability_getter()
+        except Exception:
+            return None
+        return capability if isinstance(capability, _ContextBackendCapability) else None
+
     def run(
         self,
-        plan: _AccountingPlan,
+        plan: _AccountingPlan | _ContextPlan,
         *,
         invocation: _CompiledInvocation,
         data_summary: str | None,
@@ -89,63 +160,356 @@ class _AccountingGraphRuntime:
     ) -> _AccountingGraphExecution[T]:
         if preview_num_records is not None:
             raise _AccountingGraphAdmissionError(_AccountingAdmissionCode.UNSUPPORTED_TASK_CARDINALITY)
-        if not _is_admitted_accounting_plan(plan):
-            raise _AccountingGraphAdmissionError(_AccountingAdmissionCode.MALFORMED_GRAPH)
+        prepared = self._prepare_runtime_plan(plan)
         ledger: _AccountingLedger[T] = _AccountingLedger(
-            plan,
+            prepared.accounting,
             datum_release_predicate=datum_release_predicate,
         )
         ledger.open()
         failed_records: list[FailedRecord] = []
-        datum_by_id = {datum.id: datum for datum in plan.datums}
+        datum_by_id = {datum.id: datum for datum in prepared.accounting.datums}
         while ready := ledger.ready_tasks():
-            dispatches = tuple(ledger.dispatch(task) for task in ready)
+            frontier = self._build_frontier(ledger, prepared, ready, datum_by_id)
+            if frontier is None:
+                continue
+            result = self._invoke_frontier(
+                ledger,
+                frontier,
+                invocation=invocation,
+                data_summary=data_summary,
+            )
+            if result is None:
+                break
+            if _is_well_formed_result(result):
+                failed_records.extend(result.failed_records)
+            if not self._accept_frontier(ledger, prepared.accounting, frontier, result, hydrate):
+                break
+        if prepared.context is not None:
+            with _observe_context_boundary(
+                "release",
+                target_count=len(prepared.accounting.datums),
+                context_count=prepared.context_count,
+            ):
+                accounting = ledger.finish(group_release_predicate=group_release_predicate)
+        else:
+            accounting = ledger.finish(group_release_predicate=group_release_predicate)
+        return _AccountingGraphExecution(prepared.accounting, accounting, tuple(failed_records))
+
+    def _prepare_runtime_plan(self, plan: _AccountingPlan | _ContextPlan) -> _PreparedRuntimePlan:
+        if not isinstance(plan, _ContextPlan):
+            if not _is_admitted_accounting_plan(plan):
+                raise _AccountingGraphAdmissionError(_AccountingAdmissionCode.MALFORMED_GRAPH)
+            return _PreparedRuntimePlan(plan, None, 0, None)
+        if not _is_admitted_context_plan(plan):
+            raise _ContextGraphAdmissionError(_ContextAdmissionCode.MALFORMED_GRAPH)
+        context_count = sum(len(projection.bindings) for projection in plan.projections)
+        with _observe_context_boundary(
+            "capability_recheck",
+            target_count=len(plan.accounting.datums),
+            context_count=context_count,
+        ) as observation:
+            context_runner = getattr(self._backend, "run_context", None)
+            if not _capability_satisfies(self.context_capability(), plan.contract) or not callable(context_runner):
+                observation.outcome = "rejected"
+                observation.reason = _ContextAdmissionCode.BACKEND_INCOMPATIBLE.value
+                raise _ContextGraphAdmissionError(_ContextAdmissionCode.BACKEND_INCOMPATIBLE)
+        return _PreparedRuntimePlan(plan.accounting, plan, context_count, context_runner)
+
+    def _build_frontier(
+        self,
+        ledger: _AccountingLedger[T],
+        prepared: _PreparedRuntimePlan,
+        ready: tuple[_TaskKey, ...],
+        datum_by_id: dict[_DatumId, _TextDatum],
+    ) -> _ExecutionFrontier | None:
+        if prepared.context is None:
             frame = pd.DataFrame({COL_TEXT: [datum_by_id[task.datum_id].text for task in ready]})
+            dispatches = self._dispatch_frontier(ledger, prepared, ready)
             correlations = tuple(dispatch.row_token.value for dispatch in dispatches)
             verifier = _InvocationRowVerifier(frame, correlations=correlations)
-            bound = verifier.bind(frame)
+            return _ExecutionFrontier(ready, dispatches, verifier, verifier.bind(frame), None, None)
+        with _observe_context_boundary(
+            "workframe_construction",
+            target_count=len(ready),
+            context_count=prepared.context_count,
+        ) as observation:
             try:
-                result = self._backend.run(
-                    bound,
-                    invocation=invocation,
-                    data_summary=data_summary,
-                    preview_num_records=None,
-                    verifier=verifier,
-                )
-            except KeyboardInterrupt:
-                ledger.request_cancellation()
-                verifier.abort(cancelled=True)
-                ledger.reconcile(dispatches, (), trusted_run_record=False)
-                raise
-            except PrivateRowVerificationError:
-                verifier.abort(cancelled=False)
-                ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
-                break
-            except Exception:
-                verifier.abort(cancelled=False)
-                ledger.reconcile(dispatches, (), trusted_run_record=False)
-                break
-            if not _is_well_formed_result(result):
-                verifier.abort(cancelled=False)
-                ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
-                break
-            try:
-                verifier.verify_returned_rows(result.dataframe, result.result_row_tokens)
-            except PrivateRowVerificationError:
-                ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
-                break
-            failed_records.extend(result.failed_records)
-            self._reconcile_frontier(
+                workframes = _lower_context_workframes(prepared.context, ready)
+            except _WorkframeConstructionError:
+                observation.outcome = "failed"
+                observation.reason = "binding_construction_failed"
+                for task in ready:
+                    ledger.mark_task_failed(task)
+                return None
+        correlations = tuple(work_id.value for work_id in workframes.target_work_ids())
+        try:
+            dispatches = self._dispatch_frontier(ledger, prepared, ready, correlations=correlations)
+        except Exception:
+            self._discard_context_workframes(workframes, target_count=len(ready))
+            for task in ready:
+                ledger.mark_task_failed(task)
+            return None
+        try:
+            workframes.bind_dispatches(dispatches)
+        except Exception:
+            ledger.reconcile(dispatches, (), trusted_run_record=False)
+            self._close_context_workframes(
                 ledger,
-                plan,
-                dispatches,
-                result,
-                hydrate,
+                workframes,
+                (),
+                target_count=len(ready),
             )
-        accounting = ledger.finish(
-            group_release_predicate=group_release_predicate,
+            return None
+        frame = workframes.target_frame.loc[:, [COL_TEXT]]
+        verifier = _InvocationRowVerifier(frame, correlations=correlations)
+        return _ExecutionFrontier(
+            ready,
+            dispatches,
+            verifier,
+            workframes.target_frame,
+            workframes,
+            prepared.context_runner,
         )
-        return _AccountingGraphExecution(plan, accounting, tuple(failed_records))
+
+    @staticmethod
+    def _dispatch_frontier(
+        ledger: _AccountingLedger[T],
+        prepared: _PreparedRuntimePlan,
+        ready: tuple[_TaskKey, ...],
+        *,
+        correlations: tuple[str, ...] | None = None,
+    ) -> tuple[_Dispatch, ...]:
+        if prepared.context is None:
+            return tuple(ledger.dispatch(task) for task in ready)
+        if correlations is None or len(correlations) != len(ready):
+            raise _WorkframeConstructionError
+        with _observe_context_boundary(
+            "dispatch",
+            target_count=len(ready),
+            context_count=prepared.context_count,
+        ):
+            return ledger.dispatch_batch(ready, row_token_values=correlations)
+
+    def _invoke_frontier(
+        self,
+        ledger: _AccountingLedger[T],
+        frontier: _ExecutionFrontier,
+        *,
+        invocation: _CompiledInvocation,
+        data_summary: str | None,
+    ) -> object | None:
+        try:
+            return self._call_frontier_backend(frontier, invocation=invocation, data_summary=data_summary)
+        except KeyboardInterrupt:
+            ledger.request_cancellation()
+            frontier.verifier.abort(cancelled=True)
+            ledger.reconcile(frontier.dispatches, (), trusted_run_record=False)
+            self._close_frontier_without_evidence(ledger, frontier)
+            raise
+        except PrivateRowVerificationError:
+            frontier.verifier.abort(cancelled=False)
+            ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+            self._close_frontier_without_evidence(ledger, frontier)
+            return None
+        except Exception:
+            frontier.verifier.abort(cancelled=False)
+            ledger.reconcile(frontier.dispatches, (), trusted_run_record=False)
+            self._close_frontier_without_evidence(ledger, frontier)
+            return None
+
+    def _call_frontier_backend(
+        self,
+        frontier: _ExecutionFrontier,
+        *,
+        invocation: _CompiledInvocation,
+        data_summary: str | None,
+    ) -> object:
+        if frontier.workframes is None:
+            return self._backend.run(
+                frontier.bound,
+                invocation=invocation,
+                data_summary=data_summary,
+                preview_num_records=None,
+                verifier=frontier.verifier,
+            )
+        if frontier.context_runner is None:
+            raise TypeError("private context backend is unavailable")
+        return self._run_context_backend(
+            frontier.context_runner,
+            frontier.workframes,
+            frontier.bound,
+            invocation=invocation,
+            data_summary=data_summary,
+            verifier=frontier.verifier,
+        )
+
+    def _accept_frontier(
+        self,
+        ledger: _AccountingLedger[T],
+        plan: _AccountingPlan,
+        frontier: _ExecutionFrontier,
+        value: object,
+        hydrate: Callable[[_TextDatum, pd.Series], T],
+    ) -> bool:
+        if not _is_well_formed_result(value):
+            frontier.verifier.abort(cancelled=False)
+            ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+            self._close_frontier_without_evidence(ledger, frontier)
+            return False
+        try:
+            frontier.verifier.verify_returned_rows(value.dataframe, value.result_row_tokens)
+        except PrivateRowVerificationError:
+            ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+            self._close_frontier(ledger, frontier, value.closure_attestations)
+            return False
+        context_status = self._accept_context_evidence(ledger, frontier, value)
+        if context_status is not _ContextReconciliationStatus.GLOBAL_INVALID:
+            self._reconcile_frontier(ledger, plan, frontier.dispatches, value, hydrate)
+        cleanup = self._close_frontier(ledger, frontier, value.closure_attestations)
+        return cleanup is _ContextCleanupStatus.VERIFIED
+
+    def _accept_context_evidence(
+        self,
+        ledger: _AccountingLedger[T],
+        frontier: _ExecutionFrontier,
+        result: _PandasExecutionResult,
+    ) -> _ContextReconciliationStatus:
+        if frontier.workframes is None:
+            return _ContextReconciliationStatus.VERIFIED
+        return self._reconcile_context_bindings(
+            ledger,
+            frontier.workframes,
+            result,
+            target_count=len(frontier.ready),
+        )
+
+    def _close_frontier_without_evidence(
+        self,
+        ledger: _AccountingLedger[T],
+        frontier: _ExecutionFrontier,
+    ) -> None:
+        self._close_frontier(ledger, frontier, ())
+
+    def _close_frontier(
+        self,
+        ledger: _AccountingLedger[T],
+        frontier: _ExecutionFrontier,
+        attestations: tuple[_BackendClosureAttestation, ...],
+    ) -> _ContextCleanupStatus:
+        if frontier.workframes is None:
+            return _ContextCleanupStatus.VERIFIED
+        return self._close_context_workframes(
+            ledger,
+            frontier.workframes,
+            attestations,
+            target_count=len(frontier.ready),
+        )
+
+    def _run_context_backend(
+        self,
+        context_runner: Callable[..., object],
+        workframes: _ContextWorkframes,
+        target_frame: pd.DataFrame,
+        *,
+        invocation: _CompiledInvocation,
+        data_summary: str | None,
+        verifier: _InvocationRowVerifier,
+    ) -> object:
+        context_frame = workframes.context_frame
+        with _observe_context_boundary(
+            "backend_execution",
+            target_count=len(target_frame),
+            context_count=len(context_frame),
+        ):
+            return context_runner(
+                target_frame,
+                context_dataframe=context_frame,
+                artifact_id=workframes.artifact_id,
+                invocation=invocation,
+                data_summary=data_summary,
+                preview_num_records=None,
+                verifier=verifier,
+            )
+
+    @staticmethod
+    def _reconcile_context_bindings(
+        ledger: _AccountingLedger[T],
+        workframes: _ContextWorkframes,
+        result: _PandasExecutionResult,
+        *,
+        target_count: int,
+    ) -> _ContextReconciliationStatus:
+        with _observe_context_boundary(
+            "reconciliation",
+            target_count=target_count,
+            context_count=len(result.context_binding_evidence),
+        ) as observation:
+            context_reconciliation = workframes.reconcile(result.context_binding_evidence)
+            observation.reconciliation = context_reconciliation.status.value
+            if context_reconciliation.status is _ContextReconciliationStatus.GLOBAL_INVALID:
+                observation.outcome = "inconsistent"
+                observation.reason = "binding_attribution_invalid"
+                ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+            elif context_reconciliation.status is _ContextReconciliationStatus.LOCAL_INVALID:
+                observation.outcome = "localized"
+                observation.reason = "binding_evidence_invalid"
+                cause_by_fault = {
+                    _ContextBindingFault.MISSING: _CauseCode.MISSING,
+                    _ContextBindingFault.DUPLICATE: _CauseCode.DUPLICATE,
+                    _ContextBindingFault.CONTRADICTORY: _CauseCode.CONTRADICTORY,
+                }
+                for task, fault in context_reconciliation.faults:
+                    ledger.mark_task_inconsistent(task, cause_by_fault[fault])
+            return context_reconciliation.status
+
+    @staticmethod
+    def _close_context_workframes(
+        ledger: _AccountingLedger[T],
+        workframes: _ContextWorkframes,
+        attestations: tuple[_BackendClosureAttestation, ...],
+        *,
+        target_count: int,
+    ) -> _ContextCleanupStatus:
+        with _observe_context_boundary(
+            "cleanup",
+            target_count=target_count,
+            context_count=len(workframes.context_frame),
+        ) as observation:
+            try:
+                cleanup = workframes.close(attestations)
+            except Exception:
+                observation.outcome = "failed"
+                observation.reason = _CauseCode.CLEANUP_FAILED.value
+                observation.cleanup = _ContextCleanupStatus.FAILED.value
+                ledger.mark_cleanup_failed()
+                return _ContextCleanupStatus.FAILED
+            observation.cleanup = cleanup.status.value
+            if cleanup.status is _ContextCleanupStatus.FAILED:
+                observation.outcome = "failed"
+                observation.reason = _CauseCode.CLEANUP_FAILED.value
+                ledger.mark_cleanup_failed()
+            elif cleanup.status is _ContextCleanupStatus.UNCONFIRMED:
+                observation.outcome = "inconsistent"
+                observation.reason = _CauseCode.CLEANUP_UNCONFIRMED.value
+                ledger.mark_cleanup_unconfirmed()
+            return cleanup.status
+
+    @staticmethod
+    def _discard_context_workframes(workframes: _ContextWorkframes, *, target_count: int) -> None:
+        """Discard unopened owned frames when atomic dispatch never committed."""
+        with _observe_context_boundary(
+            "cleanup",
+            target_count=target_count,
+            context_count=len(workframes.context_frame),
+        ) as observation:
+            try:
+                workframes.discard_before_dispatch()
+            except Exception:
+                observation.outcome = "failed"
+                observation.reason = _CauseCode.CLEANUP_FAILED.value
+                observation.cleanup = _ContextCleanupStatus.FAILED.value
+                raise
+            observation.cleanup = _ContextCleanupStatus.VERIFIED.value
 
     @staticmethod
     def _reconcile_frontier(
@@ -247,4 +611,6 @@ def _is_well_formed_result(value: object) -> TypeGuard[_PandasExecutionResult]:
         )
         and isinstance(value.trusted_stop_tokens, tuple)
         and all(isinstance(token, str) and token for token in value.trusted_stop_tokens)
+        and isinstance(value.context_binding_evidence, tuple)
+        and isinstance(value.closure_attestations, tuple)
     )

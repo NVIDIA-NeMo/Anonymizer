@@ -29,7 +29,14 @@ from anonymizer.engine.execution.accounting_outcomes import (
     _InvocationCompleted,
 )
 from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _AccountingPlan
-from anonymizer.engine.execution.graph import _DatumId, _TextDatum
+from anonymizer.engine.execution.context_admission import (
+    _compile_context_plan,
+    _ContextAdmissionResult,
+    _ContextPlan,
+)
+from anonymizer.engine.execution.context_contract import _ContextExecutionContract
+from anonymizer.engine.execution.context_observations import _observe_context_boundary
+from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _TextDatum
 from anonymizer.engine.execution.graph_runtime import _AccountingGraphExecution
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 
@@ -74,7 +81,7 @@ class _GraphProtectionResult(_PrivateProtectionValue):
 class _GraphRuntimeBackend(Protocol):
     def run(
         self,
-        plan: _AccountingPlan,
+        plan: _AccountingPlan | _ContextPlan,
         *,
         invocation: _CompiledInvocation,
         data_summary: str | None,
@@ -99,9 +106,38 @@ class _RedactProtectionService:
         """Compile the complete graph before any execution context opens."""
         return _compile_accounting_plan(graph, limits=limits)
 
+    def admit_context(
+        self,
+        graph: object,
+        *,
+        accounting_limits: _AccountingLimits,
+        contract: _ContextExecutionContract,
+    ) -> _ContextAdmissionResult:
+        """Compile context framing against the selected backend's preflight snapshot."""
+        target_count, context_count = _preflight_observation_counts(graph)
+        with _observe_context_boundary(
+            "preflight",
+            target_count=target_count,
+            context_count=context_count,
+        ) as observation:
+            capability_getter = getattr(self._runtime, "context_capability", None)
+            capability = capability_getter() if callable(capability_getter) else None
+            result = _compile_context_plan(
+                graph,
+                accounting_limits=accounting_limits,
+                contract=contract,
+                capability=capability,
+            )
+            if isinstance(result, _ContextPlan):
+                observation.outcome = "admitted"
+            else:
+                observation.outcome = "rejected"
+                observation.reason = result.code.value
+            return result
+
     def protect(
         self,
-        plan: _AccountingPlan,
+        plan: _AccountingPlan | _ContextPlan,
         *,
         invocation: _CompiledInvocation,
     ) -> _GraphProtectionResult:
@@ -114,6 +150,32 @@ class _RedactProtectionService:
             datum_release_predicate=lambda _datum_id, candidate: candidate.release_qualified,
         )
         return _materialize(execution)
+
+
+def _preflight_observation_counts(graph: object) -> tuple[int, int]:
+    """Best-effort total counts for telemetry, kept outside admission semantics."""
+    try:
+        datums = getattr(graph, "datums", ())
+        scopes = getattr(graph, "context_scopes", ())
+    except BaseException:
+        return 0, 0
+    target_count = 0
+    context_count = 0
+    if isinstance(datums, tuple):
+        for datum in datums:
+            try:
+                target_count += getattr(datum, "purpose", None) is _DatumPurpose.TARGET
+            except BaseException:
+                continue
+    if isinstance(scopes, tuple):
+        for scope in scopes:
+            try:
+                context = getattr(scope, "context", ())
+            except BaseException:
+                continue
+            if isinstance(context, tuple):
+                context_count += len(context)
+    return target_count, context_count
 
 
 def _hydrate_redact_candidate(datum: _TextDatum, row: pd.Series) -> _RedactCandidate:

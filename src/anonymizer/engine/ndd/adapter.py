@@ -29,6 +29,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.engine.execution.context_observations import _private_context_observation_session
 from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
@@ -342,7 +343,7 @@ class NddAdapter:
         """Use invocation-ephemeral artifacts and suppress ambient collection."""
         token = _PRIVATE_EXECUTION.set(True)
         try:
-            with suppress_measurement():
+            with _private_context_observation_session(), suppress_measurement():
                 yield
         finally:
             _PRIVATE_EXECUTION.reset(token)
