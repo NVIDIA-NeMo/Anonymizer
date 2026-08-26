@@ -167,14 +167,19 @@ class _ContextWorkframes(_PrivateWorkframeValue):
         tasks: tuple[_TaskKey, ...],
         expected: tuple[_ExpectedBinding, ...],
         artifact_id: _BackendArtifactId,
+        required_artifacts: tuple[_BackendArtifactClass, ...],
+        schema_version: _ContextSchemaVersion,
     ) -> None:
         self._target_frame = target_frame
         self._context_frame = context_frame
         self._tasks = tasks
         self._expected = expected
         self._artifact_id: _BackendArtifactId | None = artifact_id
+        self._required_artifacts = required_artifacts
+        self._schema_version = schema_version
         self._closed = False
         self._reconciled = False
+        self._dispatches_bound = False
 
     @property
     def target_frame(self) -> pd.DataFrame:
@@ -208,7 +213,8 @@ class _ContextWorkframes(_PrivateWorkframeValue):
         self._require_active()
         target_work_ids = self.target_work_ids()
         if (
-            self._reconciled
+            self._dispatches_bound
+            or self._reconciled
             or len(dispatches) != len(self._tasks)
             or len(dispatches) != len(target_work_ids)
             or len({dispatch.attempt_id for dispatch in dispatches}) != len(dispatches)
@@ -219,6 +225,7 @@ class _ContextWorkframes(_PrivateWorkframeValue):
         ):
             raise _WorkframeStateError
         self._target_frame.loc[:, COL_ATTEMPT_ID] = [dispatch.attempt_id for dispatch in dispatches]
+        self._dispatches_bound = True
 
     def reconcile(self, evidence: object) -> _ContextReconciliation:
         self._require_active()
@@ -276,8 +283,8 @@ class _ContextWorkframes(_PrivateWorkframeValue):
             attestation = attestations[0]
             if (
                 attestation.artifact_id != self._artifact_id
-                or attestation.artifact_class is not _BackendArtifactClass.CONTEXT_REQUEST
-                or attestation.schema_version is not _ContextSchemaVersion.V1
+                or self._required_artifacts != (attestation.artifact_class,)
+                or attestation.schema_version is not self._schema_version
                 or type(attestation.closed) is not bool
             ):
                 return _ContextCleanup(_ContextCleanupStatus.UNCONFIRMED)
@@ -301,6 +308,7 @@ class _ContextWorkframes(_PrivateWorkframeValue):
         self._tasks = ()
         self._expected = ()
         self._artifact_id = None
+        self._required_artifacts = ()
         self._closed = True
 
     def _require_active(self) -> None:
@@ -355,6 +363,8 @@ def _lower_context_workframes(
         tasks=tasks,
         expected=expected,
         artifact_id=_BackendArtifactId(artifact_value),
+        required_artifacts=plan.contract.required_artifacts,
+        schema_version=plan.contract.schema_version,
     )
 
 

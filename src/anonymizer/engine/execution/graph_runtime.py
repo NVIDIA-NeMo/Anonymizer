@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from inspect import Signature, signature
 from typing import Generic, Protocol, TypeGuard, TypeVar, assert_never
 
 import pandas as pd
@@ -29,7 +30,11 @@ from anonymizer.engine.execution.context_admission import (
     _ContextPlan,
     _is_admitted_context_plan,
 )
-from anonymizer.engine.execution.context_contract import _capability_satisfies, _ContextBackendCapability
+from anonymizer.engine.execution.context_contract import (
+    _capability_satisfies,
+    _ContextBackendCapability,
+    _snapshot_context_capability,
+)
 from anonymizer.engine.execution.context_observations import _observe_context_boundary
 from anonymizer.engine.execution.context_workframes import (
     _BackendArtifactId,
@@ -84,6 +89,55 @@ class _ContextFrameExecutionBackend(_FrameExecutionBackend, Protocol):
     ) -> _PandasExecutionResult: ...
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _ContextRunnerAdapter:
+    """Validated private invocation shape for context-capable backends."""
+
+    runner: Callable[..., object]
+
+    def run(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        context_dataframe: pd.DataFrame,
+        artifact_id: _BackendArtifactId,
+        invocation: _CompiledInvocation,
+        data_summary: str | None,
+        preview_num_records: int | None,
+        verifier: _InvocationRowVerifier,
+    ) -> object:
+        return self.runner(
+            dataframe,
+            context_dataframe=context_dataframe,
+            artifact_id=artifact_id,
+            invocation=invocation,
+            data_summary=data_summary,
+            preview_num_records=preview_num_records,
+            verifier=verifier,
+        )
+
+
+def _adapt_context_runner(backend: object) -> _ContextRunnerAdapter | None:
+    """Reject missing or incompatible private context runners before execution opens."""
+    try:
+        runner = getattr(backend, "run_context", None)
+        if not callable(runner):
+            return None
+        runner_signature: Signature = signature(runner)
+        runner_signature.bind(
+            object(),
+            context_dataframe=object(),
+            artifact_id=object(),
+            invocation=object(),
+            data_summary=None,
+            preview_num_records=None,
+            verifier=object(),
+        )
+    except Exception:
+        return None
+    return _ContextRunnerAdapter(runner)
+
+
 class _AccountingGraphAdmissionError(TypeError):
     def __init__(self, code: _AccountingAdmissionCode) -> None:
         self.code = code
@@ -117,7 +171,7 @@ class _PreparedRuntimePlan:
     accounting: _AccountingPlan
     context: _ContextPlan | None
     context_count: int
-    context_runner: Callable[..., object] | None
+    context_runner: _ContextRunnerAdapter | None
 
 
 @dataclass(slots=True, repr=False)
@@ -127,7 +181,7 @@ class _ExecutionFrontier:
     verifier: _InvocationRowVerifier
     bound: pd.DataFrame
     workframes: _ContextWorkframes | None
-    context_runner: Callable[..., object] | None
+    context_runner: _ContextRunnerAdapter | None
 
 
 class _AccountingGraphRuntime:
@@ -138,14 +192,7 @@ class _AccountingGraphRuntime:
 
     def context_capability(self) -> _ContextBackendCapability | None:
         """Take one typed preflight snapshot from the selected backend."""
-        capability_getter = getattr(self._backend, "context_capability", None)
-        if not callable(capability_getter):
-            return None
-        try:
-            capability = capability_getter()
-        except Exception:
-            return None
-        return capability if isinstance(capability, _ContextBackendCapability) else None
+        return _snapshot_context_capability(self._backend)
 
     def run(
         self,
@@ -208,8 +255,8 @@ class _AccountingGraphRuntime:
             target_count=len(plan.accounting.datums),
             context_count=context_count,
         ) as observation:
-            context_runner = getattr(self._backend, "run_context", None)
-            if not _capability_satisfies(self.context_capability(), plan.contract) or not callable(context_runner):
+            context_runner = _adapt_context_runner(self._backend)
+            if not _capability_satisfies(self.context_capability(), plan.contract) or context_runner is None:
                 observation.outcome = "rejected"
                 observation.reason = _ContextAdmissionCode.BACKEND_INCOMPATIBLE.value
                 raise _ContextGraphAdmissionError(_ContextAdmissionCode.BACKEND_INCOMPATIBLE)
@@ -407,7 +454,7 @@ class _AccountingGraphRuntime:
 
     def _run_context_backend(
         self,
-        context_runner: Callable[..., object],
+        context_runner: _ContextRunnerAdapter,
         workframes: _ContextWorkframes,
         target_frame: pd.DataFrame,
         *,
@@ -421,7 +468,7 @@ class _AccountingGraphRuntime:
             target_count=len(target_frame),
             context_count=len(context_frame),
         ):
-            return context_runner(
+            return context_runner.run(
                 target_frame,
                 context_dataframe=context_frame,
                 artifact_id=workframes.artifact_id,

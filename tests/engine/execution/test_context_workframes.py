@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_TARGET_WORK_ID,
     COL_TEXT,
 )
+from anonymizer.engine.execution.accounting_evidence import _AttemptId, _Dispatch, _InvocationId, _RowToken
 from anonymizer.engine.execution.accounting_plan import _AccountingLimits
 from anonymizer.engine.execution.context_admission import _compile_context_plan, _ContextPlan
 from anonymizer.engine.execution.context_contract import (
@@ -116,6 +117,21 @@ def test_exact_binding_and_closure_evidence_verifies_then_closes_all_state() -> 
         frames.expected_bindings()
     with pytest.raises(_WorkframeClosedError):
         _ = frames.artifact_id
+
+
+def test_dispatch_binding_is_an_absorbing_one_shot_transition() -> None:
+    frames = _frames()
+    dispatches = _dispatches_for(frames)
+
+    frames.bind_dispatches(dispatches)
+    original_attempts = tuple(frames.target_frame[getattr(execution_constants, "COL_ATTEMPT_ID")])
+
+    with pytest.raises(_WorkframeStateError):
+        frames.bind_dispatches(dispatches)
+    with pytest.raises(_WorkframeStateError):
+        frames.bind_dispatches(tuple(reversed(dispatches)))
+
+    assert tuple(frames.target_frame[getattr(execution_constants, "COL_ATTEMPT_ID")]) == original_attempts
 
 
 def test_missing_binding_is_local_to_its_compiled_owner() -> None:
@@ -268,6 +284,18 @@ def _exact_evidence(frames) -> tuple[_ContextBindingEvidence, ...]:
             row[COL_CONTEXT_TEXT],
         )
         for _index, row in frames.context_frame.iterrows()
+    )
+
+
+def _dispatches_for(frames) -> tuple[_Dispatch, ...]:
+    return tuple(
+        _Dispatch(
+            _InvocationId("invocation"),
+            task,
+            _AttemptId(f"attempt-{index}"),
+            _RowToken(work_id.value),
+        )
+        for index, (task, work_id) in enumerate(zip(frames.tasks, frames.target_work_ids(), strict=True))
     )
 
 

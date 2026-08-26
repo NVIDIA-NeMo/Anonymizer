@@ -34,7 +34,7 @@ from anonymizer.engine.execution.context_admission import (
     _ContextAdmissionResult,
     _ContextPlan,
 )
-from anonymizer.engine.execution.context_contract import _ContextExecutionContract
+from anonymizer.engine.execution.context_contract import _ContextExecutionContract, _snapshot_context_capability
 from anonymizer.engine.execution.context_observations import _observe_context_boundary
 from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _TextDatum
 from anonymizer.engine.execution.graph_runtime import _AccountingGraphExecution
@@ -120,8 +120,7 @@ class _RedactProtectionService:
             target_count=target_count,
             context_count=context_count,
         ) as observation:
-            capability_getter = getattr(self._runtime, "context_capability", None)
-            capability = capability_getter() if callable(capability_getter) else None
+            capability = _snapshot_context_capability(self._runtime)
             result = _compile_context_plan(
                 graph,
                 accounting_limits=accounting_limits,

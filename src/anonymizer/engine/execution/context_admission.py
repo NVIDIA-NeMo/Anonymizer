@@ -30,6 +30,7 @@ from anonymizer.engine.execution.context_contract import (
     _ContextProfile,
     _ContextSchemaVersion,
     _RetentionPosture,
+    _valid_context_limits,
 )
 from anonymizer.engine.execution.graph import (
     _ContextScope,
@@ -302,7 +303,7 @@ def _check_context_limits(
     target_datums: tuple[_TextDatum, ...],
     limits: _ContextLimits,
 ) -> _ContextRejected | None:
-    if not _valid_limits(limits):
+    if not _valid_context_limits(limits):
         return _ContextRejected(_ContextAdmissionCode.UNSUPPORTED_CONTEXT_CONTRACT)
     text_by_id = {datum.id: datum.text for datum in datums}
     total_references = 0
@@ -322,24 +323,12 @@ def _check_context_limits(
     return None
 
 
-def _valid_limits(limits: object) -> TypeGuard[_ContextLimits]:
-    return isinstance(limits, _ContextLimits) and all(
-        type(value) is int and value >= 0
-        for value in (
-            limits.max_context_members_per_target,
-            limits.max_context_bytes_per_target,
-            limits.max_total_context_references,
-            limits.max_expanded_frame_bytes,
-        )
-    )
-
-
 def _valid_contract(contract: object) -> TypeGuard[_ContextExecutionContract]:
     return (
         isinstance(contract, _ContextExecutionContract)
         and contract.profile is _ContextProfile.TARGET_CONTEXT_V1
         and contract.schema_version is _ContextSchemaVersion.V1
-        and _valid_limits(contract.limits)
+        and _valid_context_limits(contract.limits)
         and type(contract.allow_target_as_context) is bool
         and contract.ordering is _ContextOrdering.DECLARED
         and contract.retention is _RetentionPosture.DISABLED

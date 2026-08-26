@@ -69,6 +69,16 @@ class _ContextBackendCapability(_PrivateContextContractValue):
     retention: _RetentionPosture
 
 
+def _snapshot_context_capability(backend: object) -> _ContextBackendCapability | None:
+    """Take one fail-closed typed capability snapshot from a private backend."""
+    try:
+        capability_getter = getattr(backend, "context_capability", None)
+        capability = capability_getter() if callable(capability_getter) else None
+    except Exception:
+        return None
+    return capability if isinstance(capability, _ContextBackendCapability) else None
+
+
 def _capability_satisfies(
     capability: object,
     contract: object,
@@ -80,8 +90,8 @@ def _capability_satisfies(
         actual = capability.limits
         required = contract.limits
         return (
-            _valid_limit_values(actual)
-            and _valid_limit_values(required)
+            _valid_context_limits(actual)
+            and _valid_context_limits(required)
             and capability.profile is contract.profile
             and capability.schema_version is contract.schema_version
             and capability.ordering is contract.ordering
@@ -97,7 +107,7 @@ def _capability_satisfies(
         return False
 
 
-def _valid_limit_values(limits: object) -> bool:
+def _valid_context_limits(limits: object) -> bool:
     if not isinstance(limits, _ContextLimits):
         return False
     values = (

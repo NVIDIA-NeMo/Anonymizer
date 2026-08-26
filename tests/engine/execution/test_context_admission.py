@@ -40,6 +40,8 @@ from anonymizer.engine.execution.graph import (
     _ProtectionGraph,
     _TextDatum,
 )
+from anonymizer.engine.execution.graph_runtime import _AccountingGraphRuntime, _FrameExecutionBackend
+from anonymizer.engine.execution.protection_service import _GraphRuntimeBackend, _RedactProtectionService
 
 
 def test_graph_declares_separate_target_and_context_only_purposes() -> None:
@@ -72,6 +74,32 @@ def test_context_capability_is_typed_bounded_and_retention_disabled() -> None:
     )
     with pytest.raises(TypeError):
         contract.__reduce__()
+
+
+def test_preflight_rejects_a_raising_or_malformed_capability_snapshot() -> None:
+    contract, capability = _contract_and_capability()
+
+    class _Runtime:
+        def __init__(self, snapshot: object) -> None:
+            self.snapshot = snapshot
+
+        def context_capability(self) -> object:
+            if isinstance(self.snapshot, BaseException):
+                raise self.snapshot
+            return self.snapshot
+
+    for snapshot in (RuntimeError("backend unavailable"), object(), capability):
+        service = _RedactProtectionService(
+            cast(
+                _GraphRuntimeBackend,
+                _AccountingGraphRuntime(cast(_FrameExecutionBackend, _Runtime(snapshot))),
+            )
+        )
+        result = service.admit_context(_context_graph(), accounting_limits=_ACCOUNTING_LIMITS, contract=contract)
+        if snapshot is capability:
+            assert isinstance(result, _ContextPlan)
+        else:
+            assert result == _ContextRejected(_ContextAdmissionCode.BACKEND_INCOMPATIBLE)
 
 
 @pytest.mark.parametrize(

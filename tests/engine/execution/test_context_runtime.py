@@ -382,6 +382,56 @@ def test_runtime_rejects_a_capable_backend_without_context_execution_before_open
     assert raised.value.code is _ContextAdmissionCode.BACKEND_INCOMPATIBLE
 
 
+@pytest.mark.parametrize(
+    "runner",
+    [None, object(), lambda dataframe: dataframe],
+)
+def test_runtime_rejects_unusable_context_runner_before_ledger_or_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_slim_model_selection: ModelSelection,
+    runner: object,
+) -> None:
+    plan, capability = _plan()
+    backend = _ContextBackend(capability)
+    monkeypatch.setattr(backend, "run_context", runner, raising=False)
+
+    def reject_open(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("ledger must not open")
+
+    def reject_lowering(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("workframes must not be constructed")
+
+    monkeypatch.setattr(_AccountingLedger, "open", reject_open)
+    monkeypatch.setattr(graph_runtime, "_lower_context_workframes", reject_lowering)
+
+    with pytest.raises(_ContextGraphAdmissionError) as raised:
+        _run(plan, backend, stub_slim_model_selection)
+
+    assert raised.value.code is _ContextAdmissionCode.BACKEND_INCOMPATIBLE
+
+
+def test_runtime_recheck_handles_a_raising_capability_snapshot_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    plan, capability = _plan()
+    backend = _ContextBackend(capability)
+
+    def raising_snapshot() -> _ContextBackendCapability:
+        raise RuntimeError("backend unavailable")
+
+    def reject_open(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("ledger must not open")
+
+    monkeypatch.setattr(backend, "context_capability", raising_snapshot)
+    monkeypatch.setattr(_AccountingLedger, "open", reject_open)
+
+    with pytest.raises(_ContextGraphAdmissionError) as raised:
+        _run(plan, backend, stub_slim_model_selection)
+
+    assert raised.value.code is _ContextAdmissionCode.BACKEND_INCOMPATIBLE
+
+
 def test_context_target_frame_carries_exact_private_task_and_attempt_identities(
     monkeypatch: pytest.MonkeyPatch,
     stub_slim_model_selection: ModelSelection,
