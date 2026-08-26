@@ -183,14 +183,20 @@ class _ContextWorkframes(_PrivateWorkframeValue):
 
     @property
     def target_frame(self) -> pd.DataFrame:
+        if self._closed:
+            return self._target_frame.iloc[0:0].copy()
         return self._target_frame.copy()
 
     @property
     def context_frame(self) -> pd.DataFrame:
+        if self._closed:
+            return self._context_frame.iloc[0:0].copy()
         return self._context_frame.copy()
 
     @property
     def tasks(self) -> tuple[_TaskKey, ...]:
+        if self._closed:
+            return ()
         return self._tasks
 
     @property
@@ -232,6 +238,8 @@ class _ContextWorkframes(_PrivateWorkframeValue):
         if self._reconciled:
             raise _WorkframeStateError
         self._reconciled = True
+        if not self._dispatches_bound:
+            return _ContextReconciliation(_ContextReconciliationStatus.GLOBAL_INVALID)
         if not isinstance(evidence, tuple) or not all(isinstance(item, _ContextBindingEvidence) for item in evidence):
             return _ContextReconciliation(_ContextReconciliationStatus.GLOBAL_INVALID)
         if not all(_valid_binding_evidence(item) for item in evidence):
@@ -288,7 +296,7 @@ class _ContextWorkframes(_PrivateWorkframeValue):
                 or type(attestation.closed) is not bool
             ):
                 return _ContextCleanup(_ContextCleanupStatus.UNCONFIRMED)
-            if not self._reconciled:
+            if not self._dispatches_bound or not self._reconciled:
                 return _ContextCleanup(_ContextCleanupStatus.UNCONFIRMED)
             status = _ContextCleanupStatus.VERIFIED if attestation.closed else _ContextCleanupStatus.FAILED
             return _ContextCleanup(status)
@@ -301,6 +309,16 @@ class _ContextWorkframes(_PrivateWorkframeValue):
         if self._reconciled:
             raise _WorkframeStateError
         self._discard_owned_state()
+
+    def contain_discard_failure(self) -> None:
+        """Make owned state inaccessible after a failed pre-dispatch discard."""
+        self._closed = True
+        self._target_frame = self._target_frame.iloc[0:0].copy()
+        self._context_frame = self._context_frame.iloc[0:0].copy()
+        self._tasks = ()
+        self._expected = ()
+        self._artifact_id = None
+        self._required_artifacts = ()
 
     def _discard_owned_state(self) -> None:
         self._target_frame = self._target_frame.iloc[0:0].copy()

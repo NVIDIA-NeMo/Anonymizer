@@ -292,7 +292,7 @@ class _AccountingGraphRuntime:
         try:
             dispatches = self._dispatch_frontier(ledger, prepared, ready, correlations=correlations)
         except Exception:
-            self._discard_context_workframes(workframes, target_count=len(ready))
+            self._discard_context_workframes(ledger, workframes, target_count=len(ready))
             for task in ready:
                 ledger.mark_task_failed(task)
             return None
@@ -542,7 +542,12 @@ class _AccountingGraphRuntime:
             return cleanup.status
 
     @staticmethod
-    def _discard_context_workframes(workframes: _ContextWorkframes, *, target_count: int) -> None:
+    def _discard_context_workframes(
+        ledger: _AccountingLedger[T],
+        workframes: _ContextWorkframes,
+        *,
+        target_count: int,
+    ) -> None:
         """Discard unopened owned frames when atomic dispatch never committed."""
         with _observe_context_boundary(
             "cleanup",
@@ -555,7 +560,12 @@ class _AccountingGraphRuntime:
                 observation.outcome = "failed"
                 observation.reason = _CauseCode.CLEANUP_FAILED.value
                 observation.cleanup = _ContextCleanupStatus.FAILED.value
-                raise
+                try:
+                    workframes.contain_discard_failure()
+                except Exception:
+                    pass
+                ledger.mark_cleanup_failed()
+                return
             observation.cleanup = _ContextCleanupStatus.VERIFIED.value
 
     @staticmethod

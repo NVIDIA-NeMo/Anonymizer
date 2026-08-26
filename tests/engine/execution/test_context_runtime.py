@@ -516,6 +516,45 @@ def test_dispatch_failure_closes_constructed_workframes(
     assert len(lowered) == 1
     assert lowered[0].target_frame.empty
     assert lowered[0].context_frame.empty
+    rendered = repr(vars(lowered[0]))
+    assert all(value not in rendered for value in ("alpha", "beta", "gamma", "target-a", "context-c"))
+    with pytest.raises(_WorkframeClosedError):
+        lowered[0].artifact_id
+
+
+def test_discard_failure_after_uncommitted_dispatch_is_contained_and_embargoed(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    plan, capability = _plan()
+    backend = _ContextBackend(capability)
+    lowered: list[_ContextWorkframes] = []
+    real_lowering = graph_runtime._lower_context_workframes
+
+    def capture_lowering(*args: Any, **kwargs: Any) -> _ContextWorkframes:
+        frames = real_lowering(*args, **kwargs)
+        lowered.append(frames)
+        return frames
+
+    def fail_dispatch(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("dispatch unavailable")
+
+    def fail_discard(self: _ContextWorkframes) -> None:
+        raise RuntimeError("discard unavailable")
+
+    monkeypatch.setattr(graph_runtime, "_lower_context_workframes", capture_lowering)
+    monkeypatch.setattr(_AccountingLedger, "dispatch_batch", fail_dispatch)
+    monkeypatch.setattr(_ContextWorkframes, "discard_before_dispatch", fail_discard)
+
+    execution = _run(plan, backend, stub_slim_model_selection)
+
+    assert isinstance(execution.accounting.invocation, _InvocationFailed)
+    assert "cleanup_failed" in _invocation_causes(execution)
+    assert all(isinstance(group, _GroupWithheld) for group in execution.accounting.groups)
+    assert backend.calls == 0
+    assert len(lowered) == 1
+    assert lowered[0].target_frame.empty
+    assert lowered[0].context_frame.empty
     with pytest.raises(_WorkframeClosedError):
         lowered[0].artifact_id
 
@@ -564,6 +603,7 @@ def test_late_cancellation_preserves_private_success_but_embargos_release() -> N
     frames = _lower_context_workframes(plan, ready)
     correlations = tuple(work_id.value for work_id in frames.target_work_ids())
     dispatches = ledger.dispatch_batch(ready, row_token_values=correlations)
+    frames.bind_dispatches(dispatches)
     for dispatch in dispatches:
         ledger.accept_success(dispatch, dispatch.task.datum_id.value)
     evidence = tuple(

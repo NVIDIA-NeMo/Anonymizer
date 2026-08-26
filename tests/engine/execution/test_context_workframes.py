@@ -98,6 +98,7 @@ def test_lowering_keeps_target_and_ordered_context_frames_separate() -> None:
 
 def test_exact_binding_and_closure_evidence_verifies_then_closes_all_state() -> None:
     frames = _frames()
+    _bind_dispatches(frames)
     evidence = _exact_evidence(frames)
 
     reconciliation = frames.reconcile(evidence)
@@ -136,6 +137,7 @@ def test_dispatch_binding_is_an_absorbing_one_shot_transition() -> None:
 
 def test_missing_binding_is_local_to_its_compiled_owner() -> None:
     frames = _frames()
+    _bind_dispatches(frames)
 
     result = frames.reconcile(_exact_evidence(frames)[1:])
 
@@ -145,6 +147,7 @@ def test_missing_binding_is_local_to_its_compiled_owner() -> None:
 
 def test_cross_target_binding_is_a_global_attribution_failure() -> None:
     frames = _frames()
+    _bind_dispatches(frames)
     expected = frames.expected_bindings()
     _binding_id, _owner_work_id, _ordinal = expected[0]
     exact = _exact_evidence(frames)
@@ -162,10 +165,12 @@ def test_cross_target_binding_is_a_global_attribution_failure() -> None:
 
 def test_reordered_evidence_is_transport_only_and_known_duplicate_is_local() -> None:
     reordered = _frames()
+    _bind_dispatches(reordered)
     exact = tuple(reversed(_exact_evidence(reordered)))
     assert reordered.reconcile(exact).status is _ContextReconciliationStatus.VERIFIED
 
     duplicated = _frames()
+    _bind_dispatches(duplicated)
     exact_duplicate = _exact_evidence(duplicated)
     duplicate_evidence = (*exact_duplicate, exact_duplicate[0])
     result = duplicated.reconcile(duplicate_evidence)
@@ -187,6 +192,7 @@ def test_cleanup_requires_one_exact_trusted_artifact_attestation(
     status: _ContextCleanupStatus,
 ) -> None:
     frames = _frames()
+    _bind_dispatches(frames)
     assert frames.reconcile(_exact_evidence(frames)).status is _ContextReconciliationStatus.VERIFIED
 
     result = frames.close(
@@ -201,14 +207,16 @@ def test_cleanup_requires_one_exact_trusted_artifact_attestation(
     assert frames.context_frame.empty
 
 
-def test_cleanup_cannot_verify_before_binding_reconciliation() -> None:
+def test_pre_bind_evidence_and_attestation_fail_closed() -> None:
     frames = _frames()
 
-    result = frames.close(
+    reconciliation = frames.reconcile(_exact_evidence(frames))
+    cleanup = frames.close(
         (_BackendClosureAttestation(frames.artifact_id, _BackendArtifactClass.CONTEXT_REQUEST, True),)
     )
 
-    assert result.status is _ContextCleanupStatus.UNCONFIRMED
+    assert reconciliation.status is _ContextReconciliationStatus.GLOBAL_INVALID
+    assert cleanup.status is _ContextCleanupStatus.UNCONFIRMED
 
 
 @pytest.mark.parametrize(
@@ -231,6 +239,7 @@ def test_foreign_or_incompatible_cleanup_evidence_is_unconfirmed(
     attestation: _BackendClosureAttestation,
 ) -> None:
     frames = _frames()
+    _bind_dispatches(frames)
     evidence = _exact_evidence(frames)
     assert frames.reconcile(evidence).status is _ContextReconciliationStatus.VERIFIED
 
@@ -239,6 +248,7 @@ def test_foreign_or_incompatible_cleanup_evidence_is_unconfirmed(
 
 def test_mutated_context_payload_cannot_satisfy_a_compiled_binding() -> None:
     frames = _frames()
+    _bind_dispatches(frames)
     evidence = list(_exact_evidence(frames))
     evidence[0] = replace(evidence[0], payload_token=_ContextPayloadToken("foreign-payload"))
 
@@ -253,6 +263,7 @@ def test_mutated_context_payload_cannot_satisfy_a_compiled_binding() -> None:
 
 def test_malformed_unhashable_binding_evidence_fails_closed_and_can_cleanup() -> None:
     frames = _frames()
+    _bind_dispatches(frames)
     evidence = list(_exact_evidence(frames))
     object.__setattr__(evidence[0], "binding_id", cast(_ContextBindingId, []))
 
@@ -297,6 +308,10 @@ def _dispatches_for(frames) -> tuple[_Dispatch, ...]:
         )
         for index, (task, work_id) in enumerate(zip(frames.tasks, frames.target_work_ids(), strict=True))
     )
+
+
+def _bind_dispatches(frames) -> None:
+    frames.bind_dispatches(_dispatches_for(frames))
 
 
 def _identities(*values: str):
