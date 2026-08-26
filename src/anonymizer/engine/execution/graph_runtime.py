@@ -73,22 +73,6 @@ class _FrameExecutionBackend(Protocol):
     ) -> _PandasExecutionResult: ...
 
 
-class _ContextFrameExecutionBackend(_FrameExecutionBackend, Protocol):
-    def context_capability(self) -> _ContextBackendCapability: ...
-
-    def run_context(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        context_dataframe: pd.DataFrame,
-        artifact_id: _BackendArtifactId,
-        invocation: _CompiledInvocation,
-        data_summary: str | None,
-        preview_num_records: int | None,
-        verifier: _InvocationRowVerifier,
-    ) -> _PandasExecutionResult: ...
-
-
 @dataclass(frozen=True, slots=True, repr=False)
 class _ContextRunnerAdapter:
     """Validated private invocation shape for context-capable backends."""

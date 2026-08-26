@@ -313,21 +313,22 @@ class _ContextWorkframes(_PrivateWorkframeValue):
     def contain_discard_failure(self) -> None:
         """Make owned state inaccessible after a failed pre-dispatch discard."""
         self._closed = True
-        self._target_frame = self._target_frame.iloc[0:0].copy()
-        self._context_frame = self._context_frame.iloc[0:0].copy()
-        self._tasks = ()
-        self._expected = ()
-        self._artifact_id = None
-        self._required_artifacts = ()
+        try:
+            self._erase_owned_state()
+        except Exception:
+            pass
 
     def _discard_owned_state(self) -> None:
+        self._erase_owned_state()
+        self._closed = True
+
+    def _erase_owned_state(self) -> None:
         self._target_frame = self._target_frame.iloc[0:0].copy()
         self._context_frame = self._context_frame.iloc[0:0].copy()
         self._tasks = ()
         self._expected = ()
         self._artifact_id = None
         self._required_artifacts = ()
-        self._closed = True
 
     def _require_active(self) -> None:
         if self._closed:

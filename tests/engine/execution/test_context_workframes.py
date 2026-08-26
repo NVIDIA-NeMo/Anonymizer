@@ -219,6 +219,26 @@ def test_pre_bind_evidence_and_attestation_fail_closed() -> None:
     assert cleanup.status is _ContextCleanupStatus.UNCONFIRMED
 
 
+def test_discard_failure_containment_closes_before_best_effort_erasure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames = _frames()
+
+    def fail_erasure(self: object) -> None:
+        raise RuntimeError("erasure unavailable")
+
+    monkeypatch.setattr(type(frames), "_erase_owned_state", fail_erasure)
+
+    frames.contain_discard_failure()
+
+    assert frames.target_frame.empty
+    assert frames.context_frame.empty
+    with pytest.raises(_WorkframeClosedError):
+        frames.expected_bindings()
+    with pytest.raises(_WorkframeClosedError):
+        _ = frames.artifact_id
+
+
 @pytest.mark.parametrize(
     "attestation",
     [
