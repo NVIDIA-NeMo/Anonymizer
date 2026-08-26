@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
+import pandas as pd
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
@@ -211,7 +213,20 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
     baseline, application = apply_replacements_to_spans(
         str(row.get(COL_TEXT, "")), target_entities, replacements, allow_value_fallback=False
     )
-    row[COL_REPLACEMENT_APPLICATION] = application.to_metrics()
+    metrics: dict[str, Any] = application.to_metrics()
+    # DataDesigner checkpoints side-effect columns to Parquet as part of this same
+    # adapter call, potentially across multiple row-group/batch files whose schemas
+    # are inferred independently. A nested dict column that is sometimes `{}` and
+    # sometimes non-empty gets inferred as incompatible Arrow types across those
+    # files (an all-empty batch infers as `null`, a populated one as a `struct`),
+    # and reunifying them fails. Serialize to a JSON string instead -- always the
+    # same Arrow type regardless of content -- and let
+    # ``restore_empty_skipped_span_label_counts`` decode it back to a dict once the
+    # dataframe is back in our hands (see the analogous drop-before-run_workflow
+    # pattern in replace_runner.py / entity_coverage_judge.py, which isn't available
+    # here since this column is produced *during* the DataDesigner run).
+    metrics["skipped_span_label_counts"] = json.dumps(metrics["skipped_span_label_counts"], sort_keys=True)
+    row[COL_REPLACEMENT_APPLICATION] = metrics
     admitted_pairs = {(entity.value, entity.label) for entity in target_entities.entities}
     row[COL_REWRITE_REPLACEMENT_READY] = (
         replace_pairs <= admitted_pairs and application.applied_span_count == application.targeted_span_count
@@ -229,6 +244,27 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
         notation=str(row.get(COL_TAG_NOTATION, "bracket")),
     )
     return row
+
+
+def restore_empty_skipped_span_label_counts(dataframe: pd.DataFrame) -> None:
+    """Undo the Parquet-safe JSON-string encoding written by ``_prepare_rewrite_tagged_text``.
+
+    Mutates ``dataframe`` in place so ``skipped_span_label_counts`` is always a dict
+    (empty or not) in the trace returned to callers, matching ``ReplacementApplication``'s
+    documented contract.
+    """
+    if COL_REPLACEMENT_APPLICATION not in dataframe.columns:
+        return
+
+    def _restore(value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        counts = value.get("skipped_span_label_counts")
+        if not isinstance(counts, str):
+            return value
+        return {**value, "skipped_span_label_counts": json.loads(counts)}
+
+    dataframe[COL_REPLACEMENT_APPLICATION] = dataframe[COL_REPLACEMENT_APPLICATION].map(_restore)
 
 
 def _replace_pairs(disposition_block: object) -> set[tuple[str, str]]:
