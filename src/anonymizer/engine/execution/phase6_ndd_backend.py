@@ -11,7 +11,7 @@ from typing import TypeVar
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 
 from anonymizer.engine.constants import (
     COL_PHASE6_AUGMENTED,
@@ -71,10 +71,10 @@ class _Phase6NddStageError(RuntimeError):
 class _AugmentedSpan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    start: int
-    end: int
-    source_slice: str
-    detector_label: str
+    start: StrictInt
+    end: StrictInt
+    source_slice: StrictStr
+    detector_label: StrictStr
 
 
 class _AugmentedSpans(BaseModel):
@@ -92,9 +92,9 @@ class _DecisionKind(str, Enum):
 class _CandidateDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    ordinal: int
+    ordinal: StrictInt
     decision: _DecisionKind
-    proposed_label: str | None = None
+    proposed_label: StrictStr | None = None
 
 
 class _CandidateDecisions(BaseModel):

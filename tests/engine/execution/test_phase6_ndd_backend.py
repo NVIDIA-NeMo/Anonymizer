@@ -46,6 +46,10 @@ class _ScriptedAdapter:
     detector_payload: object
     calls: list[tuple[str, tuple[str, ...]]]
     prompts: list[str] = field(default_factory=list)
+    augmentation_payload: object = field(default_factory=lambda: {"entities": []})
+    validation_payload: object = field(
+        default_factory=lambda: {"decisions": [{"ordinal": 0, "decision": "keep", "proposed_label": None}]}
+    )
 
     def run_workflow(
         self,
@@ -61,11 +65,9 @@ class _ScriptedAdapter:
         if workflow_name == "phase6-detect":
             output[COL_RAW_DETECTED] = [self.detector_payload]
         elif workflow_name == "phase6-augment":
-            output[COL_PHASE6_AUGMENTED] = [{"entities": []}]
+            output[COL_PHASE6_AUGMENTED] = [self.augmentation_payload]
         elif workflow_name == "phase6-validate":
-            output[COL_PHASE6_VALIDATION] = [
-                {"decisions": [{"ordinal": 0, "decision": "keep", "proposed_label": None}]}
-            ]
+            output[COL_PHASE6_VALIDATION] = [self.validation_payload]
         else:  # pragma: no cover - challenge guard
             raise AssertionError(workflow_name)
         return WorkflowRunResult(output, [])
@@ -120,6 +122,48 @@ def test_phase6_ndd_augmentation_uses_valid_jinja_for_target_and_context() -> No
     assert _jinja(COL_PHASE6_CONTEXT) in prompt
 
 
+@pytest.mark.parametrize(
+    "field_value",
+    [
+        pytest.param("0", id="string"),
+        pytest.param(0.0, id="float"),
+        pytest.param(False, id="boolean"),
+    ],
+)
+@pytest.mark.parametrize("field_name", ["start", "end"])
+def test_phase6_ndd_augmentation_rejects_non_integer_offsets(field_name: str, field_value: object) -> None:
+    entity: dict[str, object] = {
+        "start": 0,
+        "end": 5,
+        "source_slice": "Alice",
+        "detector_label": "name",
+    }
+    entity[field_name] = field_value
+    payload = {"entities": [entity]}
+    backend = _backend(_ScriptedAdapter({"entities": []}, [], augmentation_payload=payload))
+    target = _MentionTarget(_MentionTargetToken(), _DatumId("target"), "Alice")
+
+    with pytest.raises(_Phase6NddStageError):
+        backend.augment(_Phase6AugmentationWork(target, ()))
+
+
+@pytest.mark.parametrize("field_name", ["source_slice", "detector_label"])
+def test_phase6_ndd_augmentation_rejects_coerced_string_fields(field_name: str) -> None:
+    entity: dict[str, object] = {
+        "start": 0,
+        "end": 5,
+        "source_slice": "Alice",
+        "detector_label": "name",
+    }
+    entity[field_name] = b"coerced"
+    payload = {"entities": [entity]}
+    backend = _backend(_ScriptedAdapter({"entities": []}, [], augmentation_payload=payload))
+    target = _MentionTarget(_MentionTargetToken(), _DatumId("target"), "Alice")
+
+    with pytest.raises(_Phase6NddStageError):
+        backend.augment(_Phase6AugmentationWork(target, ()))
+
+
 def test_phase6_ndd_validator_rejects_a_missing_candidate_decision() -> None:
     backend = _backend(_ScriptedAdapter({"entities": []}, []))
     target = _MentionTarget(_MentionTargetToken(), _DatumId("target"), "Alice Bob")
@@ -138,3 +182,47 @@ def test_phase6_ndd_validator_rejects_a_missing_candidate_decision() -> None:
 
     with pytest.raises(_Phase6NddStageError):
         backend.validate(_Phase6ValidationWork(target, candidates))
+
+
+@pytest.mark.parametrize(
+    "ordinal",
+    [
+        pytest.param("0", id="string"),
+        pytest.param(0.0, id="float"),
+        pytest.param(False, id="boolean"),
+    ],
+)
+def test_phase6_ndd_validator_rejects_non_integer_ordinals(ordinal: object) -> None:
+    payload = {"decisions": [{"ordinal": ordinal, "decision": "drop", "proposed_label": None}]}
+    backend = _backend(_ScriptedAdapter({"entities": []}, [], validation_payload=payload))
+    target = _MentionTarget(_MentionTargetToken(), _DatumId("target"), "Alice")
+    candidate = _ProvisionalCandidate(
+        _CandidateToken(),
+        target.token,
+        0,
+        5,
+        "Alice",
+        "name",
+        _MentionProvenance.SPAN_DETECTOR,
+    )
+
+    with pytest.raises(_Phase6NddStageError):
+        backend.validate(_Phase6ValidationWork(target, (candidate,)))
+
+
+def test_phase6_ndd_validator_rejects_a_coerced_proposed_label() -> None:
+    payload = {"decisions": [{"ordinal": 0, "decision": "reclass", "proposed_label": b"name"}]}
+    backend = _backend(_ScriptedAdapter({"entities": []}, [], validation_payload=payload))
+    target = _MentionTarget(_MentionTargetToken(), _DatumId("target"), "Alice")
+    candidate = _ProvisionalCandidate(
+        _CandidateToken(),
+        target.token,
+        0,
+        5,
+        "Alice",
+        "name",
+        _MentionProvenance.SPAN_DETECTOR,
+    )
+
+    with pytest.raises(_Phase6NddStageError):
+        backend.validate(_Phase6ValidationWork(target, (candidate,)))
