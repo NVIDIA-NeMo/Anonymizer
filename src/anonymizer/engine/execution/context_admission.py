@@ -128,6 +128,7 @@ def _compile_context_plan(
     accounting_limits: _AccountingLimits,
     contract: object,
     capability: object,
+    stages: tuple[str, ...] = ("protect",),
 ) -> _ContextAdmissionResult:
     """Compile one detached target/context projection before invocation effects."""
     rejected_or_datums = _compile_all_datums(graph, accounting_limits)
@@ -149,7 +150,7 @@ def _compile_context_plan(
         atomic_groups=graph.atomic_groups,
         dependencies=graph.dependencies,
     )
-    accounting = _compile_accounting_plan(projected, limits=accounting_limits)
+    accounting = _compile_accounting_plan(projected, limits=accounting_limits, stages=stages)
     if isinstance(accounting, _AccountingRejected):
         return _ContextRejected(accounting.code)
     if not _valid_contract(contract):

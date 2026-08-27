@@ -44,6 +44,7 @@ from anonymizer.engine.execution.accounting_outcomes import (
     _InvocationFailed,
     _InvocationInconsistent,
     _InvocationLost,
+    _InvocationOutcome,
     _StageBlocked,
     _StageCancelled,
     _StageFailed,
@@ -484,6 +485,15 @@ class _AccountingLedger(Generic[T]):
                 return "blocked"
             else:
                 return "waiting"
+        explicit_states = tuple(
+            self._states[predecessor.prerequisite]
+            for predecessor in self._plan.task_predecessors
+            if predecessor.dependent == task
+        )
+        if any(_is_terminal(state) and not isinstance(state, _TaskSucceeded) for state in explicit_states):
+            return "blocked"
+        if any(not isinstance(state, _TaskSucceeded) for state in explicit_states):
+            return "waiting"
         prerequisites = tuple(
             dependency.prerequisite for dependency in self._plan.dependencies if dependency.dependent == task.datum_id
         )
@@ -634,12 +644,60 @@ def _reduce_result(
         for dependency in plan.dependencies
     )
     stages = tuple(_reduce_stage(stage, tasks) for stage in plan.stages)
-    qualified = frozenset(outcome.datum_id for outcome in datums if isinstance(outcome, _DatumQualified))
-    if global_inconsistent or invocation_lost or cancellation_requested or cleanup_failed or cleanup_unconfirmed:
+    groups = _reduce_groups(
+        plan,
+        datum_by_id,
+        group_release_predicate,
+        cancellation_requested=cancellation_requested,
+        global_inconsistent=global_inconsistent,
+        invocation_lost=invocation_lost,
+        cleanup_failed=cleanup_failed,
+        cleanup_unconfirmed=cleanup_unconfirmed,
+    )
+    all_causes = _cause_union((*tasks, *datums, *dependencies, *stages, *groups))
+    invocation = _reduce_invocation(
+        groups,
+        all_causes,
+        cancellation_requested=cancellation_requested,
+        global_inconsistent=global_inconsistent,
+        invocation_lost=invocation_lost,
+        cleanup_failed=cleanup_failed,
+        cleanup_unconfirmed=cleanup_unconfirmed,
+    )
+    return _AccountingResult(tasks, datums, dependencies, stages, groups, invocation)
+
+
+def _reduce_groups(
+    plan: _AccountingPlan,
+    datum_by_id: dict[_DatumId, _DatumOutcome[T]],
+    group_release_predicate: Callable[[tuple[tuple[_DatumId, T], ...]], bool],
+    *,
+    cancellation_requested: bool,
+    global_inconsistent: bool,
+    invocation_lost: bool,
+    cleanup_failed: bool,
+    cleanup_unconfirmed: bool,
+) -> tuple[_GroupOutcome[T], ...]:
+    qualified = frozenset(outcome.datum_id for outcome in datum_by_id.values() if isinstance(outcome, _DatumQualified))
+    embargoed = (
+        global_inconsistent or invocation_lost or cancellation_requested or cleanup_failed or cleanup_unconfirmed
+    )
+    predicate_failed_groups: frozenset[_AtomicGroupKey] = frozenset()
+    if embargoed:
         qualified = frozenset()
+    else:
+        predicate_failed_groups = _failed_group_predicates(
+            plan,
+            datum_by_id,
+            qualified,
+            group_release_predicate,
+        )
+        qualified -= frozenset(
+            member for group in plan.atomic_groups if group.key in predicate_failed_groups for member in group.members
+        )
     decision = _qualify_release(plan, qualified)
     groups = tuple(
-        _reduce_group(plan, group.key, datum_by_id, decision.released_groups, group_release_predicate)
+        _reduce_group(plan, group.key, datum_by_id, decision.released_groups, predicate_failed_groups)
         for group in plan.atomic_groups
     )
     cleanup_code = (
@@ -647,20 +705,30 @@ def _reduce_result(
     )
     if cleanup_code is not None:
         groups = tuple(_GroupWithheld(group.key, _causes(cleanup_code)) for group in plan.atomic_groups)
-    all_causes = _cause_union((*tasks, *datums, *dependencies, *stages, *groups))
+    return groups
+
+
+def _reduce_invocation(
+    groups: tuple[_GroupOutcome[T], ...],
+    all_causes: _CauseSet,
+    *,
+    cancellation_requested: bool,
+    global_inconsistent: bool,
+    invocation_lost: bool,
+    cleanup_failed: bool,
+    cleanup_unconfirmed: bool,
+) -> _InvocationOutcome[T]:
     if cleanup_unconfirmed:
-        invocation = _InvocationInconsistent(all_causes | _causes(_CauseCode.CLEANUP_UNCONFIRMED))
-    elif cleanup_failed:
-        invocation = _InvocationFailed(all_causes | _causes(_CauseCode.CLEANUP_FAILED))
-    elif global_inconsistent:
-        invocation = _InvocationInconsistent(all_causes | _causes(_CauseCode.CONTRADICTORY))
-    elif invocation_lost:
-        invocation = _InvocationLost(all_causes | _causes(_CauseCode.TRANSPORT_LOST))
-    elif cancellation_requested:
-        invocation = _InvocationCancelled(all_causes | _causes(_CauseCode.CANCELLATION))
-    else:
-        invocation = _InvocationCompleted(groups)
-    return _AccountingResult(tasks, datums, dependencies, stages, groups, invocation)
+        return _InvocationInconsistent(all_causes | _causes(_CauseCode.CLEANUP_UNCONFIRMED))
+    if cleanup_failed:
+        return _InvocationFailed(all_causes | _causes(_CauseCode.CLEANUP_FAILED))
+    if global_inconsistent:
+        return _InvocationInconsistent(all_causes | _causes(_CauseCode.CONTRADICTORY))
+    if invocation_lost:
+        return _InvocationLost(all_causes | _causes(_CauseCode.TRANSPORT_LOST))
+    if cancellation_requested:
+        return _InvocationCancelled(all_causes | _causes(_CauseCode.CANCELLATION))
+    return _InvocationCompleted(groups)
 
 
 def _construction_failed_result(
@@ -739,7 +807,7 @@ def _reduce_group(
     group_key: _AtomicGroupKey,
     datum_by_id: dict[_DatumId, _DatumOutcome[T]],
     released_groups: frozenset[_AtomicGroupKey],
-    release_predicate: Callable[[tuple[tuple[_DatumId, T], ...]], bool],
+    predicate_failed_groups: frozenset[_AtomicGroupKey],
 ) -> _GroupOutcome[T]:
     group = next(group for group in plan.atomic_groups if group.key == group_key)
     member_outcomes = tuple(datum_by_id[datum.id] for datum in plan.datums if datum.id in group.members)
@@ -749,10 +817,33 @@ def _reduce_group(
         )
         if len(outputs) != len(group.members):
             return _GroupWithheld(group.key, _causes(_CauseCode.RELEASE_PREDICATE_FAILED))
-        qualified = release_predicate(outputs)
-        if type(qualified) is not bool:
-            raise _ResultConstructionFailure
-        if qualified:
-            return _GroupReleased(group.key, outputs)
+        return _GroupReleased(group.key, outputs)
+    if group.key in predicate_failed_groups:
         return _GroupWithheld(group.key, _causes(_CauseCode.RELEASE_PREDICATE_FAILED))
     return _GroupWithheld(group.key, _cause_union(member_outcomes) | _causes(_CauseCode.PREREQUISITE))
+
+
+def _failed_group_predicates(
+    plan: _AccountingPlan,
+    datum_by_id: dict[_DatumId, _DatumOutcome[T]],
+    qualified: frozenset[_DatumId],
+    release_predicate: Callable[[tuple[tuple[_DatumId, T], ...]], bool],
+) -> frozenset[_AtomicGroupKey]:
+    """Evaluate complete groups before dependency propagation can release dependents."""
+    failed: set[_AtomicGroupKey] = set()
+    for group in plan.atomic_groups:
+        if not frozenset(group.members).issubset(qualified):
+            continue
+        outputs = tuple(
+            (datum_id, outcome.candidate)
+            for datum_id in group.members
+            if isinstance((outcome := datum_by_id[datum_id]), _DatumQualified)
+        )
+        if len(outputs) != len(group.members):
+            raise _ResultConstructionFailure
+        passed = release_predicate(outputs)
+        if type(passed) is not bool:
+            raise _ResultConstructionFailure
+        if not passed:
+            failed.add(group.key)
+    return frozenset(failed)

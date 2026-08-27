@@ -1099,6 +1099,27 @@ def test_group_release_predicate_requires_an_exact_boolean() -> None:
     assert "private-group-canary" not in repr(result)
 
 
+def test_group_predicate_failure_propagates_through_explicit_dependencies() -> None:
+    graph = _graph("a", "b")
+    graph = replace(graph, dependencies=(_dependency(graph, "a", "b"),))
+    plan = _compiled(graph)
+    ledger = _ledger(plan)
+    ledger.open()
+
+    first = ledger.ready_tasks()
+    assert tuple(task.datum_id.value for task in first) == ("a",)
+    ledger.accept_success(ledger.dispatch(first[0]), "protected-a")
+    second = ledger.ready_tasks()
+    assert tuple(task.datum_id.value for task in second) == ("b",)
+    ledger.accept_success(ledger.dispatch(second[0]), "protected-b")
+
+    result = ledger.finish(
+        group_release_predicate=lambda outputs: all(datum_id.value != "a" for datum_id, _output in outputs)
+    )
+
+    assert tuple(type(group) for group in result.groups) == (_GroupWithheld, _GroupWithheld)
+
+
 def test_accounting_admission_compiles_a_detached_singleton_plan() -> None:
     source = _TextDatum(_DatumId("datum-a"), "synthetic input")
 

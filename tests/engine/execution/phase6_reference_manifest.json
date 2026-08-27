@@ -1,0 +1,67 @@
+{
+  "alphabet": [
+    "A",
+    "é",
+    "😀",
+    "é",
+    " "
+  ],
+  "canonical_trace_count": 21,
+  "case_count": 21,
+  "digest": "b1433f0eb6fb23621a66927a5f996a272553c513e512089acb688b569f28880b",
+  "event_alphabet": [
+    "dispatch",
+    "terminal",
+    "candidate_decision",
+    "evidence",
+    "finalize",
+    "patch",
+    "transform",
+    "verify",
+    "group_verify",
+    "release",
+    "cancel",
+    "trusted_stop",
+    "loss",
+    "teardown"
+  ],
+  "generator_version": "phase6-finite-envelope/v1",
+  "independence_relation": [
+    [
+      "candidate_decision",
+      "evidence"
+    ],
+    [
+      "patch",
+      "group_verify"
+    ],
+    [
+      "terminal",
+      "terminal"
+    ]
+  ],
+  "max_event_count": 45,
+  "ordered_races": [
+    [
+      "dispatch",
+      "terminal"
+    ],
+    [
+      "cancel",
+      "terminal"
+    ],
+    [
+      "verify",
+      "release"
+    ],
+    [
+      "finalize",
+      "release"
+    ],
+    [
+      "teardown",
+      "release"
+    ]
+  ],
+  "reference_model_version": "phase6-reference/v1"
+}

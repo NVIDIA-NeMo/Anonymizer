@@ -30,6 +30,12 @@ class _TaskKey(_PrivateAccountingPlanValue):
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class _TaskPredecessor(_PrivateAccountingPlanValue):
+    prerequisite: _TaskKey
+    dependent: _TaskKey
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _CompiledDependency(_PrivateAccountingPlanValue):
     prerequisite: _DatumId
     dependent: _DatumId
@@ -63,7 +69,23 @@ class _AccountingPlan(_PrivateAccountingPlanValue):
     dependencies: tuple[_CompiledDependency, ...]
     atomic_groups: tuple[_CompiledAtomicGroup, ...]
     topological_datums: tuple[_DatumId, ...]
+    task_predecessors: tuple[_TaskPredecessor, ...] = ()
     _proof: _AccountingPlanProof | None = field(default=None, compare=False)
+
+    def with_task_predecessors(self, predecessors: tuple[_TaskPredecessor, ...]) -> _AccountingPlan:
+        """Return a resealed plan with explicit compiler-owned task readiness."""
+        if not _is_admitted_accounting_plan(self):
+            raise TypeError("private accounting plan is not admitted")
+        validated = _validate_task_predecessors(self, predecessors)
+        return _admit_accounting_plan(
+            self.datums,
+            self.stages,
+            self.tasks,
+            self.dependencies,
+            self.atomic_groups,
+            self.topological_datums,
+            validated,
+        )
 
 
 def _admit_accounting_plan(
@@ -73,8 +95,9 @@ def _admit_accounting_plan(
     dependencies: tuple[_CompiledDependency, ...],
     atomic_groups: tuple[_CompiledAtomicGroup, ...],
     topological_datums: tuple[_DatumId, ...],
+    task_predecessors: tuple[_TaskPredecessor, ...] = (),
 ) -> _AccountingPlan:
-    values = (datums, stages, tasks, dependencies, atomic_groups, topological_datums)
+    values = (datums, stages, tasks, dependencies, atomic_groups, topological_datums, task_predecessors)
     plan = _AccountingPlan(*values)
     snapshot = _plan_snapshot(plan)
     if snapshot is None:
@@ -98,9 +121,69 @@ def _plan_snapshot(plan: _AccountingPlan) -> tuple[object, ...] | None:
             tuple((dependency.prerequisite.value, dependency.dependent.value) for dependency in plan.dependencies),
             tuple((group.key, tuple(member.value for member in group.members)) for group in plan.atomic_groups),
             tuple(datum_id.value for datum_id in plan.topological_datums),
+            tuple(
+                (
+                    predecessor.prerequisite.stage.value,
+                    predecessor.prerequisite.datum_id.value,
+                    predecessor.dependent.stage.value,
+                    predecessor.dependent.datum_id.value,
+                )
+                for predecessor in plan.task_predecessors
+            ),
         )
     except (AttributeError, TypeError):
         return None
+
+
+def _validate_task_predecessors(
+    plan: _AccountingPlan,
+    predecessors: object,
+) -> tuple[_TaskPredecessor, ...]:
+    if not isinstance(predecessors, tuple) or not all(
+        isinstance(predecessor, _TaskPredecessor) for predecessor in predecessors
+    ):
+        raise TypeError("private task predecessors are malformed")
+    task_set = frozenset(plan.tasks)
+    edges = tuple((predecessor.prerequisite, predecessor.dependent) for predecessor in predecessors)
+    implicit = frozenset(
+        (
+            _TaskKey(plan.stages[stage_index - 1], task.datum_id),
+            task,
+        )
+        for task in plan.tasks
+        if (stage_index := plan.stages.index(task.stage)) > 0
+    )
+    if (
+        any(prerequisite not in task_set or dependent not in task_set for prerequisite, dependent in edges)
+        or any(prerequisite == dependent for prerequisite, dependent in edges)
+        or len(set(edges)) != len(edges)
+        or any(edge in implicit for edge in edges)
+    ):
+        raise TypeError("private task predecessors are malformed")
+    _validate_task_predecessor_dag(plan.tasks, (*implicit, *edges))
+    return tuple(predecessors)
+
+
+def _validate_task_predecessor_dag(
+    tasks: tuple[_TaskKey, ...],
+    edges: tuple[tuple[_TaskKey, _TaskKey], ...],
+) -> None:
+    incoming = {task: 0 for task in tasks}
+    dependents: dict[_TaskKey, list[_TaskKey]] = {task: [] for task in tasks}
+    for prerequisite, dependent in edges:
+        incoming[dependent] += 1
+        dependents[prerequisite].append(dependent)
+    ready = [task for task in tasks if incoming[task] == 0]
+    visited = 0
+    while ready:
+        task = ready.pop(0)
+        visited += 1
+        for dependent in dependents[task]:
+            incoming[dependent] -= 1
+            if incoming[dependent] == 0:
+                ready.append(dependent)
+    if visited != len(tasks):
+        raise TypeError("private task predecessors contain a cycle")
 
 
 @dataclass(frozen=True, slots=True)
