@@ -335,10 +335,12 @@ def test_public_display_renders_the_selected_transformed_record(tmp_path: Path) 
         data=input_data,
     )
 
-    with patch("IPython.display.display") as display:
+    display = Mock()
+    ipython_display = Mock(HTML=lambda html: html, display=display)
+    with patch.dict("sys.modules", {"IPython": Mock(), "IPython.display": ipython_display}):
         result.display_record(index=1)
 
-    rendered = display.call_args.args[0].data
+    rendered = display.call_args.args[0]
     assert "Bob" in rendered
     assert "[REDACTED_FIRST_NAME]" in rendered
     assert "Carol" not in rendered
