@@ -9,6 +9,9 @@ import json
 from pathlib import Path
 from typing import cast
 
+import pytest
+
+from anonymizer.engine.execution import role_policy as role_policy_module
 from anonymizer.engine.execution.graph import _DatumId
 from anonymizer.engine.execution.mention_admission import (
     _AnchoredMention,
@@ -23,6 +26,7 @@ from anonymizer.engine.execution.role_policy import (
     _ClassifiedRole,
     _classify_roles,
     _compile_role_policy,
+    _load_redact_role_policy,
     _ResolvedGraph,
     _RolePolicy,
     _RolePolicyRejected,
@@ -122,3 +126,93 @@ def test_redact_role_policy_manifest_freezes_fail_closed_structural_version() ->
         "mappings": [],
         "version": _RolePolicyVersion.V1.value,
     }
+
+
+@pytest.mark.parametrize(
+    "manifest_text",
+    [
+        pytest.param("{", id="invalid-json"),
+        pytest.param(
+            json.dumps(
+                {
+                    "digest": "e11a29db1af26c9572e1b4dec9e0a91e80966c6de1d813a378b64210a3bdfc40",
+                    "mappings": [],
+                    "unexpected": True,
+                    "version": _RolePolicyVersion.V1.value,
+                }
+            ),
+            id="extra-key",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "digest": "e11a29db1af26c9572e1b4dec9e0a91e80966c6de1d813a378b64210a3bdfc40",
+                    "mappings": {},
+                    "version": _RolePolicyVersion.V1.value,
+                }
+            ),
+            id="non-list-mappings",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "digest": "e11a29db1af26c9572e1b4dec9e0a91e80966c6de1d813a378b64210a3bdfc40",
+                    "mappings": [["name"]],
+                    "version": _RolePolicyVersion.V1.value,
+                }
+            ),
+            id="malformed-mapping",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "digest": "e11a29db1af26c9572e1b4dec9e0a91e80966c6de1d813a378b64210a3bdfc40",
+                    "mappings": [],
+                    "version": 1,
+                }
+            ),
+            id="non-string-version",
+        ),
+    ],
+)
+def test_redact_role_policy_manifest_loader_rejects_noncanonical_content(
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_text: str,
+) -> None:
+    class _ManifestResource:
+        def joinpath(self, _name: str) -> _ManifestResource:
+            return self
+
+        def read_text(self, *, encoding: str) -> str:
+            assert encoding == "utf-8"
+            return manifest_text
+
+    monkeypatch.setattr(role_policy_module, "files", lambda _package: _ManifestResource())
+
+    assert isinstance(_load_redact_role_policy(), _RolePolicyRejected)
+
+
+def test_redact_role_policy_manifest_loader_rejects_a_self_consistent_nonempty_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nonempty = _compile_role_policy(_RolePolicyVersion.V1, (("name", "person_name"),))
+    assert isinstance(nonempty, _RolePolicy)
+    manifest_text = json.dumps(
+        {
+            "digest": nonempty.digest,
+            "mappings": [["name", "person_name"]],
+            "version": _RolePolicyVersion.V1.value,
+        }
+    )
+
+    class _ManifestResource:
+        def joinpath(self, _name: str) -> _ManifestResource:
+            return self
+
+        def read_text(self, *, encoding: str) -> str:
+            assert encoding == "utf-8"
+            return manifest_text
+
+    monkeypatch.setattr(role_policy_module, "files", lambda _package: _ManifestResource())
+
+    assert isinstance(_load_redact_role_policy(), _RolePolicyRejected)

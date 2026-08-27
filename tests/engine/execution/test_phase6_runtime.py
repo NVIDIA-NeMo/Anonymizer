@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import pickle
 from dataclasses import replace
 
+import pytest
+
+from anonymizer.engine.execution import role_policy as role_policy_module
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_outcomes import _InvocationFailed, _InvocationInconsistent
 from anonymizer.engine.execution.accounting_plan import _AccountingLimits
@@ -43,6 +47,7 @@ from anonymizer.engine.execution.phase6_plan import (
     _compile_phase6_plan,
     _is_admitted_phase6_plan,
     _Phase6Plan,
+    _Phase6Rejected,
 )
 from anonymizer.engine.execution.phase6_runtime import (
     _CandidateProposal,
@@ -130,6 +135,35 @@ def test_phase6_plan_freezes_stages_target_only_resolver_scopes_and_predecessors
         assert "not serializable" in str(error)
     else:
         raise AssertionError("Phase 6 plans must remain private")
+
+
+def test_phase6_plan_rejects_a_role_policy_manifest_digest_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _ManifestResource:
+        def joinpath(self, _name: str) -> _ManifestResource:
+            return self
+
+        def read_text(self, *, encoding: str) -> str:
+            assert encoding == "utf-8"
+            return json.dumps(
+                {
+                    "digest": "0" * 64,
+                    "mappings": [],
+                    "version": "phase6-role-result/v1",
+                }
+            )
+
+    monkeypatch.setattr(role_policy_module, "files", lambda _package: _ManifestResource(), raising=False)
+    contract, capability = _contract_and_capability()
+
+    result = _compile_phase6_plan(
+        _context_graph(),
+        accounting_limits=_ACCOUNTING_LIMITS,
+        context_contract=contract,
+        capability=capability,
+        mention_limits=_MENTION_LIMITS,
+    )
+
+    assert isinstance(result, _Phase6Rejected)
 
 
 def test_phase6_runtime_accounts_effects_and_releases_exact_local_redact_outputs() -> None:

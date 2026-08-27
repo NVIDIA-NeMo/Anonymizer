@@ -35,11 +35,10 @@ from anonymizer.engine.execution.mention_admission import (
 )
 from anonymizer.engine.execution.mention_resolution import _ResolverScope
 from anonymizer.engine.execution.role_policy import (
-    _compile_role_policy,
     _is_admitted_policy,
+    _load_redact_role_policy,
     _RolePolicy,
     _RolePolicyRejected,
-    _RolePolicyVersion,
 )
 
 
@@ -130,7 +129,7 @@ def _compile_phase6_plan(
         return _Phase6Rejected(context.code)
     if not _valid_mention_limits(mention_limits):
         return _Phase6Rejected(_Phase6PlanRejectionCode.INVALID_PROFILE)
-    policy = _compile_role_policy(_RolePolicyVersion.V1, ())
+    policy = _load_redact_role_policy()
     if isinstance(policy, _RolePolicyRejected):
         return _Phase6Rejected(_Phase6PlanRejectionCode.INVALID_PROFILE)
     return _materialize_phase6_plan(context, mention_limits, policy)

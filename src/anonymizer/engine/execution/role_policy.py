@@ -9,6 +9,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
+from importlib.resources import files
 from typing import TypeAlias
 
 from anonymizer.engine.execution.mention_admission import _AnchoredMention, _MentionId
@@ -91,6 +92,34 @@ class _RolePolicyRejected(_PrivateRoleValue):
 
 
 _ROLE_POLICY_SEAL = object()
+_REDACT_ROLE_POLICY_RESOURCE = "phase6_redact_role_policy.json"
+
+
+def _load_redact_role_policy() -> _RolePolicy | _RolePolicyRejected:
+    try:
+        payload = json.loads(
+            files("anonymizer.engine.execution").joinpath(_REDACT_ROLE_POLICY_RESOURCE).read_text(encoding="utf-8")
+        )
+        if type(payload) is not dict or set(payload) != {"digest", "mappings", "version"}:
+            raise TypeError
+        digest = payload["digest"]
+        mappings = payload["mappings"]
+        version = payload["version"]
+        if type(digest) is not str or type(mappings) is not list or type(version) is not str:
+            raise TypeError
+        if mappings:
+            raise ValueError
+        parsed_mappings: list[tuple[str, str]] = []
+        for mapping in mappings:
+            if type(mapping) is not list or len(mapping) != 2 or any(type(value) is not str for value in mapping):
+                raise TypeError
+            parsed_mappings.append((mapping[0], mapping[1]))
+        policy = _compile_role_policy(_RolePolicyVersion(version), tuple(parsed_mappings))
+        if isinstance(policy, _RolePolicyRejected) or digest != policy.digest:
+            raise ValueError
+        return policy
+    except (OSError, TypeError, ValueError):
+        return _RolePolicyRejected(_RolePolicyRejectionCode.UNSUPPORTED_ROLE)
 
 
 def _compile_role_policy(
