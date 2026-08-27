@@ -6,9 +6,10 @@
     "é",
     " "
   ],
-  "canonical_trace_count": 21,
+  "actual_event_count": 446,
+  "canonical_trace_count": 44,
   "case_count": 21,
-  "digest": "b1433f0eb6fb23621a66927a5f996a272553c513e512089acb688b569f28880b",
+  "digest": "37d92a09fda08d77d6f7f69447543d5eff37c0796ddf4a0098cb736b2c45902f",
   "event_alphabet": [
     "dispatch",
     "terminal",
@@ -23,9 +24,11 @@
     "cancel",
     "trusted_stop",
     "loss",
+    "cleanup",
+    "immutable_accept",
     "teardown"
   ],
-  "generator_version": "phase6-finite-envelope/v1",
+  "generator_version": "phase6-finite-envelope/v3",
   "independence_relation": [
     [
       "candidate_decision",
@@ -40,6 +43,7 @@
       "terminal"
     ]
   ],
+  "lifecycle_trace_count": 13,
   "max_event_count": 45,
   "ordered_races": [
     [
@@ -60,8 +64,28 @@
     ],
     [
       "teardown",
-      "release"
+      "immutable_accept"
     ]
   ],
-  "reference_model_version": "phase6-reference/v1"
+  "race_trace_count": 23,
+  "reference_model_version": "phase6-reference/v3",
+  "schedule_class_counts": {
+    "cancel-after-verification": 1,
+    "cancel-dispatch": 2,
+    "cancel-terminal": 2,
+    "cleanup-failure": 1,
+    "contradictory-record-patch": 2,
+    "dispatch-terminal": 2,
+    "duplicate-resolver-completion": 1,
+    "finalize-release": 2,
+    "late-candidate-after-cancel": 1,
+    "late-candidate-after-loss": 1,
+    "late-evidence-after-cancel": 1,
+    "late-evidence-after-loss": 1,
+    "local-failure-independent-success": 1,
+    "success": 21,
+    "teardown-failure-after-acceptance": 1,
+    "teardown-acceptance": 2,
+    "verify-release": 2
+  }
 }

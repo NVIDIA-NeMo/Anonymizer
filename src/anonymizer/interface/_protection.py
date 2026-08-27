@@ -30,14 +30,16 @@ from anonymizer.engine.execution.context_contract import (
     _ContextSchemaVersion,
 )
 from anonymizer.engine.execution.graph import _DatumId, _TextDatum, _trivial_graph
-from anonymizer.engine.execution.graph_runtime import _AccountingGraphRuntime
 from anonymizer.engine.execution.invocation import _CompiledInvocation
-from anonymizer.engine.execution.pandas_runtime import _PandasRuntime
+from anonymizer.engine.execution.mention_admission import _MentionLimits
+from anonymizer.engine.execution.phase6_ndd_backend import _Phase6NddBackend
+from anonymizer.engine.execution.phase6_plan import _Phase6Rejected
+from anonymizer.engine.execution.phase6_runtime import _Phase6EffectBackend
 from anonymizer.engine.execution.protection_service import (
     _GraphProtectionFailed,
     _GraphProtectionResult,
     _GraphProtectionSucceeded,
-    _RedactProtectionService,
+    _Phase6RedactProtectionService,
 )
 
 if TYPE_CHECKING:
@@ -48,6 +50,8 @@ _MAX_SEGMENT_BYTES = 65_536
 _MAX_RECORD_BYTES = 32_768
 _MAX_BATCH_BYTES = 1_048_576
 _MAX_RECORDS = 128
+_PHASE6_MENTION_LIMITS = _MentionLimits(128, 64, 256, _MAX_RECORD_BYTES)
+_PHASE6_MAX_EXPANDED_FRAME_BYTES = 65_536
 _CONTRACT_VERSION = "private-protection-v1"
 _PROFILE = "redact-release-v1"
 _IMPLEMENTATION_VERSION = "pandas-runtime-v1"
@@ -328,17 +332,17 @@ def _build_operation_plan(plan: _ProtectionPlan, records: object) -> _OperationP
 class _ProtectionFlow(_SafeRepr):
     """Reusable synchronous flow with non-waiting whole-invocation admission."""
 
-    def __init__(self, anonymizer: Anonymizer, plan: _ProtectionPlan) -> None:
+    def __init__(
+        self,
+        anonymizer: Anonymizer,
+        plan: _ProtectionPlan,
+        phase6_backend: _Phase6EffectBackend | None = None,
+    ) -> None:
         self._plan = plan
-        self._runtime = _RedactProtectionService(
-            _AccountingGraphRuntime(
-                _PandasRuntime(
-                    detection_workflow=anonymizer._detection_workflow,
-                    replace_runner=anonymizer._replace_runner,
-                    rewrite_runner=anonymizer._rewrite_runner,
-                    combined_rewrite_runner=anonymizer._combined_rewrite_runner,
-                )
-            )
+        backend = phase6_backend or _Phase6NddBackend(anonymizer._adapter, plan.invocation)
+        self._runtime = _Phase6RedactProtectionService(
+            backend,
+            mention_limits=_PHASE6_MENTION_LIMITS,
         )
         self._guard = threading.Lock()
         self._state_lock = threading.Lock()
@@ -378,6 +382,7 @@ class _ProtectionFlow(_SafeRepr):
                     max_datums=self._plan.max_records,
                     max_datum_bytes=self._plan.max_record_bytes,
                     max_graph_bytes=self._plan.max_batch_bytes,
+                    max_stages=8,
                 ),
                 contract=_ContextExecutionContract(
                     profile=_ContextProfile.TARGET_CONTEXT_V1,
@@ -386,14 +391,14 @@ class _ProtectionFlow(_SafeRepr):
                         max_context_members_per_target=0,
                         max_context_bytes_per_target=0,
                         max_total_context_references=0,
-                        max_expanded_frame_bytes=self._plan.max_batch_bytes,
+                        max_expanded_frame_bytes=_PHASE6_MAX_EXPANDED_FRAME_BYTES,
                     ),
                     allow_target_as_context=False,
                     ordering=_ContextOrdering.DECLARED,
                     required_artifacts=(_BackendArtifactClass.CONTEXT_REQUEST,),
                 ),
             )
-            if isinstance(admitted, (_AccountingRejected, _ContextRejected)):
+            if isinstance(admitted, (_AccountingRejected, _ContextRejected, _Phase6Rejected)):
                 return self._fail_all(operation)
             with self._adapter.private_execution():
                 execution = self._runtime.protect(

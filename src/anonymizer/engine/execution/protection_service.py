@@ -39,6 +39,20 @@ from anonymizer.engine.execution.context_observations import _observe_context_bo
 from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _TextDatum
 from anonymizer.engine.execution.graph_runtime import _AccountingGraphExecution
 from anonymizer.engine.execution.invocation import _CompiledInvocation
+from anonymizer.engine.execution.mention_admission import _MentionLimits
+from anonymizer.engine.execution.phase6_plan import (
+    _compile_phase6_plan,
+    _Phase6Plan,
+    _Phase6PlanRejectionCode,
+    _Phase6Rejected,
+)
+from anonymizer.engine.execution.phase6_runtime import (
+    _Phase6Candidate,
+    _Phase6EffectBackend,
+    _Phase6Execution,
+    _Phase6Runtime,
+)
+from anonymizer.engine.execution.redact_patches import _VerifiedDatum
 
 
 class _PrivateProtectionValue:
@@ -151,6 +165,54 @@ class _RedactProtectionService:
         return _materialize(execution)
 
 
+class _Phase6RedactProtectionService:
+    """Compile and execute the selected private Phase 6 Redact profile."""
+
+    def __init__(self, backend: _Phase6EffectBackend, *, mention_limits: _MentionLimits) -> None:
+        self._backend = backend
+        self._mention_limits = mention_limits
+
+    def admit_context(
+        self,
+        graph: object,
+        *,
+        accounting_limits: _AccountingLimits,
+        contract: _ContextExecutionContract,
+    ) -> _Phase6Plan | _Phase6Rejected:
+        target_count, context_count = _preflight_observation_counts(graph)
+        with _observe_context_boundary(
+            "preflight",
+            target_count=target_count,
+            context_count=context_count,
+        ) as observation:
+            capability = _snapshot_context_capability(self._backend)
+            if capability is None:
+                result: _Phase6Plan | _Phase6Rejected = _Phase6Rejected(_Phase6PlanRejectionCode.INVALID_PROFILE)
+            else:
+                result = _compile_phase6_plan(
+                    graph,
+                    accounting_limits=accounting_limits,
+                    context_contract=contract,
+                    capability=capability,
+                    mention_limits=self._mention_limits,
+                )
+            if isinstance(result, _Phase6Plan):
+                observation.outcome = "admitted"
+            else:
+                observation.outcome = "rejected"
+                observation.reason = result.code.value
+            return result
+
+    def protect(
+        self,
+        plan: _Phase6Plan,
+        *,
+        invocation: _CompiledInvocation,
+    ) -> _GraphProtectionResult:
+        del invocation
+        return _materialize_phase6(plan, _Phase6Runtime(self._backend).run(plan))
+
+
 def _preflight_observation_counts(graph: object) -> tuple[int, int]:
     """Best-effort total counts for telemetry, kept outside admission semantics."""
     try:
@@ -211,6 +273,38 @@ def _materialize(execution: _AccountingGraphExecution[_RedactCandidate]) -> _Gra
             for datum in execution.plan.datums
         )
     )
+
+
+def _materialize_phase6(plan: _Phase6Plan, execution: _Phase6Execution) -> _GraphProtectionResult:
+    datum_ids = tuple(datum.id for datum in plan.accounting.datums)
+    if not isinstance(execution.accounting.invocation, _InvocationCompleted):
+        return _fail_all(datum_ids)
+    released = {datum.datum_id: datum for datum in execution.released}
+    datum_outcomes = {outcome.datum_id: outcome for outcome in execution.accounting.datums}
+    return _GraphProtectionResult(
+        tuple(
+            _materialize_phase6_datum(datum_id, released.get(datum_id), datum_outcomes[datum_id])
+            for datum_id in datum_ids
+        )
+    )
+
+
+def _materialize_phase6_datum(
+    datum_id: _DatumId,
+    candidate: _VerifiedDatum | None,
+    outcome: _DatumOutcome[_Phase6Candidate],
+) -> _GraphProtectionOutcome:
+    if candidate is not None:
+        return _GraphProtectionSucceeded(datum_id, candidate.output, candidate.applied)
+    match outcome:
+        case _DatumFailed(causes=causes) if any(cause.code is _CauseCode.RELEASE_PREDICATE_FAILED for cause in causes):
+            return _GraphProtectionFailed(datum_id, "release", "datum")
+        case _DatumQualified():
+            return _GraphProtectionFailed(datum_id, "release", "group")
+        case _DatumFailed() | _DatumBlocked() | _DatumCancelled() | _DatumLost() | _DatumInconsistent():
+            return _GraphProtectionFailed(datum_id, "pipeline", "datum")
+        case unreachable:
+            assert_never(unreachable)
 
 
 def _materialize_datum(

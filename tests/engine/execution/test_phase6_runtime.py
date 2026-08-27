@@ -46,6 +46,7 @@ from anonymizer.engine.execution.phase6_plan import (
 )
 from anonymizer.engine.execution.phase6_runtime import (
     _CandidateProposal,
+    _Phase6AugmentationWork,
     _Phase6CandidateWork,
     _Phase6Execution,
     _Phase6ResolverWork,
@@ -145,7 +146,7 @@ def test_phase6_runtime_accounts_effects_and_releases_exact_local_redact_outputs
             self.calls.append(("detect", work.target.datum_id.value))
             return (_CandidateProposal(0, len(work.target.text), work.target.text, "name"),)
 
-        def augment(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]:
+        def augment(self, work: _Phase6AugmentationWork) -> tuple[_CandidateProposal, ...]:
             self.calls.append(("augment", work.target.datum_id.value))
             return ()
 
@@ -197,6 +198,32 @@ def test_phase6_runtime_accounts_effects_and_releases_exact_local_redact_outputs
         raise AssertionError("Phase 6 executions must remain private")
 
 
+def test_phase6_detector_work_is_target_only_and_augmentation_receives_context() -> None:
+    plan = _plan(_context_graph())
+    context_by_target: dict[str, tuple[str, ...]] = {}
+
+    class _Backend(_NoMentionBackend):
+        def detect(self, work: object) -> tuple[_CandidateProposal, ...]:
+            assert not hasattr(work, "context")
+            target = getattr(work, "target")
+            assert isinstance(target.text, str)
+            return ()
+
+        def augment(self, work: object) -> tuple[_CandidateProposal, ...]:
+            target = getattr(work, "target")
+            context = getattr(work, "context")
+            context_by_target[target.datum_id.value] = tuple(datum.text for datum in context)
+            return ()
+
+    result = _Phase6Runtime(_Backend()).run(plan)
+
+    assert tuple(datum.datum_id.value for datum in result.released) == ("target-a", "target-b")
+    assert context_by_target == {
+        "target-a": ("private context", "A. Example"),
+        "target-b": ("Alice",),
+    }
+
+
 def test_phase6_runtime_localizes_known_target_failure_without_raw_fallback() -> None:
     plan = _plan(_independent_graph())
 
@@ -209,7 +236,7 @@ def test_phase6_runtime_localizes_known_target_failure_without_raw_fallback() ->
                 raise RuntimeError("known detector failure")
             return ()
 
-        def augment(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]:
+        def augment(self, work: _Phase6AugmentationWork) -> tuple[_CandidateProposal, ...]:
             return ()
 
         def validate(self, work: _Phase6ValidationWork) -> tuple[_ValidationDecision, ...]:
@@ -225,6 +252,45 @@ def test_phase6_runtime_localizes_known_target_failure_without_raw_fallback() ->
 
     assert tuple((datum.datum_id.value, datum.output) for datum in result.released) == (("target-b", "public"),)
     assert all(datum.datum_id.value != "target-a" for datum in result.released)
+
+
+def test_phase6_attributable_resolver_fault_does_not_withhold_context_peer() -> None:
+    plan = _plan(_context_graph())
+
+    class _Backend(_NoMentionBackend):
+        def detect(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]:
+            return (_CandidateProposal(0, len(work.target.text), work.target.text, "name"),)
+
+        def validate(self, work: _Phase6ValidationWork) -> tuple[_ValidationDecision, ...]:
+            return tuple(
+                _ValidationDecision(candidate.token, _ValidationDecisionKind.KEEP) for candidate in work.candidates
+            )
+
+        def resolve(self, work: _Phase6ResolverWork) -> tuple[_SameSubjectEvidence, ...]:
+            if work.owner.datum_id.value != "target-a":
+                return ()
+            owned = next(
+                mention for mention in work.eligible_mentions if mention.target_datum_id == work.owner.datum_id
+            )
+            return (
+                _SameSubjectEvidence(
+                    work.owner.token,
+                    owned.id,
+                    owned.id,
+                    _EvidenceVersion.V1,
+                ),
+            )
+
+    result = _Phase6Runtime(_Backend()).run(plan)
+
+    assert tuple((datum.datum_id.value, datum.output) for datum in result.released) == (("target-b", "[REDACTED]"),)
+    task_outcomes = {
+        (outcome.task.stage.value, outcome.task.datum_id.value): type(outcome).__name__
+        for outcome in result.accounting.tasks
+    }
+    assert task_outcomes[("resolve", "target-a")] == "_TaskFailed"
+    assert task_outcomes[("resolve", "target-b")] == "_TaskSucceeded"
+    assert task_outcomes[("verify", "target-b")] == "_TaskSucceeded"
 
 
 def test_phase6_runtime_rechecks_capability_before_opening_effects() -> None:
@@ -366,7 +432,7 @@ class _NoMentionBackend:
         self.effect_count += 1
         return ()
 
-    def augment(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]:
+    def augment(self, work: _Phase6AugmentationWork) -> tuple[_CandidateProposal, ...]:
         del work
         self.effect_count += 1
         return ()

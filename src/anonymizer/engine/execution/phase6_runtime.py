@@ -12,6 +12,7 @@ from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_outcomes import _AccountingResult, _CauseCode, _GroupReleased
 from anonymizer.engine.execution.accounting_plan import _TaskKey
 from anonymizer.engine.execution.context_contract import _capability_satisfies, _snapshot_context_capability
+from anonymizer.engine.execution.context_observations import _observe_context_boundary
 from anonymizer.engine.execution.graph import _DatumId, _TextDatum
 from anonymizer.engine.execution.mention_admission import (
     _AnchoredMention,
@@ -77,6 +78,11 @@ class _CandidateProposal(_PrivatePhase6RuntimeValue):
 @dataclass(frozen=True, slots=True, repr=False)
 class _Phase6CandidateWork(_PrivatePhase6RuntimeValue):
     target: _MentionTarget
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase6AugmentationWork(_PrivatePhase6RuntimeValue):
+    target: _MentionTarget
     context: tuple[_TextDatum, ...]
 
 
@@ -97,7 +103,7 @@ class _Phase6EffectBackend(Protocol):
 
     def detect(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]: ...
 
-    def augment(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]: ...
+    def augment(self, work: _Phase6AugmentationWork) -> tuple[_CandidateProposal, ...]: ...
 
     def validate(self, work: _Phase6ValidationWork) -> tuple[_ValidationDecision, ...]: ...
 
@@ -173,19 +179,28 @@ class _Phase6Runtime:
         self._backend = backend
 
     def run(self, plan: _Phase6Plan) -> _Phase6Execution:
-        self._preflight(plan)
-        ledger: _AccountingLedger[_Phase6Candidate] = _AccountingLedger(plan.accounting)
-        store = _RuntimeStore()
-        ledger.open()
+        counts = _observation_counts(plan)
+        with _observe_context_boundary("capability_recheck", **counts):
+            self._preflight(plan)
+        with _observe_context_boundary("workframe_construction", **counts):
+            ledger: _AccountingLedger[_Phase6Candidate] = _AccountingLedger(plan.accounting)
+            store = _RuntimeStore()
+            ledger.open()
         try:
-            self._drive_ledger(plan, ledger, store)
+            with _observe_context_boundary("dispatch", **counts):
+                with _observe_context_boundary("backend_execution", **counts):
+                    self._drive_ledger(plan, ledger, store)
         finally:
-            self._close_before_release(ledger, store)
-        accounting = ledger.finish(
-            datum_release_predicate=_verified_datum_predicate,
-            group_release_predicate=_verified_group_predicate,
-        )
-        return _Phase6Execution(accounting, _collect_released(plan, accounting))
+            with _observe_context_boundary("cleanup", **counts):
+                self._close_before_release(ledger, store)
+        with _observe_context_boundary("reconciliation", **counts):
+            accounting = ledger.finish(
+                datum_release_predicate=_verified_datum_predicate,
+                group_release_predicate=_verified_group_predicate,
+            )
+        with _observe_context_boundary("release", **counts):
+            released = _collect_released(plan, accounting)
+        return _Phase6Execution(accounting, released)
 
     def _drive_ledger(
         self,
@@ -204,7 +219,6 @@ class _Phase6Runtime:
                 ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
             except _ComponentPhase6Fault:
                 ledger.accept_failure(dispatch)
-                self._fail_component_stage(plan, ledger, task)
             except KeyboardInterrupt:
                 ledger.request_cancellation()
                 raise
@@ -255,9 +269,9 @@ class _Phase6Runtime:
     ) -> None:
         match task.stage.value:
             case "detect":
-                self._add_proposals(plan, target, self._backend.detect(_candidate_work(plan, target)), store, False)
+                self._add_proposals(plan, target, self._backend.detect(_Phase6CandidateWork(target)), store, False)
             case "augment":
-                self._add_proposals(plan, target, self._backend.augment(_candidate_work(plan, target)), store, True)
+                self._add_proposals(plan, target, self._backend.augment(_augmentation_work(plan, target)), store, True)
             case "validate":
                 candidates = tuple(store.candidates.get(target.datum_id, ()))
                 decisions = self._backend.validate(_Phase6ValidationWork(target, candidates))
@@ -400,19 +414,6 @@ class _Phase6Runtime:
             raise _ComponentPhase6Fault
         return candidate
 
-    @staticmethod
-    def _fail_component_stage(
-        plan: _Phase6Plan,
-        ledger: _AccountingLedger[_Phase6Candidate],
-        task: _TaskKey,
-    ) -> None:
-        target = _target_for_datum(plan, task.datum_id)
-        component = _component_for_target(plan, target)
-        member_ids = {member.datum_id for member in _targets_for_component(plan, component)}
-        for candidate in plan.accounting.tasks:
-            if candidate.stage == task.stage and candidate.datum_id in member_ids and candidate != task:
-                ledger.mark_task_failed(candidate)
-
     def _close_before_release(self, ledger: _AccountingLedger[_Phase6Candidate], store: _RuntimeStore) -> None:
         try:
             closed = self._backend.close_phase6()
@@ -425,10 +426,22 @@ class _Phase6Runtime:
             store.close()
 
 
-def _candidate_work(plan: _Phase6Plan, target: _MentionTarget) -> _Phase6CandidateWork:
+def _augmentation_work(plan: _Phase6Plan, target: _MentionTarget) -> _Phase6AugmentationWork:
     projection = next(item for item in plan.context.projections if item.target_datum_id == target.datum_id)
     datum_by_id = {datum.id: datum for datum in (*plan.context.accounting.datums, *plan.context.context_only_datums)}
-    return _Phase6CandidateWork(target, tuple(datum_by_id[datum_id] for datum_id in projection.context_datum_ids))
+    return _Phase6AugmentationWork(
+        target,
+        tuple(datum_by_id[datum_id] for datum_id in projection.context_datum_ids),
+    )
+
+
+def _observation_counts(plan: _Phase6Plan) -> dict[str, int]:
+    context_ids = {datum_id for projection in plan.context.projections for datum_id in projection.context_datum_ids}
+    return {
+        "target_count": len(plan.accounting.datums),
+        "context_count": len(context_ids),
+        "byte_count": sum(len(target.text.encode("utf-8")) for target in plan.targets),
+    }
 
 
 def _candidate_from_proposal(

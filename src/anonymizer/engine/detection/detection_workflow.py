@@ -455,19 +455,35 @@ class EntityDetectionWorkflow:
         labels: list[str],
         gliner_detection_threshold: float,
     ) -> list[ModelConfig]:
-        resolved = deepcopy(model_configs)
-        for config in resolved:
-            if config.alias != selected_models.entity_detector:
-                continue
-            if config.inference_parameters.extra_body is None:
-                config.inference_parameters.extra_body = {}
-            config.inference_parameters.extra_body["labels"] = labels
-            config.inference_parameters.extra_body["threshold"] = gliner_detection_threshold
-            config.inference_parameters.extra_body["chunk_length"] = 384
-            config.inference_parameters.extra_body["overlap"] = 128
-            config.inference_parameters.extra_body["flat_ner"] = False
-            break
-        return resolved
+        return _inject_detector_params(
+            model_configs=model_configs,
+            selected_models=selected_models,
+            labels=labels,
+            gliner_detection_threshold=gliner_detection_threshold,
+        )
+
+
+def _inject_detector_params(
+    *,
+    model_configs: list[ModelConfig],
+    selected_models: DetectionModelSelection,
+    labels: list[str],
+    gliner_detection_threshold: float,
+) -> list[ModelConfig]:
+    """Return detached GLiNER model configs for one detector workflow."""
+    resolved = deepcopy(model_configs)
+    for config in resolved:
+        if config.alias != selected_models.entity_detector:
+            continue
+        if config.inference_parameters.extra_body is None:
+            config.inference_parameters.extra_body = {}
+        config.inference_parameters.extra_body["labels"] = labels
+        config.inference_parameters.extra_body["threshold"] = gliner_detection_threshold
+        config.inference_parameters.extra_body["chunk_length"] = 384
+        config.inference_parameters.extra_body["overlap"] = 128
+        config.inference_parameters.extra_body["flat_ner"] = False
+        break
+    return resolved
 
 
 def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:

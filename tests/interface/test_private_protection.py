@@ -4,9 +4,7 @@
 from __future__ import annotations
 
 import inspect
-import logging
 import threading
-from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import Any, cast
@@ -17,8 +15,25 @@ import pytest
 import anonymizer.interface._protection as protection_module
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Redact
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
-from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.execution.context_contract import (
+    _BackendArtifactClass,
+    _ContextBackendCapability,
+    _ContextLimits,
+    _ContextOrdering,
+    _ContextProfile,
+    _ContextSchemaVersion,
+    _RetentionPosture,
+)
+from anonymizer.engine.execution.mention_admission import _ValidationDecision, _ValidationDecisionKind
+from anonymizer.engine.execution.mention_resolution import _SubjectEvidence
+from anonymizer.engine.execution.phase6_runtime import (
+    _CandidateProposal,
+    _Phase6AugmentationWork,
+    _Phase6CandidateWork,
+    _Phase6ResolverWork,
+    _Phase6ValidationWork,
+)
+from anonymizer.engine.execution.protection_service import _Phase6RedactProtectionService
 from anonymizer.interface._protection import (
     _BatchFailureCode,
     _Failed,
@@ -44,9 +59,89 @@ def _record(ref: str, text: str) -> _ProtectionRecord:
 
 
 def _flow(*, entities: dict[str, str] | None = None):
-    anonymizer = build_synthetic_anonymizer(entities or {})
+    entity_map = entities or {}
+    anonymizer = build_synthetic_anonymizer(entity_map)
     plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
-    return anonymizer, anonymizer._open_protection_flow(plan)
+    return anonymizer, protection_module._ProtectionFlow(
+        anonymizer,
+        plan,
+        phase6_backend=_AnchoredPhase6Backend.from_entities(entity_map),
+    )
+
+
+class _AnchoredPhase6Backend:
+    def __init__(
+        self,
+        proposals: dict[str, tuple[_CandidateProposal, ...]],
+        *,
+        entities: dict[str, str] | None = None,
+        fault_stage: str | None = None,
+        malformed_stage: str | None = None,
+    ) -> None:
+        self._proposals = proposals
+        self._entities = entities or {}
+        self._fault_stage = fault_stage
+        self._malformed_stage = malformed_stage
+        self.closed = False
+        self.calls: list[str] = []
+
+    @classmethod
+    def from_entities(cls, entities: dict[str, str]) -> _AnchoredPhase6Backend:
+        return cls({}, entities=entities)
+
+    def context_capability(self) -> _ContextBackendCapability:
+        return _ContextBackendCapability(
+            _ContextProfile.TARGET_CONTEXT_V1,
+            _ContextSchemaVersion.V1,
+            _ContextLimits(128, 1_048_576, 16_384, 2_097_152),
+            True,
+            _ContextOrdering.DECLARED,
+            (_BackendArtifactClass.CONTEXT_REQUEST,),
+            _RetentionPosture.DISABLED,
+        )
+
+    def detect(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]:
+        self._enter("detect")
+        if self._malformed_stage == "detect":
+            return cast(Any, (object(),))
+        explicit = self._proposals.get(work.target.text)
+        if explicit is not None:
+            return explicit
+        proposals: list[_CandidateProposal] = []
+        for value, label in self._entities.items():
+            start = 0
+            while (found := work.target.text.find(value, start)) >= 0:
+                proposals.append(_CandidateProposal(found, found + len(value), value, label))
+                start = found + len(value)
+        return tuple(sorted(proposals, key=lambda proposal: (proposal.start, proposal.end)))
+
+    def augment(self, work: _Phase6AugmentationWork) -> tuple[_CandidateProposal, ...]:
+        self._enter("augment")
+        return ()
+
+    def validate(self, work: _Phase6ValidationWork) -> tuple[_ValidationDecision, ...]:
+        self._enter("validate")
+        if self._malformed_stage == "validate":
+            return cast(Any, ())
+        return tuple(
+            _ValidationDecision(candidate.token, _ValidationDecisionKind.KEEP) for candidate in work.candidates
+        )
+
+    def resolve(self, work: _Phase6ResolverWork) -> tuple[_SubjectEvidence, ...]:
+        self._enter("resolve")
+        if self._malformed_stage == "resolve":
+            return cast(Any, (object(),))
+        return ()
+
+    def close_phase6(self) -> bool:
+        self._enter("close")
+        self.closed = True
+        return self._malformed_stage != "close"
+
+    def _enter(self, stage: str) -> None:
+        self.calls.append(stage)
+        if self._fault_stage == stage:
+            raise RuntimeError("BACKEND-SECRET-alice@example.test")
 
 
 def test_private_redact_applies_and_no_detection_success_is_explicit() -> None:
@@ -56,7 +151,7 @@ def test_private_redact_applies_and_no_detection_success_is_explicit() -> None:
     applied, unchanged = result.outcomes
     assert isinstance(applied, _ProtectionSucceeded)
     assert isinstance(applied.disposition, _ProtectionApplied)
-    assert applied.output == "mail [REDACTED_EMAIL]"
+    assert applied.output == "mail [REDACTED]"
     assert isinstance(unchanged, _ProtectionSucceeded)
     assert isinstance(unchanged.disposition, _NoAcceptedDetections)
     assert unchanged.output == "ordinary text"
@@ -64,6 +159,38 @@ def test_private_redact_applies_and_no_detection_success_is_explicit() -> None:
     assert result.failure_count == 0
     assert not hasattr(result, "trace_dataframe")
     assert "row_token" not in repr(result).lower()
+
+
+def test_private_flow_has_an_engine_private_phase6_backend_seam() -> None:
+    parameters = inspect.signature(protection_module._ProtectionFlow).parameters
+
+    assert "phase6_backend" in parameters
+
+
+def test_default_private_flow_selects_phase6_redact_service() -> None:
+    anonymizer = build_synthetic_anonymizer({})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+
+    flow = anonymizer._open_protection_flow(plan)
+
+    assert isinstance(flow._runtime, _Phase6RedactProtectionService)
+
+
+def test_private_flow_executes_phase6_anchor_reconstruction() -> None:
+    text = "Alice and Alice"
+    anonymizer = build_synthetic_anonymizer({"Alice": "name"})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    backend = _AnchoredPhase6Backend({text: (_CandidateProposal(0, 5, "Alice", "name"),)})
+    flow = protection_module._ProtectionFlow(anonymizer, plan, phase6_backend=backend)
+
+    result = flow.protect((_record("a", text),))
+
+    outcome = result.outcomes[0]
+    assert isinstance(outcome, _ProtectionSucceeded)
+    assert isinstance(outcome.disposition, _ProtectionApplied)
+    assert outcome.output == "[REDACTED] and Alice"
+    assert backend.closed
+    assert "Alice" not in repr(result)
 
 
 def test_phase5_adds_no_public_context_or_graph_parameters() -> None:
@@ -162,7 +289,7 @@ def test_reentrant_context_observer_is_bounded_and_cannot_change_release() -> No
     )
 
 
-def test_trivial_graph_path_matches_public_run_output(tmp_path: Path) -> None:
+def test_private_phase6_and_public_dataframe_redact_keep_their_distinct_compatibility_outputs(tmp_path: Path) -> None:
     secret = "alice@example.test"
     anonymizer = build_synthetic_anonymizer({secret: "email"})
     config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
@@ -171,13 +298,17 @@ def test_trivial_graph_path_matches_public_run_output(tmp_path: Path) -> None:
 
     public = anonymizer.run(config=config, data=AnonymizerInput(source=str(source), text_column="text"))
     plan = anonymizer._compile_protection_plan(config)
-    private = anonymizer._open_protection_flow(plan).protect(
-        (_record("a", f"mail {secret}"), _record("b", "ordinary text"))
-    )
+    private = protection_module._ProtectionFlow(
+        anonymizer,
+        plan,
+        phase6_backend=_AnchoredPhase6Backend.from_entities({secret: "email"}),
+    ).protect((_record("a", f"mail {secret}"), _record("b", "ordinary text")))
 
-    assert [cast(_ProtectionSucceeded, outcome).output for outcome in private.outcomes] == public.dataframe[
-        "text_replaced"
-    ].tolist()
+    assert public.dataframe["text_replaced"].tolist() == ["mail [REDACTED_EMAIL]", "ordinary text"]
+    assert [cast(_ProtectionSucceeded, outcome).output for outcome in private.outcomes] == [
+        "mail [REDACTED]",
+        "ordinary text",
+    ]
 
 
 def test_graph_outcomes_are_rejoined_by_private_datum_identity() -> None:
@@ -195,7 +326,7 @@ def test_graph_outcomes_are_rejoined_by_private_datum_identity() -> None:
     first, second = result.outcomes
     assert isinstance(first, _ProtectionSucceeded)
     assert first.ref.value == "private-a"
-    assert first.output == "[REDACTED_EMAIL]"
+    assert first.output == "[REDACTED]"
     assert isinstance(second, _ProtectionSucceeded)
     assert second.ref.value == "private-b"
     assert second.output == "plain"
@@ -269,25 +400,20 @@ def test_outer_batch_is_rejected_before_admission(records: object, code: _BatchF
     assert repr(exc_info.value) == "<private protection batch error>"
 
 
-def test_graph_admission_rejects_before_private_execution_context(monkeypatch: pytest.MonkeyPatch) -> None:
-    anonymizer, flow = _flow()
-    entered = False
+def test_graph_admission_rejects_before_phase6_backend_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    anonymizer = build_synthetic_anonymizer({})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    backend = _AnchoredPhase6Backend.from_entities({})
+    flow = protection_module._ProtectionFlow(anonymizer, plan, phase6_backend=backend)
     collector = MeasurementCollector()
 
-    @contextmanager
-    def effect_spy():
-        nonlocal entered
-        entered = True
-        yield
-
     monkeypatch.setattr(protection_module, "_trivial_graph", lambda _datums: object())
-    monkeypatch.setattr(anonymizer._adapter, "private_execution", effect_spy)
 
     with measurement_session(collector):
         result = flow.protect((_record("a", "text"),))
 
     assert isinstance(result.outcomes[0], _Failed)
-    assert not entered
+    assert backend.calls == []
     observations = [record for record in collector.records if record["record_type"] == "context_workframe"]
     assert [(record["boundary"], record["event"]) for record in observations] == [
         ("preflight", "start"),
@@ -356,51 +482,28 @@ def test_cancel_before_admission_and_overlap_are_rejections() -> None:
     assert busy.outcomes[0].failure.code.value == "busy"
 
 
-@pytest.mark.parametrize("mode", ["reorder", "drop", "duplicate", "unknown", "tamper"])
-def test_adversarial_engine_results_have_exact_safe_terminal_accounting(mode: str) -> None:
+@pytest.mark.parametrize("stage", ["detect", "augment", "validate", "resolve"])
+def test_phase6_backend_faults_have_exact_safe_terminal_accounting(stage: str) -> None:
     secret = "alice@example.test"
-    anonymizer, flow = _flow(entities={secret: "email"})
-    original = cast(Any, anonymizer._replace_runner).run
-
-    def altered(*args: Any, **kwargs: Any):
-        result = original(*args, **kwargs)
-        frame = result.dataframe
-        if mode == "reorder":
-            frame = frame.iloc[::-1].reset_index(drop=True)
-        elif mode == "drop":
-            frame = frame.iloc[:1].copy()
-        elif mode == "duplicate":
-            frame = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
-        elif mode == "unknown":
-            frame = frame.copy()
-            frame.iloc[0, frame.columns.get_loc("__anonymizer_private_row_correlation__")] = "unknown"
-        else:
-            frame = frame.copy()
-            frame.at[0, COL_FINAL_ENTITIES] = {"entities": []}
-        return type(result)(dataframe=frame, failed_records=result.failed_records)
-
-    cast(Any, anonymizer._replace_runner).run = altered
+    anonymizer = build_synthetic_anonymizer({secret: "email"})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    backend = _AnchoredPhase6Backend.from_entities({secret: "email"})
+    backend._fault_stage = stage
+    flow = protection_module._ProtectionFlow(anonymizer, plan, phase6_backend=backend)
     run = flow.protect((_record("a", secret), _record("b", "plain")))
+
     assert len(run.outcomes) == 2
     assert [outcome.ref.value for outcome in run.outcomes] == ["a", "b"]
-    if mode == "reorder":
-        assert all(isinstance(outcome, _ProtectionSucceeded) for outcome in run.outcomes)
-        first = cast(_ProtectionSucceeded, run.outcomes[0])
-        second = cast(_ProtectionSucceeded, run.outcomes[1])
-        assert first.output == "[REDACTED_EMAIL]"
-        assert second.output == "plain"
-    elif mode == "drop":
-        assert sum(isinstance(outcome, _Failed) for outcome in run.outcomes) == 1
-    else:
-        assert all(isinstance(outcome, _Failed) for outcome in run.outcomes)
+    assert all(isinstance(outcome, _Failed) for outcome in run.outcomes)
     assert secret not in repr(run)
-    assert "__anonymizer_private_row_correlation__" not in repr(run)
 
 
 def test_invocation_failure_suppresses_cause_and_emits_no_output() -> None:
     secret = "provider secret alice@example.test"
-    anonymizer, flow = _flow()
-    cast(Any, anonymizer._detection_workflow).run = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError(secret))
+    anonymizer = build_synthetic_anonymizer({})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    backend = _AnchoredPhase6Backend({}, fault_stage="detect")
+    flow = protection_module._ProtectionFlow(anonymizer, plan, phase6_backend=backend)
     run = flow.protect((_record("private-ref", "raw input"),))
     outcome = run.outcomes[0]
     assert isinstance(outcome, _Failed)
@@ -409,48 +512,27 @@ def test_invocation_failure_suppresses_cause_and_emits_no_output() -> None:
     assert "private-ref" not in repr(outcome)
 
 
-def test_private_failure_logs_exclude_backend_exception_and_failed_record_canaries(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_private_failure_logs_exclude_backend_exception_canary(caplog: pytest.LogCaptureFixture) -> None:
     backend_canary = "BACKEND-SECRET-alice@example.test"
-    reason_canary = "FAILED-REASON-bob@example.test"
-    anonymizer, flow = _flow()
-    original = cast(Any, anonymizer._replace_runner).run
+    anonymizer = build_synthetic_anonymizer({})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    backend = _AnchoredPhase6Backend({}, fault_stage="detect")
+    flow = protection_module._ProtectionFlow(anonymizer, plan, phase6_backend=backend)
 
-    def failed_record(*args: Any, **kwargs: Any):
-        result = original(*args, **kwargs)
-        return type(result)(
-            dataframe=result.dataframe,
-            failed_records=[FailedRecord(record_id="PRIVATE-ID", step="replace", reason=reason_canary)],
-        )
-
-    cast(Any, anonymizer._replace_runner).run = failed_record
-    caplog.set_level(logging.DEBUG)
     run = flow.protect((_record("a", "text"),))
     assert isinstance(run.outcomes[0], _Failed)
     rendered = repr(run) + "\n" + "\n".join(record.getMessage() for record in caplog.records)
-    assert reason_canary not in rendered
-    assert "PRIVATE-ID" not in rendered
-
-    cast(Any, anonymizer._detection_workflow).run = lambda *_a, **_k: (_ for _ in ()).throw(
-        RuntimeError(backend_canary)
-    )
-    flow.protect((_record("b", "raw"),))
-    rendered = "\n".join(record.getMessage() for record in caplog.records)
     assert backend_canary not in rendered
 
 
-def test_malformed_accepted_entities_fail_closed() -> None:
-    anonymizer, flow = _flow()
-    original = cast(Any, anonymizer._replace_runner).run
+@pytest.mark.parametrize("stage", ["detect", "validate", "resolve", "close"])
+def test_malformed_phase6_stage_result_fails_closed(stage: str) -> None:
+    anonymizer = build_synthetic_anonymizer({"text": "label"})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    backend = _AnchoredPhase6Backend.from_entities({"text": "label"})
+    backend._malformed_stage = stage
+    flow = protection_module._ProtectionFlow(anonymizer, plan, phase6_backend=backend)
 
-    def malformed(*args: Any, **kwargs: Any):
-        result = original(*args, **kwargs)
-        frame = result.dataframe.copy()
-        frame.at[0, COL_FINAL_ENTITIES] = {"entities": object()}
-        return type(result)(dataframe=frame, failed_records=result.failed_records)
-
-    cast(Any, anonymizer._replace_runner).run = malformed
     assert isinstance(flow.protect((_record("a", "text"),)).outcomes[0], _Failed)
 
 
@@ -460,39 +542,6 @@ def test_failure_retry_taxonomy_is_unassigned_and_unknown() -> None:
     failure = cast(_Rejected, flow.protect((_record("a", "text"),)).outcomes[0]).failure
     assert failure.retry_safety.value == "unknown"
     assert failure.retry_owner.value == "unassigned"
-
-
-def test_release_predicate_prevents_raw_fallback() -> None:
-    secret = "alice@example.test"
-    anonymizer, flow = _flow(entities={secret: "email"})
-    original = cast(Any, anonymizer._replace_runner).run
-
-    def raw_fallback(*args: Any, **kwargs: Any):
-        result = original(*args, **kwargs)
-        frame = result.dataframe.copy()
-        frame[COL_REPLACED_TEXT] = frame[COL_TEXT]
-        return type(result)(dataframe=frame, failed_records=result.failed_records)
-
-    cast(Any, anonymizer._replace_runner).run = raw_fallback
-    outcome = flow.protect((_record("a", secret),)).outcomes[0]
-    assert isinstance(outcome, _Failed)
-    assert not hasattr(outcome, "output")
-
-
-def test_no_accepted_detections_requires_output_unchanged_from_input() -> None:
-    anonymizer, flow = _flow()
-    original = cast(Any, anonymizer._replace_runner).run
-
-    def modified_without_detections(*args: Any, **kwargs: Any):
-        result = original(*args, **kwargs)
-        frame = result.dataframe.copy()
-        frame[COL_REPLACED_TEXT] = "modified"
-        return type(result)(dataframe=frame, failed_records=result.failed_records)
-
-    cast(Any, anonymizer._replace_runner).run = modified_without_detections
-    outcome = flow.protect((_record("a", "original"),)).outcomes[0]
-    assert isinstance(outcome, _Failed)
-    assert not hasattr(outcome, "output")
 
 
 def test_close_is_idempotent_and_does_not_close_borrowed_anonymizer() -> None:

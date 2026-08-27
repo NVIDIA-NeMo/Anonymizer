@@ -24,9 +24,28 @@ from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInpu
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.execution.context_contract import (
+    _BackendArtifactClass,
+    _ContextBackendCapability,
+    _ContextLimits,
+    _ContextOrdering,
+    _ContextProfile,
+    _ContextSchemaVersion,
+    _RetentionPosture,
+)
+from anonymizer.engine.execution.mention_admission import _ValidationDecision, _ValidationDecisionKind
+from anonymizer.engine.execution.mention_resolution import _SubjectEvidence
+from anonymizer.engine.execution.phase6_runtime import (
+    _CandidateProposal,
+    _Phase6AugmentationWork,
+    _Phase6CandidateWork,
+    _Phase6ResolverWork,
+    _Phase6ValidationWork,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
+from anonymizer.interface._protection import _ProtectionFlow
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.results import AnonymizerResult
 
@@ -336,6 +355,56 @@ def build_synthetic_anonymizer(
         detection_workflow=cast(EntityDetectionWorkflow, detector),
         replace_runner=ReplacementWorkflow(),
     )
+
+
+class _SyntheticPhase6Backend:
+    """Exact-span Phase 6 backend for test-only private-flow adopters."""
+
+    def __init__(self, sensitive_entities: Mapping[str, str]) -> None:
+        self._sensitive_entities = sensitive_entities
+
+    def context_capability(self) -> _ContextBackendCapability:
+        return _ContextBackendCapability(
+            _ContextProfile.TARGET_CONTEXT_V1,
+            _ContextSchemaVersion.V1,
+            _ContextLimits(128, 1_048_576, 16_384, 2_097_152),
+            True,
+            _ContextOrdering.DECLARED,
+            (_BackendArtifactClass.CONTEXT_REQUEST,),
+            _RetentionPosture.DISABLED,
+        )
+
+    def detect(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]:
+        proposals: list[_CandidateProposal] = []
+        for value, label in self._sensitive_entities.items():
+            start = 0
+            while (found := work.target.text.find(value, start)) >= 0:
+                proposals.append(_CandidateProposal(found, found + len(value), value, label))
+                start = found + len(value)
+        return tuple(sorted(proposals, key=lambda proposal: (proposal.start, proposal.end)))
+
+    def augment(self, work: _Phase6AugmentationWork) -> tuple[_CandidateProposal, ...]:
+        return ()
+
+    def validate(self, work: _Phase6ValidationWork) -> tuple[_ValidationDecision, ...]:
+        return tuple(
+            _ValidationDecision(candidate.token, _ValidationDecisionKind.KEEP) for candidate in work.candidates
+        )
+
+    def resolve(self, work: _Phase6ResolverWork) -> tuple[_SubjectEvidence, ...]:
+        return ()
+
+    def close_phase6(self) -> bool:
+        return True
+
+
+def build_synthetic_protection_flow(
+    sensitive_entities: Mapping[str, str],
+) -> _ProtectionFlow:
+    """Build a private flow without making provider calls from format tests."""
+    anonymizer = build_synthetic_anonymizer(sensitive_entities)
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
+    return _ProtectionFlow(anonymizer, plan, phase6_backend=_SyntheticPhase6Backend(sensitive_entities))
 
 
 def run_projected_segments(

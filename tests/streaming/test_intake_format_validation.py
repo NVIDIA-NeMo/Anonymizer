@@ -11,8 +11,6 @@ from typing import Any
 import pytest
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig
-from anonymizer.config.replace_strategies import Redact
 from tests.streaming.intake_format_validation import (
     IntakeValidationError,
     build_local_otlp_request,
@@ -22,15 +20,13 @@ from tests.streaming.intake_format_validation import (
     protect_chat_completion,
     protect_otlp_request,
 )
-from tests.streaming.structured_trace_prototype import build_synthetic_anonymizer
+from tests.streaming.structured_trace_prototype import build_synthetic_protection_flow
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "streaming"
 
 
 def _flow(sensitive_entities: dict[str, str]):
-    anonymizer = build_synthetic_anonymizer(sensitive_entities)
-    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
-    return anonymizer._open_protection_flow(plan)
+    return build_synthetic_protection_flow(sensitive_entities)
 
 
 @pytest.mark.parametrize(
@@ -72,7 +68,7 @@ def test_atif_boundary_versions_round_trip_through_plan_a(
         assert result["steps"][1]["tool_calls"][0]["arguments"]["limit"] == 5
     rendered = json.dumps(result)
     assert all(value not in rendered for value in sensitive_entities)
-    assert "[REDACTED_" in rendered
+    assert "[REDACTED]" in rendered
 
 
 def test_chat_completion_preserves_extensions_and_protects_declared_content() -> None:
@@ -112,7 +108,7 @@ def test_local_chain_llm_otlp_protobuf_round_trips_through_plan_a() -> None:
     assert result_attributes["0000000000000002"]["gen_ai.request.model"] == "gpt-validation"
     rendered = json.dumps(result_attributes)
     assert all(value not in rendered for value in entities)
-    assert "[REDACTED_" in rendered
+    assert "[REDACTED]" in rendered
 
 
 def test_invalid_otlp_span_withholds_complete_batch() -> None:

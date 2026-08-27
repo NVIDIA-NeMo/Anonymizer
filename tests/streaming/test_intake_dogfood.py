@@ -26,8 +26,6 @@ from uuid import uuid4
 import pytest
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig
-from anonymizer.config.replace_strategies import Redact
 from tests.streaming.intake_format_validation import (
     IntakeValidationError,
     build_local_otlp_request,
@@ -36,7 +34,7 @@ from tests.streaming.intake_format_validation import (
     protect_otlp_request,
 )
 from tests.streaming.sandbox_session_export import export_codex_session_to_atif
-from tests.streaming.structured_trace_prototype import build_synthetic_anonymizer
+from tests.streaming.structured_trace_prototype import build_synthetic_protection_flow
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "streaming"
 _BASE_URL_ENV = "ANONYMIZER_INTAKE_DOGFOOD_BASE_URL"
@@ -64,9 +62,7 @@ def dogfood_run_id() -> str:
 
 
 def _flow(entities: Mapping[str, str]):
-    anonymizer = build_synthetic_anonymizer(dict(entities))
-    plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
-    return anonymizer._open_protection_flow(plan)
+    return build_synthetic_protection_flow(entities)
 
 
 def _dogfood_variants() -> tuple[str, ...]:
@@ -77,7 +73,7 @@ def _dogfood_variants() -> tuple[str, ...]:
 
 def _assert_safe_outbound(body: bytes, sensitive: tuple[str, ...]) -> None:
     assert all(value.encode() not in body for value in sensitive)
-    assert b"[REDACTED_" in body
+    assert b"[REDACTED]" in body
 
 
 def _request(
@@ -204,7 +200,7 @@ def _assert_visibility(
     present = [value for value in sensitive if value in rendered]
     assert bool(present) is expect_sensitive
     if not expect_sensitive:
-        assert "[REDACTED_" in rendered
+        assert "[REDACTED]" in rendered
     return stored
 
 
@@ -486,7 +482,7 @@ def test_protected_delivery_failure_is_sanitized_and_retryable(
     )
     assert status == 201
     stored = _stable_spans(intake_base_url, {"session_id": session_id}, expected_count=1)
-    assert "[REDACTED_" in json.dumps(stored)
+    assert "[REDACTED]" in json.dumps(stored)
 
 
 def _assert_exact_retry_deduplicates(

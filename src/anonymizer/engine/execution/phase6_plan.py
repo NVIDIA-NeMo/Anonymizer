@@ -14,7 +14,6 @@ from anonymizer.engine.execution.accounting_plan import (
     _AccountingLimits,
     _AccountingPlan,
     _is_admitted_accounting_plan,
-    _StageId,
     _TaskKey,
     _TaskPredecessor,
 )
@@ -29,7 +28,6 @@ from anonymizer.engine.execution.context_contract import (
     _ContextBackendCapability,
     _ContextExecutionContract,
 )
-from anonymizer.engine.execution.graph import _DatumId
 from anonymizer.engine.execution.mention_admission import (
     _MentionLimits,
     _MentionTarget,
@@ -242,28 +240,7 @@ def _compile_predecessors(
                     resolve,
                 )
             )
-    for component in components:
-        datums = tuple(datum_by_token[token] for token in component.target_tokens)
-        edges.extend(_cross_stage_barrier(stage_by_value["resolve"], stage_by_value["classify"], datums))
-        edges.extend(_cross_stage_barrier(stage_by_value["classify"], stage_by_value["transform"], datums))
-        edges.extend(_cross_stage_barrier(stage_by_value["transform"], stage_by_value["verify"], datums))
     return tuple(edges)
-
-
-def _cross_stage_barrier(
-    prerequisite_stage: _StageId,
-    dependent_stage: _StageId,
-    datums: tuple[_DatumId, ...],
-) -> tuple[_TaskPredecessor, ...]:
-    return tuple(
-        _TaskPredecessor(
-            _TaskKey(prerequisite_stage, prerequisite),
-            _TaskKey(dependent_stage, dependent),
-        )
-        for prerequisite in datums
-        for dependent in datums
-        if prerequisite != dependent
-    )
 
 
 def _phase6_plan_snapshot(plan: _Phase6Plan) -> tuple[object, ...] | None:

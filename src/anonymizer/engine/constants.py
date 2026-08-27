@@ -21,6 +21,12 @@ COL_CONTEXT_OWNER_WORK_ID = "__anonymizer_context_owner_work_id__"
 COL_CONTEXT_ORDINAL = "__anonymizer_context_ordinal__"
 COL_CONTEXT_TEXT = "__anonymizer_context_text__"
 
+# Private Phase 6 provider workframes. These columns never enter public results.
+COL_PHASE6_CONTEXT = "__anonymizer_phase6_context__"
+COL_PHASE6_CANDIDATES = "__anonymizer_phase6_candidates__"
+COL_PHASE6_AUGMENTED = "__anonymizer_phase6_augmented__"
+COL_PHASE6_VALIDATION = "__anonymizer_phase6_validation__"
+
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"
 
