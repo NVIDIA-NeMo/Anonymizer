@@ -78,9 +78,7 @@ def _backend(adapter: _ScriptedAdapter) -> _Phase6NddBackend:
 
 
 def test_phase6_ndd_detector_uses_only_target_text_and_preserves_exact_spans() -> None:
-    payload = json.dumps(
-        {"entities": [{"text": "Alice", "label": "name", "start": 0, "end": 5, "score": 0.9}]}
-    )
+    payload = json.dumps({"entities": [{"text": "Alice", "label": "name", "start": 0, "end": 5, "score": 0.9}]})
     adapter = _ScriptedAdapter(payload, [])
     backend = _backend(adapter)
     target = _MentionTarget(_MentionTargetToken(), _DatumId("target"), "Alice met Bob")

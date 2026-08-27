@@ -172,8 +172,7 @@ Return an empty entities list when no additional exact target span is justified.
         )
         parsed = _coerce_model(_single_stage_value(result, COL_PHASE6_AUGMENTED), _AugmentedSpans)
         return tuple(
-            _CandidateProposal(item.start, item.end, item.source_slice, item.detector_label)
-            for item in parsed.entities
+            _CandidateProposal(item.start, item.end, item.source_slice, item.detector_label) for item in parsed.entities
         )
 
     def validate(self, work: _Phase6ValidationWork) -> tuple[_ValidationDecision, ...]:
