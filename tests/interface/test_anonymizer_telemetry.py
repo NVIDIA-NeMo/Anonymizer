@@ -131,9 +131,10 @@ class TestInitSideEffects:
         _make_anonymizer()
         assert os.environ["NEMO_SESSION_PREFIX"] == "custom-"
 
-    def test_deployment_type_defaults_to_sdk(self) -> None:
+    def test_usage_type_defaults_to_sdk(self) -> None:
         _make_anonymizer()
-        assert os.environ.get("NEMO_DEPLOYMENT_TYPE") == "sdk"
+        assert os.environ.get("ANONYMIZER_USAGE_TYPE") == "sdk"
+        assert "NEMO_DEPLOYMENT_TYPE" not in os.environ
 
 
 # =============================================================================

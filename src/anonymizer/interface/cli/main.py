@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal
 
-# When invoked via the CLI entry point, telemetry deployment type defaults to "cli".
-# Anonymizer's SDK path sets "sdk" via os.environ.setdefault in Anonymizer.__init__,
-# but the CLI is loaded first so its setdefault wins for CLI-driven runs.
-os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "cli")
+# Track whether Anonymizer is used through the CLI or SDK separately from the
+# shared NeMo deployment type. Data Designer validates NEMO_DEPLOYMENT_TYPE
+# against deployment-level values such as "library" and "api" at import time.
+os.environ.setdefault("ANONYMIZER_USAGE_TYPE", "cli")
 
 logger = logging.getLogger("anonymizer.cli")
 
