@@ -3,13 +3,14 @@
 
 # Phase 5 design — target and bounded-context workframes
 
-Status: reviewed phase-specific design and test strategy; branch implementation authorization
-is pending. This document is subordinate to the complete development and research plan in
-the [graph-native SDK RFC](graph-native-anonymizer-sdk-rfc.md) and the
+Status: reviewed phase-specific design and test strategy; private branch-local implementation
+and hardening landed on 2026-08-26 in `bb79cda` through `53ef74f`. This document is
+subordinate to the complete development and research plan in the
+[graph-native SDK RFC](graph-native-anonymizer-sdk-rfc.md) and the
 [phase 4 terminal-accounting design](phase-4-hierarchical-terminal-accounting-design.md).
-RFC acceptance is the project decision on the plan; a later operator checkpoint controls
-when Phase 5 work begins on this branch. Neither decision authorizes a public graph or
-session API, production Intake or OpenShell integration, or a privacy-boundary decision.
+RFC acceptance remains the project decision on the plan. The branch-local implementation
+does not authorize a public graph or session API, production Intake or OpenShell integration,
+or a privacy-boundary decision.
 
 Review status: independent architecture and test-strategy council review completed on
 2026-08-20 with zero unresolved Critical or Warning findings for the prior draft. The
@@ -17,9 +18,11 @@ Review status: independent architecture and test-strategy council review complet
 preflight and private work-ID terminology, and adds the content-free observation and cleanup
 contracts while retaining typed context limits and backend compatibility. Focused
 architecture and test-strategy re-review completed with zero unresolved Critical or Warning
-findings. The design review is complete, but Phase 5 is not implemented or tested. Branch
-implementation authorization remains pending and is sequenced after Phase 4 is implemented
-and passes its evidence gates.
+findings. The design review is complete, and the branch now contains the Phase 5
+implementation, frozen independent reference model, and focused context admission, execution,
+reconciliation, cleanup, privacy, and compatibility tests. The 2026-08-31 PR checks pass;
+this evidence remains private to the branch and does not establish product or publication
+support.
 
 ## Decision
 
@@ -655,7 +658,8 @@ reviewed outside Anonymizer.
 | Source access, field authorization, and earliest boundary where unprotected target/context may cross | Customer or consuming-product owner |
 | Any public graph, context, receipt, artifact, or endpoint | Public-API and Platform owners |
 
-Phase 5 is ready for an operator-authorized branch implementation checkpoint only after:
+The implemented private Phase 5 profile is governed by these prerequisites, which remain
+regression and promotion gates:
 
 1. Phase 4 is implemented and its evidence qualifies;
 2. reviewers accept the closed purpose and context-scope grammar;
@@ -667,17 +671,17 @@ Phase 5 is ready for an operator-authorized branch implementation checkpoint onl
 7. reviewers accept the unchanged public, DataFrame, NDD, measurement, and downstream
    ownership boundaries.
 
-Passing Phase 5 later does not authorize context-informed entity decisions, the Phase 6 or 7
-branch checkpoints, a public graph/session API, source mappings, production Intake or OpenShell
+Completion of Phase 5 does not authorize context-informed entity decisions, the Phase 7
+branch checkpoint, a public graph/session API, source mappings, production Intake or OpenShell
 support, durable state, a privacy boundary, a `zero PII` claim, or stable promotion.
 
 ## Evidence and unresolved gates
 
-Current phases 1–3 prove only empty-context singleton lowering. They do not establish
-multi-datum framing, context correlation, cleanup, or context-aware model
-semantics. A Phase 4 branch implementation candidate and evidence suite exist, but its
-completion review and repository checks remain pending at this
-checkpoint.
+The current branch implements bounded multi-datum framing, private context correlation,
+publication-critical cleanup, and the reviewed context execution contract. The frozen Phase 5
+reference model and focused tests cover admission, workframes, execution, reconciliation,
+lifecycle, privacy, and public compatibility. They do not authorize source field selection,
+prove provider retention behavior, or establish unrestricted context-aware model semantics.
 
 Intake hierarchy and structured fields motivate bounded context but do not approve which
 fields may be exposed, the earliest protection boundary, or a source-to-context mapping.
@@ -690,4 +694,4 @@ The authoritative inputs are the parent
 [phase 4 design](phase-4-hierarchical-terminal-accounting-design.md), the separate
 [Intake evidence](intake-workload-validation-evidence.md), and the branch-local graph,
 runtime, adapter, and private release code at
-`702f43a988cf3673d16f40be5c59bc784737e1a3`.
+`88b59e2a4366be09aa7af802fa0a8f81afa8440d`.

@@ -19,7 +19,7 @@ Target Closing Date: Not set
 
 Implementation: https://github.com/NVIDIA-NeMo/Anonymizer/pull/253
 
-Base revision: branch `codex/anonymizer-openshell-intake` at `702f43a988cf3673d16f40be5c59bc784737e1a3`. Review candidate: the protected, unstaged branch working tree, including this RFC, the phase designs, and the Phase 4 source and tests. This tab is the review mirror.
+Implementation baseline: `codex/anonymizer-openshell-intake` at `29bddad51fdc879c5e5c677857c1d2561f4528ee`. The review candidate includes this RFC, the phase designs, and the private Phases 1–6 source and tests. Phase 7 implementation remains unauthorized. This tab is the review mirror.
 
 ## Decision Requested
 
@@ -30,8 +30,8 @@ Acceptance records the project decision on the complete plan. It permits iterati
 Phase checkpoints are branch execution controls, not separate project acceptance decisions. A checkpoint records that the operator has authorized the next bounded implementation or research step on this branch. Evidence review determines whether its prerequisites have passed; later product, public-API, adopter, customer, and release gates remain with the owners named below.
 
 * Phase 4: the authorized branch-local implementation and its evidence gates completed on 2026-08-25; RFC acceptance, public-API approval, production integration, and promotion remain pending their separate decisions.
-* Phase 5: focused architecture and test-strategy re-review complete with zero unresolved Critical or Warning findings; branch implementation authorization pending and sequenced after Phase 4 evidence.
-* Phase 6: focused architecture and test-strategy re-review complete with zero unresolved Critical or Warning findings; branch implementation authorization pending and sequenced after Phases 4 and 5 and its owned semantic and execution gates.
+* Phase 5: the private branch-local implementation and hardening landed on 2026-08-26 in `bb79cda` through `53ef74f`; its frozen reference model and focused context, lifecycle, privacy, and compatibility evidence are present on the branch.
+* Phase 6: the private branch-local implementation and hardening landed on 2026-08-27 in `5bf61c6` through `29bddad`; its frozen reference model and focused mention, resolution, role, Redact, lifecycle, privacy, and compatibility evidence are present on the branch.
 * Phase 7: reviewed design only; branch implementation authorization remains pending and sequenced after Phases 4–6 and its versioned semantic and execution contract.
 
 ## Revision History
@@ -43,6 +43,7 @@ Phase checkpoints are branch execution controls, not separate project acceptance
 * 0.5 — 2026-08-21 — Made acceptance apply to the complete RFC plan, distinguished project acceptance from branch execution checkpoints, and recorded implementation and test status.
 * 0.6 — 2026-08-25 — Recorded the completed private Phase 4 implementation, frozen conformance corpus, repository verification, and remediation-council closeout without changing RFC or later-phase authority.
 * 0.7 — 2026-08-25 — Recorded authenticated Arc acceptance, bounded rejection of non-UTF-8 datum values, and the explicit per-datum stage-predecessor contract without changing later-phase or publication authority.
+* 0.8 — 2026-08-31 — Reconciled Phase 5 and Phase 6 status with the private branch implementation, reference-model, test, and CI evidence without changing public, production, Phase 7, or promotion authority.
 
 ## Review History
 
@@ -55,18 +56,18 @@ Phase checkpoints are branch execution controls, not separate project acceptance
 
 ## Development Status
 
-PR 253 is an active development and research PR. Its protected working tree contains the private Phases 1–4 implementation and the evolving RFC and phase designs; it is not an implementation of the complete plan and does not expose a public graph SDK.
+PR 253 is an active development and research PR. Its protected branch contains the private Phases 1–6 implementation plus the evolving RFC and phase designs; it is not an implementation of the complete RFC and does not expose a public graph SDK.
 
 | Phase | Branch state | Verification state | Next branch checkpoint |
 | --- | --- | --- | --- |
 | 1–3 | Implemented privately | 38 focused graph and private-protection tests passed; the 2026-08-20 repository run reported 1,408 passed and 11 opt-in Intake tests skipped | Preserve compatibility while later phases replace the internal system of record |
 | 4 | Implemented privately under its authorized branch checkpoint | Frozen `phase4-stream-v4` corpus passed 397,542 canonical traces over 8,278 admitted graphs; focused accounting, race, process-loss, privacy, compatibility, formatting, type, documentation, and full repository checks passed; remediation council closed with zero unresolved material findings | Preserve the verified boundary; later adoption, publication, and promotion require their separate gates |
-| 5 | Designed and independently re-reviewed | Test strategy reviewed, but implementation evidence does not yet exist; the Phase 4 prerequisite now qualifies | Obtain separate operator authorization |
-| 6 | Designed and independently re-reviewed | Test strategy reviewed, but implementation evidence does not yet exist | Obtain operator authorization after qualifying Phases 4 and 5 evidence and contract freezes |
-| 7 | Designed and independently reviewed; implementation authorization pending | Test strategy reviewed, but implementation evidence does not yet exist | Complete Phases 4–6, freeze the Phase 7 semantic and execution contract, and obtain separate authorization |
+| 5 | Implemented privately and hardened | Frozen Phase 5 reference-model evidence and focused context admission, execution, reconciliation, cleanup, privacy, and public-compatibility tests are present; 2026-08-31 PR checks pass | Preserve the qualified private boundary; publication and production use require separate gates |
+| 6 | Implemented privately and hardened | Frozen Phase 6 reference-model evidence and focused mention, resolution, role-policy, Redact, backend, lifecycle, privacy, and public-compatibility tests are present; 2026-08-31 PR checks pass | Preserve the qualified private Redact boundary; Phase 7 requires its own contract and authorization |
+| 7 | Designed and independently reviewed; implementation authorization pending | Test strategy reviewed, but implementation evidence does not yet exist | Freeze the Phase 7 semantic and execution contract and obtain separate authorization |
 | 8–11 | RFC plan only | No phase implementation evidence | Refine and authorize bounded branch checkpoints in order |
 
-“Test strategy reviewed” means reviewers found the proposed evidence plan sufficient to begin the corresponding branch work when authorized. It does not mean the phase has been implemented or its tests have passed.
+For phases that remain proposals, “test strategy reviewed” means reviewers found the proposed evidence plan sufficient to begin the corresponding branch work when authorized. It does not mean that phase has been implemented or its tests have passed.
 
 ## Problem
 
@@ -78,7 +79,7 @@ External workloads such as trace trees, trajectories, and structured request/res
 
 Published Anonymizer exposes DataFrame-oriented `run()`, `preview()`, and `evaluate()` paths. `NddAdapter.run_workflow()` is the engine boundary for executing DataDesigner workflows. The migration must preserve those public contracts while replacing the row-local internal system of record.
 
-Private branch-local Phases 1–3 define immutable, non-serializable graph values, validate a trivial independent-datum profile, lower it through the existing pandas runtime, hydrate graph outcomes, and map them back through the private compatibility flow. Phase 4 extends that seam with explicit dependency DAGs, flat exact atomic partitions, and exhaustive terminal accounting. Related context, coherence planning, and links remain unsupported and fail closed.
+Private branch-local Phases 1–3 define immutable, non-serializable graph values, validate a trivial independent-datum profile, lower it through the existing pandas runtime, hydrate graph outcomes, and map them back through the private compatibility flow. Phase 4 extends that seam with explicit dependency DAGs, flat exact atomic partitions, and exhaustive terminal accounting. Phase 5 adds bounded target/context workframes, and Phase 6 adds anchored mentions, explicit-evidence resolution, versioned role results, and exact local Redact verification. Coherence planning and links remain unsupported and fail closed.
 
 Verification on 2026-08-20 reported 1,408 passed and 11 skipped tests with one warning. The focused graph and private-protection suites passed 38 tests. The 11 opt-in Intake dogfood tests skipped because their external environment was not enabled; historical operator runs remain bounded observations, not product guarantees.
 
@@ -279,7 +280,7 @@ Context is an immutable original-text snapshot. It creates no dependency, output
 
 The first profile requires an immutable typed context execution contract with explicit limits, closed backend artifact classes and closure attestations, and a backend-attested `retention_disabled` posture. It is a backend-compatibility contract, not product authorization, proof of provider behavior, or a claim that Anonymizer controls provider retention. Reconciliation proves exact target-task, target-row, context-binding, context-row, ordinal, owner, and consumed-evidence bijections. Publication-critical cleanup closes every Anonymizer-owned frame and work-ID map and reconciles every required execution-boundary closure attestation after private task and datum outcomes are terminal but before release. It does not rewrite those absorbing outcomes. Confirmed owned or attested backend cleanup failure closes the invocation as `failed(cleanup_failed)`; missing or contradictory cleanup evidence closes it as `inconsistent(cleanup_unconfirmed)`. Both map every public target to the corresponding non-success outcome and embargo all output.
 
-Status: focused architecture and test-strategy re-review completed on 2026-08-21 with zero unresolved Critical or Warning findings. Branch implementation authorization remains pending, and execution remains gated on Phase 4 implementation and qualifying evidence.
+Status: reviewed and implemented privately on the branch. Commits `bb79cda` through `53ef74f` landed and hardened bounded context admission, separate workframes, exact reconciliation, cleanup, reference-model, privacy, and compatibility evidence on 2026-08-26. This branch-local completion does not authorize public APIs, production integration, or promotion.
 
 ### Phase 6: Anchored Mentions and Resolution
 
@@ -289,7 +290,7 @@ The compiler creates exactly one resolver task per target. Resolution waits for 
 
 The first transform profile is private Redact only. It creates one exact patch per accepted mention, applies patches once against authoritative source offsets without evolving-output search or value fallback, and verifies the returned text through source-plus-patches reconstruction and atomic-group predicates.
 
-Status: focused architecture and test-strategy re-review complete with zero unresolved Critical or Warning findings. Branch implementation authorization remains pending, and execution remains gated on Phases 4 and 5, a frozen Redact label/provenance policy and role-result version, compatible execution capabilities, and qualifying evidence.
+Status: reviewed and implemented privately on the branch. Commits `5bf61c6` through `29bddad` landed and hardened anchored mention admission, explicit-evidence resolution, the frozen Redact role policy, mention-keyed verification, reference-model, privacy, and compatibility evidence on 2026-08-27. This branch-local completion does not authorize Substitute, public APIs, production integration, or promotion.
 
 ### Phase 7: Stable Substitute
 
@@ -501,7 +502,7 @@ Semantic grammar, requirement strength, rejection precedence, capability version
 
 ### Phases 1–3: Private Compatibility Foundation
 
-Status: branch-local implementation. Phases 1–3 established immutable trivial graphs, independent-datum validation, temporary pandas lowering, typed hydration, and private Redact compatibility. Phase 4 now adds dependency DAGs, flat exact multi-datum atomic groups, and exhaustive terminal accounting. Related context, coherence planning, grouped rewrite, links, and public graph APIs remain unsupported.
+Status: branch-local implementation. Phases 1–3 established immutable trivial graphs, independent-datum validation, temporary pandas lowering, typed hydration, and private Redact compatibility. Phase 4 added dependency DAGs, flat exact multi-datum atomic groups, and exhaustive terminal accounting. Later branch-local phases now add bounded context and anchored mention resolution; coherence planning, grouped rewrite, links, and public graph APIs remain unsupported.
 
 ### Phase 4: Hierarchical Terminal Accounting
 
@@ -509,11 +510,11 @@ Status: the authorized private branch implementation and evidence gates complete
 
 ### Phase 5: Target and Context Workframes
 
-Status: focused re-review complete; branch implementation authorization pending. Deliver after Phase 4 evidence qualifies: immutable context scopes, bounded separate frames, original-text snapshots, a typed context execution contract, exact work-ID reconciliation, a retention-disabled first profile, observable lifecycle cleanup, and the versioned content-free observation contract. Product authorization and field policy remain outside Anonymizer.
+Status: reviewed and implemented privately on 2026-08-26 in `bb79cda` through `53ef74f`. The branch delivers immutable context scopes, bounded separate frames, original-text snapshots, a typed context execution contract, exact work-ID reconciliation, a retention-disabled first profile, observable lifecycle cleanup, and the versioned content-free observation contract. Product authorization and field policy remain outside Anonymizer.
 
 ### Phase 6: Anchored Mentions and Private Redact
 
-Status: focused re-review complete; branch implementation authorization pending. Deliver after Phases 4 and 5 evidence qualifies: exact target-offset mentions, closed candidate lineage, one resolver task per target, deterministic evidence-based clustering, versioned role results, mention-keyed Redact patches, and exact reconstruction.
+Status: reviewed and implemented privately on 2026-08-27 in `5bf61c6` through `29bddad`. The branch delivers exact target-offset mentions, closed candidate lineage, one resolver task per target, deterministic evidence-based clustering, versioned role results, mention-keyed Redact patches, and exact reconstruction.
 
 ### Phase 7: Stable Substitute
 
@@ -612,4 +613,4 @@ Reason rejected for the first profile: Phase 7 deliberately qualifies invocation
 
 ## Next Decision
 
-Project reviewers should accept the complete RFC development and research plan or identify required revisions. Acceptance permits branch-local implementation and experimentation only through the ordered prerequisites and operator checkpoints described above; it does not approve public API publication or any production integration. Phase 4 is the only currently authorized implementation phase. Phase 5 follows qualifying Phase 4 evidence and separate branch authorization, Phase 6 follows qualifying Phases 4 and 5 evidence and separate branch authorization, and Phase 7 remains after Phases 4–6, its contract freeze, and separate branch authorization.
+Project reviewers should accept the complete RFC development and research plan or identify required revisions. Acceptance permits branch-local implementation and experimentation only through the ordered prerequisites and operator checkpoints described above; it does not approve public API publication or any production integration. Private Phases 4–6 are implemented with branch-local evidence. Phase 7 remains after those completed prerequisites and still requires its contract freeze, semantic and execution owner approval, and separate operator authorization.

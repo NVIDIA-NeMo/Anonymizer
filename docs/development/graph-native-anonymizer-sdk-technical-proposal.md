@@ -18,7 +18,7 @@ Status: proposed architecture within the complete development and research plan 
 Every consequential claim uses one of these labels:
 
 - **[Published current behavior]** Behavior supported by an immutable public repository revision.
-- **[Branch-local implementation]** Behavior in the protected review candidate: base revision `702f43a988cf3673d16f40be5c59bc784737e1a3` plus explicitly identified unstaged working-tree source, tests, and documents; not published behavior or a public contract.
+- **[Branch-local implementation]** Behavior in the protected review candidate at branch baseline `88b59e2a4366be09aa7af802fa0a8f81afa8440d`; not published behavior or a public contract.
 - **[Dated dogfood observation]** A bounded observation from a named test or environment on a stated date; not a product guarantee.
 - **[Proposal]** Architecture to adopt or work to perform; not current behavior.
 - **[Unresolved gate]** A decision, assumption, or proof still required. A provisional assumption is not approval.
@@ -84,7 +84,9 @@ The text equivalent is: adapters project source data into graph semantics; Anony
 
 **[Branch-local implementation]** Private phases 1–3 exist in `src/anonymizer/engine/execution/graph.py`, `src/anonymizer/engine/execution/graph_runtime.py`, `src/anonymizer/engine/execution/protection_service.py`, and `src/anonymizer/interface/_protection.py`. The implementation defines immutable, non-serializable graph values; validates a trivial independent-datum profile; lowers it through the existing pandas runtime; hydrates graph outcomes; and maps those outcomes back to the private compatibility flow.
 
-**[Branch-local implementation]** Phases 1–3 established a trivial compiler for singleton context, coherence, and atomic scopes. Phase 4 extends that compiler with explicit dependency DAGs and flat exact multi-datum atomic partitions. It still rejects links, added context, and multi-datum coherence with explicit private validation codes. This supports related release and scheduling boundaries without claiming context or coherence semantics. The branch-local tests are in `tests/engine/execution/test_graph_runtime.py` and `tests/engine/execution/test_hierarchical_accounting.py`.
+**[Branch-local implementation]** Phases 1–3 established a trivial compiler for singleton context, coherence, and atomic scopes. Phase 4 extended that compiler with explicit dependency DAGs and flat exact multi-datum atomic partitions. At the Phase 4 checkpoint it still rejected links, added context, and multi-datum coherence with explicit private validation codes. The branch-local accounting tests are in `tests/engine/execution/test_graph_runtime.py` and `tests/engine/execution/test_hierarchical_accounting.py`.
+
+**[Branch-local implementation — phases 5–6]** Phase 5 now adds bounded target/context admission, separate workframes, exact private-ID reconciliation, cleanup, and a frozen independent reference model. Phase 6 now adds anchored mentions, closed candidate lineage, explicit-evidence resolution, versioned role results, mention-keyed local Redact verification, and a separate frozen reference model. Multi-datum coherence, graph Substitute, grouped Rewrite, links, and public graph APIs remain unsupported.
 
 **[Branch-local implementation]** No public graph API exists. The graph slice qualifies only its private Redact release profile; it does not qualify Substitute or Rewrite for graph execution and does not change current public signatures.
 
@@ -92,12 +94,14 @@ The text equivalent is: adapters project source data into graph semantics; Anony
 
 **[Branch-local verification — 2026-08-25]** The Phase 4 implementation passed the frozen `phase4-stream-v4` corpus of **397,542 canonical traces over 8,278 admitted graphs** and the full repository suite of **1,508 passed and 11 skipped** with one pre-existing deprecation warning. Formatting, type checking, documentation, privacy-canary, compatibility, process-loss, concurrency, and mutation checks passed. The independent implementation-remediation council closed all nine findings with zero unresolved material findings, and the maintained authenticated review-only Arc accepted the focused remediation with zero findings.
 
+**[Branch-local verification — 2026-08-31]** The protected PR head includes the Phase 5 implementation and hardening commits `bb79cda` through `53ef74f` and the Phase 6 implementation and hardening commits `5bf61c6` through `29bddad`. Frozen Phase 5 and Phase 6 reference-model manifests and focused admission, runtime, reconciliation, lifecycle, privacy, Redact, and compatibility suites are present. Current PR checks pass on Python 3.11–3.13, along with formatting, type, DCO, linked-issue, conventional-commit, and documentation checks. This is branch-local evidence, not publication or production authorization.
+
 The ordered migration is:
 
 1. **[Branch-local implementation — phases 1–3]** Encapsulate the pandas backend, extract source-neutral protection services, and prove trivial-graph compatibility. These phases remain the compatibility seam extended by Phase 4.
 2. **[Branch-local implementation — phase 4 hard gate complete]** A private one-shot ledger provides hierarchical stage-task, datum, dependency, invocation, and atomic-group terminal accounting according to the [phase 4 design and test strategy](phase-4-hierarchical-terminal-accounting-design.md). Dependencies form an explicit DAG. Atomic groups form a flat exact partition; cycles, nesting, overlap, coverage gaps, and unsupported cardinalities are rejected before graph-invocation effects. Phase 4 performs no automatic task retry. Post-dispatch cancellation without trusted stop evidence is lost. Release occurs only after exhaustive reconciliation and fixed-point dependency and group withholding. Its authorized private implementation, repository evidence gates, and independent remediation review completed on 2026-08-25. This completion grants no later-phase, public-API, product, integration, or promotion authority.
-3. **[Proposal — phase 5; revised reviewed design]** Add separately framed target and bounded context workframes according to the [phase 5 design and test strategy](phase-5-target-context-workframe-design.md). Focused architecture and test-strategy re-review of the revised design completed on 2026-08-21 with zero unresolved Critical or Warning findings. Branch implementation authorization remains pending, and execution remains gated on phase 4 implementation and evidence.
-4. **[Proposal — phase 6; revised reviewed design]** Add target-anchored mentions, deterministic evidence-based entity clustering, versioned replacement-role classification, and exact local Redact verification according to the [phase 6 design and test strategy](phase-6-anchored-mention-resolution-design.md). Focused architecture and test-strategy re-review completed with zero unresolved Critical or Warning findings. Branch implementation authorization remains pending, and execution remains gated on phases 4 and 5 implementation and evidence.
+3. **[Branch-local implementation — phase 5 complete]** Separately framed target and bounded context workframes landed in `bb79cda` through `53ef74f` according to the [phase 5 design and test strategy](phase-5-target-context-workframe-design.md). The private branch includes the frozen reference model and focused context, lifecycle, privacy, and compatibility evidence. This completion grants no public-API, product, integration, or promotion authority.
+4. **[Branch-local implementation — phase 6 complete]** Target-anchored mentions, deterministic evidence-based entity clustering, versioned replacement-role classification, and exact local Redact verification landed in `5bf61c6` through `29bddad` according to the [phase 6 design and test strategy](phase-6-anchored-mention-resolution-design.md). The private branch includes the frozen reference model and focused mention, resolution, role, Redact, lifecycle, privacy, and compatibility evidence. This completion grants no Substitute, public-API, product, integration, or promotion authority.
 5. **[Proposal — phase 7; branch implementation authorization pending]** Add coherence-scope replacement planning and a bounded ephemeral ledger according to the [stable Substitute design, branch decision record, and test strategy](phase-7-stable-substitute-design.md). Stable Substitute means stable assignment inside one explicitly declared scope; it does not imply durable idempotency, restart recovery, or cross-worker consistency. Independent architecture and test-strategy reviews are complete. Implementation requires separate operator authorization after phases 4–6 and after its owned versioned semantic and execution contract is frozen.
 6. **[Proposal — phase 8]** Add keyed group rewrite, evaluation, and repair with no independent-row fallback.
 7. **[Proposal — phase 9]** Move legacy result materialization behind compatibility adapters while retaining public behavior.
@@ -108,7 +112,7 @@ The ordered migration is:
 
 ## Phase 5 and phase 6 design scope
 
-**[Proposal]** Phase 5 compiles one private, bounded target/context projection per output
+**[Branch-local implementation]** Phase 5 compiles one private, bounded target/context projection per output
 target. It preserves original datum identity and keeps target, context, dependency, atomic,
 and later coherence semantics separate. Context-only datums never become output. The
 integrating product authorizes source access and field use before graph construction.
@@ -117,7 +121,7 @@ observable cleanup of owned state, required execution-boundary closure attestati
 first profile that requires provider retention to be disabled; it does not accept product
 authorization tokens or claim to control provider retention or deletion.
 
-**[Proposal]** Phase 6 converts untrusted candidate evidence into exact target-offset
+**[Branch-local implementation]** Phase 6 converts untrusted candidate evidence into exact target-offset
 mentions, then resolves those mentions from explicit typed same-subject and distinct-subject
 evidence. It accounts for exactly one resolver task per target and qualifies only a private
 Redact profile through exact source-plus-patches reconstruction. Context may inform reviewed
@@ -125,7 +129,7 @@ tasks but cannot create a mention endpoint, replacement span, coherence scope, o
 rule. The [phase 5](phase-5-target-context-workframe-design.md) and
 [phase 6](phase-6-anchored-mention-resolution-design.md) subordinate designs define the
 admission, lifecycle, failure, privacy, reference-model, and exhaustive test requirements.
-Neither design bypasses its prerequisites or the operator checkpoint that authorizes its branch-local implementation.
+Their branch-local implementations preserve the reviewed prerequisites and gates. Their completion does not authorize public or production use or bypass the separate Phase 7 checkpoint.
 
 ## Phase 7 stable Substitute design scope
 
@@ -243,10 +247,10 @@ This proposal does not:
 
 Project reviewers should accept the complete RFC development and research plan or identify
 required revisions. Acceptance permits branch-local implementation and experimentation only
-through its ordered prerequisites and operator checkpoints. Phase 4 is the only completed
-implementation checkpoint; Phase 5 follows the qualifying Phase 4 evidence only after separate branch authorization,
-Phase 6 follows qualifying Phases 4 and 5 evidence and branch authorization, and Phase 7
-remains sequenced after Phases 4–6 and its owned versioned semantic and execution contract.
+through its ordered prerequisites and operator checkpoints. Private Phases 4–6 are now
+implemented with branch-local evidence. Phase 7 remains sequenced after those completed
+prerequisites and still requires its owned versioned semantic and execution contract,
+semantic and execution owner approval, and separate operator authorization.
 The proposed public SDK contract still requires separate public-API review before
 publication. RFC acceptance does not authorize a production Intake or OpenShell integration,
 stable promotion, or any unresolved privacy or provenance decision.

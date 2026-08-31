@@ -3,21 +3,24 @@
 
 # Phase 6 design — anchored mentions, resolution, and local verification
 
-Status: reviewed phase-specific design and test strategy; branch implementation authorization
-is pending. This document is subordinate to the complete development and research plan in
-the [graph-native SDK RFC](graph-native-anonymizer-sdk-rfc.md), the
+Status: reviewed phase-specific design and test strategy; private branch-local implementation
+and hardening landed on 2026-08-27 in `5bf61c6` through `29bddad`. This document is
+subordinate to the complete development and research plan in the
+[graph-native SDK RFC](graph-native-anonymizer-sdk-rfc.md), the
 [phase 4 terminal-accounting design](phase-4-hierarchical-terminal-accounting-design.md),
 and the [phase 5 target/context design](phase-5-target-context-workframe-design.md). RFC
-acceptance is the project decision on the plan; a later operator checkpoint controls when
-Phase 6 work begins on this branch. Neither decision authorizes a public graph or session
-API, production Intake or OpenShell integration, or stable promotion.
+acceptance remains the project decision on the plan. The branch-local implementation does
+not authorize a public graph or session API, production Intake or OpenShell integration, or
+stable promotion.
 
 Review status: independent architecture and test-strategy council review completed on
 2026-08-20 with zero unresolved Critical or Warning findings. Focused re-review after the
 Phase 5 ownership-boundary revision also completed with zero unresolved Critical or Warning
-findings. The design review is complete, but Phase 6 is not implemented or tested. Branch
-implementation authorization remains pending and is sequenced after Phases 4 and 5 are
-implemented and pass their evidence gates.
+findings. The design review is complete, and the branch now contains the Phase 6
+implementation, frozen independent reference model, and focused mention, resolution, role,
+Redact, backend, lifecycle, privacy, and compatibility tests. The 2026-08-31 PR checks pass;
+this evidence remains private to the branch and does not establish Substitute, product, or
+publication support.
 
 ## Decision
 
@@ -632,7 +635,8 @@ inspection.
 | Source access, field authorization, privacy boundary, and residual risk | Customer or consuming-product owner |
 | Any public mention, cluster, role, graph, receipt, or endpoint | Public-API and Platform owners |
 
-Phase 6 is ready for an operator-authorized branch implementation checkpoint only after:
+The implemented private Phase 6 profile is governed by these prerequisites, which remain
+regression and promotion gates:
 
 1. Phases 4 and 5 are implemented and their evidence qualifies;
 2. reviewers accept the exact target-anchor and no-heuristic-overlap rules;
@@ -646,21 +650,22 @@ Phase 6 is ready for an operator-authorized branch implementation checkpoint onl
 8. reviewers accept unchanged public DataFrame behavior, the NDD boundary, and downstream
    ownership.
 
-Passing Phase 6 later does not authorize the Phase 7 branch checkpoint automatically, Substitute or
+Completion of Phase 6 does not authorize the Phase 7 branch checkpoint automatically, Substitute or
 Rewrite graph execution, public graph/session/mention APIs, production Intake or OpenShell
 support, durable state, an accepted privacy boundary, a `zero PII` claim, or stable promotion.
 
 ## Evidence and unresolved gates
 
-Current code provides legacy entity schemas, offset-aware local application, overlap
-resolution, value-based occurrence expansion/grouping, and a private Redact release check.
-It does not provide graph mention IDs, exact keyed augmentation spans, typed alias evidence,
-deterministic evidence-based clusters, closed role results, mention-keyed patches, or group
-verification.
+Current branch code provides graph mention IDs, exact keyed augmentation spans, typed alias
+evidence, deterministic evidence-based clusters, closed role results, mention-keyed Redact
+patches, exact reconstruction, and group verification. The frozen Phase 6 reference model and
+focused tests cover admission, resolution, role policy, backend evidence, lifecycle, privacy,
+and public compatibility. They do not qualify graph Substitute or Rewrite.
 
-The Redact-only label/provenance admission policy and structural role-result version require
-an Anonymizer semantic-owner decision before phase 6 implementation. Phase 7 separately owns
-the broader role and relational contract. Intake field roles, context exposure, source
+The branch freezes the Redact-only label/provenance admission policy and structural
+`phase6-role-result/v1` contract. Its intentionally empty Redact role mapping remains
+fail-closed rather than inventing Phase 7 roles. Phase 7 separately owns the broader role and
+relational contract. Intake field roles, context exposure, source
 mappings, atomic commit units, and privacy objectives remain adopter or customer decisions
 and do not move into either policy.
 
@@ -671,4 +676,4 @@ The authoritative inputs are the parent
 [phase 7 design](phase-7-stable-substitute-design.md), the separate
 [Intake evidence](intake-workload-validation-evidence.md), and the branch-local detection,
 replacement, graph runtime, adapter, and private release code at
-`702f43a988cf3673d16f40be5c59bc784737e1a3`.
+`88b59e2a4366be09aa7af802fa0a8f81afa8440d`.
