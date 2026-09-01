@@ -29,6 +29,7 @@ from anonymizer.engine.execution.context_contract import (
     _ContextBackendCapability,
     _ContextExecutionContract,
 )
+from anonymizer.engine.execution.graph import _CoherenceScope, _ProtectionGraph
 from anonymizer.engine.execution.mention_admission import (
     _MentionLimits,
     _MentionTarget,
@@ -38,6 +39,7 @@ from anonymizer.engine.execution.mention_resolution import _ResolverScope
 from anonymizer.engine.execution.role_policy import (
     _is_admitted_policy,
     _load_redact_role_policy,
+    _load_substitute_role_policy,
     _RolePolicy,
     _RolePolicyRejected,
 )
@@ -53,6 +55,7 @@ class _PrivatePhase6PlanValue:
 
 class _Phase6ProfileVersion(str, Enum):
     REDACT_V1 = "phase6-redact-graph/v1"
+    SUBSTITUTE_V1 = "phase6-substitute-graph/v1"
 
 
 class _Phase6PlanRejectionCode(str, Enum):
@@ -91,6 +94,7 @@ class _Phase6Plan(_PrivatePhase6PlanValue):
     targets: tuple[_MentionTarget, ...]
     resolver_scopes: tuple[_ResolverScope, ...]
     components: tuple[_Phase6Component, ...]
+    coherence_scopes: tuple[_CoherenceScope, ...]
     mention_limits: _MentionLimits
     role_policy: _RolePolicy
     profile_version: _Phase6ProfileVersion
@@ -98,7 +102,7 @@ class _Phase6Plan(_PrivatePhase6PlanValue):
 
 
 _PHASE6_PLAN_SEAL = object()
-_PHASE6_STAGES = (
+_PHASE6_REDACT_STAGES = (
     "detect",
     "augment",
     "validate",
@@ -108,6 +112,7 @@ _PHASE6_STAGES = (
     "transform",
     "verify",
 )
+_PHASE6_SUBSTITUTE_STAGES = _PHASE6_REDACT_STAGES[:6]
 
 
 def _compile_phase6_plan(
@@ -117,29 +122,42 @@ def _compile_phase6_plan(
     context_contract: _ContextExecutionContract,
     capability: _ContextBackendCapability,
     mention_limits: _MentionLimits,
+    profile_version: _Phase6ProfileVersion = _Phase6ProfileVersion.REDACT_V1,
 ) -> _Phase6Plan | _Phase6Rejected:
     """Compile target-only mention and resolver identities before invocation effects."""
+    selected = _select_profile(profile_version)
+    if selected is None:
+        return _Phase6Rejected(_Phase6PlanRejectionCode.INVALID_PROFILE)
+    stages, policy = selected
     context = _compile_context_plan(
         graph,
         accounting_limits=accounting_limits,
         contract=context_contract,
         capability=capability,
-        stages=_PHASE6_STAGES,
+        stages=stages,
     )
     if isinstance(context, _ContextRejected):
         return _Phase6Rejected(context.code)
     if not _valid_mention_limits(mention_limits):
         return _Phase6Rejected(_Phase6PlanRejectionCode.INVALID_PROFILE)
-    policy = _load_redact_role_policy()
-    if isinstance(policy, _RolePolicyRejected):
+    if (
+        isinstance(policy, _RolePolicyRejected)
+        or not _is_admitted_policy(policy)
+        or not isinstance(graph, _ProtectionGraph)
+    ):
         return _Phase6Rejected(_Phase6PlanRejectionCode.INVALID_PROFILE)
-    return _materialize_phase6_plan(context, mention_limits, policy)
+    coherence_scopes = _detach_coherence_scopes(graph, context)
+    if coherence_scopes is None:
+        return _Phase6Rejected(_Phase6PlanRejectionCode.INVALID_PROFILE)
+    return _materialize_phase6_plan(context, mention_limits, policy, profile_version, coherence_scopes)
 
 
 def _materialize_phase6_plan(
     context: _ContextPlan,
     mention_limits: _MentionLimits,
     policy: _RolePolicy,
+    profile_version: _Phase6ProfileVersion,
+    coherence_scopes: tuple[_CoherenceScope, ...],
 ) -> _Phase6Plan | _Phase6Rejected:
     targets = tuple(_MentionTarget(_MentionTargetToken(), datum.id, datum.text) for datum in context.accounting.datums)
     scopes = _compile_resolver_scopes(context, targets)
@@ -152,9 +170,10 @@ def _materialize_phase6_plan(
         targets,
         scopes,
         components,
+        coherence_scopes,
         mention_limits,
         policy,
-        _Phase6ProfileVersion.REDACT_V1,
+        profile_version,
     )
     candidate = _Phase6Plan(*values)
     snapshot = _phase6_plan_snapshot(candidate)
@@ -251,6 +270,7 @@ def _phase6_plan_snapshot(plan: _Phase6Plan) -> tuple[object, ...] | None:
             tuple((target.token, target.datum_id.value, target.text) for target in plan.targets),
             tuple((scope.owner, scope.eligible_targets) for scope in plan.resolver_scopes),
             tuple((component.key, component.target_tokens) for component in plan.components),
+            tuple(tuple(member.value for member in scope.members) for scope in plan.coherence_scopes),
             (
                 plan.mention_limits.max_candidates_per_target,
                 plan.mention_limits.max_mentions_per_target,
@@ -261,6 +281,32 @@ def _phase6_plan_snapshot(plan: _Phase6Plan) -> tuple[object, ...] | None:
             plan.profile_version.value,
         )
     except (AttributeError, TypeError):
+        return None
+
+
+def _select_profile(
+    profile_version: object,
+) -> tuple[tuple[str, ...], _RolePolicy | _RolePolicyRejected] | None:
+    match profile_version:
+        case _Phase6ProfileVersion.REDACT_V1:
+            return _PHASE6_REDACT_STAGES, _load_redact_role_policy()
+        case _Phase6ProfileVersion.SUBSTITUTE_V1:
+            return _PHASE6_SUBSTITUTE_STAGES, _load_substitute_role_policy()
+        case _:
+            return None
+
+
+def _detach_coherence_scopes(
+    graph: _ProtectionGraph,
+    context: _ContextPlan,
+) -> tuple[_CoherenceScope, ...] | None:
+    by_value = {datum.id.value: datum.id for datum in context.accounting.datums}
+    try:
+        return tuple(
+            _CoherenceScope(tuple(by_value[member.value] for member in scope.members))
+            for scope in graph.coherence_scopes
+        )
+    except (AttributeError, KeyError, TypeError):
         return None
 
 

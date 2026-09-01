@@ -9,8 +9,15 @@ from dataclasses import dataclass, field
 from typing import Protocol, TypeAlias
 
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
-from anonymizer.engine.execution.accounting_outcomes import _AccountingResult, _CauseCode, _GroupReleased
-from anonymizer.engine.execution.accounting_plan import _DatumTaskSubject, _TaskKey
+from anonymizer.engine.execution.accounting_outcomes import (
+    _AccountingResult,
+    _CauseCode,
+    _DatumQualified,
+    _GroupReleased,
+    _InvocationCompleted,
+    _TaskSucceeded,
+)
+from anonymizer.engine.execution.accounting_plan import _AtomicGroupKey, _DatumTaskSubject, _TaskKey
 from anonymizer.engine.execution.context_contract import _capability_satisfies, _snapshot_context_capability
 from anonymizer.engine.execution.context_observations import _observe_context_boundary
 from anonymizer.engine.execution.graph import _DatumId, _TextDatum
@@ -38,6 +45,7 @@ from anonymizer.engine.execution.phase6_plan import (
     _Phase6Component,
     _Phase6ComponentKey,
     _Phase6Plan,
+    _Phase6ProfileVersion,
 )
 from anonymizer.engine.execution.redact_patches import (
     _apply_redact_patches,
@@ -53,7 +61,9 @@ from anonymizer.engine.execution.redact_patches import (
     _verify_redact_patches,
 )
 from anonymizer.engine.execution.role_policy import (
+    _ClassifiedRole,
     _classify_roles,
+    _is_admitted_resolved_graph,
     _ResolvedGraph,
     _RolePolicyRejected,
 )
@@ -117,13 +127,53 @@ class _Phase6StageReceipt(_PrivatePhase6RuntimeValue):
     task: _TaskKey
 
 
-_Phase6Candidate: TypeAlias = _Phase6StageReceipt | _VerifiedDatum
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase6ResolvedDatum(_PrivatePhase6RuntimeValue):
+    datum_id: _DatumId
+    component: _Phase6ComponentKey
+    resolved: _ResolvedGraph
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase6TerminalEvidence(_PrivatePhase6RuntimeValue):
+    tasks: tuple[_TaskKey, ...]
+    datum_ids: tuple[_DatumId, ...]
+    groups: tuple[_AtomicGroupKey, ...]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase6HandoffProof(_PrivatePhase6RuntimeValue):
+    seal: object = field(compare=False)
+    snapshot: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase6SubstituteHandoff(_PrivatePhase6RuntimeValue):
+    component: _Phase6ComponentKey
+    resolved: _ResolvedGraph
+    result_version: str
+    policy_version: str
+    policy_digest: str
+    terminal_evidence: _Phase6TerminalEvidence
+    _proof: _Phase6HandoffProof | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase6HandoffRejected(_PrivatePhase6RuntimeValue):
+    pass
+
+
+_Phase6Candidate: TypeAlias = _Phase6StageReceipt | _Phase6ResolvedDatum | _VerifiedDatum
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _Phase6Execution(_PrivatePhase6RuntimeValue):
     accounting: _AccountingResult[_Phase6Candidate]
     released: tuple[_VerifiedDatum, ...]
+    handoffs: tuple[_Phase6SubstituteHandoff, ...] = ()
+
+
+_PHASE6_HANDOFF_SEAL = object()
 
 
 class _Phase6RuntimeAdmissionError(TypeError):
@@ -195,12 +245,16 @@ class _Phase6Runtime:
                 self._close_before_release(ledger, store)
         with _observe_context_boundary("reconciliation", **counts):
             accounting = ledger.finish(
-                datum_release_predicate=_verified_datum_predicate,
-                group_release_predicate=_verified_group_predicate,
+                datum_release_predicate=lambda datum_id, candidate: _qualified_datum_predicate(
+                    plan, datum_id, candidate
+                ),
+                group_release_predicate=lambda outputs: _qualified_group_predicate(plan, outputs),
             )
         with _observe_context_boundary("release", **counts):
             released = _collect_released(plan, accounting)
-        return _Phase6Execution(accounting, released)
+            handoff_result = _build_substitute_handoffs(plan, accounting)
+            handoffs = () if isinstance(handoff_result, _Phase6HandoffRejected) else handoff_result
+        return _Phase6Execution(accounting, released, handoffs)
 
     def _drive_ledger(
         self,
@@ -254,6 +308,8 @@ class _Phase6Runtime:
                 self._resolve_target(plan, target, store)
             case "classify":
                 self._classify_component(plan, target, store)
+                if plan.profile_version is _Phase6ProfileVersion.SUBSTITUTE_V1:
+                    return self._resolved_datum(plan, target, store)
             case "transform":
                 self._transform_component(plan, target, store)
             case "verify":
@@ -365,6 +421,18 @@ class _Phase6Runtime:
             raise _ComponentPhase6Fault
         store.clustered[component.key] = clustered
         store.resolved[component.key] = resolved
+
+    @staticmethod
+    def _resolved_datum(
+        plan: _Phase6Plan,
+        target: _MentionTarget,
+        store: _RuntimeStore,
+    ) -> _Phase6ResolvedDatum:
+        component = _component_for_target(plan, target)
+        resolved = store.resolved.get(component.key)
+        if resolved is None or not _valid_substitute_resolved_graph(plan, component, resolved):
+            raise _ComponentPhase6Fault
+        return _Phase6ResolvedDatum(target.datum_id, component.key, resolved)
 
     @staticmethod
     def _transform_component(plan: _Phase6Plan, target: _MentionTarget, store: _RuntimeStore) -> None:
@@ -511,14 +579,26 @@ def _targets_for_component(
     return tuple(target for target in plan.targets if target.token in component.target_tokens)
 
 
-def _verified_datum_predicate(datum_id: _DatumId, candidate: _Phase6Candidate) -> bool:
-    return isinstance(candidate, _VerifiedDatum) and candidate.datum_id == datum_id
+def _qualified_datum_predicate(
+    plan: _Phase6Plan,
+    datum_id: _DatumId,
+    candidate: _Phase6Candidate,
+) -> bool:
+    if plan.profile_version is _Phase6ProfileVersion.REDACT_V1:
+        return isinstance(candidate, _VerifiedDatum) and candidate.datum_id == datum_id
+    if not isinstance(candidate, _Phase6ResolvedDatum) or candidate.datum_id != datum_id:
+        return False
+    component = next((item for item in plan.components if item.key is candidate.component), None)
+    return component is not None and _valid_substitute_resolved_graph(plan, component, candidate.resolved)
 
 
-def _verified_group_predicate(outputs: tuple[tuple[_DatumId, _Phase6Candidate], ...]) -> bool:
+def _qualified_group_predicate(
+    plan: _Phase6Plan,
+    outputs: tuple[tuple[_DatumId, _Phase6Candidate], ...],
+) -> bool:
     ids = tuple(datum_id for datum_id, _candidate in outputs)
     return len(set(ids)) == len(ids) and all(
-        isinstance(candidate, _VerifiedDatum) and candidate.datum_id == datum_id for datum_id, candidate in outputs
+        _qualified_datum_predicate(plan, datum_id, candidate) for datum_id, candidate in outputs
     )
 
 
@@ -534,6 +614,198 @@ def _collect_released(
         if isinstance(candidate, _VerifiedDatum)
     }
     return tuple(released_by_id[datum.id] for datum in plan.accounting.datums if datum.id in released_by_id)
+
+
+def _build_substitute_handoffs(
+    plan: _Phase6Plan,
+    accounting: _AccountingResult[_Phase6Candidate],
+) -> tuple[_Phase6SubstituteHandoff, ...] | _Phase6HandoffRejected:
+    if plan.profile_version is not _Phase6ProfileVersion.SUBSTITUTE_V1 or not _is_admitted_phase6_plan(plan):
+        return ()
+    if not isinstance(accounting, _AccountingResult) or not isinstance(accounting.invocation, _InvocationCompleted):
+        return _Phase6HandoffRejected()
+    candidate_by_datum = _released_substitute_candidates(plan, accounting)
+    if isinstance(candidate_by_datum, _Phase6HandoffRejected):
+        return candidate_by_datum
+    handoffs: list[_Phase6SubstituteHandoff] = []
+    for component in plan.components:
+        handoff = _build_component_handoff(plan, accounting, component, candidate_by_datum)
+        if isinstance(handoff, _Phase6HandoffRejected):
+            return handoff
+        if handoff is not None:
+            handoffs.append(handoff)
+    return tuple(handoffs)
+
+
+def _released_substitute_candidates(
+    plan: _Phase6Plan,
+    accounting: _AccountingResult[_Phase6Candidate],
+) -> dict[_DatumId, _Phase6Candidate] | _Phase6HandoffRejected:
+    expected_groups = tuple(group.key for group in plan.accounting.atomic_groups)
+    observed_groups = tuple(outcome.group for outcome in accounting.groups)
+    if len(set(observed_groups)) != len(observed_groups) or set(observed_groups) != set(expected_groups):
+        return _Phase6HandoffRejected()
+    released = tuple(outcome for outcome in accounting.groups if isinstance(outcome, _GroupReleased))
+    released_candidates = tuple(item for outcome in released for item in outcome.outputs)
+    if len({datum_id for datum_id, _candidate in released_candidates}) != len(released_candidates):
+        return _Phase6HandoffRejected()
+    return dict(released_candidates)
+
+
+def _build_component_handoff(
+    plan: _Phase6Plan,
+    accounting: _AccountingResult[_Phase6Candidate],
+    component: _Phase6Component,
+    candidate_by_datum: dict[_DatumId, _Phase6Candidate],
+) -> _Phase6SubstituteHandoff | _Phase6HandoffRejected | None:
+    targets = _targets_for_component(plan, component)
+    present = tuple(candidate_by_datum[target.datum_id] for target in targets if target.datum_id in candidate_by_datum)
+    if not present:
+        return None
+    if len(present) != len(targets) or not all(isinstance(candidate, _Phase6ResolvedDatum) for candidate in present):
+        return _Phase6HandoffRejected()
+    candidates = tuple(candidate for candidate in present if isinstance(candidate, _Phase6ResolvedDatum))
+    resolved = candidates[0].resolved
+    if any(
+        candidate.component is not component.key
+        or candidate.resolved is not resolved
+        or candidate.datum_id != target.datum_id
+        for candidate, target in zip(candidates, targets, strict=True)
+    ) or not _valid_substitute_resolved_graph(plan, component, resolved):
+        return _Phase6HandoffRejected()
+    terminal = _terminal_evidence(plan, accounting, component, candidates)
+    if terminal is None:
+        return _Phase6HandoffRejected()
+    values = (
+        component.key,
+        resolved,
+        plan.role_policy.version.value,
+        plan.role_policy.policy_version,
+        plan.role_policy.digest,
+        terminal,
+    )
+    candidate = _Phase6SubstituteHandoff(*values)
+    snapshot = _handoff_snapshot(candidate)
+    if snapshot is None:
+        return _Phase6HandoffRejected()
+    return _Phase6SubstituteHandoff(*values, _Phase6HandoffProof(_PHASE6_HANDOFF_SEAL, snapshot))
+
+
+def _is_admitted_substitute_handoff(value: object, plan: _Phase6Plan) -> bool:
+    if (
+        not isinstance(value, _Phase6SubstituteHandoff)
+        or value._proof is None
+        or not _is_admitted_phase6_plan(plan)
+        or plan.profile_version is not _Phase6ProfileVersion.SUBSTITUTE_V1
+        or value._proof.seal is not _PHASE6_HANDOFF_SEAL
+        or value._proof.snapshot != _handoff_snapshot(value)
+        or value.result_version != plan.role_policy.version.value
+        or value.policy_version != plan.role_policy.policy_version
+        or value.policy_digest != plan.role_policy.digest
+    ):
+        return False
+    component = next((candidate for candidate in plan.components if candidate.key is value.component), None)
+    if component is None or not _valid_substitute_resolved_graph(plan, component, value.resolved):
+        return False
+    expected_ids = tuple(target.datum_id for target in _targets_for_component(plan, component))
+    expected_tasks = tuple(
+        task
+        for task in plan.accounting.tasks
+        if isinstance(task.subject, _DatumTaskSubject) and task.subject.datum_id in expected_ids
+    )
+    expected_groups = tuple(
+        group.key for group in plan.accounting.atomic_groups if any(member in expected_ids for member in group.members)
+    )
+    return value.terminal_evidence == _Phase6TerminalEvidence(expected_tasks, expected_ids, expected_groups)
+
+
+def _terminal_evidence(
+    plan: _Phase6Plan,
+    accounting: _AccountingResult[_Phase6Candidate],
+    component: _Phase6Component,
+    candidates: tuple[_Phase6ResolvedDatum, ...],
+) -> _Phase6TerminalEvidence | None:
+    targets = _targets_for_component(plan, component)
+    datum_ids = tuple(target.datum_id for target in targets)
+    tasks = tuple(
+        task
+        for task in plan.accounting.tasks
+        if isinstance(task.subject, _DatumTaskSubject) and task.subject.datum_id in datum_ids
+    )
+    task_by_key = {outcome.task: outcome for outcome in accounting.tasks}
+    datum_by_id = {outcome.datum_id: outcome for outcome in accounting.datums}
+    candidate_by_id = {candidate.datum_id: candidate for candidate in candidates}
+    if len(task_by_key) != len(accounting.tasks) or len(datum_by_id) != len(accounting.datums):
+        return None
+    if any(not isinstance(task_by_key.get(task), _TaskSucceeded) for task in tasks):
+        return None
+    final_tasks = tuple(_TaskKey(plan.accounting.stages[-1], _DatumTaskSubject(datum_id)) for datum_id in datum_ids)
+    for task, datum_id in zip(final_tasks, datum_ids, strict=True):
+        task_outcome = task_by_key[task]
+        datum_outcome = datum_by_id.get(datum_id)
+        expected = candidate_by_id[datum_id]
+        if (
+            not isinstance(task_outcome, _TaskSucceeded)
+            or task_outcome.candidate is not expected
+            or not isinstance(datum_outcome, _DatumQualified)
+            or datum_outcome.candidate is not expected
+        ):
+            return None
+    groups = tuple(
+        group.key for group in plan.accounting.atomic_groups if any(member in datum_ids for member in group.members)
+    )
+    released_by_key = {outcome.group: outcome for outcome in accounting.groups if isinstance(outcome, _GroupReleased)}
+    if any(group not in released_by_key for group in groups):
+        return None
+    return _Phase6TerminalEvidence(tasks, datum_ids, groups)
+
+
+def _valid_substitute_resolved_graph(
+    plan: _Phase6Plan,
+    component: _Phase6Component,
+    resolved: _ResolvedGraph,
+) -> bool:
+    if not _is_admitted_resolved_graph(resolved, plan.role_policy):
+        return False
+    targets = _targets_for_component(plan, component)
+    if tuple(target.token for target in resolved.clustered.detected.targets) != component.target_tokens:
+        return False
+    target_ids = {target.datum_id for target in targets}
+    if any(
+        item.mention.target_datum_id not in target_ids or not isinstance(item.role_result, _ClassifiedRole)
+        for item in resolved.mentions
+    ):
+        return False
+    scope_by_datum = {
+        datum_id: scope_index for scope_index, scope in enumerate(plan.coherence_scopes) for datum_id in scope.members
+    }
+    mention_by_id = {item.mention.id: item.mention for item in resolved.mentions}
+    return all(
+        len(
+            {
+                scope_by_datum.get(mention_by_id[mention_id].target_datum_id)
+                for mention_id in cluster.ordered_mention_ids
+            }
+        )
+        == 1
+        for cluster in resolved.clustered.clusters
+    )
+
+
+def _handoff_snapshot(value: _Phase6SubstituteHandoff) -> tuple[object, ...] | None:
+    try:
+        return (
+            value.component,
+            value.resolved._proof,
+            value.result_version,
+            value.policy_version,
+            value.policy_digest,
+            value.terminal_evidence.tasks,
+            value.terminal_evidence.datum_ids,
+            value.terminal_evidence.groups,
+        )
+    except (AttributeError, TypeError):
+        return None
 
 
 def _bounded_text(value: object, limit: int) -> bool:

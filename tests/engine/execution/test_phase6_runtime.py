@@ -47,6 +47,7 @@ from anonymizer.engine.execution.phase6_plan import (
     _compile_phase6_plan,
     _is_admitted_phase6_plan,
     _Phase6Plan,
+    _Phase6ProfileVersion,
     _Phase6Rejected,
 )
 from anonymizer.engine.execution.phase6_runtime import (
@@ -169,6 +170,47 @@ def test_phase6_plan_rejects_a_role_policy_manifest_digest_mismatch(monkeypatch:
     )
 
     assert isinstance(result, _Phase6Rejected)
+
+
+def test_default_phase6_profile_freezes_redact_policy_transform_and_verification() -> None:
+    plan = _plan(_independent_graph())
+
+    class _Backend(_NoMentionBackend):
+        def detect(self, work: _Phase6CandidateWork) -> tuple[_CandidateProposal, ...]:
+            self.effect_count += 1
+            return (_CandidateProposal(0, len(work.target.text), work.target.text, "first_name"),)
+
+        def validate(self, work: _Phase6ValidationWork) -> tuple[_ValidationDecision, ...]:
+            self.effect_count += 1
+            return tuple(
+                _ValidationDecision(candidate.token, _ValidationDecisionKind.KEEP) for candidate in work.candidates
+            )
+
+    result = _Phase6Runtime(_Backend()).run(plan)
+
+    assert plan.profile_version is _Phase6ProfileVersion.REDACT_V1
+    assert plan.role_policy.version.value == "phase6-role-result/v1"
+    assert plan.role_policy.mappings == ()
+    assert plan.role_policy.digest == "e11a29db1af26c9572e1b4dec9e0a91e80966c6de1d813a378b64210a3bdfc40"
+    assert tuple(stage.value for stage in plan.accounting.stages) == (
+        "detect",
+        "augment",
+        "validate",
+        "finalize",
+        "resolve",
+        "classify",
+        "transform",
+        "verify",
+    )
+    assert tuple((datum.datum_id.value, datum.output) for datum in result.released) == (
+        ("target-a", "[REDACTED]"),
+        ("target-b", "[REDACTED]"),
+    )
+    assert {
+        (_datum_id(outcome.task).value, type(outcome).__name__)
+        for outcome in result.accounting.tasks
+        if outcome.task.stage.value == "verify"
+    } == {("target-a", "_TaskSucceeded"), ("target-b", "_TaskSucceeded")}
 
 
 def test_phase6_runtime_accounts_effects_and_releases_exact_local_redact_outputs() -> None:
