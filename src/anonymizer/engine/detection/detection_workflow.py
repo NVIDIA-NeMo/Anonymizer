@@ -652,7 +652,7 @@ Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first 
         "  Examples of disguised identifiers to detect:\n"
         '  - Any identifier spoken as digit words, including "o" or "oh" used in place of zero:\n'
         '    "nine o two, five five five, one two three four"\n'
-        '  - Values spelled out letter by letter with hyphens or commas:\n'
+        "  - Values spelled out letter by letter with hyphens or commas:\n"
         '    "J-O-H-N", "M, A, R, Y"\n'
     )
 

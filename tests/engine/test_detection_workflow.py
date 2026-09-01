@@ -411,11 +411,14 @@ def test_augment_prompt_strict_when_custom_labels_provided() -> None:
     assert "employment_status" not in prompt.split("Output:")[1]
 
 
-@pytest.mark.parametrize("labels,strict", [
-    (["hostname", "ipv4"], True),
-    (["ssn"], True),
-    (["phone_number", "age"], False),
-])
+@pytest.mark.parametrize(
+    "labels,strict",
+    [
+        (["hostname", "ipv4"], True),
+        (["ssn"], True),
+        (["phone_number", "age"], False),
+    ],
+)
 def test_augment_prompt_always_includes_disguised_identifier_hints(labels: list[str], strict: bool) -> None:
     """Disguised-identifier hints and examples are included for all label sets."""
     prompt = _get_augment_prompt(data_summary=None, labels=labels, strict_labels=strict)
