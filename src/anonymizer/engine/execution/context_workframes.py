@@ -23,7 +23,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
 )
 from anonymizer.engine.execution.accounting_evidence import _Dispatch
-from anonymizer.engine.execution.accounting_plan import _TaskKey
+from anonymizer.engine.execution.accounting_plan import _DatumTaskSubject, _TaskKey
 from anonymizer.engine.execution.context_admission import (
     _CompiledContextBinding,
     _CompiledContextProjection,
@@ -345,6 +345,11 @@ def _lower_context_workframes(
     """Lower a ready target frontier from the sealed compiled snapshot only."""
     if not _is_admitted_context_plan(plan):
         raise _WorkframeConstructionError
+    datum_subjects: list[_DatumTaskSubject] = []
+    for task in tasks:
+        if not isinstance(task.subject, _DatumTaskSubject):
+            raise _WorkframeConstructionError
+        datum_subjects.append(task.subject)
     target_work_ids = _resolve_target_work_ids(tasks, target_work_ids, identity_factory)
     projection_by_task = {projection.owner_task: projection for projection in plan.projections}
     if len(set(tasks)) != len(tasks) or any(task not in projection_by_task for task in tasks):
@@ -366,9 +371,9 @@ def _lower_context_workframes(
                 COL_TARGET_WORK_ID: owner.value,
                 COL_TASK_ID: task,
                 COL_ATTEMPT_ID: None,
-                COL_TEXT: target_text[task.datum_id],
+                COL_TEXT: target_text[subject.datum_id],
             }
-            for task, owner in zip(tasks, target_ids, strict=True)
+            for task, subject, owner in zip(tasks, datum_subjects, target_ids, strict=True)
         ),
         columns=pd.Index([COL_TARGET_WORK_ID, COL_TASK_ID, COL_ATTEMPT_ID, COL_TEXT]),
     )

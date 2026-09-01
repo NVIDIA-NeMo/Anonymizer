@@ -39,7 +39,12 @@ from anonymizer.engine.execution.accounting_outcomes import (
     _TaskLost,
     _TaskSucceeded,
 )
-from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _AccountingPlan, _TaskKey
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingLimits,
+    _AccountingPlan,
+    _DatumTaskSubject,
+    _TaskKey,
+)
 from anonymizer.engine.execution.context_admission import (
     _compile_context_plan,
     _ContextAdmissionCode,
@@ -272,6 +277,11 @@ class _ContextBackend:
 
     def run(self, *_args: object, **_kwargs: object) -> _PandasExecutionResult:
         raise AssertionError("context plans must not fall back to independent-row execution")
+
+
+def _datum_id(task: _TaskKey) -> _DatumId:
+    assert isinstance(task.subject, _DatumTaskSubject)
+    return task.subject.datum_id
 
 
 def _corrupt_terminal_evidence(
@@ -605,7 +615,7 @@ def test_late_cancellation_preserves_private_success_but_embargos_release() -> N
     dispatches = ledger.dispatch_batch(ready, row_token_values=correlations)
     frames.bind_dispatches(dispatches)
     for dispatch in dispatches:
-        ledger.accept_success(dispatch, dispatch.task.datum_id.value)
+        ledger.accept_success(dispatch, _datum_id(dispatch.task).value)
     evidence = tuple(
         _make_context_binding_evidence(
             row[COL_CONTEXT_BINDING_ID],

@@ -17,6 +17,7 @@ from anonymizer.engine.execution.accounting_admission import (
 from anonymizer.engine.execution.accounting_plan import (
     _AccountingLimits,
     _AccountingPlan,
+    _DatumTaskSubject,
     _is_admitted_accounting_plan,
     _TaskKey,
 )
@@ -348,7 +349,7 @@ def _materialize_projections(
     final_stage = accounting.stages[-1]
     projections: list[_CompiledContextProjection] = []
     for target in accounting.datums:
-        task = _TaskKey(final_stage, target.id)
+        task = _TaskKey(final_stage, _DatumTaskSubject(target.id))
         scope = _ContextScopeKey()
         members = member_by_target[target.id]
         bindings = tuple(
@@ -396,26 +397,34 @@ def _context_plan_snapshot(plan: _ContextPlan) -> tuple[object, ...] | None:
 
 
 def _projection_snapshot(projections: tuple[_CompiledContextProjection, ...]) -> tuple[object, ...]:
-    return tuple(
-        (
-            projection.owner_task.stage.value,
-            projection.target_datum_id.value,
-            projection.scope,
-            tuple(member.value for member in projection.context_datum_ids),
-            tuple(
+    snapshots: list[tuple[object, ...]] = []
+    for projection in projections:
+        if not isinstance(projection.owner_task.subject, _DatumTaskSubject):
+            raise TypeError("private context projection owner is not datum-owned")
+        bindings: list[tuple[object, ...]] = []
+        for binding in projection.bindings:
+            if not isinstance(binding.owner_task.subject, _DatumTaskSubject):
+                raise TypeError("private context binding owner is not datum-owned")
+            bindings.append(
                 (
                     binding.owner_task.stage.value,
-                    binding.owner_task.datum_id.value,
+                    binding.owner_task.subject.datum_id.value,
                     binding.scope,
                     binding.ordinal,
                     binding.datum_id.value,
                 )
-                for binding in projection.bindings
-            ),
-            projection.context_bytes,
+            )
+        snapshots.append(
+            (
+                projection.owner_task.stage.value,
+                projection.target_datum_id.value,
+                projection.scope,
+                tuple(member.value for member in projection.context_datum_ids),
+                tuple(bindings),
+                projection.context_bytes,
+            )
         )
-        for projection in projections
-    )
+    return tuple(snapshots)
 
 
 def _contract_snapshot(contract: _ContextExecutionContract) -> tuple[object, ...]:

@@ -24,7 +24,12 @@ from anonymizer.engine.execution.accounting_evidence import (
 )
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_outcomes import _AccountingResult, _CauseCode
-from anonymizer.engine.execution.accounting_plan import _AccountingPlan, _is_admitted_accounting_plan, _TaskKey
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingPlan,
+    _DatumTaskSubject,
+    _is_admitted_accounting_plan,
+    _TaskKey,
+)
 from anonymizer.engine.execution.context_admission import (
     _ContextAdmissionCode,
     _ContextPlan,
@@ -230,8 +235,12 @@ class _AccountingGraphRuntime:
         if not isinstance(plan, _ContextPlan):
             if not _is_admitted_accounting_plan(plan):
                 raise _AccountingGraphAdmissionError(_AccountingAdmissionCode.MALFORMED_GRAPH)
+            if any(not isinstance(task.subject, _DatumTaskSubject) for task in plan.tasks):
+                raise _AccountingGraphAdmissionError(_AccountingAdmissionCode.UNSUPPORTED_TASK_CARDINALITY)
             return _PreparedRuntimePlan(plan, None, 0, None)
         if not _is_admitted_context_plan(plan):
+            raise _ContextGraphAdmissionError(_ContextAdmissionCode.MALFORMED_GRAPH)
+        if any(not isinstance(task.subject, _DatumTaskSubject) for task in plan.accounting.tasks):
             raise _ContextGraphAdmissionError(_ContextAdmissionCode.MALFORMED_GRAPH)
         context_count = sum(len(projection.bindings) for projection in plan.projections)
         with _observe_context_boundary(
@@ -253,8 +262,13 @@ class _AccountingGraphRuntime:
         ready: tuple[_TaskKey, ...],
         datum_by_id: dict[_DatumId, _TextDatum],
     ) -> _ExecutionFrontier | None:
+        datum_subjects: list[_DatumTaskSubject] = []
+        for task in ready:
+            if not isinstance(task.subject, _DatumTaskSubject):
+                raise _AccountingGraphAdmissionError(_AccountingAdmissionCode.UNSUPPORTED_TASK_CARDINALITY)
+            datum_subjects.append(task.subject)
         if prepared.context is None:
-            frame = pd.DataFrame({COL_TEXT: [datum_by_id[task.datum_id].text for task in ready]})
+            frame = pd.DataFrame({COL_TEXT: [datum_by_id[subject.datum_id].text for subject in datum_subjects]})
             dispatches = self._dispatch_frontier(ledger, prepared, ready)
             correlations = tuple(dispatch.row_token.value for dispatch in dispatches)
             verifier = _InvocationRowVerifier(frame, correlations=correlations)
@@ -604,7 +618,9 @@ class _AccountingGraphRuntime:
             match status:
                 case _TerminalOutcome.SUCCESS:
                     try:
-                        candidate = hydrate(datum_by_id[dispatch.task.datum_id], row_by_token[token])
+                        if not isinstance(dispatch.task.subject, _DatumTaskSubject):
+                            raise TypeError
+                        candidate = hydrate(datum_by_id[dispatch.task.subject.datum_id], row_by_token[token])
                     except Exception:
                         records.append(_FailureRecord(dispatch))
                     else:

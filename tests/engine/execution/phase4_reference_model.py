@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
 from itertools import product
-from typing import TypeAlias, assert_never, final
+from typing import Literal, TypeAlias, assert_never, final
 
 
 class ReferenceTaskOutcome(str, Enum):
@@ -562,3 +562,154 @@ def _reduce_children(
         )
         if outcome in children
     )
+
+
+ReferenceMixedSubject: TypeAlias = tuple[Literal["datum", "scope"], str]
+ReferenceMixedTaskKey: TypeAlias = tuple[str, ReferenceMixedSubject]
+
+
+@dataclass(frozen=True)
+class ReferenceMixedDeclaration:
+    """Independent declaration for non-rectangular datum/scope task plans."""
+
+    datum_ids: tuple[str, ...]
+    datum_stages: tuple[str, ...]
+    scope_tasks: tuple[tuple[str, str], ...]
+    datum_dependencies: tuple[tuple[str, str], ...] = ()
+    task_predecessors: tuple[tuple[ReferenceMixedTaskKey, ReferenceMixedTaskKey], ...] = ()
+    atomic_groups: tuple[tuple[str, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class ReferenceMixedResult:
+    """Observable scheduling and reduction result for a mixed task plan."""
+
+    ready_frontiers: tuple[tuple[ReferenceMixedTaskKey, ...], ...]
+    tasks: tuple[tuple[ReferenceMixedTaskKey, ReferenceTaskOutcome], ...]
+    datums: tuple[tuple[str, ReferenceTaskOutcome], ...]
+    stages: tuple[tuple[str, ReferenceTaskOutcome], ...]
+    released_groups: frozenset[frozenset[str]]
+
+
+def reduce_mixed_schedule(
+    declaration: ReferenceMixedDeclaration,
+    schedule: tuple[tuple[ReferenceMixedTaskKey, ReferenceTaskOutcome], ...],
+) -> ReferenceMixedResult:
+    """Evaluate a mixed schedule without importing production planning or ledger code."""
+    ordered_datums = _topological_mixed_datums(declaration)
+    task_order = (
+        *((stage, ("datum", datum_id)) for stage in declaration.datum_stages for datum_id in ordered_datums),
+        *((stage, ("scope", scope_id)) for stage, scope_id in declaration.scope_tasks),
+    )
+    states: dict[ReferenceMixedTaskKey, str | ReferenceTaskOutcome] = dict.fromkeys(task_order, "planned")
+
+    def datum_state(datum_id: str) -> str:
+        children = tuple(states[(stage, ("datum", datum_id))] for stage in declaration.datum_stages)
+        if all(child is ReferenceTaskOutcome.SUCCEEDED for child in children):
+            return "satisfied"
+        if any(isinstance(child, ReferenceTaskOutcome) for child in children):
+            return "unsatisfied"
+        return "waiting"
+
+    def readiness(task: ReferenceMixedTaskKey) -> str:
+        stage, (subject_kind, subject_id) = task
+        if subject_kind == "datum":
+            stage_index = declaration.datum_stages.index(stage)
+            if stage_index:
+                previous = states[(declaration.datum_stages[stage_index - 1], (subject_kind, subject_id))]
+                if previous is not ReferenceTaskOutcome.SUCCEEDED:
+                    return "blocked" if isinstance(previous, ReferenceTaskOutcome) else "waiting"
+        explicit_states = tuple(
+            states[prerequisite] for prerequisite, dependent in declaration.task_predecessors if dependent == task
+        )
+        if any(
+            isinstance(state, ReferenceTaskOutcome) and state is not ReferenceTaskOutcome.SUCCEEDED
+            for state in explicit_states
+        ):
+            return "blocked"
+        if any(state is not ReferenceTaskOutcome.SUCCEEDED for state in explicit_states):
+            return "waiting"
+        if subject_kind == "scope":
+            return "ready"
+        prerequisites = tuple(
+            prerequisite for prerequisite, dependent in declaration.datum_dependencies if dependent == subject_id
+        )
+        prerequisite_states = tuple(datum_state(datum_id) for datum_id in prerequisites)
+        if "unsatisfied" in prerequisite_states:
+            return "blocked"
+        return "ready" if all(state == "satisfied" for state in prerequisite_states) else "waiting"
+
+    def advance() -> None:
+        changed = True
+        while changed:
+            changed = False
+            for task in task_order:
+                if states[task] != "planned":
+                    continue
+                guard = readiness(task)
+                if guard == "ready":
+                    states[task] = "ready"
+                    changed = True
+                elif guard == "blocked":
+                    states[task] = ReferenceTaskOutcome.BLOCKED
+                    changed = True
+
+    ready_frontiers: list[tuple[ReferenceMixedTaskKey, ...]] = []
+    for task, outcome in schedule:
+        advance()
+        ready = tuple(candidate for candidate in task_order if states[candidate] == "ready")
+        ready_frontiers.append(ready)
+        if task not in ready or outcome not in {
+            ReferenceTaskOutcome.SUCCEEDED,
+            ReferenceTaskOutcome.FAILED,
+            ReferenceTaskOutcome.CANCELLED,
+            ReferenceTaskOutcome.LOST,
+            ReferenceTaskOutcome.INCONSISTENT,
+        }:
+            raise AssertionError("reference mixed schedule is not executable")
+        states[task] = outcome
+
+    advance()
+    states = {
+        task: ReferenceTaskOutcome.BLOCKED if state in {"planned", "ready"} else state for task, state in states.items()
+    }
+    terminal_tasks = tuple((task, _terminal(state)) for task, state in states.items())
+    outcome_by_task = dict(terminal_tasks)
+    datums = tuple(
+        (
+            datum_id,
+            _reduce_children(
+                tuple(outcome_by_task[(stage, ("datum", datum_id))] for stage in declaration.datum_stages)
+            ),
+        )
+        for datum_id in declaration.datum_ids
+    )
+    stages = tuple(
+        (
+            stage,
+            _reduce_children(
+                tuple(outcome_by_task[(stage, ("datum", datum_id))] for datum_id in declaration.datum_ids)
+            ),
+        )
+        for stage in declaration.datum_stages
+    )
+    released = reduce_reference(
+        ReferenceDeclaration(
+            declaration.datum_ids,
+            declaration.datum_dependencies,
+            declaration.atomic_groups,
+            declaration.datum_stages,
+        ),
+        dict(datums),
+    ).released_groups
+    return ReferenceMixedResult(tuple(ready_frontiers), terminal_tasks, datums, stages, released)
+
+
+def _topological_mixed_datums(declaration: ReferenceMixedDeclaration) -> tuple[str, ...]:
+    legacy_shape = ReferenceDeclaration(
+        declaration.datum_ids,
+        declaration.datum_dependencies,
+        declaration.atomic_groups,
+        declaration.datum_stages,
+    )
+    return _topological_datums(legacy_shape)

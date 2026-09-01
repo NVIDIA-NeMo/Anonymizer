@@ -10,7 +10,7 @@ from typing import Protocol, TypeAlias
 
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_outcomes import _AccountingResult, _CauseCode, _GroupReleased
-from anonymizer.engine.execution.accounting_plan import _TaskKey
+from anonymizer.engine.execution.accounting_plan import _DatumTaskSubject, _TaskKey
 from anonymizer.engine.execution.context_contract import _capability_satisfies, _snapshot_context_capability
 from anonymizer.engine.execution.context_observations import _observe_context_boundary
 from anonymizer.engine.execution.graph import _DatumId, _TextDatum
@@ -243,7 +243,9 @@ class _Phase6Runtime:
         task: _TaskKey,
         store: _RuntimeStore,
     ) -> _Phase6Candidate:
-        target = _target_for_datum(plan, task.datum_id)
+        if not isinstance(task.subject, _DatumTaskSubject):
+            raise _GlobalPhase6Fault
+        target = _target_for_datum(plan, task.subject.datum_id)
         if task.stage.value in {"detect", "augment", "validate", "finalize"}:
             self._execute_mention_task(plan, task, target, store)
             return _Phase6StageReceipt(task)

@@ -13,7 +13,7 @@ import pytest
 from anonymizer.engine.execution import role_policy as role_policy_module
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_outcomes import _InvocationFailed, _InvocationInconsistent
-from anonymizer.engine.execution.accounting_plan import _AccountingLimits
+from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _DatumTaskSubject, _TaskKey
 from anonymizer.engine.execution.context_contract import (
     _BackendArtifactClass,
     _ContextBackendCapability,
@@ -59,6 +59,11 @@ from anonymizer.engine.execution.phase6_runtime import (
     _Phase6RuntimeAdmissionError,
     _Phase6ValidationWork,
 )
+
+
+def _datum_id(task: _TaskKey) -> _DatumId:
+    assert isinstance(task.subject, _DatumTaskSubject)
+    return task.subject.datum_id
 
 
 def test_phase6_runtime_test_infrastructure() -> None:
@@ -110,7 +115,7 @@ def test_phase6_plan_freezes_stages_target_only_resolver_scopes_and_predecessors
         )
     )
 
-    tasks = {(task.stage.value, task.datum_id.value): task for task in result.accounting.tasks}
+    tasks = {(task.stage.value, _datum_id(task).value): task for task in result.accounting.tasks}
     ledger: _AccountingLedger[str] = _AccountingLedger(result.accounting)
     ledger.open()
     for stage in ("detect", "augment", "validate"):
@@ -119,7 +124,7 @@ def test_phase6_plan_freezes_stages_target_only_resolver_scopes_and_predecessors
         for task in ready:
             ledger.accept_success(ledger.dispatch(task), stage)
     finalize = ledger.ready_tasks()
-    by_datum = {task.datum_id.value: task for task in finalize}
+    by_datum = {_datum_id(task).value: task for task in finalize}
     ledger.accept_success(ledger.dispatch(by_datum["target-a"]), "finalized-a")
     assert ledger.ready_tasks() == (by_datum["target-b"],)
     ledger.accept_success(ledger.dispatch(by_datum["target-b"]), "finalized-b")
@@ -319,7 +324,7 @@ def test_phase6_attributable_resolver_fault_does_not_withhold_context_peer() -> 
 
     assert tuple((datum.datum_id.value, datum.output) for datum in result.released) == (("target-b", "[REDACTED]"),)
     task_outcomes = {
-        (outcome.task.stage.value, outcome.task.datum_id.value): type(outcome).__name__
+        (outcome.task.stage.value, _datum_id(outcome.task).value): type(outcome).__name__
         for outcome in result.accounting.tasks
     }
     assert task_outcomes[("resolve", "target-a")] == "_TaskFailed"

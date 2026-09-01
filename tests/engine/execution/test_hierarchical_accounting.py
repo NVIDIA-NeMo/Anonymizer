@@ -57,7 +57,12 @@ from anonymizer.engine.execution.accounting_outcomes import (
     _TaskLost,
     _TaskSucceeded,
 )
-from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _AccountingPlan
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingLimits,
+    _AccountingPlan,
+    _DatumTaskSubject,
+    _TaskKey,
+)
 from anonymizer.engine.execution.accounting_release import _qualify_release
 from anonymizer.engine.execution.graph import (
     _AtomicGroup,
@@ -125,6 +130,11 @@ def _compiled(graph: _ProtectionGraph) -> _AccountingPlan:
     return result
 
 
+def _datum_id(task: _TaskKey) -> _DatumId:
+    assert isinstance(task.subject, _DatumTaskSubject)
+    return task.subject.datum_id
+
+
 def test_one_shot_ledger_reconciles_complete_singleton_invocation() -> None:
     plan = _compile_accounting_plan(_graph("a"), limits=_LIMITS)
     assert isinstance(plan, _AccountingPlan)
@@ -159,9 +169,9 @@ def test_synthetic_multistage_plan_pipelines_per_datum_without_global_stage_disp
 
     observed_frontiers: list[tuple[tuple[str, str], ...]] = []
     while ready := ledger.ready_tasks():
-        observed_frontiers.append(tuple((task.stage.value, task.datum_id.value) for task in ready))
+        observed_frontiers.append(tuple((task.stage.value, _datum_id(task).value) for task in ready))
         for task in ready:
-            ledger.accept_success(ledger.dispatch(task), f"{task.stage.value}-{task.datum_id.value}")
+            ledger.accept_success(ledger.dispatch(task), f"{task.stage.value}-{_datum_id(task).value}")
     result = ledger.finish()
 
     assert observed_frontiers == [
@@ -254,8 +264,8 @@ def test_failure_blocks_dependents_without_dispatch_or_retry_and_isolates_indepe
     ledger = _ledger(plan)
     ledger.open()
     ready = ledger.ready_tasks()
-    assert tuple(task.datum_id.value for task in ready) == ("a", "c")
-    by_datum = {task.datum_id.value: task for task in ready}
+    assert tuple(_datum_id(task).value for task in ready) == ("a", "c")
+    by_datum = {_datum_id(task).value: task for task in ready}
     dispatch_a = ledger.dispatch(by_datum["a"])
     dispatch_c = ledger.dispatch(by_datum["c"])
     ledger.accept_failure(dispatch_a)
@@ -267,7 +277,7 @@ def test_failure_blocks_dependents_without_dispatch_or_retry_and_isolates_indepe
     result = ledger.finish()
 
     assert isinstance(result.invocation, _InvocationCompleted)
-    assert any(isinstance(outcome, _TaskBlocked) and outcome.task.datum_id.value == "b" for outcome in result.tasks)
+    assert any(isinstance(outcome, _TaskBlocked) and _datum_id(outcome.task).value == "b" for outcome in result.tasks)
     released = tuple(outcome for outcome in result.groups if isinstance(outcome, _GroupReleased))
     assert tuple(output[0].value for outcome in released for output in outcome.outputs) == ("c",)
 
@@ -287,9 +297,9 @@ def test_late_atomic_peer_failure_withholds_already_succeeded_dependent_at_fixed
     assert isinstance(plan, _AccountingPlan)
     ledger = _ledger(plan)
     ledger.open()
-    initial = {task.datum_id.value: task for task in ledger.ready_tasks()}
+    initial = {_datum_id(task).value: task for task in ledger.ready_tasks()}
     ledger.accept_success(ledger.dispatch(initial["a"]), "protected-a")
-    after_prerequisite = {task.datum_id.value: task for task in ledger.ready_tasks()}
+    after_prerequisite = {_datum_id(task).value: task for task in ledger.ready_tasks()}
     ledger.accept_success(ledger.dispatch(after_prerequisite["c"]), "protected-c")
     ledger.accept_failure(ledger.dispatch(after_prerequisite["b"]))
     ledger.accept_success(ledger.dispatch(after_prerequisite["d"]), "protected-d")
@@ -322,13 +332,13 @@ def test_late_atomic_peer_failure_withholds_already_succeeded_dependent_at_fixed
         for datum_id, _candidate in group.outputs
     )
 
-    assert any(isinstance(outcome, _TaskSucceeded) and outcome.task.datum_id.value == "c" for outcome in result.tasks)
+    assert any(isinstance(outcome, _TaskSucceeded) and _datum_id(outcome.task).value == "c" for outcome in result.tasks)
     assert released_ids == ("e",)
     assert (
         tuple(
-            ((outcome.task.stage.value, outcome.task.datum_id.value), ReferenceTaskOutcome.SUCCEEDED)
+            ((outcome.task.stage.value, _datum_id(outcome.task).value), ReferenceTaskOutcome.SUCCEEDED)
             if isinstance(outcome, _TaskSucceeded)
-            else ((outcome.task.stage.value, outcome.task.datum_id.value), ReferenceTaskOutcome.FAILED)
+            else ((outcome.task.stage.value, _datum_id(outcome.task).value), ReferenceTaskOutcome.FAILED)
             for outcome in result.tasks
             if isinstance(outcome, (_TaskSucceeded, _TaskFailed))
         )
@@ -1107,10 +1117,10 @@ def test_group_predicate_failure_propagates_through_explicit_dependencies() -> N
     ledger.open()
 
     first = ledger.ready_tasks()
-    assert tuple(task.datum_id.value for task in first) == ("a",)
+    assert tuple(_datum_id(task).value for task in first) == ("a",)
     ledger.accept_success(ledger.dispatch(first[0]), "protected-a")
     second = ledger.ready_tasks()
-    assert tuple(task.datum_id.value for task in second) == ("b",)
+    assert tuple(_datum_id(task).value for task in second) == ("b",)
     ledger.accept_success(ledger.dispatch(second[0]), "protected-b")
 
     result = ledger.finish(
@@ -1128,7 +1138,7 @@ def test_accounting_admission_compiles_a_detached_singleton_plan() -> None:
     assert isinstance(result, _AccountingPlan)
     assert result.datums == (source,)
     assert result.datums[0] is not source
-    assert tuple(task.datum_id for task in result.tasks) == (source.id,)
+    assert tuple(_datum_id(task) for task in result.tasks) == (source.id,)
     object.__setattr__(source, "text", "mutated after compilation")
     assert result.datums[0].text == "synthetic input"
 
@@ -1406,7 +1416,7 @@ def test_concurrent_frontier_terminals_preserve_hierarchical_fixed_point() -> No
     def terminalize(dispatch: _Dispatch, *, succeeds: bool) -> _EvidenceAcceptance:
         gate.wait()
         return (
-            ledger.accept_success(dispatch, f"protected-{dispatch.task.datum_id.value}")
+            ledger.accept_success(dispatch, f"protected-{_datum_id(dispatch.task).value}")
             if succeeds
             else ledger.accept_failure(dispatch)
         )
@@ -1482,7 +1492,7 @@ def _run_ledger_case(
     ledger = _ledger(plan)
     ledger.open()
     result_construction_failure = False
-    tasks = {(task.stage.value, task.datum_id.value): task for task in plan.tasks}
+    tasks = {(task.stage.value, _datum_id(task).value): task for task in plan.tasks}
     dispatches = {}
     for observation in observations:
         match observation:
@@ -1558,10 +1568,10 @@ def _run_ledger_case(
 
 def _ledger_shape(result: _AccountingResult[str]) -> tuple[object, ...]:
     return (
-        tuple(((task.task.stage.value, task.task.datum_id.value), _outcome_name(task)) for task in result.tasks),
+        tuple(((task.task.stage.value, _datum_id(task.task).value), _outcome_name(task)) for task in result.tasks),
         tuple(
             (
-                (task.task.stage.value, task.task.datum_id.value),
+                (task.task.stage.value, _datum_id(task.task).value),
                 tuple(cause.code.value for cause in getattr(task, "causes", ())),
             )
             for task in result.tasks
@@ -1656,7 +1666,7 @@ def test_accounting_admission_compiles_declaration_order_independent_dag_and_par
 
     assert isinstance(result, _AccountingPlan)
     assert tuple(datum_id.value for datum_id in result.topological_datums) == ("a", "c", "b", "d")
-    assert tuple(task.datum_id.value for task in result.tasks[:4]) == ("a", "c", "b", "d")
+    assert tuple(_datum_id(task).value for task in result.tasks[:4]) == ("a", "c", "b", "d")
     assert len(result.tasks) == 8
     assert {frozenset(member.value for member in group.members) for group in result.atomic_groups} == {
         frozenset(("a", "b")),
@@ -1930,10 +1940,10 @@ def test_dispatch_batch_size_does_not_change_terminal_or_release_result() -> Non
         while ready := ledger.ready_tasks():
             for task in ready[:batch_size]:
                 dispatch = ledger.dispatch(task)
-                if task.datum_id.value == "b":
+                if _datum_id(task).value == "b":
                     ledger.accept_failure(dispatch)
                 else:
-                    ledger.accept_success(dispatch, f"candidate-{task.datum_id.value}")
+                    ledger.accept_success(dispatch, f"candidate-{_datum_id(task).value}")
         return ledger.finish()
 
     assert _ledger_shape(execute(1)) == _ledger_shape(execute(4))

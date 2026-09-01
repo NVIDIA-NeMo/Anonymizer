@@ -61,7 +61,14 @@ from anonymizer.engine.execution.accounting_outcomes import (
     _TaskSucceeded,
     _TerminalCause,
 )
-from anonymizer.engine.execution.accounting_plan import _AccountingPlan, _AtomicGroupKey, _StageId, _TaskKey
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingPlan,
+    _AtomicGroupKey,
+    _DatumTaskSubject,
+    _ScopeTaskSubject,
+    _StageId,
+    _TaskKey,
+)
 from anonymizer.engine.execution.accounting_release import _qualify_release
 from anonymizer.engine.execution.graph import _DatumId
 
@@ -475,16 +482,17 @@ class _AccountingLedger(Generic[T]):
                     changed = True
 
     def _readiness(self, task: _TaskKey) -> str:
-        stage_index = self._plan.stages.index(task.stage)
-        if stage_index:
-            previous = _TaskKey(self._plan.stages[stage_index - 1], task.datum_id)
-            previous_state = self._states[previous]
-            if isinstance(previous_state, _TaskSucceeded):
-                pass
-            elif _is_terminal(previous_state):
-                return "blocked"
-            else:
-                return "waiting"
+        if isinstance(task.subject, _DatumTaskSubject):
+            stage_index = self._plan.stages.index(task.stage)
+            if stage_index:
+                previous = _TaskKey(self._plan.stages[stage_index - 1], task.subject)
+                previous_state = self._states[previous]
+                if isinstance(previous_state, _TaskSucceeded):
+                    pass
+                elif _is_terminal(previous_state):
+                    return "blocked"
+                else:
+                    return "waiting"
         explicit_states = tuple(
             self._states[predecessor.prerequisite]
             for predecessor in self._plan.task_predecessors
@@ -494,8 +502,12 @@ class _AccountingLedger(Generic[T]):
             return "blocked"
         if any(not isinstance(state, _TaskSucceeded) for state in explicit_states):
             return "waiting"
+        if isinstance(task.subject, _ScopeTaskSubject):
+            return "ready"
         prerequisites = tuple(
-            dependency.prerequisite for dependency in self._plan.dependencies if dependency.dependent == task.datum_id
+            dependency.prerequisite
+            for dependency in self._plan.dependencies
+            if dependency.dependent == task.subject.datum_id
         )
         prerequisite_states = tuple(self._datum_execution_state(datum_id) for datum_id in prerequisites)
         if any(state == "unsatisfied" for state in prerequisite_states):
@@ -503,9 +515,10 @@ class _AccountingLedger(Generic[T]):
         return "ready" if all(state == "satisfied" for state in prerequisite_states) else "waiting"
 
     def _datum_execution_state(self, datum_id: _DatumId) -> str:
-        states = tuple(self._states[_TaskKey(stage, datum_id)] for stage in self._plan.stages)
+        subject = _DatumTaskSubject(datum_id)
+        states = tuple(self._states[_TaskKey(stage, subject)] for stage in self._plan.stages)
         if all(isinstance(state, _TaskSucceeded) for state in states):
-            final_state = self._states[_TaskKey(self._plan.stages[-1], datum_id)]
+            final_state = self._states[_TaskKey(self._plan.stages[-1], subject)]
             if not isinstance(final_state, _TaskSucceeded):
                 raise _LedgerStateError
             try:
@@ -758,7 +771,11 @@ def _reduce_datum(
     tasks: tuple[_TaskOutcome[T], ...],
     release_predicate: Callable[[_DatumId, T], bool],
 ) -> _DatumOutcome[T]:
-    child_tasks = tuple(outcome for outcome in tasks if outcome.task.datum_id == datum_id)
+    child_tasks = tuple(
+        outcome
+        for outcome in tasks
+        if isinstance(outcome.task.subject, _DatumTaskSubject) and outcome.task.subject.datum_id == datum_id
+    )
     if all(isinstance(outcome, _TaskSucceeded) for outcome in child_tasks):
         final_task = next(
             outcome

@@ -16,6 +16,7 @@ from anonymizer.engine.execution.accounting_plan import (
     _AtomicGroupKey,
     _CompiledAtomicGroup,
     _CompiledDependency,
+    _DatumTaskSubject,
     _StageId,
     _TaskKey,
 )
@@ -101,7 +102,9 @@ def _compile(graph: object, *, limits: _AccountingLimits, stages: tuple[str, ...
     _check_unsupported_semantics(graph, group_members, datum_by_value, stages, limits)
     compiled_stages = tuple(_StageId(stage) for stage in stages)
     groups = _materialize_groups(group_members, datum_by_value)
-    tasks = tuple(_TaskKey(stage, datum_id) for stage in compiled_stages for datum_id in topological_datums)
+    tasks = tuple(
+        _TaskKey(stage, _DatumTaskSubject(datum_id)) for stage in compiled_stages for datum_id in topological_datums
+    )
     return _admit_accounting_plan(
         datums,
         compiled_stages,

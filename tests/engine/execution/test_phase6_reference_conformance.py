@@ -10,7 +10,12 @@ from anonymizer.engine.execution.accounting_admission import _compile_accounting
 from anonymizer.engine.execution.accounting_evidence import _Dispatch, _SuccessRecord
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_outcomes import _GroupReleased
-from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _AccountingPlan
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingLimits,
+    _AccountingPlan,
+    _DatumTaskSubject,
+    _TaskKey,
+)
 from anonymizer.engine.execution.context_contract import (
     _BackendArtifactClass,
     _ContextBackendCapability,
@@ -63,6 +68,11 @@ from tests.engine.execution.phase6_reference_model import (
     reduce_reference,
     schedule_reference_cases,
 )
+
+
+def _datum_id(task: _TaskKey) -> _DatumId:
+    assert isinstance(task.subject, _DatumTaskSubject)
+    return task.subject.datum_id
 
 
 @pytest.mark.parametrize("case", finite_reference_cases(), ids=lambda case: case.name)
@@ -149,7 +159,7 @@ def _execute_accounting_schedule(
         subject = event.subject if event.subject != "invocation" else "target-0"
         match event.kind:
             case ReferenceEventKind.DISPATCH:
-                ready = {task.datum_id.value: task for task in ledger.ready_tasks()}
+                ready = {_datum_id(task).value: task for task in ledger.ready_tasks()}
                 if subject in ready:
                     dispatches[subject] = ledger.dispatch(ready[subject])
             case ReferenceEventKind.TERMINAL:
@@ -225,7 +235,8 @@ def _execute_accounting_schedule(
         result = ledger.finish(group_release_predicate=lambda _outputs: False)
     invocation = type(result.invocation).__name__.removeprefix("_Invocation").lower()
     tasks = tuple(
-        (outcome.task.datum_id.value, type(outcome).__name__.removeprefix("_Task").lower()) for outcome in result.tasks
+        (_datum_id(outcome.task).value, type(outcome).__name__.removeprefix("_Task").lower())
+        for outcome in result.tasks
     )
     released = tuple(
         datum_id.value

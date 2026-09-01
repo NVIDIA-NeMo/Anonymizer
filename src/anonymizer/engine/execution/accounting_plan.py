@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypeAlias, final
 
 from anonymizer.engine.execution.graph import _DatumId, _TextDatum
 
@@ -23,10 +24,33 @@ class _StageId(_PrivateAccountingPlanValue):
     value: str
 
 
+@final
+@dataclass(frozen=True, slots=True, repr=False)
+class _DatumTaskSubject(_PrivateAccountingPlanValue):
+    datum_id: _DatumId
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.datum_id, _DatumId):
+            raise TypeError("private datum task subject is malformed")
+
+
+@final
+@dataclass(frozen=True, slots=True, repr=False, eq=False)
+class _ScopeTaskSubject(_PrivateAccountingPlanValue):
+    """Compiler-issued opaque capability for one scope-owned task."""
+
+
+_TaskSubject: TypeAlias = _DatumTaskSubject | _ScopeTaskSubject
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _TaskKey(_PrivateAccountingPlanValue):
     stage: _StageId
-    datum_id: _DatumId
+    subject: _TaskSubject
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stage, _StageId) or not isinstance(self.subject, (_DatumTaskSubject, _ScopeTaskSubject)):
+            raise TypeError("private task subject is malformed")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -87,6 +111,41 @@ class _AccountingPlan(_PrivateAccountingPlanValue):
             validated,
         )
 
+    def with_scope_tasks(
+        self,
+        stage: _StageId,
+        subjects: tuple[_ScopeTaskSubject, ...],
+    ) -> _AccountingPlan:
+        """Return a resealed plan with one task for each compiler-issued scope."""
+        if not _is_admitted_accounting_plan(self):
+            raise TypeError("private accounting plan is not admitted")
+        existing_scope_subjects = frozenset(
+            task.subject for task in self.tasks if isinstance(task.subject, _ScopeTaskSubject)
+        )
+        if (
+            not isinstance(stage, _StageId)
+            or not isinstance(stage.value, str)
+            or not stage.value
+            or stage in self.stages
+            or not isinstance(subjects, tuple)
+            or not all(isinstance(subject, _ScopeTaskSubject) for subject in subjects)
+            or len(set(subjects)) != len(subjects)
+            or any(subject in existing_scope_subjects for subject in subjects)
+        ):
+            raise TypeError("private scope task subjects are malformed")
+        if not subjects:
+            return self
+        tasks = (*self.tasks, *(_TaskKey(stage, subject) for subject in subjects))
+        return _admit_accounting_plan(
+            self.datums,
+            self.stages,
+            tasks,
+            self.dependencies,
+            self.atomic_groups,
+            self.topological_datums,
+            self.task_predecessors,
+        )
+
 
 def _admit_accounting_plan(
     datums: tuple[_TextDatum, ...],
@@ -117,16 +176,14 @@ def _plan_snapshot(plan: _AccountingPlan) -> tuple[object, ...] | None:
         return (
             tuple((datum.id.value, datum.text, datum.purpose.value) for datum in plan.datums),
             tuple(stage.value for stage in plan.stages),
-            tuple((task.stage.value, task.datum_id.value) for task in plan.tasks),
+            tuple(_task_snapshot(task) for task in plan.tasks),
             tuple((dependency.prerequisite.value, dependency.dependent.value) for dependency in plan.dependencies),
             tuple((group.key, tuple(member.value for member in group.members)) for group in plan.atomic_groups),
             tuple(datum_id.value for datum_id in plan.topological_datums),
             tuple(
                 (
-                    predecessor.prerequisite.stage.value,
-                    predecessor.prerequisite.datum_id.value,
-                    predecessor.dependent.stage.value,
-                    predecessor.dependent.datum_id.value,
+                    *_task_snapshot(predecessor.prerequisite),
+                    *_task_snapshot(predecessor.dependent),
                 )
                 for predecessor in plan.task_predecessors
             ),
@@ -147,11 +204,11 @@ def _validate_task_predecessors(
     edges = tuple((predecessor.prerequisite, predecessor.dependent) for predecessor in predecessors)
     implicit = frozenset(
         (
-            _TaskKey(plan.stages[stage_index - 1], task.datum_id),
+            _TaskKey(plan.stages[stage_index - 1], task.subject),
             task,
         )
         for task in plan.tasks
-        if (stage_index := plan.stages.index(task.stage)) > 0
+        if isinstance(task.subject, _DatumTaskSubject) and (stage_index := plan.stages.index(task.stage)) > 0
     )
     if (
         any(prerequisite not in task_set or dependent not in task_set for prerequisite, dependent in edges)
@@ -162,6 +219,14 @@ def _validate_task_predecessors(
         raise TypeError("private task predecessors are malformed")
     _validate_task_predecessor_dag(plan.tasks, (*implicit, *edges))
     return tuple(predecessors)
+
+
+def _task_snapshot(task: _TaskKey) -> tuple[object, object]:
+    match task.subject:
+        case _DatumTaskSubject(datum_id=datum_id):
+            return task.stage.value, datum_id.value
+        case _ScopeTaskSubject():
+            return task.stage.value, task.subject
 
 
 def _validate_task_predecessor_dag(

@@ -13,6 +13,7 @@ from anonymizer.engine.execution.accounting_admission import _AccountingAdmissio
 from anonymizer.engine.execution.accounting_plan import (
     _AccountingLimits,
     _AccountingPlan,
+    _DatumTaskSubject,
     _is_admitted_accounting_plan,
     _TaskKey,
     _TaskPredecessor,
@@ -229,13 +230,13 @@ def _compile_predecessors(
     stage_by_value = {stage.value: stage for stage in accounting.stages}
     edges: list[_TaskPredecessor] = []
     for scope in scopes:
-        resolve = _TaskKey(stage_by_value["resolve"], datum_by_token[scope.owner])
+        resolve = _TaskKey(stage_by_value["resolve"], _DatumTaskSubject(datum_by_token[scope.owner]))
         for token in scope.eligible_targets:
             if token is scope.owner:
                 continue
             edges.append(
                 _TaskPredecessor(
-                    _TaskKey(stage_by_value["finalize"], datum_by_token[token]),
+                    _TaskKey(stage_by_value["finalize"], _DatumTaskSubject(datum_by_token[token])),
                     resolve,
                 )
             )
