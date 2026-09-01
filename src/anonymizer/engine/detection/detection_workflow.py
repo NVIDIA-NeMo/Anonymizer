@@ -645,20 +645,6 @@ Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. 
 Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
 Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
 
-    example_block += """
-
-Example (disguised identifier — digit words):
-Input text: Reach me at nine o two, five five five, one two three four.
-Already-detected entities: []
-Output: {"entities": [{"value": "nine o two, five five five, one two three four", "label": "phone_number", "reason": "phone number written as digit words with 'o' for zero"}]}"""
-
-    example_block += """
-
-Example (disguised identifier — letter spelling):
-Input text: My name is J-O-H-N D-O-E.
-Already-detected entities: []
-Output: {"entities": [{"value": "J-O-H-N", "label": "first_name", "reason": "first name spelled out letter by letter"}, {"value": "D-O-E", "label": "last_name", "reason": "last name spelled out letter by letter"}]}"""
-
     disguised_hints_block = (
         "- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,\n"
         "  spaced out, mixed with punctuation, or written in words instead of digits.\n"
