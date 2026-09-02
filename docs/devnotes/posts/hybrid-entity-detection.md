@@ -105,7 +105,9 @@ It's now:
 
 > **Was this candidate the right decision?**
 
-Validation never searches for new entities. It simply reviews each candidate and decides whether to keep, drop, or reclassify it. That's fundamentally a reasoning task, making it a natural fit for an LLM.
+Validation never searches for new entities. It simply reviews each candidate produced by the first stage and decides whether to keep, drop, or reclassify it. That's fundamentally a reasoning task, making it a natural fit for an LLM.
+
+Augmentation runs after validation, so entities it recovers are added directly to the final set rather than being sent back through another validation pass. Validating GLiNER's candidates makes sense because GLiNER trades some precision for recall; validating the augmenter's own suggestions would mean asking an LLM to second-guess itself, and augmented entities are already high precision.
 
 ### Augmentation
 
