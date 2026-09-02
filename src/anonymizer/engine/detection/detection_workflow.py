@@ -649,7 +649,18 @@ Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. 
 Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
 Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
 
-    prompt = """Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
+    disguised_hints_block = (
+        "- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,\n"
+        "  spaced out, mixed with punctuation, or written in words instead of digits.\n"
+        "  Detect the identifier and extract the exact text as written.\n"
+        "  Examples of disguised identifiers to detect:\n"
+        '  - Any identifier spoken as digit words, including "o" or "oh" used in place of zero:\n'
+        '    "nine o two, five five five, one two three four"\n'
+        "  - Values spelled out letter by letter with hyphens or commas:\n"
+        '    "J-O-H-N", "M, A, R, Y"\n'
+    )
+
+    prompt = f"""Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
 - Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
 - Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
@@ -672,6 +683,15 @@ Other information:
 - Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports (e.g., .pdf, .xlsx, .csv, .txt).
 - Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. Treat these extensions as non-sensitive system identifiers.
 
+Additional extraction requirements:
+- The "value" field must be the EXACT verbatim span from the input text.
+  Copy the text character-for-character exactly as it appears.
+  Do NOT normalize, correct spelling, expand abbreviations, decode encodings,
+  infer hidden values, translate text, reformat numbers, or otherwise modify
+  the extracted span.
+- Extract only text that is explicitly present in the input.
+  Never reconstruct, guess, or generate a value that does not appear verbatim.
+{disguised_hints_block}
 <<EXAMPLE_BLOCK>>
 
 ---

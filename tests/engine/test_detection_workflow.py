@@ -411,6 +411,23 @@ def test_augment_prompt_strict_when_custom_labels_provided() -> None:
     assert "employment_status" not in prompt.split("Output:")[1]
 
 
+@pytest.mark.parametrize(
+    "labels,strict",
+    [
+        (["hostname", "ipv4"], True),
+        (["ssn"], True),
+        (["phone_number", "age"], False),
+    ],
+)
+def test_augment_prompt_always_includes_disguised_identifier_hints(labels: list[str], strict: bool) -> None:
+    """Disguised-identifier hints and examples are included for all label sets."""
+    prompt = _get_augment_prompt(data_summary=None, labels=labels, strict_labels=strict)
+    assert "digit words" in prompt
+    assert "letter by letter" in prompt
+    assert "nine o two" in prompt
+    assert "J-O-H-N" in prompt
+
+
 def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
     _detection_with_novel_augmented_label: tuple[
         EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
