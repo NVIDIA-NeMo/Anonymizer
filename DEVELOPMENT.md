@@ -6,6 +6,7 @@ This guide covers local setup, common development commands, testing, documentati
 
 - Python 3.11+
 - Git
+- [mise](https://mise.jdx.dev/) for pinned development tools and task execution
 - [uv](https://docs.astral.sh/uv/) for dependency management
 - [gh](https://cli.github.com/) for optional GitHub CLI workflows
 
@@ -18,20 +19,24 @@ Clone the repository and install development dependencies:
 ```bash
 git clone https://github.com/<your-username>/Anonymizer.git
 cd Anonymizer
-make bootstrap
+make setup
 ```
 
-Install docs or notebook dependencies when needed:
+`make setup` installs Mise when needed, then runs the default `dev` setup profile. If Mise is already installed, run the
+same onboarding flow directly:
 
 ```bash
-make install-dev-docs
-make install-dev-notebooks
+mise run setup
 ```
 
-Install pre-commit hooks once after cloning:
+The default profile installs pinned tools, development dependencies, and repository hooks. Select another profile during
+onboarding, or synchronize one profile later:
 
 ```bash
-make install-pre-commit
+mise run setup docs
+mise run setup notebooks
+mise run deps:sync docs
+mise run deps:sync notebooks
 ```
 
 If you work from a fork, add the upstream remote:
@@ -50,67 +55,85 @@ git pull --ff-only origin main  # use upstream main when origin is your fork
 git checkout -b <username>/<type>/<issue-number>-<short-description>
 ```
 
-Common Makefile targets:
+Common mise tasks:
 
 ```bash
-make bootstrap              # install dev dependencies
-make install-dev-docs       # install dev + docs dependencies
-make install-dev-notebooks  # install dev + notebook dependencies
-make install-pre-commit     # install pre-commit hooks
-make check                  # read-only format, lint, typecheck, lock, SPDX checks
-make test                   # unit tests
-make coverage               # unit tests with coverage report
-make docs-build             # strict docs build
-make docs-serve             # local docs server
-make convert-notebooks      # regenerate tutorial notebooks
+mise run setup                  # tools, dev dependencies, and repository hooks
+mise run setup all              # tools, every dependency group, and repository hooks
+mise run deps:sync docs         # synchronize dev + docs dependencies
+mise run deps:sync notebooks    # synchronize dev + notebook dependencies
+mise run hooks:install          # reinstall repository hooks
+mise run check                  # read-only format, lint, type, lock, and SPDX checks
+mise run check ::: test         # read-only checks plus unit tests
+mise run test                   # unit tests
+mise run test:all               # unit and opt-in end-to-end tests (credentials may be required)
+mise run test:coverage          # unit tests with coverage report
+mise run docs:build             # strict docs build
+mise run docs:serve             # local docs server
+mise run notebooks:execute      # execute sources and replace generated notebooks
 ```
+
+`setup` and `deps:sync` use `uv sync --locked` and fail when `uv.lock` does not match the project metadata. After changing
+dependencies in `pyproject.toml`, run `mise run lock:update`, review the lockfile diff, then rerun the required setup or
+dependency profile.
+
+Task names follow `<domain>[:<action>[:<qualifier>...]]`. Colons separate concepts; public task names do not use hyphens
+or underscores. Run `mise tasks` for the complete tree. Commands containing `check` leave tracked files unchanged.
+
+The Makefile only exposes `help`, `install-mise`, and `setup`. Developer commands belong in `.mise/tasks/`.
 
 ## Validation Before Opening a PR
 
 Run the smallest useful check while iterating, then run the full relevant set before requesting review.
 
-For most code changes:
+For most code changes, run the local pre-PR gate:
 
 ```bash
-make check
-make test
+mise run check ::: test
 ```
 
 For changes that affect coverage-sensitive code:
 
 ```bash
-make coverage
+mise run test:coverage
 ```
 
 For end-to-end behavior:
 
 ```bash
-make test-e2e
+mise run test:e2e
+```
+
+To run both the unit and end-to-end suites:
+
+```bash
+mise run test:all
 ```
 
 For docs changes:
 
 ```bash
-make install-dev-docs
-make docs-build
+mise run docs:build
 ```
 
 For tutorial source changes:
 
 ```bash
-make install-dev-notebooks
-make convert-notebooks
-make docs-build
+mise run notebooks:execute
+mise run docs:build
 ```
 
-`make convert-notebooks` executes `docs/notebook_source/*.py` and writes generated notebooks to `docs/notebooks/`. Review the generated notebook diffs before committing them.
+`mise run notebooks:execute` executes `docs/notebook_source/*.py` and replaces generated notebooks in `docs/notebooks/`.
+It may require model-provider credentials. Review the generated notebook diffs before committing them.
+Tasks that use `uv run --locked --group <profile>` synchronize that locked profile before running. Use `deps:sync` when
+you want to prepare a profile without running another task.
 
 ## Testing
 
 Run all unit tests:
 
 ```bash
-make test
+mise run test
 ```
 
 Run a specific test file:
@@ -128,7 +151,7 @@ uv run --group dev pytest tests/engine/test_detection_workflow.py::test_name
 Run coverage:
 
 ```bash
-make coverage
+mise run test:coverage
 ```
 
 Testing expectations:
@@ -144,23 +167,27 @@ Testing expectations:
 Format and lint:
 
 ```bash
-make format
-make format-check
+mise run format
+mise run check:format
+mise run check:lint
 ```
+
+Ruff formats and lints tracked Python files and rendered notebooks. The ty configuration includes `docs`, so the
+blocking type check also checks code cells in `docs/notebooks/*.ipynb`.
 
 Run all read-only checks:
 
 ```bash
-make check
+mise run check
 ```
 
-`make check` runs `make format-check`, `make typecheck`, `make lock-check`, and `make copyright-check`. CI runs the
-same four Make targets as separate steps in its `Check` job so failures identify the affected stage.
+`mise run check` runs `mise run check:format`, `mise run check:lint`, `mise run check:type`, `mise run check:lock`, and
+`mise run check:license:headers`. CI runs the same tasks as separate steps so failures identify the affected stage.
 
 Run the blocking type checker:
 
 ```bash
-make typecheck
+mise run check:type
 ```
 
 `ty` checks `src`, `tests`, `tests_e2e`, `docs`, `scripts`, and `tools`. Errors and warnings fail locally and in CI.
@@ -168,14 +195,20 @@ make typecheck
 Check lockfile freshness:
 
 ```bash
-make lock-check
+mise run check:lock
+```
+
+Regenerate the lockfile after an intentional dependency change:
+
+```bash
+mise run lock:update
 ```
 
 Check or repair SPDX headers:
 
 ```bash
-make copyright-check
-make copyright
+mise run check:license:headers
+mise run license:headers:fix
 ```
 
 ## Pre-Commit Hooks
@@ -183,15 +216,16 @@ make copyright
 Install hooks once:
 
 ```bash
-make install-pre-commit
+mise run hooks:install
 ```
 
-Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers,
-verify `uv.lock` when `pyproject.toml` changes, and run the repository-wide `make check`. The commit-message hook
-rejects commits without a DCO `Signed-off-by` line.
+Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers, and
+run the repository-wide `mise run check`. That aggregate includes the blocking ty check and read-only lock verification.
+The commit-message hook rejects commits without a DCO `Signed-off-by` line.
 
-If a hook changes a file, review the change, stage it again, and retry the commit. In particular, the uv-lock hook may
-regenerate `uv.lock` when `pyproject.toml` changes. Do not bypass repository hooks with `git commit --no-verify`.
+If a hook changes a file, review the change, stage it again, and retry the commit. If lock verification fails after a
+dependency change, run `mise run lock:update` and review the result. Do not bypass repository hooks with
+`git commit --no-verify`.
 
 ## Secrets and Credentials
 
@@ -208,13 +242,13 @@ repository history before sharing the branch further.
 Serve docs locally:
 
 ```bash
-make docs-serve
+mise run docs:serve
 ```
 
 Build docs in strict mode:
 
 ```bash
-make docs-build
+mise run docs:build
 ```
 
 Update docs when a change affects public API behavior, CLI behavior, examples, notebooks, configuration, contributor workflow, or release process.
@@ -229,7 +263,7 @@ Tutorial notebooks are generated from Python sources:
 When editing tutorial sources, regenerate notebooks with:
 
 ```bash
-make convert-notebooks
+mise run notebooks:execute
 ```
 
 Notebook execution can require configured model provider credentials. If notebooks cannot be regenerated locally, state
@@ -241,7 +275,15 @@ generated notebooks.
 Build a wheel locally:
 
 ```bash
-make build-wheel
+mise run build:wheel
+```
+
+Release automation can apply the current repository commands to a separate project checkout:
+
+```bash
+mise run build:wheel path/to/project
+mise run docs:build path/to/project
+mise run docs:deploy VERSION path/to/project
 ```
 
 Release tags use `vMAJOR.MINOR.PATCH` for stable releases and `vMAJOR.MINOR.PATCHrcN` for release candidates, while the Python package version is the unprefixed version.

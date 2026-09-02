@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# format.sh -- format (or check formatting of) Python files with ruff
+# format.sh -- format (or check formatting of) Python files and notebooks with ruff
 #
 # Usage:
-#   ./format.sh                          # fix mode: ruff format + ruff check --fix
-#   ./format.sh --check                  # check mode: ruff format --check (exit 1 if unformatted)
-#   ./format.sh src/foo.py bar.py        # fix specific files
-#   ./format.sh --check src/foo.py       # check mode on specific files
+#   ./format.sh                          # fix all tracked Python files and notebooks
+#   ./format.sh --check                  # check all tracked Python files and notebooks
+#   ./format.sh src/foo.py demo.ipynb    # fix specific files
+#   ./format.sh --check src/foo.py       # check specific files
 #
 # Lint-rule violations (ruff check without --fix) are handled by ruff_check.sh.
 # Copyright headers are handled separately by copyright_fixer.py.

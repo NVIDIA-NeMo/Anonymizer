@@ -521,7 +521,7 @@ class NddAdapter:
         existing shared seed. ``num_jobs > 1`` selects one worker's ordered partition
         (``job_index`` of ``num_jobs``), matching how the orchestrator shards the seed.
         """
-        from data_designer.config.seed import PartitionBlock  # noqa: PLC0415
+        from data_designer.config.seed import PartitionBlock
 
         if num_jobs < 1:
             raise ValueError(f"num_jobs must be >= 1, got {num_jobs}")

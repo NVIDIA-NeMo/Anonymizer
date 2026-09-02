@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Mapping
 
 from anonymizer.measurement.fields import (
     SCALAR_ADDITIVE_FIELDS,

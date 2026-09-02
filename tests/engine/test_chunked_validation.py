@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from data_designer.engine.models.clients.errors import SyncClientUnavailableError
