@@ -55,3 +55,36 @@ def test_preview_result_repr_is_compact() -> None:
     assert "preview_num_records=10" in rendered
     assert "__nemo_anonymizer_text_input__" not in rendered
     assert "bio_replaced" not in rendered
+
+
+def test_anonymizer_result_preserves_positional_data_summary_contract() -> None:
+    result = AnonymizerResult(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        "bio",
+        [],
+        None,
+        None,
+        ["first_name"],
+        "Customer support transcripts.",
+    )
+
+    assert result.data_summary == "Customer support transcripts."
+    assert result.excluded_entity_labels is None
+
+
+def test_preview_result_preserves_positional_data_summary_contract() -> None:
+    result = PreviewResult(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        "bio",
+        [],
+        3,
+        None,
+        None,
+        ["first_name"],
+        "Customer support transcripts.",
+    )
+
+    assert result.data_summary == "Customer support transcripts."
+    assert result.excluded_entity_labels is None

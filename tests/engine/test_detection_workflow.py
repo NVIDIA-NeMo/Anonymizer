@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import Mock
 
 import pandas as pd
@@ -33,10 +34,12 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
+    _filter_excluded_latent_entities,
     _format_label_examples,
     _get_augment_prompt,
     _get_latent_prompt,
     _get_validation_prompt,
+    _materialize_final_entities,
     _resolve_detection_labels,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -155,6 +158,66 @@ def test_latent_prompt_includes_summary_and_goal() -> None:
     assert "PRESERVE: Clinical utility and semantic meaning of the original text." in prompt
     assert "Every latent entity MUST include 1-2 short quotes from the text as evidence." in prompt
     assert COL_TAGGED_TEXT in prompt
+
+
+def test_latent_prompt_excludes_configured_labels() -> None:
+    prompt = _get_latent_prompt(
+        data_summary=None,
+        privacy_goal=None,
+        excluded_entity_labels=["Health_Condition", "occupation"],
+    )
+    assert "Do NOT return latent entities with these labels: health_condition, occupation." in prompt
+
+
+def test_filter_excluded_latent_entities_normalizes_configured_labels() -> None:
+    raw = {
+        "latent_entities": [
+            {"label": "Health_Condition", "value": "diabetes"},
+            {"label": "employer", "value": "Acme"},
+        ]
+    }
+    result = _filter_excluded_latent_entities(raw, [" HEALTH_CONDITION "])
+    assert result == {"latent_entities": [{"label": "employer", "value": "Acme"}]}
+
+
+def test_identify_latent_entities_filters_excluded_labels(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["The patient works at Acme."],
+                COL_LATENT_ENTITIES: [
+                    {
+                        "latent_entities": [
+                            {"label": "Health_Condition", "value": "diabetes"},
+                            {"label": "employer", "value": "Acme"},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.identify_latent_entities(
+        pd.DataFrame({COL_TEXT: ["The patient works at Acme."]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        excluded_entity_labels=["health_condition"],
+        privacy_goal=PrivacyGoal(
+            protect="Protect inferred sensitive attributes.",
+            preserve="Preserve non-sensitive facts.",
+        ),
+    )
+
+    assert result.dataframe[COL_LATENT_ENTITIES].iloc[0] == {
+        "latent_entities": [{"label": "employer", "value": "Acme"}]
+    }
 
 
 def test_run_without_latent_detection_materializes_final_entities(
@@ -479,6 +542,202 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     assert "ipv4" in final_labels
 
 
+# ── excluded_entity_labels ────────────────────────────────────────────────────
+
+
+def test_resolve_detection_labels_exclusions_remove_labels() -> None:
+    labels = _resolve_detection_labels(["first_name", "email", "city"], excluded_entity_labels={"email"})
+    assert "email" not in labels
+    assert "first_name" in labels
+    assert "city" in labels
+
+
+def test_resolve_detection_labels_exclusions_normalize_configured_labels() -> None:
+    labels = _resolve_detection_labels(["first_name", " Email "], excluded_entity_labels={" EMAIL "})
+    assert labels == ["first_name"]
+
+
+def test_resolve_detection_labels_exclusions_apply_to_defaults() -> None:
+    labels = _resolve_detection_labels(None, excluded_entity_labels={"ssn", "first_name"})
+    assert "ssn" not in labels
+    assert "first_name" not in labels
+    assert "email" in labels
+
+
+def test_resolve_detection_labels_none_exclusions_is_noop() -> None:
+    labels = _resolve_detection_labels(["email", "city"], excluded_entity_labels=None)
+    assert labels == ["email", "city"]
+
+
+def test_resolve_detection_labels_empty_result_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.detection"):
+        labels = _resolve_detection_labels(["email"], excluded_entity_labels={"email"})
+    assert labels == []
+    assert "No entities will be detected" in caplog.text
+
+
+def test_materialize_final_entities_normalizes_configured_labels() -> None:
+    raw = {
+        "entities": [
+            {"value": "Alice", "label": "First_Name", "start_position": 0, "end_position": 5},
+            {"value": "alice@example.com", "label": "Email", "start_position": 7, "end_position": 24},
+            {"value": "Houston", "label": "City", "start_position": 28, "end_position": 35},
+        ]
+    }
+
+    result = _materialize_final_entities(
+        raw,
+        allowed_labels={" first_name ", " email "},
+        excluded_entity_labels={" EMAIL "},
+    )
+
+    final = EntitiesSchema.from_raw(result)
+    assert [entity.label for entity in final.entities] == ["First_Name"]
+
+
+def test_excluded_labels_are_removed_from_final_entities(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme, her email is alice@example.com"],
+                COL_DETECTED_ENTITIES: [
+                    {
+                        "entities": [
+                            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                            {"value": "alice@example.com", "label": "email", "start_position": 33, "end_position": 50},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme, her email is alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        excluded_entity_labels=["email"],
+        tag_latent_entities=False,
+    )
+
+    final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
+    final_labels = {e.label for e in final.entities}
+    assert "email" not in final_labels
+    assert "first_name" in final_labels
+
+
+def test_excluded_labels_do_not_affect_col_detected_entities(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """COL_DETECTED_ENTITIES is the raw pre-filter output and must be untouched."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice, alice@example.com"],
+                COL_DETECTED_ENTITIES: [
+                    {
+                        "entities": [
+                            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                            {"value": "alice@example.com", "label": "email", "start_position": 7, "end_position": 24},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice, alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        excluded_entity_labels=["email"],
+        tag_latent_entities=False,
+    )
+
+    detected = EntitiesSchema.from_raw(result.dataframe[COL_DETECTED_ENTITIES].iloc[0])
+    assert "email" in {e.label for e in detected.entities}
+
+
+def test_exclusions_combined_with_allowlist_preserve_other_allowed_labels(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """entity_labels restricts to an allowlist; exclusions further remove from that set."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice in Houston, alice@example.com"],
+                COL_DETECTED_ENTITIES: [
+                    {
+                        "entities": [
+                            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                            {"value": "Houston", "label": "city", "start_position": 9, "end_position": 16},
+                            {"value": "alice@example.com", "label": "email", "start_position": 18, "end_position": 35},
+                        ]
+                    }
+                ],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice in Houston, alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["first_name", "city", "email"],
+        excluded_entity_labels=["email"],
+        tag_latent_entities=False,
+    )
+
+    final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
+    final_labels = {e.label for e in final.entities}
+    assert final_labels == {"first_name", "city"}
+
+
+def test_excluded_labels_are_removed_from_gliner_labels(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    """Denied labels must be absent from the label list injected into GLiNER."""
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[]
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["first_name", "email", "city"],
+        excluded_entity_labels=["email"],
+        tag_latent_entities=False,
+    )
+
+    injected_configs = adapter.run_workflow.call_args.kwargs["model_configs"]
+    gliner_labels = injected_configs[0].inference_parameters.extra_body["labels"]
+    assert "email" not in gliner_labels
+    assert "first_name" in gliner_labels
+    assert "city" in gliner_labels
+
+
 # ---------------------------------------------------------------------------
 # Workflow column wiring
 # ---------------------------------------------------------------------------
@@ -524,6 +783,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
         model_configs=stub_detector_model_configs,
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
+        excluded_entity_labels=["email"],
         tag_latent_entities=False,
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
@@ -539,6 +799,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
         column = _find_column(columns, name)
         assert isinstance(column, DetectionTransformConfig)
         assert DetectionTransformOperation(column.operation) == operation
+    assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == ["email"]
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
 
 

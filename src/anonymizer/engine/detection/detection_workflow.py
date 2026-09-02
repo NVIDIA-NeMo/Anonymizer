@@ -94,6 +94,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
@@ -113,6 +114,7 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
         )
         detection_result = self._adapter.run_workflow(
@@ -135,6 +137,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
         """Build the (model_configs, columns) for the core detection workflow.
@@ -143,7 +146,10 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
-        labels = _resolve_detection_labels(entity_labels)
+        labels = _resolve_detection_labels(
+            entity_labels,
+            set(excluded_entity_labels) if excluded_entity_labels else None,
+        )
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -207,6 +213,7 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES_JSON,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
@@ -219,10 +226,12 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_MERGED_ENTITIES,
                     operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
                 DetectionTransformConfig(
                     name=COL_DETECTED_ENTITIES,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
             ],
         )
@@ -240,6 +249,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
@@ -255,6 +265,7 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
         )
         return self._adapter.build_config(
@@ -275,6 +286,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
@@ -295,6 +307,7 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
         )
         return self._adapter.build_config_for_seed(
@@ -313,6 +326,7 @@ class EntityDetectionWorkflow:
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
@@ -322,7 +336,10 @@ class EntityDetectionWorkflow:
         Runs after ``detect_and_validate_entities`` when rewrite mode is
         enabled. Uses an LLM to identify entities inferable from context.
         """
-        labels = _resolve_detection_labels(entity_labels)
+        labels = _resolve_detection_labels(
+            entity_labels,
+            set(excluded_entity_labels) if excluded_entity_labels else None,
+        )
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -339,6 +356,7 @@ class EntityDetectionWorkflow:
                     prompt=_get_latent_prompt(
                         data_summary=data_summary,
                         privacy_goal=privacy_goal,
+                        excluded_entity_labels=excluded_entity_labels,
                     ),
                     model_alias=latent_alias,
                     output_format=LatentEntitiesSchema,
@@ -347,7 +365,12 @@ class EntityDetectionWorkflow:
             workflow_name="latent-entity-detection",
             preview_num_records=preview_num_records,
         )
-        return EntityDetectionResult(dataframe=latent_result.dataframe, failed_records=latent_result.failed_records)
+        latent_df = latent_result.dataframe.copy()
+        if COL_LATENT_ENTITIES in latent_df.columns:
+            latent_df[COL_LATENT_ENTITIES] = latent_df[COL_LATENT_ENTITIES].apply(
+                lambda raw: _filter_excluded_latent_entities(raw, excluded_entity_labels)
+            )
+        return EntityDetectionResult(dataframe=latent_df, failed_records=latent_result.failed_records)
 
     def run(
         self,
@@ -360,6 +383,7 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -390,6 +414,7 @@ class EntityDetectionWorkflow:
                 validation_excerpt_window_chars=validation_excerpt_window_chars,
                 validation_single_chunk_full_text=validation_single_chunk_full_text,
                 entity_labels=entity_labels,
+                excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
             )
@@ -401,6 +426,7 @@ class EntityDetectionWorkflow:
                     selected_models=selected_models,
                     gliner_detection_threshold=gliner_detection_threshold,
                     entity_labels=entity_labels,
+                    excluded_entity_labels=excluded_entity_labels,
                     privacy_goal=privacy_goal,
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
@@ -417,8 +443,13 @@ class EntityDetectionWorkflow:
             # TODO(docs): document this None-vs-explicit contract in user-facing docs.
             if COL_DETECTED_ENTITIES in final_df.columns:
                 allowed = set(entity_labels) if entity_labels is not None else None
+                excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
                 final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                    lambda raw: _materialize_final_entities(raw, allowed_labels=allowed)
+                    lambda raw: _materialize_final_entities(
+                        raw,
+                        allowed_labels=allowed,
+                        excluded_entity_labels=excluded_entity_labels_set,
+                    )
                 )
                 if compute_grouped:
                     final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
@@ -455,19 +486,71 @@ class EntityDetectionWorkflow:
         return resolved
 
 
-def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
-    if entity_labels is None:
-        return list(DEFAULT_ENTITY_LABELS)
-    return list(entity_labels)
+def _resolve_detection_labels(
+    entity_labels: list[str] | None,
+    excluded_entity_labels: set[str] | None = None,
+) -> list[str]:
+    labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
+    if excluded_entity_labels:
+        excluded = {label.strip().casefold() for label in excluded_entity_labels}
+        labels = [label for label in labels if label.strip().casefold() not in excluded]
+    if not labels:
+        logger.warning(
+            "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
+        )
+    return labels
 
 
-def _materialize_final_entities(raw: object, *, allowed_labels: set[str] | None) -> dict:
-    """Build COL_FINAL_ENTITIES, optionally filtering to *allowed_labels*."""
+def _materialize_final_entities(
+    raw: object,
+    *,
+    allowed_labels: set[str] | None,
+    excluded_entity_labels: set[str] | None = None,
+) -> dict:
+    """Build COL_FINAL_ENTITIES, applying the configured label scope."""
     parsed = EntitiesSchema.from_raw(raw)
-    if allowed_labels is None:
-        return parsed.model_dump()
-    kept = [e for e in parsed.entities if e.label in allowed_labels]
+    allowed = {label.strip().casefold() for label in allowed_labels} if allowed_labels is not None else None
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
+    kept = [
+        e
+        for e in parsed.entities
+        if (allowed is None or e.label.strip().casefold() in allowed) and e.label.strip().casefold() not in excluded
+    ]
     return EntitiesSchema(entities=kept).model_dump()
+
+
+def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[str] | None) -> object:
+    """Remove excluded latent labels while preserving the structured payload shape."""
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
+    if not excluded:
+        return raw
+
+    if isinstance(raw, LatentEntitiesSchema):
+        kept = [entity for entity in raw.latent_entities if entity.label.strip().casefold() not in excluded]
+        return LatentEntitiesSchema(latent_entities=kept).model_dump(mode="json")
+
+    if isinstance(raw, dict):
+        entities = raw.get("latent_entities")
+        if not isinstance(entities, list):
+            return raw
+        return {
+            **raw,
+            "latent_entities": [
+                entity
+                for entity in entities
+                if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in excluded
+            ],
+        }
+
+    # Retain support for legacy list-shaped traces.
+    if isinstance(raw, list):
+        return [
+            entity
+            for entity in raw
+            if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in excluded
+        ]
+
+    return raw
 
 
 def _build_entities_by_value(final_entities_raw: object) -> dict:
@@ -715,12 +798,26 @@ Already-detected entities: <<SEED_ENTITIES>>
     )
 
 
-def _get_latent_prompt(*, data_summary: str | None, privacy_goal: PrivacyGoal | None) -> str:
+def _get_latent_prompt(
+    *,
+    data_summary: str | None,
+    privacy_goal: PrivacyGoal | None,
+    excluded_entity_labels: list[str] | None = None,
+) -> str:
     summary_line = data_summary.strip() if data_summary else "Not provided"
     privacy_goal_text = _format_privacy_goal(privacy_goal)
+    excluded_labels = sorted({label.strip().casefold() for label in excluded_entity_labels or [] if label.strip()})
+    exclusion_block = (
+        "\n<excluded_entity_labels>\n"
+        f"Do NOT return latent entities with these labels: {', '.join(excluded_labels)}.\n"
+        "</excluded_entity_labels>\n"
+        if excluded_labels
+        else ""
+    )
     prompt = """You are performing: LATENT ENTITY & INFERENCE ANALYSIS for privacy protection.
 
 The text will be rewritten according to this privacy goal: <<PRIVACY_GOAL>>
+<<EXCLUSION_BLOCK>>
 
 Goal: Identify sensitive information that is NOT explicitly stated in the text, \
 but is reasonably inferable from context and could materially increase re-identification \
@@ -808,6 +905,7 @@ Now produce the JSON for the input.
             "<<PRIVACY_GOAL>>": privacy_goal_text,
             "<<DATA_SUMMARY>>": summary_line,
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
+            "<<EXCLUSION_BLOCK>>": exclusion_block,
         },
     )
 

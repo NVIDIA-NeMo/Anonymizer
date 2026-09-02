@@ -43,11 +43,12 @@ What to include:
 - The domain (clinical, legal, financial, customer support, etc.)
 - The genre (notes, transcripts, opinions, biographies)
 - Anything about the source the engine couldn't infer from a single record (e.g. "transcribed phone calls — expect disfluencies")
-- `data_summary` is the only way to provide a soft do-not-tag list for the augmenter when `entity_labels=None` — the augmenter is free to invent labels beyond `DEFAULT_ENTITY_LABELS`, so use it to tell the LLM what *not* to tag (e.g. "do not tag generic anatomical terms, medication class names, or job titles as PII").
+- `data_summary` is a soft way to guide the augmenter when `entity_labels=None` — the augmenter is free to invent labels beyond `DEFAULT_ENTITY_LABELS`, so use it to tell the LLM what *not* to tag (e.g. "do not tag generic anatomical terms, medication class names, or job titles as PII"). For a hard exclusion of specific label types, use `Detect.excluded_entity_labels` instead.
 
 What to leave out:
 
 - Lists of entity types **you want detected** (those go in `Detect.entity_labels`)
+- Lists of entity types **you never want detected** (those go in `Detect.excluded_entity_labels`)
 - Privacy/utility goals (those go in `Rewrite.privacy_goal`)
 - Substitute behavior instructions (e.g. "names should remain Portuguese", "preserve numeric magnitude") — those go in `Substitute(instructions)`
 - Generic phrasing ("text data" adds no signal)
@@ -76,6 +77,18 @@ Common ways to extend the default list:
 from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
 detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])
+```
+
+### `excluded_entity_labels`
+
+Use when you want to **exclude** specific label types from detection without enumerating the entire allowlist. Excluded labels are removed before GLiNER runs, so they are never detected, augmented, or surfaced in results. The evaluation judges also ignore excluded label types so they don't lower your coverage score.
+
+```python
+# Never detect occupation or gender, keep everything else
+Detect(excluded_entity_labels=["occupation", "gender"])
+
+# Combine with an explicit allowlist — exclusions always win
+Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
 ```
 
 ### `gliner_threshold`

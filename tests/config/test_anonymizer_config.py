@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, infer_input_source_suffix
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    Rewrite,
+    infer_input_source_suffix,
+)
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -147,3 +153,72 @@ def test_detect_validation_max_entities_per_call_must_be_positive() -> None:
 def test_detect_validation_excerpt_window_chars_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         AnonymizerConfig(detect={"validation_excerpt_window_chars": 0}, replace=Redact())
+
+
+# ── excluded_entity_labels ────────────────────────────────────────────────────
+
+
+def test_excluded_entity_labels_defaults_to_none() -> None:
+    config = AnonymizerConfig(replace=Redact())
+    assert config.detect.excluded_entity_labels is None
+
+
+def test_excluded_entity_labels_accepts_list() -> None:
+    config = AnonymizerConfig(detect={"excluded_entity_labels": ["EMAIL", "city"]}, replace=Redact())
+    assert config.detect.excluded_entity_labels is not None
+    assert set(config.detect.excluded_entity_labels) == {"email", "city"}
+
+
+def test_excluded_entity_labels_strips_whitespace_and_lowercases() -> None:
+    config = AnonymizerConfig(detect={"excluded_entity_labels": ["  FIRST_NAME ", "Email"]}, replace=Redact())
+    assert config.detect.excluded_entity_labels is not None
+    assert "first_name" in config.detect.excluded_entity_labels
+    assert "email" in config.detect.excluded_entity_labels
+
+
+def test_excluded_entity_labels_deduplicates(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        config = AnonymizerConfig(detect={"excluded_entity_labels": ["email", "email"]}, replace=Redact())
+    assert config.detect.excluded_entity_labels == ["email"]
+    assert "duplicates" in caplog.text
+
+
+def test_excluded_entity_labels_empty_list_raises() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AnonymizerConfig(detect={"excluded_entity_labels": []}, replace=Redact())
+
+
+def test_excluded_entity_labels_whitespace_only_raises() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AnonymizerConfig(detect={"excluded_entity_labels": ["  ", ""]}, replace=Redact())
+
+
+def test_excluded_entity_labels_overlap_with_entity_labels_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["email"]},
+            replace=Redact(),
+        )
+    assert "email" in caplog.text
+    assert "will never be detected" in caplog.text
+
+
+def test_excluded_entity_labels_no_overlap_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["first_name"]},
+            replace=Redact(),
+        )
+    assert "will never be detected" not in caplog.text
+
+
+def test_excluded_entity_labels_overlap_warning_only_fires_when_allowlist_explicit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning when entity_labels=None (defaults) even if exclusions are set."""
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"excluded_entity_labels": ["email"]},
+            replace=Redact(),
+        )
+    assert "will never be detected" not in caplog.text

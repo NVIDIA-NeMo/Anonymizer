@@ -117,6 +117,28 @@ def test_apply_augmented_entities_adds_occurrences() -> None:
     assert all(entity.source == "augmenter" for entity in merged)
 
 
+def test_apply_augmented_entities_filters_exclusions_before_overlap_resolution() -> None:
+    text = "Alice Johnson"
+    allowed = EntitySpan("first_name_0_5", "Alice", "first_name", 0, 5, 0.95, "detector")
+
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[allowed],
+        augmented_output={
+            "entities": [
+                {
+                    "value": "Alice Johnson",
+                    "label": " Full_Name ",
+                    "reason": "longer overlapping span",
+                }
+            ]
+        },
+        excluded_entity_labels={"full_name"},
+    )
+
+    assert merged == [allowed]
+
+
 def test_apply_augmented_entities_avoids_substring_matches() -> None:
     text = "Annex contains Ann."
     merged = apply_augmented_entities(

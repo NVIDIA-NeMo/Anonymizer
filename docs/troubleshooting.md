@@ -116,9 +116,13 @@ Verify by re-running `preview` with `Annotate` and confirming the entity now app
 
 Symptoms: detected entities include obvious common words, dates that aren't dates, etc.
 
-1. **Raise `gliner_threshold`** to `0.5`. The augmenter will pick up real misses, so this rarely costs recall.
-2. **Lower `validation_excerpt_window_chars`** (default `500`) if context-driven validation is being misled by far-away sentences. Smaller per-chunk prompts trade context for precision.
-3. **Sanity-check the validator with an `Annotate` preview.** A flaky validator (or a misconfigured alias) returns "keep" on almost everything, which presents as recall going way up — easiest spotted by eyeballing the entity list on a handful of rows.
+1. **Use `Detect.excluded_entity_labels`** if a whole label type is systematically noisy for your data (e.g. `occupation` tagging generic job words, `age` tagging durations). This is the cleanest fix — excluded labels are removed before GLiNER runs and never appear in results.
+   ```python
+   Detect(excluded_entity_labels=["occupation", "age"])
+   ```
+2. **Raise `gliner_threshold`** to `0.5`. The augmenter will pick up real misses, so this rarely costs recall.
+3. **Lower `validation_excerpt_window_chars`** (default `500`) if context-driven validation is being misled by far-away sentences. Smaller per-chunk prompts trade context for precision.
+4. **Sanity-check the validator with an `Annotate` preview.** A flaky validator (or a misconfigured alias) returns "keep" on almost everything, which presents as recall going way up — easiest spotted by eyeballing the entity list on a handful of rows.
 
 ### A new domain isn't being detected well
 

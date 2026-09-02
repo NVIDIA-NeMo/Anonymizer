@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from typing import SupportsFloat, SupportsIndex, SupportsInt
@@ -37,6 +38,17 @@ class EntitySpan:
             "score": self.score,
             "source": self.source,
         }
+
+
+def filter_excluded_entity_spans(
+    entities: list[EntitySpan],
+    excluded_entity_labels: Iterable[str] | None,
+) -> list[EntitySpan]:
+    """Remove entity spans whose normalized labels are explicitly excluded."""
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
+    if not excluded:
+        return list(entities)
+    return [entity for entity in entities if entity.label.strip().casefold() not in excluded]
 
 
 class TagNotation(str, Enum):
@@ -160,20 +172,22 @@ def apply_augmented_entities(
     text: str,
     entities: list[EntitySpan],
     augmented_output: dict | str,
+    excluded_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
-    """Add augmented entities, split full names, and resolve overlaps on merged set."""
+    """Add allowed augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
     augmented = payload.get("entities", []) if isinstance(payload, dict) else []
     if not isinstance(augmented, list):
         augmented = []
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or set()}
 
-    merged = list(entities)
+    merged = filter_excluded_entity_spans(entities, excluded)
     for idx, suggestion in enumerate(augmented):
         if not isinstance(suggestion, dict):
             continue
         value = str(suggestion.get("value", "")).strip()
         label = str(suggestion.get("label", "")).strip()
-        if not value or not label:
+        if not value or not label or label.casefold() in excluded:
             continue
         for start, end in _find_all_occurrences(text=text, needle=value):
             entity_id = _build_entity_id(label=label, start=start, end=end)
