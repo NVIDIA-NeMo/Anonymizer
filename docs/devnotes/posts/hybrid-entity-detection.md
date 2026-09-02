@@ -169,7 +169,7 @@ One result was particularly noteworthy. GLiNER2-PII was already an exceptionally
 | --- | --- | --- | --- |
 | Azure | 89.7% | 42.6% | 44.0% |
 | Privacy Filter | 78.8% | 50.6% | 57.6% |
-| Rescriber | 100.0% | 83.0% | 83.0% |
+| Rescriber | 100.0% | 51.9% | 51.9% |
 | Anonymizer | 100.0% | 80.9% | 80.9% |
 | GLiNER2-PII | 100.0% | 68.5% | 68.5% |
 
@@ -179,7 +179,7 @@ One result was particularly noteworthy. GLiNER2-PII was already an exceptionally
 | --- | --- | --- | --- |
 | Azure | 73.6% | 54.0% | 62.9% |
 | Privacy Filter | 74.8% | 46.9% | 56.9% |
-| Rescriber | 100.0% | 67.8% | 67.8% |
+| Rescriber | 100.0% | 52.0% | 52.0% |
 | Anonymizer | 100.0% | 93.1% | 93.1% |
 | GLiNER2-PII | 100.0% | 87.9% | 87.9% |
 
