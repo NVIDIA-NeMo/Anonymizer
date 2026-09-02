@@ -27,6 +27,11 @@ COL_PHASE6_CANDIDATES = "__anonymizer_phase6_candidates__"
 COL_PHASE6_AUGMENTED = "__anonymizer_phase6_augmented__"
 COL_PHASE6_VALIDATION = "__anonymizer_phase6_validation__"
 
+# Private Phase 7 candidate workframes. These columns never enter public results.
+COL_PHASE7_INVOCATION_ID = "__anonymizer_phase7_invocation_identity__"
+COL_PHASE7_CANDIDATE_REQUEST = "__anonymizer_phase7_candidate_request__"
+COL_PHASE7_CANDIDATE_BUNDLE = "__anonymizer_phase7_candidate_bundle__"
+
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"
 
