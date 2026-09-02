@@ -40,14 +40,17 @@ _MUTATIONS: tuple[_Mutation, ...] = (
         (
             (
                 "structural_key = (scope_index, mention.cluster, role)",
-                "structural_key = (scope_index, mention.datum, mention.start, role)",
+                'structural_key = (scope_index, f"{mention.datum}:{mention.start}", role)',
             ),
         ),
         "shared-slot-reuse",
     ),
     (
         "partial-acceptance",
-        (("if set(keys) != expected:", "if set(keys) - expected:"),),
+        (
+            ("if set(keys) != expected:", "if set(keys) - expected:"),
+            ("value = assignment_by_slot[slot.key]", 'value = assignment_by_slot.get(slot.key, "Placeholder")'),
+        ),
         "partial-candidate",
     ),
     (
@@ -109,10 +112,7 @@ def test_frozen_phase7_corpus_kills_every_required_mutation(
     baseline = asdict(reduce_reference(case_by_name(witness)))
     mutant = _load_mutant(name, replacements, tmp_path)
 
-    try:
-        observed = asdict(mutant.reduce_reference(mutant.case_by_name(witness)))
-    except (AssertionError, KeyError, TypeError, ValueError):
-        return
+    observed = asdict(mutant.reduce_reference(mutant.case_by_name(witness)))
 
     assert observed != baseline, f"required Phase 7 mutation survived: {name}"
 

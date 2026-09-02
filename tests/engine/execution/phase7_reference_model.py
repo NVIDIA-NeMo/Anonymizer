@@ -741,7 +741,10 @@ def _format_valid(format_name: str, value: str) -> bool:
             1 <= len(normalized.encode("utf-8")) <= 128
             and any(unicodedata.category(character).startswith("L") for character in normalized)
             and all(
-                unicodedata.category(character)[:1] in {"L", "M", "Z"} or character in "'.-" for character in normalized
+                unicodedata.category(character)[:1] in {"L", "M"}
+                or unicodedata.category(character) == "Zs"
+                or character in "'.-"
+                for character in normalized
             )
         )
     if format_name == "username_ascii/v1":

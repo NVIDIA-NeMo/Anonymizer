@@ -63,6 +63,14 @@ def test_phase7_reference_model_exposes_an_independent_finite_reducer() -> None:
     assert required.issubset(vars(model)), "Phase 7 reference reducer or corpus generator is missing"
 
 
+def test_phase7_reference_person_name_format_matches_the_p0_zs_only_contract() -> None:
+    model = importlib.import_module("tests.engine.execution.phase7_reference_model")
+
+    assert model._format_valid("unicode_person_name/v1", "A\u00a0B")
+    assert not model._format_valid("unicode_person_name/v1", "A\u2028B")
+    assert not model._format_valid("unicode_person_name/v1", "A\u2029B")
+
+
 def test_phase7_reference_model_preserves_all_owner_contract_cases() -> None:
     cases = {case.owner_case: case for case in finite_reference_cases() if case.owner_case is not None}
     expected = {
