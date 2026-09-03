@@ -381,11 +381,21 @@ def test_phase7_compiler_requires_exact_phase6_scope_cluster_role_and_terminal_h
         _DatumId("target-0"),
         _DatumId("target-1"),
     )
-    assert set(result.accounting.task_predecessors) >= {
+    expected_phase7_predecessors = {
         _TaskPredecessor(result.scope_tasks[0], result.application_tasks[0]),
         _TaskPredecessor(result.scope_tasks[0], result.application_tasks[1]),
     }
+    phase7_tasks = {*result.scope_tasks, *result.application_tasks}
+    assert {
+        predecessor
+        for predecessor in result.accounting.task_predecessors
+        if predecessor.prerequisite in phase7_tasks or predecessor.dependent in phase7_tasks
+    } == expected_phase7_predecessors
     assert module._is_admitted_phase7_plan(result)
+
+    extra = _TaskPredecessor(result.application_tasks[0], result.application_tasks[1])
+    expanded_accounting = result.accounting.with_task_predecessors((*result.accounting.task_predecessors, extra))
+    assert not module._has_exact_application_predecessors(replace(result, accounting=expanded_accounting))
 
 
 @pytest.mark.parametrize(

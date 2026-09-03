@@ -269,10 +269,16 @@ def _has_exact_application_predecessors(plan: _Phase7Plan) -> bool:
         for member in manifest.members
         if member in application_by_datum
     }
+    phase7_tasks = {*plan.scope_tasks, *plan.application_tasks}
+    observed = {
+        predecessor
+        for predecessor in plan.accounting.task_predecessors
+        if predecessor.prerequisite in phase7_tasks or predecessor.dependent in phase7_tasks
+    }
     return (
         len(application_by_datum) == len(plan.accounting.datums)
         and set(application_by_datum) == {datum.id for datum in plan.accounting.datums}
-        and expected <= set(plan.accounting.task_predecessors)
+        and observed == expected
     )
 
 
