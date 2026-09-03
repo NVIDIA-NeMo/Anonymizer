@@ -84,9 +84,9 @@ entities = merge_entities(plugin=plugin, chunks=chunks, results=results, ...)
 ```
 
 The adapter rejects a labeled request that would produce more than 256 chunks
-before it materializes chunk text or calls vLLM. Accepted requests run at most
-eight pooling calls concurrently; the remaining admitted chunks wait for a
-worker.
+before it materializes chunk text or calls vLLM. The service runs at most eight
+pooling calls concurrently across all accepted requests; the remaining
+admitted chunks wait for capacity.
 
 When `flat_ner` is `false` (Anonymizer's default), the adapter removes nested
 subset spans before score-based deduplication across chunk overlaps. A request
@@ -132,9 +132,10 @@ plan as shown in [Deploy local models](inference-services.md). That guide has
 complete host and GPU container workflows. NVIDIA GLiNER uses
 `deberta_gliner`; GLiNER2 uses `deberta_gliner2`.
 
-Launch writes a versioned receipt only after the model-list and detection
-contract probes pass. Use that receipt with the compiler's `status` and
-`stop` commands instead of supervising the internal server module directly.
+Launch writes a versioned receipt only after the new process proves launch
+ownership and the model-list and detection contract probes pass. Use that
+receipt with the compiler's `status` and `stop` commands instead of supervising
+the internal server module directly.
 
 The model families do not use identical label vocabularies. The request example below targets the default NVIDIA model and uses `user_name`; the default GLiNER2 PII checkpoint uses `username` for that category.
 
