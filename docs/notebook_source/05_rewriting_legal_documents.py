@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # ---
 # jupyter:
 #   jupytext:
@@ -178,9 +181,10 @@ result.dataframe[["text_rewritten", "utility_score", "leakage_mass", "needs_huma
 # %% [markdown]
 # ## 🚩 Filter by review flag
 #
-# - Records where automated metrics exceed thresholds are flagged for manual review.
-# - The repair loop stops after `max_repair_iterations`; records that still need
-#   repair remain flagged for human review but are not pipeline failures.
+# - Records that cross the configured leakage or utility thresholds are flagged for manual review.
+# - The repair loop stops after `max_repair_iterations`. Afterward,
+#   `needs_human_review` is computed separately from the final leakage, utility,
+#   and high-sensitivity-leak metrics.
 # - Use this to prioritize human attention on the records that need it most.
 # - See [Working with flagged records](../../concepts/rewrite/#working-with-flagged-records)
 #   for guidance on diagnosing and resolving flagged records.
@@ -197,7 +201,7 @@ flagged.head()
 # Call `evaluate()` to run LLM-as-judge scoring on the rewrite result — detection validity and three quality rubrics (privacy, quality, style).
 # Evaluation makes additional LLM calls per record. For larger datasets, evaluate
 # a preview first; this tutorial evaluates all 25 rows to demonstrate the complete workflow.
-# This holistic judge is independent of pipeline leakage scoring, so their assessments may differ.
+# The holistic privacy rubric and pipeline leakage metric are independent, so they may disagree.
 # See [Evaluation](../../concepts/evaluation/#rewrite-evaluation) for details.
 
 # %%

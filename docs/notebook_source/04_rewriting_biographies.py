@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # ---
 # jupyter:
 #   jupytext:
@@ -18,8 +21,8 @@
 # -->
 # # 🕵️ Rewriting Biographies
 #
-# Instead of replacing entities with tokens, rewrite mode generates a
-# privacy-safe transformation of the entire text. The `run()` / `preview()` pipeline:
+# Instead of replacing individual entities, rewrite mode transforms the entire
+# text and measures any sensitive information that remains. The `run()` / `preview()` pipeline:
 #
 # 1. Detects entities (same as replace mode, plus latent entity detection)
 # 2. Classifies the domain and assigns sensitivity dispositions
@@ -154,7 +157,7 @@ result.trace_dataframe.columns.tolist()
 # %% [markdown]
 # ## 🚩 Filter by review flag
 #
-# - Records where automated metrics exceed thresholds are flagged for manual review.
+# - Records that cross the configured leakage or utility thresholds are flagged for manual review.
 # - `needs_human_review` is threshold-based, so a record can have small nonzero
 #   leakage without being flagged.
 # - Use this to prioritize human attention on the records that need it most.
@@ -173,7 +176,7 @@ flagged.head()
 # Call `evaluate()` to run LLM-as-judge scoring on the rewrite result — detection validity and three quality rubrics (privacy, quality, style).
 # Evaluation makes additional LLM calls per record. For larger datasets, evaluate
 # a preview first; this tutorial evaluates all 25 rows to demonstrate the complete workflow.
-# This holistic judge is independent of pipeline leakage scoring, so their assessments may differ.
+# The holistic privacy rubric and pipeline leakage metric are independent, so they may disagree.
 # See [Evaluation](../../concepts/evaluation/#rewrite-evaluation) for details.
 
 # %%
