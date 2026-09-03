@@ -15,7 +15,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, assert_never, cast
+from typing import Literal, Never, assert_never, cast
 
 import httpx
 
@@ -133,38 +133,7 @@ def _probe_or_cleanup(
             launch_token=launch_token,
         )
     except BaseException as exc:
-        cleanup_complete, cleanup_error = _attempt_failed_launch_cleanup(
-            handle,
-            plan.spec.local.shutdown_timeout_seconds,
-        )
-        if isinstance(exc, RuntimeEffectError):
-            message = exc.diagnostic.message
-            if cleanup_error is not None:
-                message = f"{message}; cleanup failed: {cleanup_error}"
-            raise RuntimeEffectError(
-                exc.diagnostic.model_copy(
-                    update={
-                        "message": message,
-                        "known_effects": (handle.external_id,),
-                        "cleanup_complete": cleanup_complete,
-                    }
-                )
-            ) from exc
-        if isinstance(exc, Exception):
-            message = f"readiness failed unexpectedly: {exc}"
-            if cleanup_error is not None:
-                message = f"{message}; cleanup failed: {cleanup_error}"
-            raise RuntimeEffectError(
-                RuntimeDiagnostic(
-                    code="unexpected-readiness-failure",
-                    message=message,
-                    known_effects=(handle.external_id,),
-                    cleanup_complete=cleanup_complete,
-                )
-            ) from exc
-        if cleanup_error is not None:
-            exc.add_note(f"managed-process cleanup failed: {cleanup_error}")
-        raise
+        _raise_readiness_failure(exc, handle, plan.spec.local.shutdown_timeout_seconds)
     if not probe.passed:
         cleanup_complete, cleanup_error = _attempt_failed_launch_cleanup(
             handle,
@@ -189,6 +158,37 @@ def _attempt_failed_launch_cleanup(handle: LocalProcessHandle, timeout_seconds: 
         return _cleanup_handle(handle, timeout_seconds), None
     except Exception as exc:
         return False, str(exc)
+
+
+def _raise_readiness_failure(
+    exc: BaseException,
+    handle: LocalProcessHandle,
+    timeout_seconds: float,
+) -> Never:
+    cleanup_complete, cleanup_error = _attempt_failed_launch_cleanup(handle, timeout_seconds)
+    cleanup_suffix = f"; cleanup failed: {cleanup_error}" if cleanup_error is not None else ""
+    if isinstance(exc, RuntimeEffectError):
+        raise RuntimeEffectError(
+            exc.diagnostic.model_copy(
+                update={
+                    "message": f"{exc.diagnostic.message}{cleanup_suffix}",
+                    "known_effects": (handle.external_id,),
+                    "cleanup_complete": cleanup_complete,
+                }
+            )
+        ) from exc
+    if isinstance(exc, Exception):
+        raise RuntimeEffectError(
+            RuntimeDiagnostic(
+                code="unexpected-readiness-failure",
+                message=f"readiness failed unexpectedly: {exc}{cleanup_suffix}",
+                known_effects=(handle.external_id,),
+                cleanup_complete=cleanup_complete,
+            )
+        ) from exc
+    if cleanup_error is not None:
+        exc.add_note(f"managed-process cleanup failed: {cleanup_error}")
+    raise exc
 
 
 def status_run(launch: LaunchReceipt) -> StatusReceipt:
