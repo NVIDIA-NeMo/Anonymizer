@@ -143,6 +143,35 @@ def _patches_are_exact(expected: tuple[_SubstitutePatch, ...], patches: object) 
     )
 
 
+def _apply_substitute_datum(
+    bundle: object,
+    patches: object,
+    datum_id: object,
+) -> _AppliedDatum | _ApplicationRejected:
+    """Apply an exact planned bundle to one datum without widening a local fault."""
+    if (
+        not isinstance(bundle, _ValidatedBundle)
+        or not _is_validated_bundle(bundle)
+        or not isinstance(datum_id, _DatumId)
+    ):
+        return _rejected()
+    expected = _materialize_substitute_patches(bundle)
+    if isinstance(expected, _ApplicationRejected) or not _patches_are_exact(expected, patches):
+        return _rejected()
+    source_index = _index_scope_sources(bundle.manifest, bundle.handoffs)
+    if source_index is None:
+        return _rejected()
+    targets = tuple(target for target in source_index.targets if target.datum_id == datum_id)
+    if len(targets) != 1:
+        return _rejected()
+    target = targets[0]
+    target_patches = tuple(patch for patch in expected if patch.target is target.token)
+    output = _reconstruct_source(target.text, target_patches)
+    if output is None:
+        return _rejected()
+    return _AppliedDatum(datum_id, output, bool(target_patches))
+
+
 def _reconstruct_scope(
     bundle: _ValidatedBundle,
     patches: tuple[_SubstitutePatch, ...],
@@ -150,22 +179,12 @@ def _reconstruct_scope(
     source_index = _index_scope_sources(bundle.manifest, bundle.handoffs)
     if source_index is None:
         return _rejected()
-    patches_by_target: dict[_MentionTargetToken, list[_SubstitutePatch]] = {
-        target.token: [] for target in source_index.targets
-    }
-    for patch in patches:
-        target_patches = patches_by_target.get(patch.target)
-        if target_patches is None:
-            return _rejected()
-        target_patches.append(patch)
-
     datums: list[_AppliedDatum] = []
     for target in source_index.targets:
-        target_patches = tuple(patches_by_target[target.token])
-        output = _reconstruct_source(target.text, target_patches)
-        if output is None:
+        applied = _apply_substitute_datum(bundle, patches, target.datum_id)
+        if not isinstance(applied, _AppliedDatum):
             return _rejected()
-        datums.append(_AppliedDatum(target.datum_id, output, bool(target_patches)))
+        datums.append(applied)
     return tuple(datums)
 
 

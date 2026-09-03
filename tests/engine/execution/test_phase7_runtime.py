@@ -11,12 +11,14 @@ import pytest
 
 from anonymizer.engine.execution.accounting_outcomes import (
     _GroupReleased,
+    _GroupWithheld,
     _TaskCancelled,
     _TaskFailed,
     _TaskLost,
     _TaskSucceeded,
 )
 from anonymizer.engine.execution.accounting_plan import _DatumTaskSubject
+from anonymizer.engine.execution.graph import _CoherenceScope
 from anonymizer.engine.execution.phase7_admission import _Phase7Plan
 from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_contract import _load_phase7_contract, _Phase7StableSubstituteContract
@@ -102,26 +104,47 @@ def test_empty_manifest_is_verified_no_work_then_cleaned_without_backend_dispatc
     assert released_group.outputs == ((applied.candidate.datum_id, applied.candidate),)
 
 
-def test_application_exception_fails_owned_tasks_and_still_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
-    phase6, _phase6_backend, execution = _qualified_phase6(("plain",), (("target-0",),), {})
-    plan = _compile_phase7(phase6, execution, phase6.coherence_scopes)
+def test_application_exception_fails_only_its_owned_datum_and_still_cleans_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phase6, _phase6_backend, execution = _qualified_phase6(
+        ("first", "second"),
+        (("target-0",), ("target-1",)),
+        {},
+    )
+    plan = _compile_phase7(
+        phase6,
+        execution,
+        (_CoherenceScope(tuple(datum.id for datum in phase6.accounting.datums)),),
+    )
     assert isinstance(plan, _Phase7Plan)
     backend = _Backend()
     contract = _load_phase7_contract()
     assert isinstance(contract, _Phase7StableSubstituteContract)
 
-    def fail_application(_bundle: object) -> None:
-        raise RuntimeError("private canary")
+    def apply_datum(_bundle: object, _patches: object, datum_id: object) -> _AppliedDatum:
+        if datum_id == plan.accounting.datums[0].id:
+            raise RuntimeError("private canary")
+        assert datum_id == plan.accounting.datums[1].id
+        return _AppliedDatum(plan.accounting.datums[1].id, "second", False)
 
-    monkeypatch.setattr("anonymizer.engine.execution.phase7_runtime._apply_bundle", fail_application)
+    monkeypatch.setattr(
+        "anonymizer.engine.execution.phase7_runtime._apply_substitute_datum",
+        apply_datum,
+        raising=False,
+    )
 
     result = _Phase7Runtime(backend).run(phase6, execution, plan, contract)
 
-    application = next(
-        outcome for outcome in result.phase4.accounting.tasks if outcome.task == plan.application_tasks[0]
+    first_application, second_application = (
+        next(outcome for outcome in result.phase4.accounting.tasks if outcome.task == task)
+        for task in plan.application_tasks
     )
-    assert isinstance(application, _TaskFailed)
-    assert result.released == ()
+    assert isinstance(first_application, _TaskFailed)
+    assert isinstance(second_application, _TaskSucceeded)
+    assert result.released == (second_application.candidate,)
+    assert isinstance(result.phase4.accounting.groups[0], _GroupWithheld)
+    assert isinstance(result.phase4.accounting.groups[1], _GroupReleased)
     assert backend.closed == 1
     assert backend.discarded == 1
     assert result.cleanup.verified

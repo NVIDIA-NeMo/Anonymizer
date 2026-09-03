@@ -31,8 +31,7 @@ from anonymizer.engine.execution.phase6_runtime import (
 from anonymizer.engine.execution.phase7_admission import _is_admitted_phase7_plan, _Phase7Plan, _ScopeManifest
 from anonymizer.engine.execution.phase7_application import (
     _AppliedDatum,
-    _AppliedScope,
-    _apply_substitute_patches,
+    _apply_substitute_datum,
     _materialize_substitute_patches,
 )
 from anonymizer.engine.execution.phase7_contract import _is_admitted_phase7_contract, _Phase7StableSubstituteContract
@@ -351,17 +350,6 @@ def _is_verified_cleanup_attestation(value: object, cleanup_identity: object) ->
     )
 
 
-def _apply_bundle(bundle: _ValidatedBundle) -> tuple[_AppliedDatum, ...] | None:
-    """Apply once, then retain only protected datum outputs for release."""
-    patches = _materialize_substitute_patches(bundle)
-    if not isinstance(patches, tuple):
-        return None
-    applied = _apply_substitute_patches(bundle, patches)
-    if not isinstance(applied, _AppliedScope):
-        return None
-    return tuple(applied.datums)
-
-
 def _apply_planned_bundles(
     ledger: _AccountingLedger[object],
     plan: _Phase7Plan,
@@ -372,27 +360,32 @@ def _apply_planned_bundles(
         task.subject.datum_id: task for task in plan.application_tasks if isinstance(task.subject, _DatumTaskSubject)
     }
     candidates: dict[object, _AppliedDatum] = {}
-    failed_datums: set[object] = set()
     for manifest in plan.manifests:
         bundle = planned_bundles.get(manifest.id)
         if bundle is None:
             continue
         try:
-            applied = _apply_bundle(bundle)
+            patches = _materialize_substitute_patches(bundle)
         except Exception as cause:
             del cause
-            applied = None
-        if applied is None or tuple(datum.datum_id for datum in applied) != manifest.members:
-            failed_datums.update(manifest.members)
             continue
-        candidates.update((datum.datum_id, datum) for datum in applied)
+        if not isinstance(patches, tuple):
+            continue
+        for datum_id in manifest.members:
+            try:
+                applied = _apply_substitute_datum(bundle, patches, datum_id)
+            except Exception as cause:
+                del cause
+                continue
+            if isinstance(applied, _AppliedDatum) and applied.datum_id == datum_id:
+                candidates[datum_id] = applied
 
     for datum_id in plan.accounting.topological_datums:
         task = application_by_datum[datum_id]
         if task not in ledger.ready_tasks():
             continue
         candidate = candidates.get(datum_id)
-        if datum_id in failed_datums or candidate is None:
+        if candidate is None:
             ledger.mark_task_failed(task)
         else:
             ledger.mark_task_succeeded(task, candidate)
