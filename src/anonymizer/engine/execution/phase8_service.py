@@ -10,6 +10,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingPlan,
+    _admit_accounting_plan,
+    _AtomicGroupKey,
+    _CompiledAtomicGroup,
+    _CompiledDependency,
+)
+from anonymizer.engine.execution.accounting_release import _qualify_release
+from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _TextDatum
 from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_runtime import _Phase7Execution
 from anonymizer.engine.execution.phase8_admission import _compile_phase8_plan, _Phase8Plan
@@ -79,7 +88,7 @@ class _Phase8GroupedRewriteProtectionService:
         baselines = early
         candidates, states = _run_operations(groups, operations, baselines)
 
-        qualified = _phase4_qualified(groups, atomic_groups, dependencies, states)
+        qualified = _phase4_released(groups, atomic_groups, dependencies, states)
         released = tuple(
             (member, candidates[member]) for members in groups for member in members if member in qualified
         )
@@ -115,11 +124,6 @@ class _Phase8GroupedRewriteProtectionService:
         released = phase7.released
         if not all(isinstance(value, _AppliedDatum) for value in released):
             return _terminal((), tuple("inconsistent" for _ in groups), True, False)
-        applied_by_datum = {value.datum_id: value.applied for value in released}
-        effective_operations = tuple(
-            _baseline_only_operation if all(applied_by_datum.get(member) is False for member in members) else operation
-            for members, operation in zip(groups, operations, strict=True)
-        )
         return self.run_lifecycle(
             groups=groups,
             atomic_groups=atomic_groups,
@@ -127,7 +131,9 @@ class _Phase8GroupedRewriteProtectionService:
             phase7_released=tuple((value.datum_id, value.output) for value in released),
             phase7_cleanup_verified=phase7.cleanup.verified,
             phase7_global_embargo=phase7.phase4.global_embargo,
-            operations=effective_operations,
+            # Every baseline-ready private group is analyzed.  A baseline-only
+            # shortcut cannot establish the frozen analysis-derived zero route.
+            operations=operations,
         )
 
     def run_from_phase7_execution_with_backend(
@@ -147,12 +153,30 @@ class _Phase8GroupedRewriteProtectionService:
             (getattr(edge, "prerequisite", None), getattr(edge, "dependent", None))
             for edge in getattr(graph, "dependencies", ())
         )
-        return self.run_from_phase7_execution(
+        original_by_datum = {
+            getattr(datum, "id"): getattr(datum, "text")
+            for datum in getattr(graph, "datums", ())
+            if isinstance(getattr(datum, "text", None), str)
+        }
+        applied_by_datum = {value.datum_id: value.applied for value in phase7.released}
+        operations = tuple(
+            _backend_group_operation(
+                backend,
+                _Phase8GroupInput(
+                    {member: original_by_datum[member] for member in members if member in original_by_datum},
+                    {member: applied_by_datum[member] for member in members if member in applied_by_datum},
+                ),
+            )
+            for members in groups
+        )
+        return self.run_lifecycle(
             groups=groups,
             atomic_groups=atomic_groups,
             dependencies=dependencies,
-            phase7=phase7,
-            operations=tuple(_backend_group_operation(backend) for _ in groups),
+            phase7_released=tuple((value.datum_id, value.output) for value in phase7.released),
+            phase7_cleanup_verified=phase7.cleanup.verified,
+            phase7_global_embargo=phase7.phase4.global_embargo,
+            operations=operations,
         )
 
 
@@ -167,21 +191,21 @@ class _Phase8WireGroup:
     member_tokens: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8GroupInput:
+    """Phase-8-owned provenance needed to admit the conditional zero route."""
+
+    originals: dict[object, str]
+    phase7_applied: dict[object, bool]
+    accepted_mentions: tuple[object, ...] = ()
+
+
 def _opaque_token() -> str:
     """Allocate an unguessable correlation capability, never a positional label."""
     return secrets.token_urlsafe(24)
 
 
-def _baseline_only_operation(
-    members: tuple[object, ...], baselines: dict[object, str]
-) -> tuple[tuple[object, str], ...] | None:
-    """Preserve a no-entity group without opening any Phase 8 operation."""
-    if set(baselines) != set(members) or not all(isinstance(value, str) for value in baselines.values()):
-        return None
-    return tuple((member, baselines[member]) for member in members)
-
-
-def _backend_group_operation(backend: object) -> _GroupOperation:
+def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | None = None) -> _GroupOperation:
     def operation(members: tuple[object, ...], baselines: dict[object, str]) -> tuple[tuple[object, str], ...] | None:
         wire = _new_wire(members)
         tokens = wire.member_tokens
@@ -194,9 +218,7 @@ def _backend_group_operation(backend: object) -> _GroupOperation:
             return None
         privacy, utility = obligations
         if not privacy:
-            # The frozen zero route is valid only after exact analysis
-            # reconciliation and only when no utility obligation exists.
-            if utility:
+            if utility or not _zero_route_admitted(members, baselines, group_input):
                 return None
             return tuple((member, baselines[member]) for member in members)
         rewrite_wire = _new_wire(members)
@@ -251,6 +273,20 @@ def _backend_group_operation(backend: object) -> _GroupOperation:
         return None
 
     return operation
+
+
+def _zero_route_admitted(
+    members: tuple[object, ...], baselines: dict[object, str], group_input: _Phase8GroupInput | None
+) -> bool:
+    """Prove every frozen guard; absence of provenance is a rejection."""
+    return (
+        group_input is not None
+        and not group_input.accepted_mentions
+        and set(group_input.originals) == set(members)
+        and set(group_input.phase7_applied) == set(members)
+        and all(group_input.phase7_applied[member] is False for member in members)
+        and all(baselines[member] == group_input.originals[member] for member in members)
+    )
 
 
 def _new_wire(members: tuple[object, ...]) -> _Phase8WireGroup:
@@ -536,20 +572,42 @@ def _complete_candidate(members: tuple[object, ...], result: object) -> bool:
     )
 
 
-def _phase4_qualified(
+def _phase4_released(
     groups: tuple[tuple[object, ...], ...],
     atomic_groups: tuple[tuple[object, ...], ...],
     dependencies: tuple[tuple[object, object], ...],
     states: list[str],
 ) -> set[object]:
-    eligible = {member for group, state in zip(groups, states, strict=True) if state == "succeeded" for member in group}
-    while True:
-        next_eligible = {
-            member
-            for member in eligible
-            if all(set(atomic) <= eligible for atomic in atomic_groups if member in atomic)
-            and all(prerequisite in eligible for prerequisite, dependent in dependencies if dependent == member)
-        }
-        if next_eligible == eligible:
-            return eligible
-        eligible = next_eligible
+    """Delegate atomic/dependency withholding to the Phase 4 fixed point."""
+    members = tuple(member for group in groups for member in group)
+    if not all(isinstance(member, _DatumId) for member in members):
+        return set()
+    datums = tuple(_TextDatum(member, "", _DatumPurpose.TARGET) for member in members if isinstance(member, _DatumId))
+    if not all(isinstance(member, _DatumId) for group in atomic_groups for member in group) or not all(
+        isinstance(item, _DatumId) for edge in dependencies for item in edge
+    ):
+        return set()
+    try:
+        plan: _AccountingPlan = _admit_accounting_plan(
+            datums,
+            (),
+            (),
+            tuple(
+                _CompiledDependency(cast(_DatumId, prerequisite), cast(_DatumId, dependent))
+                for prerequisite, dependent in dependencies
+            ),
+            tuple(
+                _CompiledAtomicGroup(_AtomicGroupKey(), cast(tuple[_DatumId, ...], group)) for group in atomic_groups
+            ),
+            tuple(datum.id for datum in datums),
+        )
+    except (TypeError, ValueError):
+        return set()
+    locally_qualified = frozenset(
+        member
+        for group, state in zip(groups, states, strict=True)
+        if state == "succeeded"
+        for member in group
+        if isinstance(member, _DatumId)
+    )
+    return set(_qualify_release(plan, locally_qualified).release_eligible)

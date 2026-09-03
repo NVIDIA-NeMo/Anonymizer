@@ -45,6 +45,7 @@ from anonymizer.engine.execution.phase8_runtime import _run_group_operation
 from anonymizer.engine.execution.phase8_service import (
     _backend_group_operation,
     _Phase8GroupedRewriteProtectionService,
+    _Phase8GroupInput,
 )
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics
 from tests.engine.execution.phase8_reference_model import Case, reduce
@@ -213,13 +214,44 @@ def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests
             self.payload = payload
             self.failed = False
 
-    first = _backend_group_operation(Backend())
-    second = _backend_group_operation(Backend())
     members = (object(), object())
     baselines = {members[0]: "one", members[1]: "two"}
+    input = _Phase8GroupInput(dict(baselines), {member: False for member in members})
+    first = _backend_group_operation(Backend(), input)
+    second = _backend_group_operation(Backend(), input)
     assert first(members, baselines) == ((members[0], "one"), (members[1], "two"))
     assert second(members, baselines) == ((members[0], "one"), (members[1], "two"))
     assert seen[0]["group_token"] != seen[1]["group_token"]
+
+
+def test_phase8_zero_route_rejects_utility_obligations_and_missing_phase7_identity_provenance() -> None:
+    """An empty privacy analysis is not a baseline fallback."""
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            assert operation is _Phase8Operation.ANALYZE
+            members = request["members"]
+            assert isinstance(members, list)
+            return _Response(
+                operation,
+                {
+                    "analyzed_member_tokens": [member["member_token"] for member in members],
+                    "consumed_context_binding_tokens": [],
+                    "privacy_obligations": [],
+                    "utility_obligations": [{"statement": "keep meaning", "importance": "important"}],
+                },
+            )
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation = operation
+            self.payload = payload
+            self.failed = False
+
+    member = object()
+    baseline = {member: "baseline"}
+    provenance = _Phase8GroupInput({member: "original"}, {member: False})
+    assert _backend_group_operation(Backend(), provenance)((member,), baseline) is None
 
 
 def test_phase8_backend_rejects_missing_or_duplicate_obligation_answers() -> None:

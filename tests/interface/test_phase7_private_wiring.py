@@ -234,7 +234,7 @@ def test_private_grouped_rewrite_executes_phase7_then_all_phase8_operations() ->
     assert len(set(phase8.member_token_sets)) == len(phase8.member_token_sets)
 
 
-def test_private_grouped_rewrite_with_no_entities_makes_no_phase7_or_phase8_calls() -> None:
+def test_private_grouped_rewrite_with_no_entities_still_analyzes_the_admitted_group() -> None:
     anonymizer = build_synthetic_anonymizer({"Alice": "first_name"})
     plan = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite(), emit_telemetry=False))
     assert isinstance(plan, _ProtectionPlan)
@@ -251,9 +251,15 @@ def test_private_grouped_rewrite_with_no_entities_makes_no_phase7_or_phase8_call
     result = flow.protect((_record("source-a", "ordinary text"),))
 
     assert isinstance(result.outcomes[0], _ProtectionSucceeded)
-    assert result.outcomes[0].output == "ordinary text"
+    assert result.outcomes[0].output == "rewrite-0"
     assert phase7.calls == 0
-    assert phase8.calls == []
+    assert phase8.calls == [
+        _Phase8Operation.ANALYZE,
+        _Phase8Operation.REWRITE,
+        _Phase8Operation.EVALUATE,
+        _Phase8Operation.REPAIR,
+        _Phase8Operation.EVALUATE,
+    ]
 
 
 def test_private_substitute_releases_only_a_qualified_phase7_output() -> None:
