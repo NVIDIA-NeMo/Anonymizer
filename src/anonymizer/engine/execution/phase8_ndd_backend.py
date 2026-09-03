@@ -29,6 +29,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.execution.invocation import _CompiledInvocation
+from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 
@@ -96,7 +97,8 @@ class _Phase8NddBackend:
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> _Phase8DispatchResult:
         encoded = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        if len(encoded.encode()) > 65_536:
+        limits = dict(getattr(_load_phase8_contract(), "limits", ()))
+        if len(encoded.encode()) > limits.get("max_workframe_utf8_bytes_per_operation", 0):
             return _Phase8DispatchResult(operation, None, True)
         token = secrets.token_hex(16)
         frame = pd.DataFrame(

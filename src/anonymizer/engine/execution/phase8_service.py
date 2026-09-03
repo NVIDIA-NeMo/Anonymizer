@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import cast
 
 from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_runtime import _Phase7Execution
 from anonymizer.engine.execution.phase8_admission import _compile_phase8_plan, _Phase8Plan
+from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
 from anonymizer.engine.execution.phase8_runtime import _Phase8LifecycleExecution, _run_group_operation
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics, _Phase8Metric
@@ -156,6 +159,19 @@ class _Phase8GroupedRewriteProtectionService:
 _GroupOperation = Callable[[tuple[object, ...], dict[object, str]], tuple[tuple[object, str], ...] | None]
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8WireGroup:
+    """Invocation-private correlations for one complete group operation."""
+
+    group_token: str
+    member_tokens: tuple[str, ...]
+
+
+def _opaque_token() -> str:
+    """Allocate an unguessable correlation capability, never a positional label."""
+    return secrets.token_urlsafe(24)
+
+
 def _baseline_only_operation(
     members: tuple[object, ...], baselines: dict[object, str]
 ) -> tuple[tuple[object, str], ...] | None:
@@ -167,42 +183,126 @@ def _baseline_only_operation(
 
 def _backend_group_operation(backend: object) -> _GroupOperation:
     def operation(members: tuple[object, ...], baselines: dict[object, str]) -> tuple[tuple[object, str], ...] | None:
-        tokens = tuple(f"m-{index}" for index in range(len(members)))
+        wire = _Phase8WireGroup(_opaque_token(), tuple(_opaque_token() for _ in members))
+        tokens = wire.member_tokens
         token_to_member = dict(zip(tokens, members, strict=True))
-        request: dict[str, object] = {
-            "member_tokens": list(tokens),
-            "baselines": [baselines[member] for member in members],
-        }
+        request = _operation_request(wire, members, baselines)
         analysis = _dispatch(backend, _Phase8Operation.ANALYZE, request)
-        if analysis is None or not _exact_tokens(analysis, "analyzed_member_tokens", tokens):
+        if analysis is None or not _reconcile_common(analysis, "analyzed_member_tokens", tokens, ()):
             return None
-        obligations = _field(analysis, "privacy_obligations", [])
-        if not isinstance(obligations, list):
+        obligations = _admit_obligations(analysis, tokens)
+        if obligations is None:
             return None
-        if not obligations:
+        privacy, utility = obligations
+        if not privacy:
             # The frozen zero route is valid only after exact analysis
-            # reconciliation. It deliberately makes no rewrite/evaluate call.
+            # reconciliation and only when no utility obligation exists.
+            if utility:
+                return None
             return tuple((member, baselines[member]) for member in members)
-        revision = _dispatch(backend, _Phase8Operation.REWRITE, request)
+        active_request = {**request, "privacy_obligations": privacy, "utility_obligations": utility}
+        revision = _dispatch(backend, _Phase8Operation.REWRITE, active_request)
+        if revision is None or not _reconcile_common(revision, None, tokens, ()):
+            return None
         current = _revisions(revision, token_to_member)
         if current is None:
             return None
-        for repair_round in range(4):
-            evaluation = _dispatch(backend, _Phase8Operation.EVALUATE, {**request, "revisions": current})
-            metric = _metric(evaluation, tokens)
+        limits = dict(getattr(_load_phase8_contract(), "limits", ()))
+        for repair_round in range(limits.get("max_repair_iterations", 0) + 1):
+            evaluation_request = {
+                **active_request,
+                "revisions": _revision_request(current, token_to_member),
+            }
+            evaluation = _dispatch(backend, _Phase8Operation.EVALUATE, evaluation_request)
+            metric = _metric(evaluation, tokens, _obligation_tokens(privacy), _obligation_tokens(utility))
             if metric is None:
                 return None
             if not metric.needs_repair:
                 return tuple((member, current[member]) for member in members)
-            if repair_round == 3:
+            if repair_round == limits.get("max_repair_iterations", 0):
                 return None
-            repaired = _dispatch(backend, _Phase8Operation.REPAIR, {**request, "revisions": current})
+            repaired = _dispatch(backend, _Phase8Operation.REPAIR, evaluation_request)
+            if repaired is None or not _reconcile_common(repaired, None, tokens, ()):
+                return None
             current = _revisions(repaired, token_to_member)
             if current is None:
                 return None
         return None
 
     return operation
+
+
+def _operation_request(
+    wire: _Phase8WireGroup, members: tuple[object, ...], baselines: dict[object, str]
+) -> dict[str, object]:
+    """Build the complete content-bearing workframe owned by this service."""
+    return {
+        "group_token": wire.group_token,
+        "operation_token": _opaque_token(),
+        "members": [
+            {"member_token": token, "ordinal": ordinal, "phase7_baseline": baselines[member]}
+            for ordinal, (member, token) in enumerate(zip(members, wire.member_tokens, strict=True))
+        ],
+        # Graph handoffs with no accepted context or mentions still carry the
+        # fields explicitly; later graph profiles populate the same schemas.
+        "context_bindings": [],
+        "accepted_mentions": [],
+        "privacy_obligations": [],
+        "utility_obligations": [],
+    }
+
+
+def _revision_request(current: dict[object, str], token_to_member: dict[str, object]) -> list[dict[str, str]]:
+    return [{"member_token": token, "text": current[member]} for token, member in token_to_member.items()]
+
+
+def _reconcile_common(
+    payload: object, member_field: str | None, members: tuple[str, ...], contexts: tuple[str, ...]
+) -> bool:
+    return (member_field is None or _exact_tokens(payload, member_field, members)) and _exact_tokens(
+        payload, "consumed_context_binding_tokens", contexts
+    )
+
+
+def _admit_obligations(
+    payload: object, members: tuple[str, ...]
+) -> tuple[list[dict[str, object]], list[dict[str, object]]] | None:
+    """Allocate obligation tokens locally after exact provenance validation."""
+    admitted: list[list[dict[str, object]]] = []
+    for field in ("privacy_obligations", "utility_obligations"):
+        raw = _field(payload, field)
+        limits = dict(getattr(_load_phase8_contract(), "limits", ()))
+        limit_name = (
+            "max_privacy_obligations_per_group"
+            if field == "privacy_obligations"
+            else "max_utility_obligations_per_group"
+        )
+        if not isinstance(raw, list) or len(raw) > limits.get(limit_name, 0):
+            return None
+        values: list[dict[str, object]] = []
+        for value in raw:
+            statement = _field(value, "statement")
+            owners = _field(value, "source_member_tokens", [])
+            if (
+                not isinstance(statement, str)
+                or not statement
+                or len(statement.encode()) > limits.get("max_obligation_statement_utf8_bytes", 0)
+            ):
+                return None
+            if (
+                not isinstance(owners, list)
+                or not owners
+                or len(owners) != len(set(owners))
+                or not set(owners) <= set(members)
+            ):
+                return None
+            values.append({"obligation_token": _opaque_token(), "statement": statement, "source_member_tokens": owners})
+        admitted.append(values)
+    return admitted[0], admitted[1]
+
+
+def _obligation_tokens(obligations: list[dict[str, object]]) -> tuple[str, ...]:
+    return tuple(cast(str, obligation["obligation_token"]) for obligation in obligations)
 
 
 def _dispatch(backend: object, operation: _Phase8Operation, request: dict[str, object]) -> object | None:
@@ -226,6 +326,10 @@ def _field(payload: object, name: str, default: object = None) -> object:
 
 def _exact_tokens(payload: object, name: str, expected: tuple[str, ...]) -> bool:
     observed = _field(payload, name)
+    return _exact_token_list(observed, expected)
+
+
+def _exact_token_list(observed: object, expected: tuple[str, ...]) -> bool:
     return (
         isinstance(observed, list)
         and len(observed) == len(expected)
@@ -250,12 +354,19 @@ def _revisions(payload: object, token_to_member: dict[str, object]) -> dict[obje
     return result if len(result) == len(token_to_member) else None
 
 
-def _metric(payload: object, tokens: tuple[str, ...]) -> _Phase8Metric | None:
-    if payload is None or not _exact_tokens(payload, "evaluated_member_tokens", tokens):
+def _metric(
+    payload: object, tokens: tuple[str, ...], privacy_tokens: tuple[str, ...], utility_tokens: tuple[str, ...]
+) -> _Phase8Metric | None:
+    if payload is None or not _reconcile_common(payload, "evaluated_member_tokens", tokens, ()):
         return None
     privacy = _field(payload, "privacy_answers", [])
     utility = _field(payload, "utility_answers", [])
-    if not isinstance(privacy, list) or not isinstance(utility, list):
+    if (
+        not isinstance(privacy, list)
+        or not isinstance(utility, list)
+        or not _exact_answer_tokens(privacy, privacy_tokens)
+        or not _exact_answer_tokens(utility, utility_tokens)
+    ):
         return None
     try:
         privacy_values = tuple(_privacy_answer(answer) for answer in privacy)
@@ -265,6 +376,10 @@ def _metric(payload: object, tokens: tuple[str, ...]) -> _Phase8Metric | None:
     return _evaluate_metrics(
         privacy_values, utility_values, repair_any_high=True, repair_threshold=0.0, utility_floor=0.5
     )
+
+
+def _exact_answer_tokens(answers: list[object], expected: tuple[str, ...]) -> bool:
+    return _exact_token_list([_field(answer, "obligation_token") for answer in answers], expected)
 
 
 def _privacy_answer(answer: object) -> tuple[str, float, bool]:

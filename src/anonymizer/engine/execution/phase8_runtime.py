@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.execution.phase8_validation import _Phase8Metric, _validate_complete_revisions
 
 
@@ -44,7 +45,13 @@ def _run_group_operation(
     max_repairs: int,
 ) -> _Phase8GroupOutcome:
     """Run every stage against one exact group, never adopting a subset."""
-    if max_repairs < 0 or max_repairs > 3 or not _validate_complete_revisions(members, baselines):
+    contract = _load_phase8_contract()
+    limits = dict(getattr(contract, "limits", ()))
+    if (
+        max_repairs < 0
+        or max_repairs > limits.get("max_repair_iterations", 0)
+        or not _validate_complete_revisions(members, baselines)
+    ):
         return _Phase8GroupOutcome("failed", None, 0)
     zero_obligations, zero_route_guards = analyze()
     if zero_obligations:

@@ -40,8 +40,12 @@ from anonymizer.engine.execution.phase8_contract import (
     _load_phase8_contract,
     _Phase8GroupedRewriteContract,
 )
+from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
 from anonymizer.engine.execution.phase8_runtime import _run_group_operation
-from anonymizer.engine.execution.phase8_service import _Phase8GroupedRewriteProtectionService
+from anonymizer.engine.execution.phase8_service import (
+    _backend_group_operation,
+    _Phase8GroupedRewriteProtectionService,
+)
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics
 from tests.engine.execution.phase8_reference_model import Case, reduce
 
@@ -174,6 +178,96 @@ def test_private_phase8_service_only_returns_a_complete_group_candidate() -> Non
         max_repairs=0,
     )
     assert result == ((members[0], "one"), (members[1], "two"))
+
+
+def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests() -> None:
+    """Wire correlations are private capabilities, not deterministic member indexes."""
+
+    seen: list[dict[str, object]] = []
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            seen.append(request)
+            members = request["members"]
+            assert isinstance(members, list)
+            tokens = [member["member_token"] for member in members]
+            assert all(isinstance(token, str) and not token.startswith("m-") for token in tokens)
+            assert {"group_token", "operation_token", "members", "context_bindings", "accepted_mentions"} <= set(
+                request
+            )
+            if operation is _Phase8Operation.ANALYZE:
+                return _Result(
+                    operation,
+                    {
+                        "analyzed_member_tokens": tokens,
+                        "consumed_context_binding_tokens": [],
+                        "privacy_obligations": [],
+                        "utility_obligations": [],
+                    },
+                )
+            raise AssertionError("zero route must not dispatch another operation")
+
+    class _Result:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation = operation
+            self.payload = payload
+            self.failed = False
+
+    first = _backend_group_operation(Backend())
+    second = _backend_group_operation(Backend())
+    members = (object(), object())
+    baselines = {members[0]: "one", members[1]: "two"}
+    assert first(members, baselines) == ((members[0], "one"), (members[1], "two"))
+    assert second(members, baselines) == ((members[0], "one"), (members[1], "two"))
+    assert seen[0]["group_token"] != seen[1]["group_token"]
+
+
+def test_phase8_backend_rejects_missing_or_duplicate_obligation_answers() -> None:
+    """Evaluation adoption requires an exact obligation-token bijection."""
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            members = request["members"]
+            assert isinstance(members, list)
+            tokens = [member["member_token"] for member in members]
+            if operation is _Phase8Operation.ANALYZE:
+                return _Response(
+                    operation,
+                    {
+                        "analyzed_member_tokens": tokens,
+                        "consumed_context_binding_tokens": [],
+                        "privacy_obligations": [{"statement": "protect", "source_member_tokens": tokens}],
+                        "utility_obligations": [],
+                    },
+                )
+            if operation is _Phase8Operation.REWRITE:
+                return _Response(
+                    operation,
+                    {
+                        "consumed_context_binding_tokens": [],
+                        "revisions": [{"member_token": token, "text": "safe"} for token in tokens],
+                    },
+                )
+            if operation is _Phase8Operation.EVALUATE:
+                return _Response(
+                    operation,
+                    {
+                        "evaluated_member_tokens": tokens,
+                        "consumed_context_binding_tokens": [],
+                        "privacy_answers": [],
+                        "utility_answers": [],
+                    },
+                )
+            raise AssertionError
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation = operation
+            self.payload = payload
+            self.failed = False
+
+    member = object()
+    assert _backend_group_operation(Backend())((member,), {member: "baseline"}) is None
 
 
 def test_phase8_lifecycle_requires_a_released_phase7_baseline_and_withholds_the_atomic_group() -> None:

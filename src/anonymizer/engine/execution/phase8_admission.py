@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _ProtectionGraph, _RewriteGroup
+from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 
 
 class _Phase8AdmissionCode(str, Enum):
@@ -47,7 +48,12 @@ class _Phase8Rejected:
 def _compile_phase8_plan(graph: object) -> _Phase8Plan | _Phase8Rejected:
     if not isinstance(graph, _ProtectionGraph) or not graph.rewrite_groups:
         return _Phase8Rejected(_Phase8AdmissionCode.INVALID_INPUT)
+    limits = dict(getattr(_load_phase8_contract(), "limits", ()))
     targets = tuple(datum.id for datum in graph.datums if datum.purpose is _DatumPurpose.TARGET)
+    if len(targets) > limits.get("max_datums_per_invocation", 0) or len(graph.rewrite_groups) > limits.get(
+        "max_rewrite_groups_per_invocation", 0
+    ):
+        return _Phase8Rejected(_Phase8AdmissionCode.LIMIT_EXCEEDED)
     target_set = set(targets)
     atomic_sets = tuple(frozenset(group.members) for group in graph.atomic_groups)
     seen: set[_DatumId] = set()
@@ -59,7 +65,7 @@ def _compile_phase8_plan(graph: object) -> _Phase8Plan | _Phase8Rejected:
         members = group.members
         if not members:
             return _Phase8Rejected(_Phase8AdmissionCode.EMPTY_GROUP)
-        if len(members) > 4:
+        if len(members) > limits.get("max_members_per_rewrite_group", 0):
             return _Phase8Rejected(_Phase8AdmissionCode.LIMIT_EXCEEDED)
         if len(set(members)) != len(members):
             return _Phase8Rejected(_Phase8AdmissionCode.DUPLICATE_MEMBER)
