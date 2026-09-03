@@ -485,6 +485,33 @@ def test_launch_command_stops_service_when_receipt_write_fails(tmp_path: Path) -
     stop.assert_called_once_with(receipt)
 
 
+def test_launch_command_rejects_a_directory_receipt_target_before_launch(tmp_path: Path) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
+    output = tmp_path / "receipt"
+    output.mkdir()
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path="out",
+        stderr_path="err",
+    )
+    receipt = launch_receipt(plan, handle)
+
+    with (
+        mock.patch.object(cli, "launch_plan", return_value=receipt) as launch,
+        mock.patch.object(cli, "stop_run"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cli.launch(plan=plan_path, output=output, log_directory=tmp_path)
+
+    assert exc_info.value.code == 125
+    launch.assert_not_called()
+
+
 def test_launch_refuses_an_unmarked_process_and_cleans_up(tmp_path: Path) -> None:
     plan = compiler.compile_profile(generation(), source_revision="test")
     process = mock.Mock(pid=4242)

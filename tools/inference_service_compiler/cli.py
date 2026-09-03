@@ -150,5 +150,7 @@ def _validate_output_destination(output: Path | None) -> None:
     """Verify that a receipt destination can create files before launching."""
     if output is None:
         return
+    if output.is_dir():
+        raise IsADirectoryError(output)
     with tempfile.NamedTemporaryFile(dir=output.parent, prefix=f".{output.name}.", delete=True):
         pass
