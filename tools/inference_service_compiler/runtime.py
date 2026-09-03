@@ -172,12 +172,34 @@ def stop_run(launch: LaunchReceipt) -> StopReceipt:
 
 
 def is_handle_running(handle: LocalProcessHandle) -> bool:
-    """Check the external identity while guarding against Linux PID reuse."""
+    """Check the recorded process identity without following a reused PID or group."""
     current_marker = read_process_start_marker(handle.pid)
-    if current_marker != handle.start_marker:
+    if current_marker is None:
         return False
+    if current_marker != handle.start_marker:
+        raise _process_identity_mismatch(
+            handle,
+            f"PID {handle.pid} now has start marker {current_marker!r}, expected {handle.start_marker!r}",
+        )
     if read_process_state(handle.pid) == "Z":
         return False
+    try:
+        current_process_group_id = os.getpgid(handle.pid)
+    except ProcessLookupError:
+        return False
+    except PermissionError as exc:
+        raise RuntimeEffectError(
+            RuntimeDiagnostic(
+                code="process-identity-unavailable",
+                message=f"cannot verify the process group for PID {handle.pid}: {exc}",
+            )
+        ) from exc
+    if current_process_group_id != handle.process_group_id:
+        raise _process_identity_mismatch(
+            handle,
+            f"PID {handle.pid} now belongs to process group {current_process_group_id}, "
+            f"expected {handle.process_group_id}",
+        )
     try:
         os.kill(handle.pid, 0)
     except ProcessLookupError:
@@ -185,6 +207,15 @@ def is_handle_running(handle: LocalProcessHandle) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _process_identity_mismatch(handle: LocalProcessHandle, detail: str) -> RuntimeEffectError:
+    return RuntimeEffectError(
+        RuntimeDiagnostic(
+            code="process-identity-mismatch",
+            message=f"refusing to act on recorded process {handle.external_id}: {detail}",
+        )
+    )
 
 
 def _cleanup_handle(handle: LocalProcessHandle, timeout_seconds: float) -> bool:
