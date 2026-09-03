@@ -86,7 +86,11 @@ class _Phase8GroupedRewriteProtectionService:
         if isinstance(early, _Phase8LifecycleExecution):
             return early
         baselines = early
-        candidates, states = _run_operations(groups, operations, baselines)
+        candidates, states, invocation_inconsistent = _run_operations(groups, operations, baselines)
+        if invocation_inconsistent:
+            candidates.clear()
+            baselines.clear()
+            return _terminal((), tuple(states), True, False)
 
         qualified = _phase4_released(groups, atomic_groups, dependencies, states)
         released = tuple(
@@ -181,6 +185,10 @@ class _Phase8GroupedRewriteProtectionService:
 
 
 _GroupOperation = Callable[[tuple[object, ...], dict[object, str]], tuple[tuple[object, str], ...] | None]
+
+
+class _Phase8InvocationInconsistent(RuntimeError):
+    """Provider evidence cannot safely be assigned to one complete group."""
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -395,9 +403,13 @@ def _dispatch(backend: object, operation: _Phase8Operation, request: dict[str, o
         return None
     try:
         result = method(operation, request)
-    except BaseException:
+    except Exception:
         return None
-    if getattr(result, "operation", None) is not operation or getattr(result, "failed", True):
+    if getattr(result, "operation", None) is not operation:
+        raise _Phase8InvocationInconsistent("operation correlation mismatch")
+    if getattr(result, "failed", True):
+        if getattr(result, "failure_kind", None) == "invocation_inconsistent":
+            raise _Phase8InvocationInconsistent("unattributable provider failure")
         return None
     return getattr(result, "payload", None)
 
@@ -509,9 +521,10 @@ def _lifecycle_preflight(
 
 def _run_operations(
     groups: tuple[tuple[object, ...], ...], operations: tuple[_GroupOperation, ...], baselines: dict[object, str]
-) -> tuple[dict[object, str], list[str]]:
+) -> tuple[dict[object, str], list[str], bool]:
     candidates: dict[object, str] = {}
     states: list[str] = []
+    invocation_inconsistent = False
     for members, operation in zip(groups, operations, strict=True):
         group_baselines = {member: baselines[member] for member in members if member in baselines}
         if len(group_baselines) != len(members):
@@ -519,7 +532,11 @@ def _run_operations(
             continue
         try:
             result = operation(members, group_baselines)
-        except BaseException:
+        except _Phase8InvocationInconsistent:
+            states.append("inconsistent")
+            invocation_inconsistent = True
+            continue
+        except Exception:
             states.append("failed")
             continue
         if not _complete_candidate(members, result):
@@ -527,7 +544,7 @@ def _run_operations(
             continue
         candidates.update(cast(tuple[tuple[object, str], ...], result))
         states.append("succeeded")
-    return candidates, states
+    return candidates, states, invocation_inconsistent
 
 
 def _valid_declarations(

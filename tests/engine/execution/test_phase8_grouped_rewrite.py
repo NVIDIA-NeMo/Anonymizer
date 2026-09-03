@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import cast
 
+import pandas as pd
 from pytest import MonkeyPatch
 
 import anonymizer.engine.execution.phase8_contract as phase8_contract
@@ -40,7 +41,7 @@ from anonymizer.engine.execution.phase8_contract import (
     _load_phase8_contract,
     _Phase8GroupedRewriteContract,
 )
-from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
+from anonymizer.engine.execution.phase8_ndd_backend import _AnalysisResponse, _hydrate, _Phase8Operation
 from anonymizer.engine.execution.phase8_runtime import _run_group_operation
 from anonymizer.engine.execution.phase8_service import (
     _backend_group_operation,
@@ -48,6 +49,7 @@ from anonymizer.engine.execution.phase8_service import (
     _Phase8GroupInput,
 )
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics
+from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult, _FailedRowEvidence
 from tests.engine.execution.phase8_reference_model import Case, reduce
 
 
@@ -222,6 +224,68 @@ def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests
     assert first(members, baselines) == ((members[0], "one"), (members[1], "two"))
     assert second(members, baselines) == ((members[0], "one"), (members[1], "two"))
     assert seen[0]["group_token"] != seen[1]["group_token"]
+
+
+def test_phase8_failed_record_is_a_local_failure_only_when_bound_to_the_active_work_token() -> None:
+    """Adapter evidence can fail one group only when its private binding is exact."""
+    token = "active-work-token"
+    failure = FailedRecord("provider-record", "phase8", "dropped")
+    result = WorkflowRunResult(pd.DataFrame(), [failure], (_FailedRowEvidence(token, failure),))
+
+    hydrated = _hydrate(_Phase8Operation.ANALYZE, result, token, _AnalysisResponse, "analysis")
+
+    assert hydrated.failed
+    assert hydrated.failure_kind == "local_failure"
+
+
+def test_phase8_foreign_or_ambiguous_failed_record_evidence_is_invocation_inconsistent() -> None:
+    """Unbound evidence cannot be attributed to the active complete group."""
+    token = "active-work-token"
+    failure = FailedRecord("provider-record", "phase8", "dropped")
+    result = WorkflowRunResult(
+        pd.DataFrame(),
+        [failure],
+        (_FailedRowEvidence(token, failure), _FailedRowEvidence("foreign-work-token", failure)),
+    )
+
+    hydrated = _hydrate(_Phase8Operation.ANALYZE, result, token, _AnalysisResponse, "analysis")
+
+    assert hydrated.failed
+    assert hydrated.failure_kind == "invocation_inconsistent"
+
+
+def test_phase8_invocation_inconsistency_embargoes_all_groups_before_phase4_release() -> None:
+    """A foreign provider failure is an invocation fault, not a withholdable group fault."""
+    first, second = _DatumId("first"), _DatumId("second")
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, _request: dict[str, object]):
+            return _Result(operation, None, True, "invocation_inconsistent")
+
+    class _Result:
+        def __init__(self, operation: _Phase8Operation, payload: object, failed: bool, failure_kind: str) -> None:
+            self.operation = operation
+            self.payload = payload
+            self.failed = failed
+            self.failure_kind = failure_kind
+
+    service = _Phase8GroupedRewriteProtectionService()
+    execution = service.run_lifecycle(
+        groups=((first,), (second,)),
+        atomic_groups=((first,), (second,)),
+        dependencies=(),
+        phase7_released=((first, "one"), (second, "two")),
+        phase7_cleanup_verified=True,
+        phase7_global_embargo=False,
+        operations=(
+            _backend_group_operation(Backend()),
+            lambda members, baselines: tuple((member, baselines[member]) for member in members),
+        ),
+    )
+
+    assert execution.released == ()
+    assert execution.global_embargo
+    assert execution.terminal_group_states == ("inconsistent", "succeeded")
 
 
 def test_phase8_zero_route_rejects_utility_obligations_and_missing_phase7_identity_provenance() -> None:
