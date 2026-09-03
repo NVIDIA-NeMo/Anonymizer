@@ -25,10 +25,5 @@ def reduce(case: Case) -> tuple[str, ...]:
     if case.embargo:
         return ()
     failed_keys = {key for index in case.failed_groups for key in case.groups[index]}
-    withheld = {
-        key
-        for atomic in case.atomic_groups
-        if failed_keys.intersection(atomic)
-        for key in atomic
-    }
+    withheld = {key for atomic in case.atomic_groups if failed_keys.intersection(atomic) for key in atomic}
     return tuple(key for group in case.groups for key in group if key not in withheld)

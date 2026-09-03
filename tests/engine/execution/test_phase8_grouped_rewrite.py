@@ -4,8 +4,13 @@
 from __future__ import annotations
 
 import ast
+import copy
+import json
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
+import anonymizer.engine.execution.phase8_contract as phase8_contract
 from anonymizer.engine.execution.graph import (
     _AtomicGroup,
     _DatumId,
@@ -21,6 +26,8 @@ from anonymizer.engine.execution.phase8_admission import (
     _Phase8Rejected,
 )
 from anonymizer.engine.execution.phase8_contract import (
+    _canonical_digest,
+    _compile_phase8_contract,
     _is_admitted_phase8_contract,
     _load_phase8_contract,
     _Phase8GroupedRewriteContract,
@@ -49,6 +56,44 @@ def test_phase8_contract_loader_admits_exact_frozen_contract() -> None:
     assert isinstance(contract, _Phase8GroupedRewriteContract)
     assert contract.digest == "597a410aee8cb8ca428e82737f385213ce9ce47eae216caea68ebc2f9907d227"
     assert dict(contract.limits)["max_repair_iterations"] == 3
+
+
+def _digest_valid_envelope() -> dict[str, object]:
+    path = Path("src/anonymizer/engine/execution/phase8_grouped_rewrite_contract.json")
+    envelope = copy.deepcopy(json.loads(path.read_text()))
+    assert isinstance(envelope["contract"], dict)
+    envelope["digest"] = _canonical_digest(envelope["contract"])
+    return envelope
+
+
+def test_phase8_contract_loader_rejects_digest_valid_nested_shape_mutations(monkeypatch: MonkeyPatch) -> None:
+    envelope = _digest_valid_envelope()
+    contract = envelope["contract"]
+    assert isinstance(contract, dict)
+    contract["scope"]["unexpected"] = True
+    envelope["digest"] = _canonical_digest(contract)
+    monkeypatch.setattr(phase8_contract, "_DIGEST", envelope["digest"])
+
+    assert not _is_admitted_phase8_contract(_compile_phase8_contract(envelope))
+
+
+def test_phase8_contract_loader_rejects_digest_valid_type_and_limit_mutations(monkeypatch: MonkeyPatch) -> None:
+    type_mutation = _digest_valid_envelope()
+    type_contract = type_mutation["contract"]
+    assert isinstance(type_contract, dict)
+    type_contract["scheduling_and_limits"]["max_members_per_rewrite_group"] = "4"
+    type_mutation["digest"] = _canonical_digest(type_contract)
+
+    limit_mutation = _digest_valid_envelope()
+    limit_contract = limit_mutation["contract"]
+    assert isinstance(limit_contract, dict)
+    del limit_contract["phase8_backend_capability"]["required_artifacts"]
+    limit_mutation["digest"] = _canonical_digest(limit_contract)
+
+    monkeypatch.setattr(phase8_contract, "_DIGEST", type_mutation["digest"])
+    assert not _is_admitted_phase8_contract(_compile_phase8_contract(type_mutation))
+    monkeypatch.setattr(phase8_contract, "_DIGEST", limit_mutation["digest"])
+    assert not _is_admitted_phase8_contract(_compile_phase8_contract(limit_mutation))
 
 
 def test_phase8_admission_requires_one_flat_exact_target_partition() -> None:

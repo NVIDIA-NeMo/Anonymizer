@@ -15,6 +15,9 @@ from typing import cast
 _DIGEST = "597a410aee8cb8ca428e82737f385213ce9ce47eae216caea68ebc2f9907d227"
 _RESOURCE = "phase8_grouped_rewrite_contract.json"
 _SEAL = object()
+_ENVELOPE_KEYS = {"schema_version", "digest_algorithm", "digest", "contract"}
+_SCHEMA_VERSION = "anonymizer-phase8-owner-contract-envelope/v1"
+_DIGEST_ALGORITHM = "sha256_of_UTF8_compact_sorted_key_JSON_of_contract_member_with_no_trailing_newline"
 
 
 class _PrivatePhase8ContractValue:
@@ -45,6 +48,36 @@ def _canonical_digest(value: object) -> str:
     ).hexdigest()
 
 
+def _same_json_value(value: object, expected: object) -> bool:
+    """Require exact JSON keys, types, ordering-independent values, and limits."""
+    if type(value) is not type(expected):
+        return False
+    if type(value) is dict:
+        actual_items = cast(dict[str, object], value)
+        expected_items = cast(dict[str, object], expected)
+        return set(actual_items) == set(expected_items) and all(
+            _same_json_value(actual_items[key], expected_items[key]) for key in expected_items
+        )
+    if type(value) is list:
+        actual_items = cast(list[object], value)
+        expected_items = cast(list[object], expected)
+        return len(actual_items) == len(expected_items) and all(
+            _same_json_value(item, expected_item)
+            for item, expected_item in zip(actual_items, expected_items, strict=True)
+        )
+    return value == expected
+
+
+def _frozen_contract() -> dict[str, object]:
+    envelope = json.loads(files("anonymizer.engine.execution").joinpath(_RESOURCE).read_text(encoding="utf-8"))
+    if type(envelope) is not dict or type(envelope.get("contract")) is not dict:
+        raise RuntimeError("invalid bundled Phase 8 contract")
+    return cast(dict[str, object], envelope["contract"])
+
+
+_FROZEN_CONTRACT = _frozen_contract()
+
+
 def _freeze(value: object) -> object:
     if type(value) is dict:
         return tuple((key, _freeze(item)) for key, item in sorted(cast(dict[str, object], value).items()))
@@ -61,16 +94,23 @@ def _freeze(value: object) -> object:
 
 def _compile_phase8_contract(envelope: object) -> _Phase8GroupedRewriteContract | _Phase8ContractRejected:
     try:
-        if type(envelope) is not dict or set(envelope) != {"schema_version", "digest_algorithm", "digest", "contract"}:
+        if type(envelope) is not dict or set(envelope) != _ENVELOPE_KEYS:
             raise TypeError
         data = cast(dict[str, object], envelope)
         contract = data["contract"]
-        if type(contract) is not dict or data["digest"] != _DIGEST or _canonical_digest(contract) != _DIGEST:
+        if (
+            data["schema_version"] != _SCHEMA_VERSION
+            or data["digest_algorithm"] != _DIGEST_ALGORITHM
+            or type(contract) is not dict
+            or data["digest"] != _DIGEST
+            or _canonical_digest(contract) != _DIGEST
+            or not _same_json_value(contract, _FROZEN_CONTRACT)
+        ):
             raise ValueError
         body = cast(dict[str, object], contract)
         if body.get("version") != "anonymizer-phase8-grouped-rewrite/v1":
             raise ValueError
-        limits = body.get("scheduling_and_limits")
+        limits = body["scheduling_and_limits"]
         if type(limits) is not dict:
             raise TypeError
         integer_limits = tuple(
