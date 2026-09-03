@@ -269,17 +269,60 @@ def test_probe_rejects_wrong_model_and_status() -> None:
             runtime.probe_endpoint(plan, client=client)
 
 
-def test_plan_integrity_and_pid_cleanup_are_enforced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_integrity_is_enforced_before_launch(tmp_path: Path) -> None:
     plan = compiler.compile_profile(generation(), source_revision="test")
     with pytest.raises(compiler.PlanIntegrityError):
         runtime.launch_plan(
             plan.model_copy(update={"source_revision": "changed"}), secret_values={}, log_directory=tmp_path
         )
+
+
+def test_status_and_stop_reject_a_reused_pid_without_signaling(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
     handle = models.LocalProcessHandle(
         external_id="1:x", pid=1, process_group_id=1, start_marker="old", stdout_path="out", stderr_path="err"
     )
+    launch = launch_receipt(plan, handle)
     monkeypatch.setattr(runtime, "read_process_start_marker", lambda _pid: "new")
-    assert runtime.is_handle_running(handle) is False
+
+    with pytest.raises(runtime.RuntimeEffectError) as status_error:
+        runtime.status_run(launch)
+    with (
+        mock.patch.object(runtime.os, "killpg") as killpg,
+        pytest.raises(runtime.RuntimeEffectError) as stop_error,
+    ):
+        runtime.stop_run(launch)
+
+    assert status_error.value.diagnostic.code == "process-identity-mismatch"
+    assert stop_error.value.diagnostic.code == "process-identity-mismatch"
+    killpg.assert_not_called()
+
+
+def test_stop_rejects_a_mismatched_process_group_without_signaling() -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path="out",
+        stderr_path="err",
+    )
+    launch = launch_receipt(plan, handle)
+
+    with (
+        mock.patch.object(runtime, "read_process_start_marker", return_value="100"),
+        mock.patch.object(runtime, "read_process_state", return_value="S"),
+        mock.patch.object(runtime.os, "getpgid", return_value=9000),
+        mock.patch.object(runtime.os, "kill"),
+        mock.patch.object(runtime.os, "killpg") as killpg,
+        mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 1.0]),
+        pytest.raises(runtime.RuntimeEffectError) as exc_info,
+    ):
+        runtime.stop_run(launch)
+
+    assert exc_info.value.diagnostic.code == "process-identity-mismatch"
+    killpg.assert_not_called()
 
 
 def test_launch_records_process_identity_and_resolves_secrets(tmp_path: Path) -> None:
