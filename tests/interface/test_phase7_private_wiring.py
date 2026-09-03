@@ -110,7 +110,9 @@ def test_private_substitute_plan_selects_phase7_service_without_changing_other_p
     assert type(anonymizer._open_protection_flow(redact)._runtime).__name__ == "_Phase6RedactProtectionService"
     assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(replace=Annotate())), _PlanRejected)
     assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(replace=Hash())), _PlanUnsupported)
-    assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite())), _PlanUnsupported)
+    rewrite = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite()))
+    assert isinstance(rewrite, _ProtectionPlan)
+    assert rewrite.profile == "grouped-rewrite-v1"
     assert isinstance(
         anonymizer._compile_protection_plan(AnonymizerConfig(replace=Substitute(instructions="legacy only"))),
         _PlanRejected,

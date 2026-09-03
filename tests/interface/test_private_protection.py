@@ -39,9 +39,9 @@ from anonymizer.interface._protection import (
     _Failed,
     _NoAcceptedDetections,
     _PlanRejected,
-    _PlanUnsupported,
     _ProtectionApplied,
     _ProtectionBatchError,
+    _ProtectionPlan,
     _ProtectionReceipt,
     _ProtectionRecord,
     _ProtectionSucceeded,
@@ -336,7 +336,9 @@ def test_graph_outcomes_are_rejoined_by_private_datum_identity() -> None:
 def test_compilation_is_closed_and_plan_is_content_free_and_immutable() -> None:
     anonymizer = build_synthetic_anonymizer({})
     assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(replace=Annotate())), _PlanRejected)
-    assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite())), _PlanUnsupported)
+    rewrite = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite()))
+    assert isinstance(rewrite, _ProtectionPlan)
+    assert rewrite.profile == "grouped-rewrite-v1"
     plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
     assert "Redact" not in repr(plan)
     with pytest.raises(FrozenInstanceError):

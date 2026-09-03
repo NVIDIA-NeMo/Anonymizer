@@ -42,6 +42,11 @@ from anonymizer.engine.execution.phase7_contract import (
 )
 from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddBackend
 from anonymizer.engine.execution.phase7_runtime import _Phase7EffectBackend
+from anonymizer.engine.execution.phase8_contract import (
+    _is_admitted_phase8_contract,
+    _load_phase8_contract,
+    _Phase8GroupedRewriteContract,
+)
 from anonymizer.engine.execution.protection_service import (
     _GraphProtectionFailed,
     _GraphProtectionResult,
@@ -63,6 +68,7 @@ _PHASE6_MAX_EXPANDED_FRAME_BYTES = 65_536
 _CONTRACT_VERSION = "private-protection-v1"
 _REDACT_PROFILE = "redact-release-v1"
 _SUBSTITUTE_PROFILE = "stable-substitute-v1"
+_GROUPED_REWRITE_PROFILE = "grouped-rewrite-v1"
 _IMPLEMENTATION_VERSION = "pandas-runtime-v1"
 
 
@@ -125,6 +131,7 @@ class _ProtectionPlan(_SafeRepr):
     max_records: int = _MAX_RECORDS
     max_record_bytes: int = _MAX_RECORD_BYTES
     max_batch_bytes: int = _MAX_BATCH_BYTES
+    phase8_contract: _Phase8GroupedRewriteContract | None = None
 
     def __reduce__(self) -> str | tuple[object, ...]:
         raise TypeError("private protection plan is not serializable")
@@ -269,7 +276,20 @@ def _compile_protection_plan(
     if isinstance(config.replace, Annotate):
         return _PlanRejected()
     if config.rewrite is not None:
-        return _PlanUnsupported()
+        # This is deliberately private graph selection only. The public
+        # Rewrite route retains its established workflow.
+        contract = _load_phase8_contract()
+        if not isinstance(contract, _Phase8GroupedRewriteContract) or not _is_admitted_phase8_contract(contract):
+            return _PlanRejected()
+        invocation = _CompiledInvocation.compile(config, selected_models, model_configs)
+        max_records = min(_MAX_RECORDS, dict(contract.limits)["max_datums_per_invocation"])
+        return _ProtectionPlan(
+            _GROUPED_REWRITE_PROFILE,
+            _plan_fingerprint(invocation, profile=_GROUPED_REWRITE_PROFILE, contract_digest=contract.digest),
+            invocation,
+            phase8_contract=contract,
+            max_records=max_records,
+        )
     if isinstance(config.replace, Redact):
         if config.replace.format_template != "[REDACTED_{label}]" or not config.replace.normalize_label:
             return _PlanRejected()
