@@ -35,7 +35,7 @@ from tests.streaming.structured_trace_prototype import build_synthetic_anonymize
 
 @dataclass
 class _CandidateBackend:
-    value: str
+    value: str | None
     calls: int = 0
     closed: int = 0
     discarded: int = 0
@@ -50,6 +50,7 @@ class _CandidateBackend:
         del handoffs, contract
         assert isinstance(manifest, _ScopeManifest)
         assert dispatch is not None
+        assert isinstance(self.value, str)
         self.calls += 1
         return _Phase7NddResult(
             _Phase7NddStatus.CANDIDATE,
@@ -61,6 +62,7 @@ class _CandidateBackend:
 
     def discard_values(self) -> None:
         self.discarded += 1
+        self.value = None
 
     def cleanup_attestation(self, cleanup_identity: object) -> object:
         return _Phase7CleanupAttestation(
@@ -75,15 +77,20 @@ class _CandidateBackend:
         )
 
 
-def _private_substitute_flow(*, original: str, synthetic: str) -> tuple[_ProtectionFlow, _CandidateBackend]:
-    anonymizer = build_synthetic_anonymizer({original: "first_name"})
+def _private_substitute_flow(
+    *,
+    original: str,
+    synthetic: str,
+    label: str = "first_name",
+) -> tuple[_ProtectionFlow, _CandidateBackend]:
+    anonymizer = build_synthetic_anonymizer({original: label})
     plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Substitute(), emit_telemetry=False))
     assert isinstance(plan, _ProtectionPlan)
     backend = _CandidateBackend(synthetic)
     flow = protection_module._ProtectionFlow(
         anonymizer,
         plan,
-        phase6_backend=_AnchoredPhase6Backend.from_entities({original: "first_name"}),
+        phase6_backend=_AnchoredPhase6Backend.from_entities({original: label}),
         phase7_backend=backend,
     )
     return flow, backend
@@ -92,9 +99,7 @@ def _private_substitute_flow(*, original: str, synthetic: str) -> tuple[_Protect
 def test_private_substitute_plan_selects_phase7_service_without_changing_other_profiles() -> None:
     anonymizer = build_synthetic_anonymizer({})
 
-    substitute = anonymizer._compile_protection_plan(
-        AnonymizerConfig(replace=Substitute(), emit_telemetry=False)
-    )
+    substitute = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Substitute(), emit_telemetry=False))
     redact = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))
 
     assert isinstance(substitute, _ProtectionPlan)
@@ -125,6 +130,7 @@ def test_private_substitute_releases_only_a_qualified_phase7_output() -> None:
     assert backend.calls == 1
     assert backend.closed == 1
     assert backend.discarded == 1
+    assert backend.value is None
 
 
 def test_private_substitute_rejects_an_invalid_bundle_without_output() -> None:
@@ -138,6 +144,7 @@ def test_private_substitute_rejects_an_invalid_bundle_without_output() -> None:
     assert backend.calls == 1
     assert backend.closed == 1
     assert backend.discarded == 1
+    assert backend.value is None
 
 
 def test_private_substitute_no_entity_scope_bypasses_phase7_adapter() -> None:
