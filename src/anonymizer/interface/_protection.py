@@ -17,7 +17,7 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig
 from anonymizer.config.models import ModelSelection
-from anonymizer.config.replace_strategies import Annotate, Redact
+from anonymizer.config.replace_strategies import Annotate, Redact, Substitute
 from anonymizer.engine.execution.accounting_admission import _AccountingRejected
 from anonymizer.engine.execution.accounting_plan import _AccountingLimits
 from anonymizer.engine.execution.context_admission import _ContextRejected
@@ -35,11 +35,19 @@ from anonymizer.engine.execution.mention_admission import _MentionLimits
 from anonymizer.engine.execution.phase6_ndd_backend import _Phase6NddBackend
 from anonymizer.engine.execution.phase6_plan import _Phase6Rejected
 from anonymizer.engine.execution.phase6_runtime import _Phase6EffectBackend
+from anonymizer.engine.execution.phase7_contract import (
+    _is_admitted_phase7_contract,
+    _load_phase7_contract,
+    _Phase7StableSubstituteContract,
+)
+from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddBackend
+from anonymizer.engine.execution.phase7_runtime import _Phase7EffectBackend
 from anonymizer.engine.execution.protection_service import (
     _GraphProtectionFailed,
     _GraphProtectionResult,
     _GraphProtectionSucceeded,
     _Phase6RedactProtectionService,
+    _Phase7SubstituteProtectionService,
 )
 
 if TYPE_CHECKING:
@@ -53,7 +61,8 @@ _MAX_RECORDS = 128
 _PHASE6_MENTION_LIMITS = _MentionLimits(128, 64, 256, _MAX_RECORD_BYTES)
 _PHASE6_MAX_EXPANDED_FRAME_BYTES = 65_536
 _CONTRACT_VERSION = "private-protection-v1"
-_PROFILE = "redact-release-v1"
+_REDACT_PROFILE = "redact-release-v1"
+_SUBSTITUTE_PROFILE = "stable-substitute-v1"
 _IMPLEMENTATION_VERSION = "pandas-runtime-v1"
 
 
@@ -112,6 +121,7 @@ class _ProtectionPlan(_SafeRepr):
     profile: str
     digest: str
     invocation: _CompiledInvocation
+    phase7_contract: _Phase7StableSubstituteContract | None = None
     max_records: int = _MAX_RECORDS
     max_record_bytes: int = _MAX_RECORD_BYTES
     max_batch_bytes: int = _MAX_BATCH_BYTES
@@ -244,24 +254,51 @@ def _compile_protection_plan(
     selected_models: ModelSelection,
     model_configs: list[ModelConfig],
 ) -> _CompileResult:
-    """Compile the one release-qualified private Redact profile."""
+    """Compile one explicitly release-qualified private protection profile."""
     if not isinstance(config, AnonymizerConfig):
         return _PlanInvalid()
     if isinstance(config.replace, Annotate):
         return _PlanRejected()
-    if not isinstance(config.replace, Redact) or config.rewrite is not None:
+    if config.rewrite is not None:
         return _PlanUnsupported()
-    if config.replace.format_template != "[REDACTED_{label}]" or not config.replace.normalize_label:
-        return _PlanRejected()
-    invocation = _CompiledInvocation.compile(config, selected_models, model_configs)
-    return _ProtectionPlan(_PROFILE, _plan_fingerprint(invocation), invocation)
+    if isinstance(config.replace, Redact):
+        if config.replace.format_template != "[REDACTED_{label}]" or not config.replace.normalize_label:
+            return _PlanRejected()
+        invocation = _CompiledInvocation.compile(config, selected_models, model_configs)
+        return _ProtectionPlan(
+            _REDACT_PROFILE,
+            _plan_fingerprint(invocation, profile=_REDACT_PROFILE),
+            invocation,
+        )
+    if isinstance(config.replace, Substitute):
+        if config.replace.instructions is not None:
+            return _PlanRejected()
+        contract = _load_phase7_contract()
+        if not isinstance(contract, _Phase7StableSubstituteContract) or not _is_admitted_phase7_contract(contract):
+            return _PlanRejected()
+        invocation = _CompiledInvocation.compile(config, selected_models, model_configs)
+        max_records = min(_MAX_RECORDS, dict(contract.count_limits)["max_scopes_per_invocation"])
+        return _ProtectionPlan(
+            _SUBSTITUTE_PROFILE,
+            _plan_fingerprint(invocation, profile=_SUBSTITUTE_PROFILE, contract_digest=contract.digest),
+            invocation,
+            contract,
+            max_records,
+        )
+    return _PlanUnsupported()
 
 
-def _plan_fingerprint(invocation: _CompiledInvocation) -> str:
-    """Fingerprint the complete allowlisted private Redact snapshot."""
+def _plan_fingerprint(
+    invocation: _CompiledInvocation,
+    *,
+    profile: str,
+    contract_digest: str | None = None,
+) -> str:
+    """Fingerprint the complete allowlisted private profile snapshot."""
     payload = {
         "contract_version": _CONTRACT_VERSION,
-        "profile": _PROFILE,
+        "profile": profile,
+        "profile_contract_digest": contract_digest,
         "implementation_version": _IMPLEMENTATION_VERSION,
         "limits": {
             "max_records": _MAX_RECORDS,
@@ -337,13 +374,31 @@ class _ProtectionFlow(_SafeRepr):
         anonymizer: Anonymizer,
         plan: _ProtectionPlan,
         phase6_backend: _Phase6EffectBackend | None = None,
+        phase7_backend: _Phase7EffectBackend | None = None,
     ) -> None:
         self._plan = plan
         backend = phase6_backend or _Phase6NddBackend(anonymizer._adapter, plan.invocation)
-        self._runtime = _Phase6RedactProtectionService(
-            backend,
-            mention_limits=_PHASE6_MENTION_LIMITS,
-        )
+        if plan.profile == _REDACT_PROFILE and plan.phase7_contract is None:
+            self._runtime = _Phase6RedactProtectionService(
+                backend,
+                mention_limits=_PHASE6_MENTION_LIMITS,
+            )
+        elif (
+            plan.profile == _SUBSTITUTE_PROFILE
+            and isinstance(plan.phase7_contract, _Phase7StableSubstituteContract)
+            and _is_admitted_phase7_contract(plan.phase7_contract)
+        ):
+            self._runtime = _Phase7SubstituteProtectionService(
+                backend,
+                (
+                    (lambda: phase7_backend)
+                    if phase7_backend is not None
+                    else (lambda: _Phase7NddBackend(anonymizer._adapter, plan.invocation))
+                ),
+                mention_limits=_PHASE6_MENTION_LIMITS,
+            )
+        else:
+            raise ValueError("private protection plan is not executable")
         self._guard = threading.Lock()
         self._state_lock = threading.Lock()
         self._closed = False
@@ -367,7 +422,15 @@ class _ProtectionFlow(_SafeRepr):
             self._guard.release()
 
     def _execute(self, operation: _OperationPlan) -> _ProtectionRunRecord:
-        if _plan_fingerprint(self._plan.invocation) != self._plan.digest:
+        contract_digest = self._plan.phase7_contract.digest if self._plan.phase7_contract is not None else None
+        if (
+            _plan_fingerprint(
+                self._plan.invocation,
+                profile=self._plan.profile,
+                contract_digest=contract_digest,
+            )
+            != self._plan.digest
+        ):
             return self._fail_all(operation)
         graph = _trivial_graph(
             tuple(
@@ -401,10 +464,16 @@ class _ProtectionFlow(_SafeRepr):
             if isinstance(admitted, (_AccountingRejected, _ContextRejected, _Phase6Rejected)):
                 return self._fail_all(operation)
             with self._adapter.private_execution():
-                execution = self._runtime.protect(
-                    admitted,
-                    invocation=self._plan.invocation,
-                )
+                if isinstance(self._runtime, _Phase7SubstituteProtectionService):
+                    contract = self._plan.phase7_contract
+                    if not isinstance(contract, _Phase7StableSubstituteContract):
+                        return self._fail_all(operation)
+                    execution = self._runtime.protect(admitted, contract=contract)
+                else:
+                    execution = self._runtime.protect(
+                        admitted,
+                        invocation=self._plan.invocation,
+                    )
         except Exception:
             return self._fail_all(operation)
 
@@ -430,7 +499,7 @@ class _ProtectionFlow(_SafeRepr):
             return self._fail_all(operation)
         receipt = _ProtectionReceipt(
             _CONTRACT_VERSION,
-            _PROFILE,
+            self._plan.profile,
             _IMPLEMENTATION_VERSION,
             True,
             True,

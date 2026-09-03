@@ -33,10 +33,16 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.execution.phase6_runtime import _CandidateProposal
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, _get_replacement_mapping_prompt
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
-from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.replace.strategies import (
+    ReplacementEntry,
+    apply_local_replace_strategy,
+    apply_replacement_map,
+    apply_replacements_to_spans,
+)
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface import _protection as protection_module
 from anonymizer.interface._protection import _Failed
 from anonymizer.interface.anonymizer import Anonymizer
@@ -327,11 +333,22 @@ def test_public_preview_and_evaluate_keep_order_columns_and_metrics(
         assert COL_ATTRIBUTE_FIDELITY_VALID not in evaluated.dataframe.columns
 
 
-def test_public_display_renders_the_selected_transformed_record(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("replace_method", "expected"),
+    [
+        pytest.param(Redact(), "[REDACTED_FIRST_NAME]", id="redact"),
+        pytest.param(Substitute(), "Blake", id="substitute"),
+    ],
+)
+def test_public_display_renders_the_selected_transformed_record(
+    tmp_path: Path,
+    replace_method: ReplaceMethod,
+    expected: str,
+) -> None:
     source_frame = _FRAME_VARIANTS["filtered"](_base_dataframe())
     input_data = _write_input(source_frame, tmp_path / "input.parquet", "parquet")
     result = _synthetic_anonymizer().run(
-        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        config=AnonymizerConfig(replace=replace_method, emit_telemetry=False),
         data=input_data,
     )
 
@@ -342,7 +359,7 @@ def test_public_display_renders_the_selected_transformed_record(tmp_path: Path) 
 
     rendered = display.call_args.args[0]
     assert "Bob" in rendered
-    assert "[REDACTED_FIRST_NAME]" in rendered
+    assert expected in rendered
     assert "Carol" not in rendered
     assert result._display_cycle_index == 0
 
@@ -364,7 +381,18 @@ def test_public_validate_config_accepts_each_supported_replacement_strategy(repl
     assert type(config.replace).__name__ == type(replace_method).__name__
 
 
-def test_cli_run_preserves_transformed_row_order_and_literal_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("strategy", "expected"),
+    [
+        pytest.param("redact", ["[REDACTED_FIRST_NAME]"] * 4, id="redact"),
+        pytest.param("substitute", ["Avery", "Casey", "Avery", "Blake"], id="substitute"),
+    ],
+)
+def test_cli_run_preserves_transformed_row_order_and_literal_output(
+    tmp_path: Path,
+    strategy: str,
+    expected: list[str],
+) -> None:
     source_frame = _FRAME_VARIANTS["concatenated"](_base_dataframe())
     source = tmp_path / "input.csv"
     output = tmp_path / "output.csv"
@@ -378,7 +406,7 @@ def test_cli_run_preserves_transformed_row_order_and_literal_output(tmp_path: Pa
                     "--source",
                     str(source),
                     "--replace",
-                    "redact",
+                    strategy,
                     "--no-emit-telemetry",
                     "--output",
                     str(output),
@@ -388,12 +416,7 @@ def test_cli_run_preserves_transformed_row_order_and_literal_output(tmp_path: Pa
     assert exc_info.value.code == 0
     written = pd.read_csv(output)
     assert written["text"].tolist() == ["Alice", "Carol", "Alice", "Bob"]
-    assert written["text_replaced"].tolist() == [
-        "[REDACTED_FIRST_NAME]",
-        "[REDACTED_FIRST_NAME]",
-        "[REDACTED_FIRST_NAME]",
-        "[REDACTED_FIRST_NAME]",
-    ]
+    assert written["text_replaced"].tolist() == expected
     assert list(written.columns) == ["text", COL_FINAL_ENTITIES, "text_with_spans", "text_replaced"]
 
 
@@ -420,12 +443,56 @@ def test_public_substitute_bypasses_replacement_provider_for_no_entity_rows(tmp_
     adapter.run_workflow.assert_not_called()
 
 
+def test_public_substitute_keeps_custom_instructions_in_the_legacy_prompt() -> None:
+    instruction = "P8-PROMPT-7f3bd124a9c84d7bb9f05a0b6fb420a1"
+
+    prompt = _get_replacement_mapping_prompt(
+        entities_column="_legacy_entities",
+        instructions=instruction,
+    )
+
+    assert f"Additional instructions: {instruction}" in prompt
+
+
+def test_public_substitute_keeps_legacy_value_only_fallback_and_non_cascading_application() -> None:
+    entities = EntitiesSchema.from_raw(
+        {
+            "entities": [
+                {
+                    "id": "entity-alice",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 1.0,
+                    "source": "compatibility-test",
+                }
+            ]
+        }
+    )
+
+    output, application = apply_replacements_to_spans(
+        "Alice Avery",
+        entities,
+        [ReplacementEntry("Alice", "legacy_person", "Avery")],
+        allow_value_fallback=True,
+    )
+
+    assert output == "Avery Avery"
+    assert application.to_metrics() == {
+        "targeted_span_count": 1,
+        "applied_span_count": 1,
+        "skipped_span_count": 0,
+        "skipped_span_label_counts": {},
+    }
+
+
 def test_malformed_anchor_is_accepted_by_public_legacy_and_fails_closed_in_private_phase6(tmp_path: Path) -> None:
     source = pd.DataFrame({"record_id": ["r-alice"], "text": ["Alice"]})
     input_data = _write_input(source, tmp_path / "input.csv", "csv")
 
     public = _synthetic_anonymizer(detect=_detect_malformed_anchor).run(
-        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        config=AnonymizerConfig(replace=Substitute(), emit_telemetry=False),
         data=input_data,
     )
 
@@ -465,6 +532,12 @@ def test_public_run_keeps_failed_record_shape_and_stage_order(tmp_path: Path) ->
     )
 
     assert result.failed_records == [detection_failure, replacement_failure]
+    assert result.failed_records[0] is detection_failure
+    assert result.failed_records[1] is replacement_failure
+    assert [vars(failure) for failure in result.failed_records] == [
+        {"record_id": "r-bob", "step": "entity-detection", "reason": "detector-timeout"},
+        {"record_id": "r-carol", "step": "replace-map-generation", "reason": "invalid-map"},
+    ]
     assert list(result.trace_dataframe.columns) == [
         "record_id",
         "text",

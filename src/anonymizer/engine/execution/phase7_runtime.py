@@ -1,11 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Private Phase 7 lifecycle coordinator.
-
-This module deliberately stops at private Phase 4 evidence.  It neither
-releases output nor retains a replacement bundle after cleanup.
-"""
+"""Private Phase 7 lifecycle coordinator and release-qualified projection."""
 
 from __future__ import annotations
 
@@ -17,6 +13,7 @@ from anonymizer.engine.execution.accounting_ledger import _AccountingLedger, _Ev
 from anonymizer.engine.execution.accounting_outcomes import (
     _AccountingResult,
     _CauseCode,
+    _GroupReleased,
     _TaskBlocked,
     _TaskCancelled,
     _TaskFailed,
@@ -34,6 +31,12 @@ from anonymizer.engine.execution.phase6_runtime import (
     _Phase6Execution,
 )
 from anonymizer.engine.execution.phase7_admission import _is_admitted_phase7_plan, _Phase7Plan, _ScopeManifest
+from anonymizer.engine.execution.phase7_application import (
+    _AppliedDatum,
+    _AppliedScope,
+    _apply_substitute_patches,
+    _materialize_substitute_patches,
+)
 from anonymizer.engine.execution.phase7_contract import _is_admitted_phase7_contract, _Phase7StableSubstituteContract
 from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddResult, _Phase7NddStatus
 from anonymizer.engine.execution.phase7_validation import _validate_scope_bundle, _ValidatedBundle
@@ -99,6 +102,7 @@ class _Phase7Execution(_PrivatePhase7RuntimeValue):
     scopes: tuple[_Phase7ScopeOutcome, ...]
     cleanup: _Phase7CleanupAttestation
     phase4: _Phase7Phase4Evidence
+    released: tuple[_AppliedDatum, ...] = ()
 
 
 class _Phase7EffectBackend(Protocol):
@@ -156,6 +160,7 @@ class _Phase7Runtime:
         # Phase 7 extends, rather than replaces, Phase 6's compiler-expanded
         # Phase 4 plan.  These exact terminal records are immutable input.
         ledger.import_terminal_outcomes(phase6_execution.accounting.tasks)
+        applied_by_scope: dict[object, tuple[_AppliedDatum, ...]] = {}
         try:
             for manifest in plan.manifests:
                 task = task_by_scope[manifest.id]
@@ -169,22 +174,36 @@ class _Phase7Runtime:
                 if not _scope_has_terminal_phase6_evidence(manifest, phase6, phase6_execution):
                     ledger.mark_task_blocked(task)
                     continue
-                self._plan_scope(ledger, task, manifest, phase6_execution.handoffs, contract)
+                applied = self._plan_scope(ledger, task, manifest, phase6_execution.handoffs, contract)
+                if applied is not None:
+                    applied_by_scope[manifest.id] = applied
         finally:
             ledger.seal_mutation()
             cleanup = self._cleanup()
             if not cleanup.verified:
                 ledger.record_cleanup_unconfirmed_after_seal()
-        accounting = ledger.finish()
+        applied_by_datum = {datum.datum_id: datum for datums in applied_by_scope.values() for datum in datums}
+        accounting = ledger.finish(datum_release_predicate=lambda datum_id, _candidate: datum_id in applied_by_datum)
         frozen = tuple(_scope_outcome(accounting, task_by_scope[manifest.id]) for manifest in plan.manifests)
         embargo = not cleanup.verified or any(
             outcome.state in {_ScopePlanState.INCONSISTENT, _ScopePlanState.LOST, _ScopePlanState.CANCELLED}
             for outcome in frozen
         )
         phase4 = _Phase7Phase4Evidence(frozen, accounting, cleanup, embargo)
-        # Cleanup retired every provisional bundle before this evidence crosses
-        # the owner boundary.  Phase 4 receives terminal accounting only.
-        return _Phase7Execution(frozen, cleanup, phase4)
+        released_ids = {
+            datum_id
+            for group in accounting.groups
+            if isinstance(group, _GroupReleased)
+            for datum_id, _candidate in group.outputs
+        }
+        released = tuple(
+            applied_by_datum[datum.id]
+            for datum in plan.accounting.datums
+            if datum.id in released_ids and datum.id in applied_by_datum
+        )
+        # Cleanup retired every provisional bundle before this result crosses
+        # the owner boundary. Only release-qualified protected text remains.
+        return _Phase7Execution(frozen, cleanup, phase4, released)
 
     def _preflight(
         self,
@@ -215,20 +234,22 @@ class _Phase7Runtime:
         manifest: _ScopeManifest,
         handoffs: tuple[object, ...],
         contract: _Phase7StableSubstituteContract,
-    ) -> None:
+    ) -> tuple[_AppliedDatum, ...] | None:
         if not manifest.slots:
             bundle = _validate_scope_bundle(manifest, handoffs, (), contract)
             if isinstance(bundle, _ValidatedBundle):
-                ledger.mark_task_succeeded(task, _Phase7PlanReceipt())
-            else:
-                ledger.mark_task_failed(task)
-            return
+                applied = _apply_bundle(bundle)
+                if applied is not None:
+                    ledger.mark_task_succeeded(task, _Phase7PlanReceipt())
+                    return applied
+            ledger.mark_task_failed(task)
+            return None
         dispatch = ledger.dispatch(task)
         try:
             result = self._backend.propose_scope(manifest, handoffs, contract, dispatch)
         except Exception:
             ledger.mark_transport_lost(dispatch)
-            return
+            return None
         if self._cancelled():
             # Cancellation is only a request.  Once dispatch occurred, a
             # returned candidate does not independently prove that execution
@@ -236,18 +257,23 @@ class _Phase7Runtime:
             # than fabricating a trusted stop acknowledgement.
             ledger.request_cancellation()
             ledger.mark_transport_lost(dispatch)
-            return
+            return None
         if not isinstance(result, _Phase7NddResult):
             ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
-            return
+            return None
         if result.status is _Phase7NddStatus.CANDIDATE:
             bundle = _validate_scope_bundle(manifest, handoffs, result.assignments, contract)
-            if isinstance(bundle, _ValidatedBundle):
-                if ledger.accept_success(dispatch, _Phase7PlanReceipt()) is not _EvidenceAcceptance.ACCEPTED:
-                    ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
-            else:
+            if not isinstance(bundle, _ValidatedBundle):
                 ledger.accept_failure(dispatch)
-            return
+                return None
+            applied = _apply_bundle(bundle)
+            if applied is None:
+                ledger.accept_failure(dispatch)
+                return None
+            if ledger.accept_success(dispatch, _Phase7PlanReceipt()) is _EvidenceAcceptance.ACCEPTED:
+                return applied
+            ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+            return None
         if result.status is _Phase7NddStatus.TASK_FAILED:
             ledger.accept_failure(dispatch)
         elif result.status is _Phase7NddStatus.ABORTED:
@@ -263,6 +289,7 @@ class _Phase7Runtime:
             ledger.mark_transport_lost(dispatch)
         else:
             ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+        return None
 
     def _cleanup(self) -> _Phase7CleanupAttestation:
         """Perform and attest the lifecycle actions this owner actually observed.
@@ -318,6 +345,17 @@ def _is_verified_cleanup_attestation(value: object, cleanup_identity: object) ->
         and not value.provisional_values_observable
         and value.cleanup_identity is cleanup_identity
     )
+
+
+def _apply_bundle(bundle: _ValidatedBundle) -> tuple[_AppliedDatum, ...] | None:
+    """Apply once, then retain only protected datum outputs for release."""
+    patches = _materialize_substitute_patches(bundle)
+    if not isinstance(patches, tuple):
+        return None
+    applied = _apply_substitute_patches(bundle, patches)
+    if not isinstance(applied, _AppliedScope):
+        return None
+    return tuple(applied.datums)
 
 
 def _scope_has_terminal_phase6_evidence(
