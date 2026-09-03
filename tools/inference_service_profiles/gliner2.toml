@@ -1,0 +1,27 @@
+schema_version = "inference-service.local-spec/v2"
+
+[task]
+kind = "entity-detection"
+dynamic_labels = true
+offsets = true
+scores = true
+
+[model]
+model_id = "fastino/gliner2-privacy-filter-PII-multi"
+revision = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
+
+[vllm]
+python_executable = ".venv/bin/python"
+gpu_memory_utilization = 0.85
+max_model_len = 512
+
+[vllm.factory]
+plugin = "deberta_gliner2"
+prepared_model_root = "/tmp/anonymizer-vllm-factory"
+
+[local]
+host = "127.0.0.1"
+port = 8002
+
+startup_timeout_seconds = 300
+shutdown_timeout_seconds = 30

@@ -123,4 +123,4 @@ make docs-serve    # local MkDocs server at http://127.0.0.1:8000
 
 For contributor workflow and branch naming see [CONTRIBUTING.md](CONTRIBUTING.md). For local setup, tests, docs, and day-to-day development tasks see [DEVELOPMENT.md](DEVELOPMENT.md). For code style and naming conventions see [STYLEGUIDE.md](STYLEGUIDE.md).
 
-Reference GLiNER server for self-hosted detection: [`tools/serve_gliner.py`](tools/serve_gliner.py) — see [`docs/concepts/self-hosting-gliner.md`](docs/concepts/self-hosting-gliner.md).
+Local GLiNER and vLLM services are compiled and managed through [`tools/inference_service.py`](tools/inference_service.py) — see [`docs/concepts/inference-services.md`](docs/concepts/inference-services.md) and [`docs/concepts/self-hosting-gliner.md`](docs/concepts/self-hosting-gliner.md).
