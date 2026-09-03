@@ -9,7 +9,6 @@ import pickle
 from collections.abc import Iterator
 from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
-from typing import Any
 from unittest.mock import Mock
 
 import pandas as pd
@@ -29,7 +28,6 @@ from anonymizer.engine.constants import (
     COL_TAGGED_TEXT,
     COL_TARGET_WORK_ID,
     COL_TASK_ID,
-    COL_TEXT,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.execution.phase7_runtime import _Phase7CleanupAttestation
@@ -111,9 +109,7 @@ def _public_substitute_anonymizer() -> Anonymizer:
         }
         output[COL_DETECTED_ENTITIES] = [{"entities": [entity]}]
         output[COL_FINAL_ENTITIES] = [{"entities": [entity]}]
-        output[COL_ENTITIES_BY_VALUE] = [
-            {"entities_by_value": [{"value": _ORIGINAL, "labels": ["email"]}]}
-        ]
+        output[COL_ENTITIES_BY_VALUE] = [{"entities_by_value": [{"value": _ORIGINAL, "labels": ["email"]}]}]
         output[COL_TAGGED_TEXT] = [f"<email>{_ORIGINAL}</email>"]
         return EntityDetectionResult(output, [])
 
@@ -123,11 +119,7 @@ def _public_substitute_anonymizer() -> Anonymizer:
     def replace(dataframe: pd.DataFrame, **_kwargs: object) -> ReplacementResult:
         output = dataframe.copy()
         output[COL_REPLACEMENT_MAP] = [
-            {
-                "replacements": [
-                    {"original": _ORIGINAL, "label": "email", "synthetic": _SYNTHETIC}
-                ]
-            }
+            {"replacements": [{"original": _ORIGINAL, "label": "email", "synthetic": _SYNTHETIC}]}
         ]
         return ReplacementResult(apply_replacement_map(output), [])
 
@@ -283,22 +275,16 @@ def test_active_workframe_planner_state_and_cleanup_follow_structural_allowlists
     assert len(request["slots"]) == 1
     assert set(request["slots"][0]) == {"slot_token", "role", "format", "mask", "source_values"}
     request_leaves = list(_leaf_paths(request, "request"))
-    assert {path for path, value in request_leaves if value == _ORIGINAL} == {
-        "request['slots'][0]['source_values'][0]"
-    }
+    assert {path for path, value in request_leaves if value == _ORIGINAL} == {"request['slots'][0]['source_values'][0]"}
     for forbidden in (_SYNTHETIC, _PROMPT, _SOURCE_ID, _DIGEST_MATERIAL, *_CONTENT_DIGESTS):
         assert forbidden not in repr(request)
 
     active = backend._planner.current(manifest.id)
     active_leaves = list(_leaf_paths(active, "planner"))
-    assert {path for path, value in active_leaves if value == _SYNTHETIC} == {
-        "planner.value.assignments[0].value"
-    }
+    assert {path for path, value in active_leaves if value == _SYNTHETIC} == {"planner.value.assignments[0].value"}
     assert not any(value == _ORIGINAL for _path, value in active_leaves)
     result_leaves = list(_leaf_paths(result, "candidate"))
-    assert {path for path, value in result_leaves if value == _SYNTHETIC} == {
-        "candidate.assignments[0].value"
-    }
+    assert {path for path, value in result_leaves if value == _SYNTHETIC} == {"candidate.assignments[0].value"}
     with pytest.raises(TypeError, match="not serializable"):
         pickle.dumps(result)
 
@@ -322,9 +308,7 @@ def test_public_result_trace_and_serialization_exclude_every_private_identity_an
     source = pd.DataFrame({"record_id": [_SOURCE_ID], "text": [_ORIGINAL]})
     data = _write_input(source, tmp_path / "input.parquet", "parquet")
     anonymizer = _public_substitute_anonymizer()
-    private_plan = anonymizer._compile_protection_plan(
-        AnonymizerConfig(replace=Substitute(), emit_telemetry=False)
-    )
+    private_plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Substitute(), emit_telemetry=False))
     assert isinstance(private_plan, _ProtectionPlan)
     assert private_plan.phase7_contract is not None
 
@@ -376,7 +360,11 @@ def test_public_result_trace_and_serialization_exclude_every_private_identity_an
         "text_with_spans",
         COL_REPLACEMENT_MAP,
     }
-    assert all(path.rsplit(".", 1)[-1].split("[", 1)[0] in allowed_original_columns for path, value in leaves if value == _ORIGINAL)
+    assert all(
+        path.rsplit(".", 1)[-1].split("[", 1)[0] in allowed_original_columns
+        for path, value in leaves
+        if value == _ORIGINAL
+    )
 
     serialized = pickle.loads(pickle.dumps(result))
     assert list(serialized.dataframe.columns) == list(result.dataframe.columns)
