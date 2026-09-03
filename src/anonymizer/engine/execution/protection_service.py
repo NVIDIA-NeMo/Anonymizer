@@ -64,6 +64,7 @@ from anonymizer.engine.execution.phase7_runtime import (
     _Phase7Execution,
     _Phase7Runtime,
 )
+from anonymizer.engine.execution.phase8_successor import _Phase8SuccessorHandoff, _seal_phase8_successor
 from anonymizer.engine.execution.redact_patches import _VerifiedDatum
 
 
@@ -301,6 +302,25 @@ class _Phase7SubstituteProtectionService:
         if not isinstance(phase7, _Phase7Plan):
             return None
         return _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7, contract)
+
+    def execute_successor(
+        self,
+        plan: _Phase6Plan,
+        *,
+        contract: _Phase7StableSubstituteContract,
+    ) -> _Phase8SuccessorHandoff | None:
+        """Create the nonserializable Phase 8 authority without exposing P7 bundles."""
+        phase6 = _Phase6Runtime(self._phase6_backend).run(plan)
+        phase7_plan = _compile_phase7_plan(
+            plan,
+            phase6.handoffs,
+            _Phase7Declarations(plan.coherence_scopes),
+            contract,
+        )
+        if not isinstance(phase7_plan, _Phase7Plan):
+            return None
+        phase7 = _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7_plan, contract)
+        return _seal_phase8_successor(plan, phase6, phase7)
 
 
 def _preflight_observation_counts(graph: object) -> tuple[int, int]:

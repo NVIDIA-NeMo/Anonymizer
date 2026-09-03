@@ -530,12 +530,12 @@ class _ProtectionFlow(_SafeRepr):
                     contract = self._plan.phase7_contract
                     if not isinstance(contract, _Phase7StableSubstituteContract):
                         return self._fail_all(operation)
-                    phase7 = phase7_runtime.execute(admitted, contract=contract)
-                    if phase7 is None:
+                    predecessor = phase7_runtime.execute_successor(admitted, contract=contract)
+                    if predecessor is None:
                         return self._fail_all(operation)
                     backend = injected_backend or _Phase8NddBackend(self._adapter, self._plan.invocation)
-                    execution = phase8_service.run_from_phase7_execution_with_backend(
-                        graph, phase7, backend, self._plan.invocation
+                    execution = phase8_service.run_from_phase7_successor_with_backend(
+                        graph, predecessor, backend, self._plan.invocation
                     )
                     execution = _phase8_as_graph_result(execution, tuple(datum.id for datum in datums))
                 elif isinstance(self._runtime, _Phase7SubstituteProtectionService):

@@ -25,6 +25,7 @@ from anonymizer.engine.execution.phase8_admission import _compile_phase8_plan, _
 from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
 from anonymizer.engine.execution.phase8_runtime import _Phase8LifecycleExecution, _run_group_operation
+from anonymizer.engine.execution.phase8_successor import _is_admitted_phase8_successor, _Phase8SuccessorHandoff
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics, _Phase8Metric
 
 
@@ -182,6 +183,40 @@ class _Phase8GroupedRewriteProtectionService:
             operations=operations,
         )
 
+    def run_from_phase7_successor_with_backend(
+        self,
+        graph: object,
+        predecessor: _Phase8SuccessorHandoff,
+        backend: object,
+        invocation: object | None = None,
+    ) -> _Phase8LifecycleExecution:
+        """Consume only the sealed predecessor held by the Phase 7 owner."""
+        if not _is_admitted_phase8_successor(predecessor):
+            return _terminal((), (), True, False)
+        phase7 = predecessor.phase7_execution
+        plan = _compile_phase8_plan(graph)
+        if not isinstance(plan, _Phase8Plan):
+            return _terminal((), (), True, False)
+        groups = tuple(manifest.members for manifest in plan.groups)
+        atomic_groups = tuple(getattr(group, "members", ()) for group in getattr(graph, "atomic_groups", ()))
+        dependencies = tuple(
+            (getattr(edge, "prerequisite", None), getattr(edge, "dependent", None))
+            for edge in getattr(graph, "dependencies", ())
+        )
+        operations = tuple(
+            _backend_group_operation(backend, _phase8_group_input_from_successor(members, predecessor, invocation))
+            for members in groups
+        )
+        return self.run_lifecycle(
+            groups=groups,
+            atomic_groups=atomic_groups,
+            dependencies=dependencies,
+            phase7_released=tuple((value.datum_id, value.output) for value in phase7.released),
+            phase7_cleanup_verified=phase7.cleanup.verified,
+            phase7_global_embargo=phase7.phase4.global_embargo,
+            operations=operations,
+        )
+
 
 _GroupOperation = Callable[[tuple[object, ...], dict[object, str]], tuple[tuple[object, str], ...] | None]
 
@@ -263,6 +298,63 @@ def _phase8_group_input(
         {member: applied[member] for member in members if member in applied},
         privacy_goal=privacy_goal if isinstance(privacy_goal, dict) else None,
         strict_entity_protection=getattr(rewrite, "strict_entity_protection", False) is True,
+    )
+
+
+def _phase8_group_input_from_successor(
+    members: tuple[object, ...],
+    predecessor: _Phase8SuccessorHandoff,
+    invocation: object | None,
+) -> _Phase8GroupInput | None:
+    """Project authoritative Phase 5/6 values from one authenticated predecessor."""
+    if not _is_admitted_phase8_successor(predecessor):
+        return None
+    phase6 = predecessor.phase6_plan
+    originals = {datum.id: datum.text for datum in (*phase6.accounting.datums, *phase6.context.context_only_datums)}
+    released = predecessor.phase7_execution.released
+    applied = {value.datum_id: value.applied for value in released}
+    if set(members) - set(originals) or set(members) - set(applied):
+        return None
+    mentions: list[_Phase8AcceptedMention] = []
+    for handoff in predecessor.phase6_execution.handoffs:
+        for resolved in handoff.resolved.mentions:
+            mention = resolved.mention
+            if mention.target_datum_id in members:
+                mentions.append(
+                    _Phase8AcceptedMention(
+                        mention.target_datum_id,
+                        mention.id,
+                        mention.start,
+                        mention.end,
+                        mention.source_slice,
+                        mention.detector_label,
+                        mention.provenance.value,
+                    )
+                )
+    contexts: list[_Phase8ContextProjection] = []
+    for projection in phase6.context.projections:
+        if projection.target_datum_id not in members:
+            continue
+        for binding in projection.bindings:
+            text = originals.get(binding.datum_id)
+            if text is None or binding.owner_task != projection.owner_task:
+                return None
+            contexts.append(
+                _Phase8ContextProjection(projection.target_datum_id, binding.datum_id, binding.ordinal, text)
+            )
+    base = _phase8_group_input(
+        members,
+        cast(Mapping[object, str], originals),
+        cast(Mapping[object, bool], applied),
+        invocation,
+    )
+    return _Phase8GroupInput(
+        base.originals,
+        base.phase7_applied,
+        tuple(mentions),
+        tuple(contexts),
+        base.privacy_goal,
+        base.strict_entity_protection,
     )
 
 
@@ -482,6 +574,7 @@ def _valid_group_input(
         return False
     mentions = group_input.accepted_mentions
     contexts = group_input.context_projections
+    limits = dict(getattr(_load_phase8_contract(), "limits", ()))
     return (
         all(
             item.owner in baselines
@@ -494,11 +587,17 @@ def _valid_group_input(
             for item in mentions
         )
         and len({item.identity for item in mentions}) == len(mentions)
+        and len(mentions) <= limits.get("max_accepted_mentions_per_group", 0)
+        and all(len(item.text.encode("utf-8")) <= limits.get("max_member_text_utf8_bytes", 0) for item in mentions)
         and all(
             item.owner in baselines and type(item.ordinal) is int and item.ordinal >= 0 and isinstance(item.text, str)
             for item in contexts
         )
         and len({(item.owner, item.ordinal) for item in contexts}) == len(contexts)
+        and all(len(item.text.encode("utf-8")) <= limits.get("max_context_fragment_utf8_bytes", 0) for item in contexts)
+        and len(contexts) <= limits.get("max_context_bindings_per_group", 0)
+        and sum(len(item.text.encode("utf-8")) for item in contexts)
+        <= limits.get("max_all_context_utf8_bytes_per_group", 0)
     )
 
 

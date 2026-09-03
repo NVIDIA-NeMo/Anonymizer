@@ -16,6 +16,7 @@ from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddResult, _Ph
 from anonymizer.engine.execution.phase7_runtime import _Phase7CleanupAttestation
 from anonymizer.engine.execution.phase7_validation import _CandidateAssignment
 from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
+from anonymizer.engine.execution.protection_service import _Phase7SubstituteProtectionService
 from anonymizer.interface._protection import (
     _BatchFailureCode,
     _Failed,
@@ -85,6 +86,7 @@ class _GroupedRewriteBackend:
     calls: list[_Phase8Operation]
     evaluations: int = 0
     member_token_sets: list[tuple[str, ...]] | None = None
+    accepted_mention_counts: list[int] | None = None
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
         self.calls.append(operation)
@@ -98,7 +100,20 @@ class _GroupedRewriteBackend:
         assert "context_bindings" in request
         if operation is _Phase8Operation.ANALYZE:
             assert all("accepted_mentions" in member for member in members)
+            if self.accepted_mention_counts is None:
+                self.accepted_mention_counts = []
+            self.accepted_mention_counts.extend(
+                len(member["accepted_mentions"])
+                for member in members
+                if isinstance(member.get("accepted_mentions"), list)
+            )
         if operation is _Phase8Operation.ANALYZE:
+            mentions = [
+                mention["mention_token"]
+                for member in members
+                for mention in member["accepted_mentions"]
+                if isinstance(mention, dict)
+            ]
             return _Dispatch(
                 operation,
                 {
@@ -107,10 +122,10 @@ class _GroupedRewriteBackend:
                     "privacy_obligations": [
                         {
                             "statement": "protect identifier",
-                            "kind": "latent",
+                            "kind": "direct" if mentions else "latent",
                             "sensitivity": "high",
                             "source_member_tokens": tokens,
-                            "source_mention_tokens": [],
+                            "source_mention_tokens": mentions,
                         }
                     ],
                     "utility_obligations": [{"statement": "preserve meaning", "importance": "important"}],
@@ -236,6 +251,7 @@ def test_private_grouped_rewrite_executes_phase7_then_all_phase8_operations() ->
     ]
     assert phase8.member_token_sets is not None
     assert len(set(phase8.member_token_sets)) == len(phase8.member_token_sets)
+    assert phase8.accepted_mention_counts == [1]
 
 
 def test_private_grouped_rewrite_with_no_entities_still_analyzes_the_admitted_group() -> None:
@@ -266,6 +282,33 @@ def test_private_grouped_rewrite_with_no_entities_still_analyzes_the_admitted_gr
         _Phase8Operation.REPAIR,
         _Phase8Operation.EVALUATE,
     ]
+
+
+@pytest.mark.parametrize("forged", [object(), (object(), object())])
+def test_private_grouped_rewrite_rejects_forged_or_mismatched_predecessor_before_phase8_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    forged: object,
+) -> None:
+    """Only the Phase 7 owner may provide the exact sealed predecessor identity."""
+    anonymizer = build_synthetic_anonymizer({"Alice": "first_name"})
+    plan = anonymizer._compile_protection_plan(
+        AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True), emit_telemetry=False)
+    )
+    assert isinstance(plan, _ProtectionPlan)
+    phase8 = _GroupedRewriteBackend([])
+    monkeypatch.setattr(_Phase7SubstituteProtectionService, "execute_successor", lambda *_args, **_kwargs: forged)
+    flow = _ProtectionFlow(
+        anonymizer,
+        plan,
+        phase6_backend=_AnchoredPhase6Backend.from_entities({"Alice": "first_name"}),
+        phase7_backend=_CandidateBackend("Avery"),
+        phase8_backend=phase8,
+    )
+
+    result = flow.protect((_record("source-a", "Alice"),))
+
+    assert isinstance(result.outcomes[0], _Failed)
+    assert phase8.calls == []
 
 
 def test_private_substitute_releases_only_a_qualified_phase7_output() -> None:
