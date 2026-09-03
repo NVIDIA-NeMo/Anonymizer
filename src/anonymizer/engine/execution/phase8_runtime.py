@@ -18,6 +18,21 @@ class _Phase8GroupOutcome:
     repair_iterations: int
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8LifecycleExecution:
+    """Content-free terminal receipt for the private grouped lifecycle.
+
+    Candidate revisions exist only while Phase 4 is reducing the invocation.
+    The receipt intentionally carries terminal states and released cells, never
+    a Phase 7 baseline, a provisional revision, or an operation workframe.
+    """
+
+    released: tuple[tuple[object, str], ...]
+    terminal_group_states: tuple[str, ...]
+    global_embargo: bool
+    cleanup_verified: bool
+
+
 def _run_group_operation(
     members: tuple[object, ...],
     baselines: dict[object, str],

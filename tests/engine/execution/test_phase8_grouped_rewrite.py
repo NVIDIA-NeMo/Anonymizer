@@ -7,10 +7,12 @@ import ast
 import copy
 import json
 from pathlib import Path
+from typing import cast
 
 from pytest import MonkeyPatch
 
 import anonymizer.engine.execution.phase8_contract as phase8_contract
+from anonymizer.engine.execution.accounting_outcomes import _AccountingResult
 from anonymizer.engine.execution.graph import (
     _AtomicGroup,
     _DatumId,
@@ -18,6 +20,12 @@ from anonymizer.engine.execution.graph import (
     _ProtectionGraph,
     _RewriteGroup,
     _TextDatum,
+)
+from anonymizer.engine.execution.phase7_application import _AppliedDatum
+from anonymizer.engine.execution.phase7_runtime import (
+    _Phase7CleanupAttestation,
+    _Phase7Execution,
+    _Phase7Phase4Evidence,
 )
 from anonymizer.engine.execution.phase8_admission import (
     _compile_phase8_plan,
@@ -166,6 +174,104 @@ def test_private_phase8_service_only_returns_a_complete_group_candidate() -> Non
         max_repairs=0,
     )
     assert result == ((members[0], "one"), (members[1], "two"))
+
+
+def test_phase8_lifecycle_requires_a_released_phase7_baseline_and_withholds_the_atomic_group() -> None:
+    """A failed complete group may not release its otherwise-successful sibling."""
+    service = _Phase8GroupedRewriteProtectionService()
+    first, second = _DatumId("first"), _DatumId("second")
+    execution = service.run_lifecycle(
+        groups=((first,), (second,)),
+        atomic_groups=((first, second),),
+        dependencies=(),
+        phase7_released=((first, "one"), (second, "two")),
+        phase7_cleanup_verified=True,
+        phase7_global_embargo=False,
+        operations=(
+            lambda members, baselines: service.run_group(
+                members,
+                baselines,
+                analyze=lambda: (False, False),
+                rewrite=lambda values: values,
+                evaluate=lambda _values: _metric(),
+                repair=lambda values, _round: values,
+                max_repairs=0,
+            ),
+            lambda members, baselines: service.run_group(
+                members,
+                baselines,
+                analyze=lambda: (False, False),
+                rewrite=lambda _values: {},
+                evaluate=lambda _values: _metric(),
+                repair=lambda values, _round: values,
+                max_repairs=0,
+            ),
+        ),
+    )
+    assert execution.released == ()
+    assert execution.global_embargo is False
+    assert execution.cleanup_verified
+    assert execution.terminal_group_states == ("succeeded", "failed")
+
+
+def test_phase8_lifecycle_embargoes_before_dispatch_when_phase7_handoff_is_not_clean() -> None:
+    service = _Phase8GroupedRewriteProtectionService()
+    datum = _DatumId("only")
+    dispatched = False
+
+    def operation(_members: tuple[object, ...], _baselines: dict[object, str]) -> tuple[tuple[object, str], ...] | None:
+        nonlocal dispatched
+        dispatched = True
+        raise AssertionError("must not dispatch")
+
+    execution = service.run_lifecycle(
+        groups=((datum,),),
+        atomic_groups=((datum,),),
+        dependencies=(),
+        phase7_released=((datum, "baseline"),),
+        phase7_cleanup_verified=False,
+        phase7_global_embargo=False,
+        operations=(operation,),
+    )
+    assert not dispatched
+    assert execution.global_embargo
+    assert execution.released == ()
+
+
+def test_phase8_lifecycle_consumes_only_the_phase7_released_baseline_handoff() -> None:
+    service = _Phase8GroupedRewriteProtectionService()
+    datum = _DatumId("only")
+    cleanup = _Phase7CleanupAttestation("phase7-cleanup-attestation/v1", True, 0, 0, True, 0, False)
+    phase7 = _Phase7Execution(
+        (),
+        cleanup,
+        _Phase7Phase4Evidence((), cast(_AccountingResult[object], object()), cleanup, False),
+        (_AppliedDatum(datum, "baseline", True),),
+    )
+    execution = service.run_from_phase7_execution(
+        groups=((datum,),),
+        atomic_groups=((datum,),),
+        dependencies=(),
+        phase7=phase7,
+        operations=(
+            lambda members, baselines: service.run_group(
+                members,
+                baselines,
+                analyze=lambda: (True, True),
+                rewrite=lambda values: values,
+                evaluate=lambda _values: _metric(),
+                repair=lambda values, _round: values,
+                max_repairs=0,
+            ),
+        ),
+    )
+    assert execution.released == ((datum, "baseline"),)
+
+
+def _metric():
+    metric = _evaluate_metrics((), ((1, 1.0),), repair_any_high=False, repair_threshold=0.0, utility_floor=0.5)
+    assert metric is not None
+    return metric
 
 
 def test_phase8_reference_model_is_pure_and_withholds_an_atomic_group() -> None:
