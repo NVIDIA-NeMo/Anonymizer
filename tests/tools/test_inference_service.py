@@ -436,6 +436,42 @@ def test_compatible_preexisting_endpoint_cannot_prove_launch_ownership() -> None
     assert exc_info.value.diagnostic.code == "launch-ownership-not-observed"
 
 
+def test_launch_ownership_probe_receives_endpoint_authentication() -> None:
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    probe = launch_receipt(
+        plan,
+        models.LocalProcessHandle(
+            external_id="4242:100",
+            pid=4242,
+            process_group_id=4242,
+            start_marker="100",
+            stdout_path="out",
+            stderr_path="err",
+        ),
+    ).probe
+    observed_secrets: object = None
+
+    def ownership_probe(
+        _plan: models.RunPlan,
+        _launch_token: str,
+        secret_values: object = None,
+    ) -> None:
+        nonlocal observed_secrets
+        observed_secrets = secret_values
+
+    with (
+        mock.patch.object(runtime, "_probe_launch_ownership", side_effect=ownership_probe),
+        mock.patch.object(runtime, "probe_endpoint", return_value=probe),
+    ):
+        runtime.wait_for_readiness(
+            plan,
+            secret_values={"LOCAL_KEY": "endpoint-secret"},
+            launch_token="launch-secret",
+        )
+
+    assert observed_secrets == {"LOCAL_KEY": "endpoint-secret"}
+
+
 @pytest.mark.parametrize("failure", [RuntimeError("unexpected readiness failure"), KeyboardInterrupt()])
 def test_post_spawn_readiness_failures_always_clean_up(tmp_path: Path, failure: BaseException) -> None:
     plan = compiler.compile_profile(generation(), source_revision="test")
