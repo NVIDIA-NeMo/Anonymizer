@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import signal
 import subprocess
 import time
@@ -19,6 +20,13 @@ from typing import Literal, assert_never, cast
 import httpx
 
 from inference_service_compiler.compiler import verify_plan
+from inference_service_compiler.lifecycle import (
+    LAUNCH_OWNERSHIP_HEADER,
+    LAUNCH_OWNERSHIP_PATH,
+    LAUNCH_OWNERSHIP_PROOF_FIELD,
+    LAUNCH_TOKEN_ENVIRONMENT_VARIABLE,
+    launch_token_proof,
+)
 from inference_service_compiler.models import (
     Capability,
     CapabilityProbeReceipt,
@@ -97,9 +105,11 @@ def launch_plan(
     argv = plan.command.render_argv()
     environment = os.environ.copy()
     environment.update(command_environment)
+    launch_token = secrets.token_urlsafe(32)
+    environment[LAUNCH_TOKEN_ENVIRONMENT_VARIABLE] = launch_token
     log_directory.mkdir(parents=True, exist_ok=True)
     handle = _launch_process(plan, argv, environment, log_directory)
-    probe = _probe_or_cleanup(plan, handle, secret_values)
+    probe = _probe_or_cleanup(plan, handle, secret_values, launch_token)
     return LaunchReceipt(
         plan_digest=plan.plan_digest,
         launched_at=_now(),
@@ -113,30 +123,72 @@ def _probe_or_cleanup(
     plan: RunPlan,
     handle: LocalProcessHandle,
     secret_values: Mapping[str, str],
+    launch_token: str,
 ) -> CapabilityProbeReceipt:
     try:
-        probe = wait_for_readiness(plan, secret_values=secret_values, handle=handle)
-    except RuntimeEffectError as exc:
-        cleanup_complete = _cleanup_handle(handle, plan.spec.local.shutdown_timeout_seconds)
-        raise RuntimeEffectError(
-            exc.diagnostic.model_copy(
-                update={
-                    "known_effects": (handle.external_id,),
-                    "cleanup_complete": cleanup_complete,
-                }
-            )
-        ) from exc
+        probe = wait_for_readiness(
+            plan,
+            secret_values=secret_values,
+            handle=handle,
+            launch_token=launch_token,
+        )
+    except BaseException as exc:
+        cleanup_complete, cleanup_error = _attempt_failed_launch_cleanup(
+            handle,
+            plan.spec.local.shutdown_timeout_seconds,
+        )
+        if isinstance(exc, RuntimeEffectError):
+            message = exc.diagnostic.message
+            if cleanup_error is not None:
+                message = f"{message}; cleanup failed: {cleanup_error}"
+            raise RuntimeEffectError(
+                exc.diagnostic.model_copy(
+                    update={
+                        "message": message,
+                        "known_effects": (handle.external_id,),
+                        "cleanup_complete": cleanup_complete,
+                    }
+                )
+            ) from exc
+        if isinstance(exc, Exception):
+            message = f"readiness failed unexpectedly: {exc}"
+            if cleanup_error is not None:
+                message = f"{message}; cleanup failed: {cleanup_error}"
+            raise RuntimeEffectError(
+                RuntimeDiagnostic(
+                    code="unexpected-readiness-failure",
+                    message=message,
+                    known_effects=(handle.external_id,),
+                    cleanup_complete=cleanup_complete,
+                )
+            ) from exc
+        if cleanup_error is not None:
+            exc.add_note(f"managed-process cleanup failed: {cleanup_error}")
+        raise
     if not probe.passed:
-        cleanup_complete = _cleanup_handle(handle, plan.spec.local.shutdown_timeout_seconds)
+        cleanup_complete, cleanup_error = _attempt_failed_launch_cleanup(
+            handle,
+            plan.spec.local.shutdown_timeout_seconds,
+        )
+        message = "endpoint became ready but did not satisfy required capabilities"
+        if cleanup_error is not None:
+            message = f"{message}; cleanup failed: {cleanup_error}"
         raise RuntimeEffectError(
             RuntimeDiagnostic(
                 code="capability-mismatch",
-                message="endpoint became ready but did not satisfy required capabilities",
+                message=message,
                 known_effects=(handle.external_id,),
                 cleanup_complete=cleanup_complete,
             )
         )
     return probe
+
+
+def _attempt_failed_launch_cleanup(handle: LocalProcessHandle, timeout_seconds: float) -> tuple[bool, str | None]:
+    try:
+        return _cleanup_handle(handle, timeout_seconds), None
+    except Exception as exc:
+        return False, str(exc)
 
 
 def status_run(launch: LaunchReceipt) -> StatusReceipt:
@@ -255,6 +307,7 @@ def wait_for_readiness(
     *,
     secret_values: Mapping[str, str] | None = None,
     handle: LocalProcessHandle | None = None,
+    launch_token: str | None = None,
 ) -> CapabilityProbeReceipt:
     """Poll the declared readiness contract until it passes or times out."""
     deadline = time.monotonic() + plan.readiness.timeout_seconds
@@ -269,6 +322,8 @@ def wait_for_readiness(
                 )
             )
         try:
+            if launch_token is not None:
+                _probe_launch_ownership(plan, launch_token)
             receipt = probe_endpoint(plan, secret_values=secret_values)
             if receipt.passed:
                 return receipt
@@ -280,6 +335,30 @@ def wait_for_readiness(
         time.sleep(min(0.5, max(0, deadline - time.monotonic())))
     message = str(last_error) if last_error is not None else "readiness probe timed out"
     raise RuntimeEffectError(RuntimeDiagnostic(code="readiness-timeout", message=message))
+
+
+def _probe_launch_ownership(plan: RunPlan, launch_token: str) -> None:
+    """Require a proof that the responding server inherited this launch's token."""
+    url = f"{plan.endpoint.scheme}://{plan.endpoint.host}:{plan.endpoint.port}{LAUNCH_OWNERSHIP_PATH}"
+    try:
+        response = httpx.get(
+            url,
+            headers={LAUNCH_OWNERSHIP_HEADER: launch_token},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            raise ValueError(f"launch ownership probe returned status {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, Mapping):
+            raise TypeError("launch ownership response must be an object")
+        observed_proof = payload.get(LAUNCH_OWNERSHIP_PROOF_FIELD)
+        expected_proof = launch_token_proof(launch_token)
+        if not isinstance(observed_proof, str) or not secrets.compare_digest(observed_proof, expected_proof):
+            raise ValueError("launch ownership proof did not match")
+    except (httpx.HTTPError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeEffectError(
+            RuntimeDiagnostic(code="launch-ownership-not-observed", message=f"launch ownership probe failed: {exc}")
+        ) from exc
 
 
 def read_process_start_marker(pid: int) -> str | None:
