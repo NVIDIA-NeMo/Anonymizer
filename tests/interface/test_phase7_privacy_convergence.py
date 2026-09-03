@@ -153,8 +153,6 @@ def test_private_release_and_serialization_have_an_exact_content_allowlist(
         "implementation_version",
         "terminal_accounting_verified",
         "accepted_detections_verified",
-        "plan_digest",
-        "attempt_id",
     }
     assert backend.value is None
 

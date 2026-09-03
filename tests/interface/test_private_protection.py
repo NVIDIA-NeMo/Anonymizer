@@ -42,6 +42,7 @@ from anonymizer.interface._protection import (
     _PlanUnsupported,
     _ProtectionApplied,
     _ProtectionBatchError,
+    _ProtectionReceipt,
     _ProtectionRecord,
     _ProtectionSucceeded,
     _RecordRef,
@@ -374,6 +375,8 @@ def test_receipt_binds_plan_digest_and_fresh_attempt_identity() -> None:
     _, flow = _flow()
     first = cast(_ProtectionSucceeded, flow.protect((_record("a", "text"),)).outcomes[0]).receipt
     second = cast(_ProtectionSucceeded, flow.protect((_record("a", "text"),)).outcomes[0]).receipt
+    assert isinstance(first, _ProtectionReceipt)
+    assert isinstance(second, _ProtectionReceipt)
     assert first.plan_digest == second.plan_digest
     assert first.attempt_id != second.attempt_id
 

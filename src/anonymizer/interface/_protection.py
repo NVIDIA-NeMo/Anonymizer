@@ -201,11 +201,20 @@ class _ProtectionReceipt(_SafeRepr):
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class _Phase7ProtectionReceipt(_SafeRepr):
+    contract_version: str
+    profile: str
+    implementation_version: str
+    terminal_accounting_verified: bool
+    accepted_detections_verified: bool
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _ProtectionSucceeded(_SafeRepr):
     ref: _RecordRef
     output: str
     disposition: _SuccessDisposition
-    receipt: _ProtectionReceipt
+    receipt: _ProtectionReceipt | _Phase7ProtectionReceipt
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -497,15 +506,24 @@ class _ProtectionFlow(_SafeRepr):
             outcome_by_id[datum_id] = graph_outcome
         if set(outcome_by_id) != set(expected_ids):
             return self._fail_all(operation)
-        receipt = _ProtectionReceipt(
-            _CONTRACT_VERSION,
-            self._plan.profile,
-            _IMPLEMENTATION_VERSION,
-            True,
-            True,
-            self._plan.digest,
-            secrets.token_hex(16),
-        )
+        if self._plan.profile == _SUBSTITUTE_PROFILE:
+            receipt: _ProtectionReceipt | _Phase7ProtectionReceipt = _Phase7ProtectionReceipt(
+                _CONTRACT_VERSION,
+                self._plan.profile,
+                _IMPLEMENTATION_VERSION,
+                True,
+                True,
+            )
+        else:
+            receipt = _ProtectionReceipt(
+                _CONTRACT_VERSION,
+                self._plan.profile,
+                _IMPLEMENTATION_VERSION,
+                True,
+                True,
+                self._plan.digest,
+                secrets.token_hex(16),
+            )
         outcomes: list[_RecordOutcome] = []
         for record, datum_id in zip(operation.records, expected_ids, strict=True):
             graph_outcome = outcome_by_id[datum_id]

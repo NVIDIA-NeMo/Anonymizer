@@ -9,8 +9,16 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from anonymizer.engine.execution.accounting_outcomes import _TaskCancelled, _TaskLost, _TaskSucceeded
+from anonymizer.engine.execution.accounting_outcomes import (
+    _GroupReleased,
+    _TaskCancelled,
+    _TaskFailed,
+    _TaskLost,
+    _TaskSucceeded,
+)
+from anonymizer.engine.execution.accounting_plan import _DatumTaskSubject
 from anonymizer.engine.execution.phase7_admission import _Phase7Plan
+from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_contract import _load_phase7_contract, _Phase7StableSubstituteContract
 from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddResult, _Phase7NddStatus
 from anonymizer.engine.execution.phase7_runtime import (
@@ -77,11 +85,46 @@ def test_empty_manifest_is_verified_no_work_then_cleaned_without_backend_dispatc
     # The runtime consumes the exact compiler-issued Phase 4 task plan; it
     # does not fabricate a detached scope-only accounting shell.
     assert len(result.phase4.accounting.tasks) == len(plan.accounting.tasks)
-    assert result.phase4.accounting.tasks[:-1] == execution.accounting.tasks
+    assert result.phase4.accounting.tasks[:-2] == execution.accounting.tasks
     assert not hasattr(result, "bundles")
-    planned = result.phase4.accounting.tasks[-1]
+    planned, applied = result.phase4.accounting.tasks[-2:]
     assert isinstance(planned, _TaskSucceeded)
     assert not hasattr(planned.candidate, "assignments")
+    assert plan.scope_tasks == (planned.task,)
+    assert plan.application_tasks == (applied.task,)
+    assert isinstance(applied.task.subject, _DatumTaskSubject)
+    assert isinstance(applied, _TaskSucceeded)
+    assert isinstance(applied.candidate, _AppliedDatum)
+    assert applied.candidate.output == "plain"
+    assert result.released == (applied.candidate,)
+    released_group = result.phase4.accounting.groups[0]
+    assert isinstance(released_group, _GroupReleased)
+    assert released_group.outputs == ((applied.candidate.datum_id, applied.candidate),)
+
+
+def test_application_exception_fails_owned_tasks_and_still_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    phase6, _phase6_backend, execution = _qualified_phase6(("plain",), (("target-0",),), {})
+    plan = _compile_phase7(phase6, execution, phase6.coherence_scopes)
+    assert isinstance(plan, _Phase7Plan)
+    backend = _Backend()
+    contract = _load_phase7_contract()
+    assert isinstance(contract, _Phase7StableSubstituteContract)
+
+    def fail_application(_bundle: object) -> None:
+        raise RuntimeError("private canary")
+
+    monkeypatch.setattr("anonymizer.engine.execution.phase7_runtime._apply_bundle", fail_application)
+
+    result = _Phase7Runtime(backend).run(phase6, execution, plan, contract)
+
+    application = next(
+        outcome for outcome in result.phase4.accounting.tasks if outcome.task == plan.application_tasks[0]
+    )
+    assert isinstance(application, _TaskFailed)
+    assert result.released == ()
+    assert backend.closed == 1
+    assert backend.discarded == 1
+    assert result.cleanup.verified
 
 
 def test_reconstructed_phase6_execution_is_rejected_before_any_planner_dispatch() -> None:
@@ -169,7 +212,7 @@ def test_unverified_abort_after_dispatch_is_lost_without_stop_acknowledgement() 
     assert isinstance(contract, _Phase7StableSubstituteContract)
     result = _Phase7Runtime(_Backend(result=_Phase7NddStatus.ABORTED)).run(phase6, execution, plan, contract)
 
-    lost = result.phase4.accounting.tasks[-1]
+    lost = next(outcome for outcome in result.phase4.accounting.tasks if outcome.task == plan.scope_tasks[0])
     assert isinstance(lost, _TaskLost)
     assert {cause.code.value for cause in lost.causes} == {"transport_lost"}
     assert result.phase4.global_embargo
@@ -189,7 +232,8 @@ def test_backend_echoed_dispatch_is_not_trusted_stop_evidence() -> None:
     )
 
     assert result.scopes[0].state is _ScopePlanState.LOST
-    assert isinstance(result.phase4.accounting.tasks[-1], _TaskLost)
+    scope_outcome = next(outcome for outcome in result.phase4.accounting.tasks if outcome.task == plan.scope_tasks[0])
+    assert isinstance(scope_outcome, _TaskLost)
     assert result.phase4.global_embargo
 
 
@@ -215,7 +259,7 @@ def test_independently_verified_stop_receipt_acknowledges_cancellation() -> None
     ).run(phase6, execution, plan, contract)
 
     assert len(observed) == 2
-    cancelled = result.phase4.accounting.tasks[-1]
+    cancelled = next(outcome for outcome in result.phase4.accounting.tasks if outcome.task == plan.scope_tasks[0])
     assert isinstance(cancelled, _TaskCancelled)
     assert {cause.code.value for cause in cancelled.causes} == {"cancellation", "stop_acknowledged"}
     assert result.phase4.global_embargo
@@ -287,5 +331,6 @@ def test_accepted_cancellation_after_dispatch_without_verified_stop_is_lost() ->
 
     assert backend.calls == 1
     assert result.scopes[0].state is _ScopePlanState.LOST
-    assert isinstance(result.phase4.accounting.tasks[-1], _TaskLost)
+    scope_outcome = next(outcome for outcome in result.phase4.accounting.tasks if outcome.task == plan.scope_tasks[0])
+    assert isinstance(scope_outcome, _TaskLost)
     assert result.phase4.global_embargo

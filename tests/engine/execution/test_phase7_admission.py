@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.execution.accounting_plan import _AccountingLimits
+from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _DatumTaskSubject, _TaskPredecessor
 from anonymizer.engine.execution.context_contract import (
     _BackendArtifactClass,
     _ContextBackendCapability,
@@ -373,6 +373,18 @@ def test_phase7_compiler_requires_exact_phase6_scope_cluster_role_and_terminal_h
     assert isinstance(result, module._Phase7Plan)
     assert len(result.manifests) == 1
     assert tuple(member.value for member in result.manifests[0].members) == ("target-0", "target-1")
+    assert tuple(task.stage.value for task in result.scope_tasks) == ("phase7-plan",)
+    assert tuple(task.stage.value for task in result.application_tasks) == ("phase7-apply", "phase7-apply")
+    assert tuple(
+        task.subject.datum_id for task in result.application_tasks if isinstance(task.subject, _DatumTaskSubject)
+    ) == (
+        _DatumId("target-0"),
+        _DatumId("target-1"),
+    )
+    assert set(result.accounting.task_predecessors) >= {
+        _TaskPredecessor(result.scope_tasks[0], result.application_tasks[0]),
+        _TaskPredecessor(result.scope_tasks[0], result.application_tasks[1]),
+    }
     assert module._is_admitted_phase7_plan(result)
 
 
@@ -830,6 +842,7 @@ def test_phase7_plan_and_nested_manifests_reject_tampering_and_serialization() -
 
     assert not module._is_admitted_phase7_plan(replace(result, manifests=(changed_manifest,)))
     assert not module._is_admitted_phase7_plan(replace(result, manifests=(replace(manifest, members=()),)))
+    assert not module._is_admitted_phase7_plan(replace(result, application_tasks=()))
     with pytest.raises(FrozenInstanceError):
         manifest.members = ()
     with pytest.raises(TypeError, match="not serializable"):

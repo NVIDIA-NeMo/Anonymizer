@@ -8,7 +8,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from anonymizer.engine.execution.accounting_plan import _AccountingPlan, _ScopeTaskSubject, _StageId, _TaskKey
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingPlan,
+    _DatumTaskSubject,
+    _ScopeTaskSubject,
+    _StageId,
+    _TaskKey,
+    _TaskPredecessor,
+)
 from anonymizer.engine.execution.context_admission import _CompiledContextProjection
 from anonymizer.engine.execution.graph import _CoherenceScope, _DatumId, _TextDatum
 from anonymizer.engine.execution.mention_admission import _MentionId
@@ -161,6 +168,7 @@ class _Phase7Plan(_PrivatePhase7AdmissionValue):
     # conservation and turns an opaque owner capability into presentation data.
     accounting: _AccountingPlan
     scope_tasks: tuple[_TaskKey, ...]
+    application_tasks: tuple[_TaskKey, ...]
     _proof: _Phase7PlanProof | None = field(default=None, compare=False)
 
 
@@ -204,13 +212,31 @@ def _compile_phase7_plan(
         return materialized
     manifests = materialized
     subjects = tuple(_ScopeTaskSubject() for _manifest in manifests)
-    accounting = phase6.accounting.with_scope_tasks(_StageId("phase7-plan"), subjects)
-    scope_tasks = tuple(_TaskKey(_StageId("phase7-plan"), subject) for subject in subjects)
-    candidate = _Phase7Plan(manifests, accounting, scope_tasks)
+    planning_stage = _StageId("phase7-plan")
+    application_stage = _StageId("phase7-apply")
+    accounting = phase6.accounting.with_scope_tasks(planning_stage, subjects).with_datum_stage(application_stage)
+    scope_tasks = tuple(_TaskKey(planning_stage, subject) for subject in subjects)
+    application_tasks = tuple(_TaskKey(application_stage, _DatumTaskSubject(datum.id)) for datum in accounting.datums)
+    application_by_datum = {
+        task.subject.datum_id: task for task in application_tasks if isinstance(task.subject, _DatumTaskSubject)
+    }
+    scope_predecessors = tuple(
+        _TaskPredecessor(scope_task, application_by_datum[member])
+        for manifest, scope_task in zip(manifests, scope_tasks, strict=True)
+        for member in manifest.members
+    )
+    accounting = accounting.with_task_predecessors((*accounting.task_predecessors, *scope_predecessors))
+    candidate = _Phase7Plan(manifests, accounting, scope_tasks, application_tasks)
     snapshot = _phase7_plan_snapshot(candidate)
     if snapshot is None:
         return _Phase7Rejected(_Phase7AdmissionCode.INVALID_INPUT)
-    return _Phase7Plan(manifests, accounting, scope_tasks, _Phase7PlanProof(_PHASE7_PLAN_SEAL, snapshot))
+    return _Phase7Plan(
+        manifests,
+        accounting,
+        scope_tasks,
+        application_tasks,
+        _Phase7PlanProof(_PHASE7_PLAN_SEAL, snapshot),
+    )
 
 
 def _is_admitted_phase7_plan(value: object) -> bool:
@@ -220,10 +246,33 @@ def _is_admitted_phase7_plan(value: object) -> bool:
         and value._proof.seal is _PHASE7_PLAN_SEAL
         and all(_is_admitted_scope_manifest(manifest) for manifest in value.manifests)
         and len(value.scope_tasks) == len(value.manifests)
+        and len(value.application_tasks) == len(value.accounting.datums)
         and all(
             task in value.accounting.tasks and isinstance(task.subject, _ScopeTaskSubject) for task in value.scope_tasks
         )
+        and all(
+            task in value.accounting.tasks and isinstance(task.subject, _DatumTaskSubject)
+            for task in value.application_tasks
+        )
+        and _has_exact_application_predecessors(value)
         and value._proof.snapshot == _phase7_plan_snapshot(value)
+    )
+
+
+def _has_exact_application_predecessors(plan: _Phase7Plan) -> bool:
+    application_by_datum = {
+        task.subject.datum_id: task for task in plan.application_tasks if isinstance(task.subject, _DatumTaskSubject)
+    }
+    expected = {
+        _TaskPredecessor(scope_task, application_by_datum[member])
+        for manifest, scope_task in zip(plan.manifests, plan.scope_tasks, strict=True)
+        for member in manifest.members
+        if member in application_by_datum
+    }
+    return (
+        len(application_by_datum) == len(plan.accounting.datums)
+        and set(application_by_datum) == {datum.id for datum in plan.accounting.datums}
+        and expected <= set(plan.accounting.task_predecessors)
     )
 
 
@@ -639,6 +688,7 @@ def _phase7_plan_snapshot(plan: _Phase7Plan) -> tuple[object, ...] | None:
             # Phase 6 prefix and appended scope-task sequence as well.
             tuple(plan.accounting.tasks),
             tuple(plan.scope_tasks),
+            tuple(plan.application_tasks),
         )
     except (AttributeError, TypeError):
         return None

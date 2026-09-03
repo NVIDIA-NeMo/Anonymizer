@@ -21,9 +21,7 @@ from anonymizer.engine.execution.accounting_outcomes import (
     _TaskLost,
     _TaskSucceeded,
 )
-from anonymizer.engine.execution.accounting_plan import (
-    _TaskKey,
-)
+from anonymizer.engine.execution.accounting_plan import _DatumTaskSubject, _TaskKey
 from anonymizer.engine.execution.phase6_plan import _is_admitted_phase6_plan, _Phase6Plan
 from anonymizer.engine.execution.phase6_runtime import (
     _is_admitted_phase6_execution,
@@ -160,7 +158,7 @@ class _Phase7Runtime:
         # Phase 7 extends, rather than replaces, Phase 6's compiler-expanded
         # Phase 4 plan.  These exact terminal records are immutable input.
         ledger.import_terminal_outcomes(phase6_execution.accounting.tasks)
-        applied_by_scope: dict[object, tuple[_AppliedDatum, ...]] = {}
+        planned_bundles: dict[object, _ValidatedBundle] = {}
         try:
             for manifest in plan.manifests:
                 task = task_by_scope[manifest.id]
@@ -174,32 +172,44 @@ class _Phase7Runtime:
                 if not _scope_has_terminal_phase6_evidence(manifest, phase6, phase6_execution):
                     ledger.mark_task_blocked(task)
                     continue
-                applied = self._plan_scope(ledger, task, manifest, phase6_execution.handoffs, contract)
-                if applied is not None:
-                    applied_by_scope[manifest.id] = applied
+                bundle = self._plan_scope(ledger, task, manifest, phase6_execution.handoffs, contract)
+                if bundle is not None:
+                    planned_bundles[manifest.id] = bundle
+            _apply_planned_bundles(ledger, plan, planned_bundles)
         finally:
+            planned_bundles.clear()
             ledger.seal_mutation()
             cleanup = self._cleanup()
             if not cleanup.verified:
                 ledger.record_cleanup_unconfirmed_after_seal()
-        applied_by_datum = {datum.datum_id: datum for datums in applied_by_scope.values() for datum in datums}
-        accounting = ledger.finish(datum_release_predicate=lambda datum_id, _candidate: datum_id in applied_by_datum)
+        accounting = ledger.finish()
         frozen = tuple(_scope_outcome(accounting, task_by_scope[manifest.id]) for manifest in plan.manifests)
-        embargo = not cleanup.verified or any(
-            outcome.state in {_ScopePlanState.INCONSISTENT, _ScopePlanState.LOST, _ScopePlanState.CANCELLED}
-            for outcome in frozen
-        )
-        phase4 = _Phase7Phase4Evidence(frozen, accounting, cleanup, embargo)
-        released_ids = {
-            datum_id
+        released_values = tuple(
+            (datum_id, candidate)
             for group in accounting.groups
             if isinstance(group, _GroupReleased)
-            for datum_id, _candidate in group.outputs
+            for datum_id, candidate in group.outputs
+        )
+        release_is_valid = len({datum_id for datum_id, _candidate in released_values}) == len(released_values) and all(
+            isinstance(candidate, _AppliedDatum) and candidate.datum_id == datum_id
+            for datum_id, candidate in released_values
+        )
+        embargo = (
+            not cleanup.verified
+            or any(
+                outcome.state in {_ScopePlanState.INCONSISTENT, _ScopePlanState.LOST, _ScopePlanState.CANCELLED}
+                for outcome in frozen
+            )
+            or not release_is_valid
+        )
+        phase4 = _Phase7Phase4Evidence(frozen, accounting, cleanup, embargo)
+        released_by_datum = {
+            datum_id: candidate
+            for datum_id, candidate in released_values
+            if isinstance(candidate, _AppliedDatum) and candidate.datum_id == datum_id
         }
         released = tuple(
-            applied_by_datum[datum.id]
-            for datum in plan.accounting.datums
-            if datum.id in released_ids and datum.id in applied_by_datum
+            released_by_datum[datum.id] for datum in plan.accounting.datums if datum.id in released_by_datum
         )
         # Cleanup retired every provisional bundle before this result crosses
         # the owner boundary. Only release-qualified protected text remains.
@@ -234,14 +244,12 @@ class _Phase7Runtime:
         manifest: _ScopeManifest,
         handoffs: tuple[object, ...],
         contract: _Phase7StableSubstituteContract,
-    ) -> tuple[_AppliedDatum, ...] | None:
+    ) -> _ValidatedBundle | None:
         if not manifest.slots:
             bundle = _validate_scope_bundle(manifest, handoffs, (), contract)
             if isinstance(bundle, _ValidatedBundle):
-                applied = _apply_bundle(bundle)
-                if applied is not None:
-                    ledger.mark_task_succeeded(task, _Phase7PlanReceipt())
-                    return applied
+                ledger.mark_task_succeeded(task, _Phase7PlanReceipt())
+                return bundle
             ledger.mark_task_failed(task)
             return None
         dispatch = ledger.dispatch(task)
@@ -266,12 +274,8 @@ class _Phase7Runtime:
             if not isinstance(bundle, _ValidatedBundle):
                 ledger.accept_failure(dispatch)
                 return None
-            applied = _apply_bundle(bundle)
-            if applied is None:
-                ledger.accept_failure(dispatch)
-                return None
             if ledger.accept_success(dispatch, _Phase7PlanReceipt()) is _EvidenceAcceptance.ACCEPTED:
-                return applied
+                return bundle
             ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
             return None
         if result.status is _Phase7NddStatus.TASK_FAILED:
@@ -358,6 +362,42 @@ def _apply_bundle(bundle: _ValidatedBundle) -> tuple[_AppliedDatum, ...] | None:
     return tuple(applied.datums)
 
 
+def _apply_planned_bundles(
+    ledger: _AccountingLedger[object],
+    plan: _Phase7Plan,
+    planned_bundles: dict[object, _ValidatedBundle],
+) -> None:
+    """Apply each planned scope once through its compiler-owned datum tasks."""
+    application_by_datum = {
+        task.subject.datum_id: task for task in plan.application_tasks if isinstance(task.subject, _DatumTaskSubject)
+    }
+    candidates: dict[object, _AppliedDatum] = {}
+    failed_datums: set[object] = set()
+    for manifest in plan.manifests:
+        bundle = planned_bundles.get(manifest.id)
+        if bundle is None:
+            continue
+        try:
+            applied = _apply_bundle(bundle)
+        except Exception as cause:
+            del cause
+            applied = None
+        if applied is None or tuple(datum.datum_id for datum in applied) != manifest.members:
+            failed_datums.update(manifest.members)
+            continue
+        candidates.update((datum.datum_id, datum) for datum in applied)
+
+    for datum_id in plan.accounting.topological_datums:
+        task = application_by_datum[datum_id]
+        if task not in ledger.ready_tasks():
+            continue
+        candidate = candidates.get(datum_id)
+        if datum_id in failed_datums or candidate is None:
+            ledger.mark_task_failed(task)
+        else:
+            ledger.mark_task_succeeded(task, candidate)
+
+
 def _scope_has_terminal_phase6_evidence(
     manifest: _ScopeManifest,
     phase6: _Phase6Plan,
@@ -400,7 +440,7 @@ def _has_exact_phase6_prefix(
         len(outcomes) == len(phase6.accounting.tasks)
         and tuple(outcome.task for outcome in outcomes) == phase6.accounting.tasks
         and prefix == phase6.accounting.tasks
-        and plan.accounting.tasks[len(outcomes) :] == plan.scope_tasks
+        and plan.accounting.tasks[len(outcomes) :] == (*plan.scope_tasks, *plan.application_tasks)
     )
 
 

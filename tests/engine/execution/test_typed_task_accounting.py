@@ -77,6 +77,32 @@ def test_accounting_admission_emits_only_datum_owned_tasks() -> None:
     assert not hasattr(result.tasks[0], "datum_id")
 
 
+def test_plan_appends_one_compiler_owned_task_for_each_datum_stage() -> None:
+    graph = _trivial_graph(
+        (
+            _TextDatum(_DatumId("datum-0"), "first"),
+            _TextDatum(_DatumId("datum-1"), "second"),
+        )
+    )
+    plan = _compile_accounting_plan(
+        graph,
+        limits=_AccountingLimits(max_datums=2, max_datum_bytes=64, max_graph_bytes=128, max_stages=2),
+    )
+    assert isinstance(plan, _AccountingPlan)
+
+    expanded = plan.with_datum_stage(_StageId("apply"))
+
+    assert expanded.tasks == (
+        *plan.tasks,
+        _TaskKey(_StageId("apply"), _DatumTaskSubject(_DatumId("datum-0"))),
+        _TaskKey(_StageId("apply"), _DatumTaskSubject(_DatumId("datum-1"))),
+    )
+    assert expanded.stages == (*plan.stages, _StageId("apply"))
+    assert _is_admitted_accounting_plan(expanded)
+    with pytest.raises(TypeError, match="datum stage"):
+        expanded.with_datum_stage(_StageId("apply"))
+
+
 def test_plan_adds_one_opaque_scope_task_for_each_declared_scope() -> None:
     graph = _trivial_graph((_TextDatum(_DatumId("fabricated-datum"), "fabricated text"),))
     plan = _compile_accounting_plan(

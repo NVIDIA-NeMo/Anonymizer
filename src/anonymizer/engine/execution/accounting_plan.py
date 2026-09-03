@@ -146,6 +146,31 @@ class _AccountingPlan(_PrivateAccountingPlanValue):
             self.task_predecessors,
         )
 
+    def with_datum_stage(self, stage: _StageId) -> _AccountingPlan:
+        """Append one compiler-owned task stage for every admitted datum."""
+        if (
+            not _is_admitted_accounting_plan(self)
+            or not isinstance(stage, _StageId)
+            or not isinstance(stage.value, str)
+            or not stage.value
+            or stage in self.stages
+            or any(task.stage == stage for task in self.tasks)
+        ):
+            raise TypeError("private datum stage is malformed")
+        tasks = (
+            *self.tasks,
+            *(_TaskKey(stage, _DatumTaskSubject(datum.id)) for datum in self.datums),
+        )
+        return _admit_accounting_plan(
+            self.datums,
+            (*self.stages, stage),
+            tasks,
+            self.dependencies,
+            self.atomic_groups,
+            self.topological_datums,
+            self.task_predecessors,
+        )
+
 
 def _admit_accounting_plan(
     datums: tuple[_TextDatum, ...],
