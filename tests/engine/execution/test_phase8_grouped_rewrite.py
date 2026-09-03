@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import cast
 
 import pandas as pd
+import pytest
 from pytest import MonkeyPatch
 
 import anonymizer.engine.execution.phase8_contract as phase8_contract
@@ -45,6 +46,8 @@ from anonymizer.engine.execution.phase8_ndd_backend import _AnalysisResponse, _h
 from anonymizer.engine.execution.phase8_runtime import _run_group_operation
 from anonymizer.engine.execution.phase8_service import (
     _backend_group_operation,
+    _Phase8AcceptedMention,
+    _Phase8ContextProjection,
     _Phase8GroupedRewriteProtectionService,
     _Phase8GroupInput,
 )
@@ -195,9 +198,13 @@ def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests
             assert isinstance(members, list)
             tokens = [member["member_token"] for member in members]
             assert all(isinstance(token, str) and not token.startswith("m-") for token in tokens)
-            assert {"group_token", "operation_token", "members", "context_bindings", "accepted_mentions"} <= set(
-                request
-            )
+            assert set(request) == {
+                "schema_version",
+                "privacy_goal",
+                "strict_entity_protection",
+                "members",
+                "context_bindings",
+            }
             if operation is _Phase8Operation.ANALYZE:
                 return _Result(
                     operation,
@@ -223,7 +230,126 @@ def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests
     second = _backend_group_operation(Backend(), input)
     assert first(members, baselines) == ((members[0], "one"), (members[1], "two"))
     assert second(members, baselines) == ((members[0], "one"), (members[1], "two"))
-    assert seen[0]["group_token"] != seen[1]["group_token"]
+    first_members, second_members = seen[0]["members"], seen[1]["members"]
+    assert isinstance(first_members, list) and isinstance(second_members, list)
+    assert [member["member_token"] for member in first_members] != [member["member_token"] for member in second_members]
+
+
+def test_phase8_analysis_lowers_only_admitted_provenance_and_binds_privacy_authority() -> None:
+    """Context and mentions inform analysis without becoming members or graph IDs."""
+
+    member = object()
+    seen: dict[str, object] = {}
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            seen.update(request)
+            members = request["members"]
+            assert isinstance(members, list)
+            member_record = members[0]
+            assert isinstance(member_record, dict)
+            token = member_record["member_token"]
+            contexts = request["context_bindings"]
+            assert isinstance(contexts, list)
+            mentions = member_record["accepted_mentions"]
+            assert isinstance(mentions, list)
+            assert request["schema_version"] == "phase8-group-workframe/v1"
+            assert request["privacy_goal"] == {"protect": "hide", "preserve": "meaning"}
+            assert request["strict_entity_protection"] is True
+            assert "datum_id" not in member_record
+            assert contexts == [
+                {
+                    "binding_token": contexts[0]["binding_token"],
+                    "owner_member_token": token,
+                    "ordinal": 0,
+                    "text": "admitted context",
+                }
+            ]
+            assert mentions == [
+                {
+                    "mention_token": mentions[0]["mention_token"],
+                    "owner_member_token": token,
+                    "start": 0,
+                    "end": 5,
+                    "text": "Alice",
+                    "label": "name",
+                    "source": "span_detector",
+                }
+            ]
+            return _Response(
+                operation,
+                {
+                    "analyzed_member_tokens": [token],
+                    "consumed_context_binding_tokens": [contexts[0]["binding_token"]],
+                    "privacy_obligations": [
+                        {
+                            "statement": "protect name",
+                            "kind": "direct",
+                            "sensitivity": "high",
+                            "source_member_tokens": [token],
+                            "source_mention_tokens": [mentions[0]["mention_token"]],
+                        }
+                    ],
+                    "utility_obligations": [],
+                },
+            )
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation, self.payload, self.failed = operation, payload, False
+
+    provenance = _Phase8GroupInput(
+        originals={member: "Alice"},
+        phase7_applied={member: True},
+        accepted_mentions=(_Phase8AcceptedMention(member, object(), 0, 5, "Alice", "name", "span_detector"),),
+        context_projections=(_Phase8ContextProjection(member, object(), 0, "admitted context"),),
+        privacy_goal={"protect": "hide", "preserve": "meaning"},
+        strict_entity_protection=True,
+    )
+    assert _backend_group_operation(Backend(), provenance)((member,), {member: "replacement"}) is None
+
+
+def test_phase8_retired_member_token_is_invocation_inconsistent_not_a_local_failure() -> None:
+    """A stage may not accept a prior attempt's private correlation token."""
+
+    member = object()
+    retired: list[str] = []
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            members = request["members"]
+            assert isinstance(members, list)
+            token = members[0]["member_token"]
+            if operation is _Phase8Operation.ANALYZE:
+                retired.append(token)
+                return _Response(
+                    operation,
+                    {
+                        "analyzed_member_tokens": [token],
+                        "consumed_context_binding_tokens": [],
+                        "privacy_obligations": [
+                            {
+                                "statement": "p",
+                                "kind": "latent",
+                                "sensitivity": "high",
+                                "source_member_tokens": [token],
+                                "source_mention_tokens": [],
+                            }
+                        ],
+                        "utility_obligations": [],
+                    },
+                )
+            return _Response(
+                operation,
+                {"consumed_context_binding_tokens": [], "revisions": [{"member_token": retired[0], "text": "safe"}]},
+            )
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation, self.payload, self.failed = operation, payload, False
+
+    with pytest.raises(Exception, match="correlation"):
+        _backend_group_operation(Backend())((member,), {member: "baseline"})
 
 
 def test_phase8_failed_record_is_a_local_failure_only_when_bound_to_the_active_work_token() -> None:

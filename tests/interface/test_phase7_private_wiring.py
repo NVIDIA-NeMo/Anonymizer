@@ -96,7 +96,8 @@ class _GroupedRewriteBackend:
         self.member_token_sets.append(tuple(tokens))
         assert all(isinstance(token, str) for token in tokens)
         assert "context_bindings" in request
-        assert "accepted_mentions" in request
+        if operation is _Phase8Operation.ANALYZE:
+            assert all("accepted_mentions" in member for member in members)
         if operation is _Phase8Operation.ANALYZE:
             return _Dispatch(
                 operation,
@@ -194,7 +195,8 @@ def test_private_substitute_plan_selects_phase7_service_without_changing_other_p
     assert type(anonymizer._open_protection_flow(redact)._runtime).__name__ == "_Phase6RedactProtectionService"
     assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(replace=Annotate())), _PlanRejected)
     assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(replace=Hash())), _PlanUnsupported)
-    rewrite = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite()))
+    assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite())), _PlanRejected)
+    rewrite = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True)))
     assert isinstance(rewrite, _ProtectionPlan)
     assert rewrite.profile == "grouped-rewrite-v1"
     assert isinstance(
@@ -205,7 +207,9 @@ def test_private_substitute_plan_selects_phase7_service_without_changing_other_p
 
 def test_private_grouped_rewrite_executes_phase7_then_all_phase8_operations() -> None:
     anonymizer = build_synthetic_anonymizer({"Alice": "first_name"})
-    plan = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite(), emit_telemetry=False))
+    plan = anonymizer._compile_protection_plan(
+        AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True), emit_telemetry=False)
+    )
     assert isinstance(plan, _ProtectionPlan)
     phase7 = _CandidateBackend("Avery")
     phase8 = _GroupedRewriteBackend([])
@@ -236,7 +240,9 @@ def test_private_grouped_rewrite_executes_phase7_then_all_phase8_operations() ->
 
 def test_private_grouped_rewrite_with_no_entities_still_analyzes_the_admitted_group() -> None:
     anonymizer = build_synthetic_anonymizer({"Alice": "first_name"})
-    plan = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite(), emit_telemetry=False))
+    plan = anonymizer._compile_protection_plan(
+        AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True), emit_telemetry=False)
+    )
     assert isinstance(plan, _ProtectionPlan)
     phase7 = _CandidateBackend("Avery")
     phase8 = _GroupedRewriteBackend([])

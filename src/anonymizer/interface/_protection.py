@@ -280,6 +280,8 @@ def _compile_protection_plan(
     if config.rewrite is not None:
         # This is deliberately private graph selection only. The public
         # Rewrite route retains its established workflow.
+        if not config.rewrite.strict_entity_protection:
+            return _PlanRejected()
         contract = _load_phase8_contract()
         if not isinstance(contract, _Phase8GroupedRewriteContract) or not _is_admitted_phase8_contract(contract):
             return _PlanRejected()
@@ -532,7 +534,9 @@ class _ProtectionFlow(_SafeRepr):
                     if phase7 is None:
                         return self._fail_all(operation)
                     backend = injected_backend or _Phase8NddBackend(self._adapter, self._plan.invocation)
-                    execution = phase8_service.run_from_phase7_execution_with_backend(graph, phase7, backend)
+                    execution = phase8_service.run_from_phase7_execution_with_backend(
+                        graph, phase7, backend, self._plan.invocation
+                    )
                     execution = _phase8_as_graph_result(execution, tuple(datum.id for datum in datums))
                 elif isinstance(self._runtime, _Phase7SubstituteProtectionService):
                     contract = self._plan.phase7_contract

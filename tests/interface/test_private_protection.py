@@ -336,7 +336,8 @@ def test_graph_outcomes_are_rejoined_by_private_datum_identity() -> None:
 def test_compilation_is_closed_and_plan_is_content_free_and_immutable() -> None:
     anonymizer = build_synthetic_anonymizer({})
     assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(replace=Annotate())), _PlanRejected)
-    rewrite = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite()))
+    assert isinstance(anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite())), _PlanRejected)
+    rewrite = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True)))
     assert isinstance(rewrite, _ProtectionPlan)
     assert rewrite.profile == "grouped-rewrite-v1"
     plan = anonymizer._compile_protection_plan(AnonymizerConfig(replace=Redact(), emit_telemetry=False))

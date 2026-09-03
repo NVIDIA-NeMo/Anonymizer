@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 import secrets
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import cast
 
 from anonymizer.engine.execution.accounting_plan import (
@@ -141,7 +141,7 @@ class _Phase8GroupedRewriteProtectionService:
         )
 
     def run_from_phase7_execution_with_backend(
-        self, graph: object, phase7: _Phase7Execution, backend: object
+        self, graph: object, phase7: _Phase7Execution, backend: object, invocation: object | None = None
     ) -> _Phase8LifecycleExecution:
         """Execute the admitted complete groups through the sole NDD boundary.
 
@@ -166,9 +166,8 @@ class _Phase8GroupedRewriteProtectionService:
         operations = tuple(
             _backend_group_operation(
                 backend,
-                _Phase8GroupInput(
-                    {member: original_by_datum[member] for member in members if member in original_by_datum},
-                    {member: applied_by_datum[member] for member in members if member in applied_by_datum},
+                _phase8_group_input(
+                    members, original_by_datum, cast(Mapping[object, bool], applied_by_datum), invocation
                 ),
             )
             for members in groups
@@ -197,6 +196,31 @@ class _Phase8WireGroup:
 
     group_token: str
     member_tokens: tuple[str, ...]
+    context_tokens: tuple[str, ...] = ()
+    mention_tokens: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8AcceptedMention:
+    """A Phase 6 accepted mention bound to its compiler-owned target."""
+
+    owner: object
+    identity: object
+    start: int
+    end: int
+    text: str
+    label: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8ContextProjection:
+    """One admitted Phase 5 binding; it is never a Phase 8 member."""
+
+    owner: object
+    datum_binding: object
+    ordinal: int
+    text: str
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -205,7 +229,41 @@ class _Phase8GroupInput:
 
     originals: dict[object, str]
     phase7_applied: dict[object, bool]
-    accepted_mentions: tuple[object, ...] = ()
+    accepted_mentions: tuple[_Phase8AcceptedMention, ...] = ()
+    context_projections: tuple[_Phase8ContextProjection, ...] = ()
+    privacy_goal: dict[str, str] | None = None
+    strict_entity_protection: bool = True
+
+
+@dataclass(slots=True, repr=False)
+class _Phase8WireRegistry:
+    """Tracks only this invocation's private capabilities for stale-token detection."""
+
+    issued: set[str] = field(default_factory=set)
+
+    def new(self) -> str:
+        token = _opaque_token()
+        self.issued.add(token)
+        return token
+
+
+def _phase8_group_input(
+    members: tuple[object, ...],
+    originals: Mapping[object, str],
+    applied: Mapping[object, bool],
+    invocation: object | None,
+) -> _Phase8GroupInput:
+    """Detach the compiler-owned Phase 8 authority before any provider call."""
+    rewrite = getattr(invocation, "rewrite", None)
+    goal = getattr(rewrite, "privacy_goal", None)
+    dumped = getattr(goal, "model_dump", None)
+    privacy_goal = dumped() if callable(dumped) else None
+    return _Phase8GroupInput(
+        {member: originals[member] for member in members if member in originals},
+        {member: applied[member] for member in members if member in applied},
+        privacy_goal=privacy_goal if isinstance(privacy_goal, dict) else None,
+        strict_entity_protection=getattr(rewrite, "strict_entity_protection", False) is True,
+    )
 
 
 def _opaque_token() -> str:
@@ -214,14 +272,26 @@ def _opaque_token() -> str:
 
 
 def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | None = None) -> _GroupOperation:
+    registry = _Phase8WireRegistry()
+
     def operation(members: tuple[object, ...], baselines: dict[object, str]) -> tuple[tuple[object, str], ...] | None:
-        wire = _new_wire(members)
-        tokens = wire.member_tokens
-        request = _operation_request(wire, members, baselines)
-        analysis = _dispatch(backend, _Phase8Operation.ANALYZE, request)
-        if analysis is None or not _reconcile_common(analysis, "analyzed_member_tokens", tokens, ()):
+        if not _valid_group_input(members, baselines, group_input):
             return None
-        obligations = _admit_obligations(analysis, tokens)
+        wire = _new_wire(members, group_input, registry, include_mentions=True)
+        tokens = wire.member_tokens
+        request = _operation_request(_Phase8Operation.ANALYZE, wire, members, baselines, group_input)
+        analysis = _dispatch(backend, _Phase8Operation.ANALYZE, request)
+        if analysis is None or not _reconcile_common(
+            analysis, "analyzed_member_tokens", tokens, wire.context_tokens, registry
+        ):
+            return None
+        mention_owners = (
+            dict(zip(wire.mention_tokens, (item.owner for item in group_input.accepted_mentions), strict=True))
+            if group_input
+            else {}
+        )
+        member_owners = dict(zip(tokens, members, strict=True))
+        obligations = _admit_obligations(analysis, tokens, wire.mention_tokens, mention_owners, member_owners, registry)
         if obligations is None:
             return None
         privacy, utility = obligations
@@ -229,53 +299,64 @@ def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | N
             if utility or not _zero_route_admitted(members, baselines, group_input):
                 return None
             return tuple((member, baselines[member]) for member in members)
-        rewrite_wire = _new_wire(members)
+        rewrite_wire = _new_wire(members, group_input, registry)
         rewrite_tokens = rewrite_wire.member_tokens
         rewrite_map = dict(zip(rewrite_tokens, members, strict=True))
         active_request = {
-            **_operation_request(rewrite_wire, members, baselines),
+            **_operation_request(_Phase8Operation.REWRITE, rewrite_wire, members, baselines, group_input),
             "privacy_obligations": privacy,
             "utility_obligations": utility,
         }
         revision = _dispatch(backend, _Phase8Operation.REWRITE, active_request)
-        if revision is None or not _reconcile_common(revision, None, rewrite_tokens, ()):
+        if revision is None or not _reconcile_common(
+            revision, None, rewrite_tokens, rewrite_wire.context_tokens, registry
+        ):
             return None
-        current = _revisions(revision, rewrite_map)
+        current = _revisions(revision, rewrite_map, registry)
         if current is None:
             return None
         limits = dict(getattr(_load_phase8_contract(), "limits", ()))
         for repair_round in range(limits.get("max_repair_iterations", 0) + 1):
-            evaluation_wire = _new_wire(members)
+            evaluation_wire = _new_wire(members, group_input, registry)
             evaluation_tokens = evaluation_wire.member_tokens
             evaluation_map = dict(zip(evaluation_tokens, members, strict=True))
             evaluation_request = {
-                **_operation_request(evaluation_wire, members, baselines),
+                **_operation_request(_Phase8Operation.EVALUATE, evaluation_wire, members, baselines, group_input),
                 "privacy_obligations": privacy,
                 "utility_obligations": utility,
                 "revisions": _revision_request(current, evaluation_map),
             }
             evaluation = _dispatch(backend, _Phase8Operation.EVALUATE, evaluation_request)
-            metric = _metric(evaluation, evaluation_tokens, _obligation_tokens(privacy), _obligation_tokens(utility))
+            metric = _metric(
+                evaluation,
+                evaluation_tokens,
+                evaluation_wire.context_tokens,
+                _obligation_tokens(privacy),
+                _obligation_tokens(utility),
+                registry,
+            )
             if metric is None:
                 return None
             if not metric.needs_repair:
                 return tuple((member, current[member]) for member in members)
             if repair_round == limits.get("max_repair_iterations", 0):
                 return None
-            repair_wire = _new_wire(members)
+            repair_wire = _new_wire(members, group_input, registry)
             repair_tokens = repair_wire.member_tokens
             repair_map = dict(zip(repair_tokens, members, strict=True))
             repair_request = {
-                **_operation_request(repair_wire, members, baselines),
+                **_operation_request(_Phase8Operation.REPAIR, repair_wire, members, baselines, group_input),
                 "privacy_obligations": privacy,
                 "utility_obligations": utility,
                 "revisions": _revision_request(current, repair_map),
                 "repair_round": repair_round + 1,
             }
             repaired = _dispatch(backend, _Phase8Operation.REPAIR, repair_request)
-            if repaired is None or not _reconcile_common(repaired, None, repair_tokens, ()):
+            if repaired is None or not _reconcile_common(
+                repaired, None, repair_tokens, repair_wire.context_tokens, registry
+            ):
                 return None
-            current = _revisions(repaired, repair_map)
+            current = _revisions(repaired, repair_map, registry)
             if current is None:
                 return None
         return None
@@ -297,29 +378,128 @@ def _zero_route_admitted(
     )
 
 
-def _new_wire(members: tuple[object, ...]) -> _Phase8WireGroup:
+def _new_wire(
+    members: tuple[object, ...],
+    group_input: _Phase8GroupInput | None,
+    registry: _Phase8WireRegistry,
+    *,
+    include_mentions: bool = False,
+) -> _Phase8WireGroup:
     """Allocate attempt-local capabilities; they must never span a stage."""
-    return _Phase8WireGroup(_opaque_token(), tuple(_opaque_token() for _ in members))
+    context_count = len(group_input.context_projections) if group_input is not None else 0
+    mention_count = len(group_input.accepted_mentions) if group_input is not None and include_mentions else 0
+    return _Phase8WireGroup(
+        registry.new(),
+        tuple(registry.new() for _ in members),
+        tuple(registry.new() for _ in range(context_count)),
+        tuple(registry.new() for _ in range(mention_count)),
+    )
 
 
 def _operation_request(
-    wire: _Phase8WireGroup, members: tuple[object, ...], baselines: dict[object, str]
+    operation: _Phase8Operation,
+    wire: _Phase8WireGroup,
+    members: tuple[object, ...],
+    baselines: dict[object, str],
+    group_input: _Phase8GroupInput | None,
 ) -> dict[str, object]:
-    """Build the complete content-bearing workframe owned by this service."""
-    return {
-        "group_token": wire.group_token,
-        "operation_token": _opaque_token(),
-        "members": [
-            {"member_token": token, "ordinal": ordinal, "phase7_baseline": baselines[member]}
-            for ordinal, (member, token) in enumerate(zip(members, wire.member_tokens, strict=True))
-        ],
-        # Graph handoffs with no accepted context or mentions still carry the
-        # fields explicitly; later graph profiles populate the same schemas.
-        "context_bindings": [],
-        "accepted_mentions": [],
-        "privacy_obligations": [],
-        "utility_obligations": [],
+    """Build the frozen, operation-specific allowlisted workframe."""
+    originals = group_input.originals if group_input is not None else {}
+    records: list[dict[str, object]] = [
+        {"member_token": token, "original_text": originals.get(member), "phase7_baseline": baselines[member]}
+        for member, token in zip(members, wire.member_tokens, strict=True)
+    ]
+    request: dict[str, object] = {
+        "schema_version": "phase8-group-workframe/v1",
+        "privacy_goal": group_input.privacy_goal if group_input is not None else None,
+        "members": records,
+        "context_bindings": _context_request(wire, members, group_input),
     }
+    if operation is _Phase8Operation.ANALYZE:
+        for record, mentions in zip(records, _mentions_by_owner(wire, members, group_input), strict=True):
+            record["accepted_mentions"] = mentions
+        request["strict_entity_protection"] = group_input.strict_entity_protection if group_input is not None else None
+    elif operation is _Phase8Operation.REWRITE:
+        request["strict_entity_protection"] = group_input.strict_entity_protection if group_input is not None else None
+    elif operation is _Phase8Operation.EVALUATE:
+        for record in records:
+            record.pop("original_text")
+            record.pop("phase7_baseline")
+    else:
+        request["strict_entity_protection"] = group_input.strict_entity_protection if group_input is not None else None
+    return request
+
+
+def _context_request(
+    wire: _Phase8WireGroup, members: tuple[object, ...], group_input: _Phase8GroupInput | None
+) -> list[dict[str, object]]:
+    if group_input is None:
+        return []
+    member_tokens = dict(zip(members, wire.member_tokens, strict=True))
+    return [
+        {
+            "binding_token": token,
+            "owner_member_token": member_tokens[item.owner],
+            "ordinal": item.ordinal,
+            "text": item.text,
+        }
+        for item, token in zip(group_input.context_projections, wire.context_tokens, strict=True)
+    ]
+
+
+def _mentions_by_owner(
+    wire: _Phase8WireGroup, members: tuple[object, ...], group_input: _Phase8GroupInput | None
+) -> list[list[dict[str, object]]]:
+    if group_input is None or not wire.mention_tokens:
+        return [[] for _ in members]
+    member_tokens = dict(zip(members, wire.member_tokens, strict=True))
+    by_owner: dict[object, list[dict[str, object]]] = {member: [] for member in members}
+    for item, token in zip(group_input.accepted_mentions, wire.mention_tokens, strict=True):
+        by_owner[item.owner].append(
+            {
+                "mention_token": token,
+                "owner_member_token": member_tokens[item.owner],
+                "start": item.start,
+                "end": item.end,
+                "text": item.text,
+                "label": item.label,
+                "source": item.source,
+            }
+        )
+    return [by_owner[member] for member in members]
+
+
+def _valid_group_input(
+    members: tuple[object, ...], baselines: dict[object, str], group_input: _Phase8GroupInput | None
+) -> bool:
+    if group_input is None:
+        return True
+    if set(group_input.originals) != set(members) or set(group_input.phase7_applied) != set(members):
+        return False
+    if not group_input.strict_entity_protection or (
+        group_input.privacy_goal is not None and set(group_input.privacy_goal) != {"protect", "preserve"}
+    ):
+        return False
+    mentions = group_input.accepted_mentions
+    contexts = group_input.context_projections
+    return (
+        all(
+            item.owner in baselines
+            and type(item.start) is int
+            and type(item.end) is int
+            and 0 <= item.start < item.end <= len(group_input.originals[item.owner])
+            and group_input.originals[item.owner][item.start : item.end] == item.text
+            and item.label
+            and item.source
+            for item in mentions
+        )
+        and len({item.identity for item in mentions}) == len(mentions)
+        and all(
+            item.owner in baselines and type(item.ordinal) is int and item.ordinal >= 0 and isinstance(item.text, str)
+            for item in contexts
+        )
+        and len({(item.owner, item.ordinal) for item in contexts}) == len(contexts)
+    )
 
 
 def _revision_request(current: dict[object, str], token_to_member: dict[str, object]) -> list[dict[str, str]]:
@@ -327,24 +507,33 @@ def _revision_request(current: dict[object, str], token_to_member: dict[str, obj
 
 
 def _reconcile_common(
-    payload: object, member_field: str | None, members: tuple[str, ...], contexts: tuple[str, ...]
+    payload: object,
+    member_field: str | None,
+    members: tuple[str, ...],
+    contexts: tuple[str, ...],
+    registry: _Phase8WireRegistry,
 ) -> bool:
-    return (member_field is None or _exact_tokens(payload, member_field, members)) and _exact_tokens(
-        payload, "consumed_context_binding_tokens", contexts
+    return (member_field is None or _exact_tokens(payload, member_field, members, registry)) and _exact_tokens(
+        payload, "consumed_context_binding_tokens", contexts, registry
     )
 
 
 def _admit_obligations(
-    payload: object, members: tuple[str, ...]
+    payload: object,
+    members: tuple[str, ...],
+    mentions: tuple[str, ...],
+    mention_owners: dict[str, object],
+    member_owners: dict[str, object],
+    registry: _Phase8WireRegistry,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]] | None:
     """Allocate obligation tokens locally after exact provenance validation."""
     admitted: list[list[dict[str, object]]] = []
-    for field in ("privacy_obligations", "utility_obligations"):
-        raw = _field(payload, field)
+    for obligation_field in ("privacy_obligations", "utility_obligations"):
+        raw = _field(payload, obligation_field)
         limits = dict(getattr(_load_phase8_contract(), "limits", ()))
         limit_name = (
             "max_privacy_obligations_per_group"
-            if field == "privacy_obligations"
+            if obligation_field == "privacy_obligations"
             else "max_utility_obligations_per_group"
         )
         if not isinstance(raw, list) or len(raw) > limits.get(limit_name, 0):
@@ -358,7 +547,7 @@ def _admit_obligations(
                 or len(statement.encode()) > limits.get("max_obligation_statement_utf8_bytes", 0)
             ):
                 return None
-            if field == "privacy_obligations":
+            if obligation_field == "privacy_obligations":
                 owners = _field(value, "source_member_tokens", [])
                 kind = _field(value, "kind")
                 sensitivity = _field(value, "sensitivity")
@@ -372,7 +561,14 @@ def _admit_obligations(
                     or sensitivity not in {"high", "medium", "low"}
                     or not isinstance(mention_tokens, list)
                     or len(mention_tokens) != len(set(mention_tokens))
+                    or not set(mention_tokens) <= set(mentions)
+                    or any(
+                        mention_owners[token] not in {member_owners[token] for token in owners}
+                        for token in mention_tokens
+                    )
+                    or (kind == "direct" and not mention_tokens)
                 ):
+                    _raise_if_retired(mention_tokens, set(mentions), registry)
                     return None
                 values.append(
                     {
@@ -390,6 +586,10 @@ def _admit_obligations(
                     return None
                 values.append({"obligation_token": _opaque_token(), "statement": statement, "importance": importance})
         admitted.append(values)
+    if set(
+        mention for obligation in admitted[0] for mention in cast(list[str], obligation["source_mention_tokens"])
+    ) != set(mentions):
+        return None
     return admitted[0], admitted[1]
 
 
@@ -420,9 +620,18 @@ def _field(payload: object, name: str, default: object = None) -> object:
     return getattr(payload, name, default)
 
 
-def _exact_tokens(payload: object, name: str, expected: tuple[str, ...]) -> bool:
+def _exact_tokens(payload: object, name: str, expected: tuple[str, ...], registry: _Phase8WireRegistry) -> bool:
     observed = _field(payload, name)
+    if isinstance(observed, list):
+        _raise_if_retired(observed, set(expected), registry)
     return _exact_token_list(observed, expected)
+
+
+def _raise_if_retired(observed: object, current: set[str], registry: _Phase8WireRegistry) -> None:
+    if isinstance(observed, list) and any(
+        isinstance(token, str) and token in registry.issued - current for token in observed
+    ):
+        raise _Phase8InvocationInconsistent("retired correlation token")
 
 
 def _exact_token_list(observed: object, expected: tuple[str, ...]) -> bool:
@@ -434,13 +643,16 @@ def _exact_token_list(observed: object, expected: tuple[str, ...]) -> bool:
     )
 
 
-def _revisions(payload: object, token_to_member: dict[str, object]) -> dict[object, str] | None:
+def _revisions(
+    payload: object, token_to_member: dict[str, object], registry: _Phase8WireRegistry
+) -> dict[object, str] | None:
     revisions = _field(payload, "revisions")
     if not isinstance(revisions, list):
         return None
     result: dict[object, str] = {}
     for revision in revisions:
         token, text = _field(revision, "member_token"), _field(revision, "text")
+        _raise_if_retired([token], set(token_to_member), registry)
         if not isinstance(token, str) or not isinstance(text, str) or token not in token_to_member:
             return None
         member = token_to_member[token]
@@ -451,17 +663,22 @@ def _revisions(payload: object, token_to_member: dict[str, object]) -> dict[obje
 
 
 def _metric(
-    payload: object, tokens: tuple[str, ...], privacy_tokens: tuple[str, ...], utility_tokens: tuple[str, ...]
+    payload: object,
+    tokens: tuple[str, ...],
+    contexts: tuple[str, ...],
+    privacy_tokens: tuple[str, ...],
+    utility_tokens: tuple[str, ...],
+    registry: _Phase8WireRegistry,
 ) -> _Phase8Metric | None:
-    if payload is None or not _reconcile_common(payload, "evaluated_member_tokens", tokens, ()):
+    if payload is None or not _reconcile_common(payload, "evaluated_member_tokens", tokens, contexts, registry):
         return None
     privacy = _field(payload, "privacy_answers", [])
     utility = _field(payload, "utility_answers", [])
     if (
         not isinstance(privacy, list)
         or not isinstance(utility, list)
-        or not _exact_answer_tokens(privacy, privacy_tokens)
-        or not _exact_answer_tokens(utility, utility_tokens)
+        or not _exact_answer_tokens(privacy, privacy_tokens, registry)
+        or not _exact_answer_tokens(utility, utility_tokens, registry)
     ):
         return None
     try:
@@ -474,8 +691,10 @@ def _metric(
     )
 
 
-def _exact_answer_tokens(answers: list[object], expected: tuple[str, ...]) -> bool:
-    return _exact_token_list([_field(answer, "obligation_token") for answer in answers], expected)
+def _exact_answer_tokens(answers: list[object], expected: tuple[str, ...], registry: _Phase8WireRegistry) -> bool:
+    tokens = [_field(answer, "obligation_token") for answer in answers]
+    _raise_if_retired(tokens, set(expected), registry)
+    return _exact_token_list(tokens, expected)
 
 
 def _privacy_answer(answer: object) -> tuple[str, float, bool]:
