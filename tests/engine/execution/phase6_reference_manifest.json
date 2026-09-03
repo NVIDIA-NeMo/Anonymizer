@@ -1,0 +1,91 @@
+{
+  "alphabet": [
+    "A",
+    "é",
+    "😀",
+    "é",
+    " "
+  ],
+  "actual_event_count": 446,
+  "canonical_trace_count": 44,
+  "case_count": 21,
+  "digest": "37d92a09fda08d77d6f7f69447543d5eff37c0796ddf4a0098cb736b2c45902f",
+  "event_alphabet": [
+    "dispatch",
+    "terminal",
+    "candidate_decision",
+    "evidence",
+    "finalize",
+    "patch",
+    "transform",
+    "verify",
+    "group_verify",
+    "release",
+    "cancel",
+    "trusted_stop",
+    "loss",
+    "cleanup",
+    "immutable_accept",
+    "teardown"
+  ],
+  "generator_version": "phase6-finite-envelope/v3",
+  "independence_relation": [
+    [
+      "candidate_decision",
+      "evidence"
+    ],
+    [
+      "patch",
+      "group_verify"
+    ],
+    [
+      "terminal",
+      "terminal"
+    ]
+  ],
+  "lifecycle_trace_count": 13,
+  "max_event_count": 45,
+  "ordered_races": [
+    [
+      "dispatch",
+      "terminal"
+    ],
+    [
+      "cancel",
+      "terminal"
+    ],
+    [
+      "verify",
+      "release"
+    ],
+    [
+      "finalize",
+      "release"
+    ],
+    [
+      "teardown",
+      "immutable_accept"
+    ]
+  ],
+  "race_trace_count": 23,
+  "reference_model_version": "phase6-reference/v3",
+  "schedule_class_counts": {
+    "cancel-after-verification": 1,
+    "cancel-dispatch": 2,
+    "cancel-terminal": 2,
+    "cleanup-failure": 1,
+    "contradictory-record-patch": 2,
+    "dispatch-terminal": 2,
+    "duplicate-resolver-completion": 1,
+    "finalize-release": 2,
+    "late-candidate-after-cancel": 1,
+    "late-candidate-after-loss": 1,
+    "late-evidence-after-cancel": 1,
+    "late-evidence-after-loss": 1,
+    "local-failure-independent-success": 1,
+    "success": 21,
+    "teardown-failure-after-acceptance": 1,
+    "teardown-acceptance": 2,
+    "verify-release": 2
+  }
+}

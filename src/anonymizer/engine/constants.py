@@ -12,6 +12,26 @@ from __future__ import annotations
 # Input
 COL_TEXT = "__nemo_anonymizer_text_input__"
 
+# Private target/context workframes. These columns never enter public results.
+COL_TARGET_WORK_ID = "__anonymizer_private_row_correlation__"
+COL_TASK_ID = "__anonymizer_private_task_identity__"
+COL_ATTEMPT_ID = "__anonymizer_private_attempt_identity__"
+COL_CONTEXT_BINDING_ID = "__anonymizer_context_binding_id__"
+COL_CONTEXT_OWNER_WORK_ID = "__anonymizer_context_owner_work_id__"
+COL_CONTEXT_ORDINAL = "__anonymizer_context_ordinal__"
+COL_CONTEXT_TEXT = "__anonymizer_context_text__"
+
+# Private Phase 6 provider workframes. These columns never enter public results.
+COL_PHASE6_CONTEXT = "__anonymizer_phase6_context__"
+COL_PHASE6_CANDIDATES = "__anonymizer_phase6_candidates__"
+COL_PHASE6_AUGMENTED = "__anonymizer_phase6_augmented__"
+COL_PHASE6_VALIDATION = "__anonymizer_phase6_validation__"
+
+# Private Phase 7 candidate workframes. These columns never enter public results.
+COL_PHASE7_INVOCATION_ID = "__anonymizer_phase7_invocation_identity__"
+COL_PHASE7_CANDIDATE_REQUEST = "__anonymizer_phase7_candidate_request__"
+COL_PHASE7_CANDIDATE_BUNDLE = "__anonymizer_phase7_candidate_bundle__"
+
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"
 

@@ -1,0 +1,62 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "atif-session-v17",
+  "trajectory_id": "trajectory-v17",
+  "agent": {
+    "name": "validation-agent",
+    "version": "1.7.0",
+    "model_name": "validation-model"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "timestamp": "2026-08-19T00:01:00Z",
+      "source": "user",
+      "message": [
+        {
+          "type": "text",
+          "text": "Email Bob at bob@example.test"
+        }
+      ]
+    },
+    {
+      "step_id": 2,
+      "timestamp": "2026-08-19T00:01:01Z",
+      "source": "agent",
+      "message": "I found Bob",
+      "reasoning_content": "Search Acme records for Bob",
+      "model_name": "validation-model",
+      "tool_calls": [
+        {
+          "tool_call_id": "call-v17-1",
+          "function_name": "search_directory",
+          "arguments": {
+            "query": "Bob at Acme",
+            "limit": 5
+          },
+          "extra": {
+            "invocation_index": 1
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "call-v17-1",
+            "content": [
+              {
+                "type": "text",
+                "text": "Bob uses bob@example.test"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "notes": "Validation trajectory for Bob",
+  "evaluation_context": {
+    "evaluation_id": "sdk-validation",
+    "test_case_id": "atif-v17"
+  }
+}

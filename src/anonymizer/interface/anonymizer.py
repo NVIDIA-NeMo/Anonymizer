@@ -49,7 +49,6 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
-    DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -57,6 +56,8 @@ from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWor
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.execution.invocation import _CompiledInvocation
+from anonymizer.engine.execution.pandas_runtime import _PandasRuntime
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import (
@@ -65,13 +66,14 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
+from anonymizer.engine.private_row_verification import PrivateRowVerificationError, _InvocationRowVerifier
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesByValueSchema
-from anonymizer.interface.errors import InvalidConfigError
+from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
 from anonymizer.measurement import (
@@ -97,6 +99,8 @@ if TYPE_CHECKING:
     from data_designer.config.config_builder import DataDesignerConfigBuilder
 
 logger = logging.getLogger("anonymizer")
+
+_PUBLIC_PIPELINE_FAILURE_MESSAGE = "Anonymization pipeline failed."
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:
@@ -243,6 +247,13 @@ class Anonymizer:
         No LLM evaluation judges run here — call :meth:`evaluate` on the
         result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
+        The call publishes one complete :class:`AnonymizerResult` or raises;
+        exceptions never carry a partial result. Records dropped by an
+        underlying workflow are instead reported explicitly in a successful
+        result's ``failed_records``. This result-publication contract does not
+        make external providers, telemetry, source ingestion, or persistence
+        transactional.
+
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
@@ -253,12 +264,15 @@ class Anonymizer:
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
+        public_error: AnonymizerWorkflowError | None = None
         try:
             result = self._run_internal(config=config, data=data, context=context, preview_num_records=None)
-            return result
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
             raise
+        except PrivateRowVerificationError:
+            status = TaskStatusEnum.ERROR
+            public_error = AnonymizerWorkflowError(_PUBLIC_PIPELINE_FAILURE_MESSAGE)
         except Exception:
             status = TaskStatusEnum.ERROR
             raise
@@ -272,6 +286,11 @@ class Anonymizer:
                 result=result,
                 duration_sec=time.perf_counter() - t_start,
             )
+        if public_error is not None:
+            raise public_error from None
+        if result is None:  # pragma: no cover - defensive typing guard
+            raise RuntimeError("Anonymizer pipeline returned no result")
+        return result
 
     def export_detection_config(
         self,
@@ -355,6 +374,13 @@ class Anonymizer:
         No LLM evaluation judges run here — call :meth:`evaluate` on the
         result's ``trace_dataframe`` when you want the Judge Agreement scores.
 
+        The call publishes one complete :class:`PreviewResult` for the selected
+        subset or raises; exceptions never carry a partial result. Records
+        dropped by an underlying workflow are instead reported explicitly in a
+        successful result's ``failed_records``. This result-publication contract
+        does not make external providers, telemetry, source ingestion, or
+        persistence transactional.
+
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: Input source with file path, text column, and optional data summary.
@@ -366,22 +392,15 @@ class Anonymizer:
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
+        public_error: AnonymizerWorkflowError | None = None
         try:
             result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
-            return PreviewResult(
-                dataframe=result.dataframe,
-                trace_dataframe=result.trace_dataframe,
-                resolved_text_column=result.resolved_text_column,
-                failed_records=result.failed_records,
-                preview_num_records=num_records,
-                replace_method=config.replace,
-                rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
-                entity_labels=config.detect.entity_labels,
-                data_summary=result.data_summary,
-            )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
             raise
+        except PrivateRowVerificationError:
+            status = TaskStatusEnum.ERROR
+            public_error = AnonymizerWorkflowError(_PUBLIC_PIPELINE_FAILURE_MESSAGE)
         except Exception:
             status = TaskStatusEnum.ERROR
             raise
@@ -395,6 +414,21 @@ class Anonymizer:
                 result=result,
                 duration_sec=time.perf_counter() - t_start,
             )
+        if public_error is not None:
+            raise public_error from None
+        if result is None:  # pragma: no cover - defensive typing guard
+            raise RuntimeError("Anonymizer preview pipeline returned no result")
+        return PreviewResult(
+            dataframe=result.dataframe,
+            trace_dataframe=result.trace_dataframe,
+            resolved_text_column=result.resolved_text_column,
+            failed_records=result.failed_records,
+            preview_num_records=num_records,
+            replace_method=config.replace,
+            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+            entity_labels=config.detect.entity_labels,
+            data_summary=result.data_summary,
+        )
 
     def evaluate(
         self,
@@ -606,8 +640,6 @@ class Anonymizer:
 
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
-            for failure in result.failed_records:
-                logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
         logger.info(
             "🎉 Evaluation complete — %d records processed [%.1fs]",
             num_records,
@@ -619,6 +651,20 @@ class Anonymizer:
         """Validate that the active workflow config is compatible with model selections."""
         self._validate_preflight_config(config)
 
+    def _compile_protection_plan(self, config: AnonymizerConfig):
+        """Compile the private Plan A profile without performing effects."""
+        from anonymizer.interface._protection import _compile_protection_plan
+
+        return _compile_protection_plan(config, self._selected_models, self._model_configs)
+
+    def _open_protection_flow(self, plan):
+        """Open a private flow borrowing this facade's runtime resources."""
+        from anonymizer.interface._protection import _ProtectionFlow, _ProtectionPlan
+
+        if not isinstance(plan, _ProtectionPlan):
+            raise ValueError("private protection plan is not executable")
+        return _ProtectionFlow(self, plan)
+
     def _run_internal(
         self,
         *,
@@ -627,36 +673,51 @@ class Anonymizer:
         context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
+        verifier = _InvocationRowVerifier(context.dataframe)
+        context = context.with_dataframe(verifier.bind(context.dataframe))
         input_df = context.dataframe
         mode = "replace" if config.replace is not None else "rewrite"
         strategy = type(config.replace).__name__ if config.replace is not None else "Rewrite"
-        with stage_timer(
-            "Anonymizer._run_internal",
-            mode=mode,
-            strategy=strategy,
-            input_row_count=len(input_df),
-            preview_num_records=preview_num_records,
-        ) as measurement:
-            record_run_metadata(
-                config=config,
-                data=data,
+        result: AnonymizerResult | None = None
+        pipeline_error: PrivateRowVerificationError | None = None
+        try:
+            with stage_timer(
+                "Anonymizer._run_internal",
                 mode=mode,
                 strategy=strategy,
                 input_row_count=len(input_df),
                 preview_num_records=preview_num_records,
-                model_configs=self._model_configs,
-            )
-            result = self._run_internal_impl(
-                config=config,
-                data=data,
-                context=context,
-                preview_num_records=preview_num_records,
-            )
-            measurement.update(
-                output_row_count=len(result.trace_dataframe),
-                failed_record_count=len(result.failed_records),
-            )
-            return result
+            ) as measurement:
+                record_run_metadata(
+                    config=config,
+                    data=data,
+                    mode=mode,
+                    strategy=strategy,
+                    input_row_count=len(input_df),
+                    preview_num_records=preview_num_records,
+                    model_configs=self._model_configs,
+                )
+                result = self._run_internal_impl(
+                    config=config,
+                    data=data,
+                    context=context,
+                    preview_num_records=preview_num_records,
+                    verifier=verifier,
+                )
+                measurement.update(
+                    output_row_count=len(result.trace_dataframe),
+                    failed_record_count=len(result.failed_records),
+                )
+        except KeyboardInterrupt:
+            verifier.abort(cancelled=True)
+            raise
+        except Exception as exc:
+            pipeline_error = verifier.abort_with_failure(stage="pipeline", cause=exc)
+        if pipeline_error is not None:
+            raise pipeline_error from None
+        if result is None:  # pragma: no cover - defensive typing guard
+            raise RuntimeError("Private anonymizer pipeline returned no result")
+        return result
 
     def _run_internal_impl(
         self,
@@ -665,136 +726,23 @@ class Anonymizer:
         data: AnonymizerInput,
         context: ResolvedInput,
         preview_num_records: int | None,
+        verifier: _InvocationRowVerifier,
     ) -> AnonymizerResult:
-        input_df = context.dataframe
-        num_records = len(input_df)
-        if preview_num_records is not None and preview_num_records != num_records:
-            effective_records = min(preview_num_records, num_records)
-            if effective_records < preview_num_records:
-                logger.info(
-                    LOG_INDENT + "🔍 Running entity detection on capped %d records (requested %d, available %d)",
-                    effective_records,
-                    preview_num_records,
-                    num_records,
-                )
-            else:
-                logger.info(
-                    LOG_INDENT + "🔍 Running entity detection on %d of %d records", effective_records, num_records
-                )
-            preview_num_records = effective_records
-        else:
-            logger.info("🔍 Running entity detection on %d records", num_records)
-        if logger.isEnabledFor(logging.DEBUG):
-            text_lengths = input_df[COL_TEXT].astype(str).str.len()
-            logger.debug(
-                "input text lengths: min=%d, max=%d, mean=%.0f chars (%d records)",
-                text_lengths.min(),
-                text_lengths.max(),
-                text_lengths.mean(),
-                num_records,
-            )
-            logger.debug(
-                "detection config: threshold=%.2f, labels=%s",
-                config.detect.gliner_threshold,
-                config.detect.entity_labels
-                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
-            )
-        else:
-            logger.info(
-                "detection labels in scope: %s",
-                config.detect.entity_labels
-                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
-            )
-
-        t0 = time.perf_counter()
-        detection_result = self._detection_workflow.run(
-            input_df,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.detection,
-            gliner_detection_threshold=config.detect.gliner_threshold,
-            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
-            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
-            entity_labels=config.detect.entity_labels,
-            privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
+        invocation = _CompiledInvocation.compile(config, self._selected_models, self._model_configs)
+        execution = _PandasRuntime(
+            detection_workflow=self._detection_workflow,
+            replace_runner=self._replace_runner,
+            rewrite_runner=self._rewrite_runner,
+            combined_rewrite_runner=self._combined_rewrite_runner,
+        ).run(
+            context.dataframe,
+            invocation=invocation,
             data_summary=data.data_summary,
-            tag_latent_entities=config.rewrite is not None,
-            compute_grouped_entities=config.replace is not None or config.rewrite is not None,
             preview_num_records=preview_num_records,
+            verifier=verifier,
         )
-        detection_elapsed = time.perf_counter() - t0
-        entity_count = _count_entities(detection_result.dataframe)
-        detection_failed = len(detection_result.failed_records)
-        logger.info(
-            LOG_INDENT + "📋 Detection complete — %d entities found across %d records (%d failed) [%.1fs]",
-            entity_count,
-            len(detection_result.dataframe),
-            detection_failed,
-            detection_elapsed,
-        )
-        if COL_DETECTED_ENTITIES in detection_result.dataframe.columns:
-            label_counts = _count_labels(detection_result.dataframe[COL_DETECTED_ENTITIES])
-            if label_counts:
-                summary = ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
-                logger.info(LOG_INDENT + "labels: %s", summary)
-        if config.replace is not None:
-            strategy_name = type(config.replace).__name__
-            logger.info("🔄 Running %s replacement", strategy_name)
-            t0 = time.perf_counter()
-            replace_result = self._replace_runner.run(
-                detection_result.dataframe,
-                replace_method=config.replace,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.replace,
-                preview_num_records=preview_num_records,
-            )
-            replace_elapsed = time.perf_counter() - t0
-            final_df = replace_result.dataframe
-            post_detection_failures = replace_result.failed_records
-            logger.info(
-                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
-                len(post_detection_failures),
-                replace_elapsed,
-            )
-        elif config.rewrite is not None:
-            logger.info("✏️ Running rewrite pipeline")
-            t0 = time.perf_counter()
-            privacy_goal = config.rewrite.privacy_goal
-            if privacy_goal is None:
-                raise InvalidConfigError("rewrite.privacy_goal must not be None")
-            rewrite_runner = (
-                self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
-            )
-            rewrite_result = rewrite_runner.run(
-                detection_result.dataframe,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.rewrite,
-                replace_model_selection=self._selected_models.replace,
-                privacy_goal=privacy_goal,
-                evaluation=config.rewrite.evaluation,
-                data_summary=data.data_summary,
-                preview_num_records=preview_num_records,
-                strict_entity_protection=config.rewrite.strict_entity_protection,
-            )
-            rewrite_elapsed = time.perf_counter() - t0
-            final_df = rewrite_result.dataframe
-            post_detection_failures = rewrite_result.failed_records
-            logger.info(
-                LOG_INDENT + "📋 Rewrite complete (%d failed) [%.1fs]",
-                len(post_detection_failures),
-                rewrite_elapsed,
-            )
-        else:
-            final_df = detection_result.dataframe
-            post_detection_failures = []
-
-        all_failures = [*detection_result.failed_records, *post_detection_failures]
-        if all_failures:
-            logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
-            for f in all_failures:
-                logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
-        text_col = context.resolved_text_column
-        renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
-        logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
+        final_df = execution.dataframe
+        renamed_trace = _rename_output_columns(final_df, resolved_text_column=context.resolved_text_column)
         record_record_metrics(
             final_df,
             mode="replace" if config.replace is not None else "rewrite",
@@ -803,10 +751,10 @@ class Anonymizer:
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
         )
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
+            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=context.resolved_text_column),
             trace_dataframe=renamed_trace,
-            resolved_text_column=text_col,
-            failed_records=all_failures,
+            resolved_text_column=context.resolved_text_column,
+            failed_records=execution.failed_records,
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,

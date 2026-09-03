@@ -23,7 +23,11 @@ class AnonymizerIOError(AnonymizerError):
 class AnonymizerWorkflowError(AnonymizerError):
     """Raised when an underlying workflow step (preview, execution, or dataset load) fails.
 
-    The original backend exception is preserved as ``__cause__`` via ``raise ... from exc``
-    so callers can inspect the exact failure without the anonymizer layer leaking backend
-    exception types into its own public error hierarchy.
+    Internal boundaries may preserve a backend exception as ``__cause__`` for
+    diagnostics. Public privacy-sensitive operations such as ``run()`` and
+    ``preview()`` deliberately suppress causes and use a generic message so
+    backend details, row correlations, and input values cannot escape. Those
+    operations do not attach a partial result to this exception. Explicit
+    per-record drops remain available only through ``failed_records`` on a
+    successfully returned result.
     """

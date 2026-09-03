@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 import pandas as pd
@@ -29,7 +29,7 @@ from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, _FailedRowEvidence
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
 from anonymizer.measurement import stage_timer
@@ -43,6 +43,7 @@ class ReplacementResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    failed_row_evidence: tuple[_FailedRowEvidence, ...] = field(default=(), repr=False)
 
 
 class ReplacementWorkflow:
@@ -89,6 +90,7 @@ class ReplacementWorkflow:
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
                 failed_records: list[FailedRecord] = []
+                failed_row_evidence: tuple[_FailedRowEvidence, ...] = ()
             elif isinstance(replace_method, Substitute):
                 if self._llm_workflow is None:
                     raise ValueError("Substitute requires an llm_workflow, but none was provided.")
@@ -101,10 +103,15 @@ class ReplacementWorkflow:
                 )
                 local_df = apply_replacement_map(map_result.dataframe)
                 failed_records = list(map_result.failed_records)
+                failed_row_evidence = map_result.failed_row_evidence
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-            result = ReplacementResult(dataframe=local_df, failed_records=failed_records)
+            result = ReplacementResult(
+                dataframe=local_df,
+                failed_records=failed_records,
+                failed_row_evidence=failed_row_evidence,
+            )
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),

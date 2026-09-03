@@ -78,6 +78,7 @@ def _make_logging_anonymizer(
         {
             COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
             COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
@@ -93,6 +94,7 @@ def _make_logging_anonymizer(
             "leakage_mass": [0.3, 0.1],
             "any_high_leaked": [False, False],
             "needs_human_review": [False, False],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
@@ -173,6 +175,24 @@ def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.Log
     assert "1 failed" in messages
     assert "🎉 Pipeline complete" in messages
     assert "2 total failures" in messages
+
+
+def test_run_preserves_debug_input_and_failure_diagnostics(
+    stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
+) -> None:
+    anonymizer = _make_logging_anonymizer(
+        detection_failures=[FailedRecord(record_id="r1", step="detection", reason="timeout")],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+    messages = caplog.text
+    assert "input text lengths: min=" in messages
+    assert "detection config: threshold=0.30" in messages
+    assert "1 record(s) failed during pipeline processing." in messages
+    assert "r1" not in messages
+    assert "timeout" not in messages
 
 
 def test_run_without_replacement_skips_replace_logs(
@@ -290,7 +310,8 @@ def test_evaluate_debug_logs_config_and_failures_without_sensitive_context(
     assert "active evaluation judges: entity_coverage_judge" in messages
     assert "evaluation models:" in messages
     assert "1 evaluation failed record(s)" in messages
-    assert "r1 (entity-coverage-judge: timeout)" in messages
+    assert "r1" not in messages
+    assert "timeout" not in messages
     assert "confidential dataset description" not in messages
 
 
@@ -452,6 +473,14 @@ def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput)
     """When num_records < available rows, preview_num_records is forwarded as-is."""
     anonymizer = _make_logging_anonymizer()
     config = AnonymizerConfig(replace=Redact())
+    detection = _mock_method(anonymizer._detection_workflow.run)
+    replacement = _mock_method(anonymizer._replace_runner.run)
+    detection.side_effect = lambda dataframe, **_kwargs: EntityDetectionResult(
+        dataframe=detection.return_value.dataframe.iloc[: len(dataframe)].copy(), failed_records=[]
+    )
+    replacement.side_effect = lambda dataframe, **_kwargs: ReplacementResult(
+        dataframe=replacement.return_value.dataframe.iloc[: len(dataframe)].copy(), failed_records=[]
+    )
 
     # stub_input has 2 rows; num_records=1 fits, so no clamping
     anonymizer.preview(config=config, data=stub_input, num_records=1)
@@ -511,6 +540,7 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
         {
             COL_TEXT: [f"Name{i} works here" for i in range(num_preview)],
             COL_REPLACED_TEXT: ["[REDACTED] works here" for _ in range(num_preview)],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)

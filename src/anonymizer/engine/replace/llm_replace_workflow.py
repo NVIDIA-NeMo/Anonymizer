@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -23,7 +23,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP_SOURCE,
     ENTITY_LABEL_EXAMPLES,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, _FailedRowEvidence
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
@@ -43,6 +43,7 @@ _INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES
 class LlmReplaceResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    failed_row_evidence: tuple[_FailedRowEvidence, ...] = field(default=(), repr=False)
 
 
 class LlmReplaceWorkflow:
@@ -120,6 +121,7 @@ class LlmReplaceWorkflow:
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
+            failed_row_evidence=run_result.failed_row_evidence,
         )
 
 

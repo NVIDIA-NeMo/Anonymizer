@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
@@ -164,7 +165,7 @@ def _standard_side_effect(
 
 def _mock_replace(mock_cls: Mock, replace_df: pd.DataFrame) -> None:
     """Configure a patched LlmReplaceWorkflow class to return replace_df."""
-    mock_cls.return_value.generate_map_only.return_value = Mock(dataframe=replace_df, failed_records=[])
+    mock_cls.return_value.generate_map_only.return_value = LlmReplaceResult(dataframe=replace_df, failed_records=[])
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +304,7 @@ def test_failed_records_accumulated_across_steps(
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
-        mock_replace_cls.return_value.generate_map_only.return_value = Mock(
+        mock_replace_cls.return_value.generate_map_only.return_value = LlmReplaceResult(
             dataframe=stub_replace_df,
             failed_records=[FailedRecord(record_id="d", step="replace-map-generation", reason="timeout")],
         )

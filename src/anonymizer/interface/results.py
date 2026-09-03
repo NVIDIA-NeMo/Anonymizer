@@ -55,7 +55,10 @@ class AnonymizerResult(_DisplayMixin):
             user's requested ``text_column`` unless the reader had to rename it
             to avoid colliding with an Anonymizer output column, in which case
             it is the post-rename identifier (e.g. ``"final_entities__input"``).
-        failed_records: Records that failed during pipeline processing.
+        failed_records: Records dropped by an underlying workflow during an
+            otherwise successful call. Their presence is an explicit degraded
+            result, not transactional publication of a partially built result
+            after an exception.
         replace_method: The replace strategy that produced this result. Set by
             ``run()`` / ``preview()``; consumed by ``evaluate()`` to dispatch the
             right judges. ``None`` on results that were constructed by hand or
@@ -101,7 +104,10 @@ class PreviewResult(_DisplayMixin):
             user's requested ``text_column`` unless the reader had to rename it
             to avoid colliding with an Anonymizer output column, in which case
             it is the post-rename identifier (e.g. ``"final_entities__input"``).
-        failed_records: Records that failed during pipeline processing.
+        failed_records: Records dropped by an underlying workflow during an
+            otherwise successful call. Their presence is an explicit degraded
+            result, not transactional publication of a partially built result
+            after an exception.
         preview_num_records: Number of records requested for the preview.
         replace_method: The replace strategy that produced this preview. Set by
             ``preview()``; consumed by ``evaluate()`` to dispatch the right
