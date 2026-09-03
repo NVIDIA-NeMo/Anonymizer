@@ -13,7 +13,12 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.execution.accounting_plan import _AccountingLimits, _DatumTaskSubject, _TaskPredecessor
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingLimits,
+    _DatumTaskSubject,
+    _TaskKey,
+    _TaskPredecessor,
+)
 from anonymizer.engine.execution.context_contract import (
     _BackendArtifactClass,
     _ContextBackendCapability,
@@ -384,13 +389,25 @@ def test_phase7_compiler_requires_exact_phase6_scope_cluster_role_and_terminal_h
     expected_phase7_predecessors = {
         _TaskPredecessor(result.scope_tasks[0], result.application_tasks[0]),
         _TaskPredecessor(result.scope_tasks[0], result.application_tasks[1]),
+        _TaskPredecessor(
+            _TaskKey(plan.accounting.stages[-1], _DatumTaskSubject(_DatumId("target-0"))),
+            result.application_tasks[0],
+        ),
+        _TaskPredecessor(
+            _TaskKey(plan.accounting.stages[-1], _DatumTaskSubject(_DatumId("target-1"))),
+            result.application_tasks[1],
+        ),
     }
     phase7_tasks = {*result.scope_tasks, *result.application_tasks}
+    assert set(result.application_predecessors) == expected_phase7_predecessors
     assert {
         predecessor
         for predecessor in result.accounting.task_predecessors
         if predecessor.prerequisite in phase7_tasks or predecessor.dependent in phase7_tasks
-    } == expected_phase7_predecessors
+    } == {
+        _TaskPredecessor(result.scope_tasks[0], result.application_tasks[0]),
+        _TaskPredecessor(result.scope_tasks[0], result.application_tasks[1]),
+    }
     assert module._is_admitted_phase7_plan(result)
 
     extra = _TaskPredecessor(result.application_tasks[0], result.application_tasks[1])
@@ -853,6 +870,7 @@ def test_phase7_plan_and_nested_manifests_reject_tampering_and_serialization() -
     assert not module._is_admitted_phase7_plan(replace(result, manifests=(changed_manifest,)))
     assert not module._is_admitted_phase7_plan(replace(result, manifests=(replace(manifest, members=()),)))
     assert not module._is_admitted_phase7_plan(replace(result, application_tasks=()))
+    assert not module._is_admitted_phase7_plan(replace(result, application_predecessors=()))
     with pytest.raises(FrozenInstanceError):
         manifest.members = ()
     with pytest.raises(TypeError, match="not serializable"):

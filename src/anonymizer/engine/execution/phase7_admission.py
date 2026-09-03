@@ -169,6 +169,7 @@ class _Phase7Plan(_PrivatePhase7AdmissionValue):
     accounting: _AccountingPlan
     scope_tasks: tuple[_TaskKey, ...]
     application_tasks: tuple[_TaskKey, ...]
+    application_predecessors: tuple[_TaskPredecessor, ...]
     _proof: _Phase7PlanProof | None = field(default=None, compare=False)
 
 
@@ -225,8 +226,16 @@ def _compile_phase7_plan(
         for manifest, scope_task in zip(manifests, scope_tasks, strict=True)
         for member in manifest.members
     )
+    # The ledger enforces the previous datum stage implicitly and deliberately
+    # rejects a duplicate explicit edge. Seal the complete effective set on
+    # the Phase 7 plan while storing only scope edges in Phase 4 accounting.
+    previous_stage = accounting.stages[-2]
+    stage_predecessors = tuple(
+        _TaskPredecessor(_TaskKey(previous_stage, task.subject), task) for task in application_tasks
+    )
     accounting = accounting.with_task_predecessors((*accounting.task_predecessors, *scope_predecessors))
-    candidate = _Phase7Plan(manifests, accounting, scope_tasks, application_tasks)
+    application_predecessors = (*scope_predecessors, *stage_predecessors)
+    candidate = _Phase7Plan(manifests, accounting, scope_tasks, application_tasks, application_predecessors)
     snapshot = _phase7_plan_snapshot(candidate)
     if snapshot is None:
         return _Phase7Rejected(_Phase7AdmissionCode.INVALID_INPUT)
@@ -235,6 +244,7 @@ def _compile_phase7_plan(
         accounting,
         scope_tasks,
         application_tasks,
+        application_predecessors,
         _Phase7PlanProof(_PHASE7_PLAN_SEAL, snapshot),
     )
 
@@ -263,14 +273,20 @@ def _has_exact_application_predecessors(plan: _Phase7Plan) -> bool:
     application_by_datum = {
         task.subject.datum_id: task for task in plan.application_tasks if isinstance(task.subject, _DatumTaskSubject)
     }
-    expected = {
+    expected_scope = tuple(
         _TaskPredecessor(scope_task, application_by_datum[member])
         for manifest, scope_task in zip(plan.manifests, plan.scope_tasks, strict=True)
         for member in manifest.members
         if member in application_by_datum
-    }
+    )
+    if len(plan.accounting.stages) < 2:
+        return False
+    previous_stage = plan.accounting.stages[-2]
+    expected_stage = tuple(
+        _TaskPredecessor(_TaskKey(previous_stage, task.subject), task) for task in plan.application_tasks
+    )
     phase7_tasks = {*plan.scope_tasks, *plan.application_tasks}
-    observed = {
+    observed_explicit = {
         predecessor
         for predecessor in plan.accounting.task_predecessors
         if predecessor.prerequisite in phase7_tasks or predecessor.dependent in phase7_tasks
@@ -278,7 +294,10 @@ def _has_exact_application_predecessors(plan: _Phase7Plan) -> bool:
     return (
         len(application_by_datum) == len(plan.accounting.datums)
         and set(application_by_datum) == {datum.id for datum in plan.accounting.datums}
-        and observed == expected
+        and all(task.stage == plan.accounting.stages[-1] for task in plan.application_tasks)
+        and all(predecessor.prerequisite in plan.accounting.tasks for predecessor in expected_stage)
+        and plan.application_predecessors == (*expected_scope, *expected_stage)
+        and observed_explicit == set(expected_scope)
     )
 
 
@@ -695,6 +714,7 @@ def _phase7_plan_snapshot(plan: _Phase7Plan) -> tuple[object, ...] | None:
             tuple(plan.accounting.tasks),
             tuple(plan.scope_tasks),
             tuple(plan.application_tasks),
+            tuple(plan.application_predecessors),
         )
     except (AttributeError, TypeError):
         return None
