@@ -68,6 +68,64 @@ def test_all_shipped_profiles_compile() -> None:
     assert all(plan.served_model_name for plan in plans)
 
 
+@pytest.mark.parametrize(
+    ("filename", "model_id", "revision", "served_model_name", "valued_flags", "switches"),
+    [
+        (
+            "gemma-4-12b-it.toml",
+            "google/gemma-4-12B-it",
+            "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+            "gemma-4-12b-it-local",
+            (("--gpu-memory-utilization", "0.9"), ("--max-model-len", "8192"), ("--max-num-seqs", "16")),
+            ("--enable-prefix-caching", "--async-scheduling"),
+        ),
+        (
+            "nemotron-3.5-lightning-nvfp4.toml",
+            "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+            "cc84af2fe71647d87f4486c064f320e1e7535243",
+            "nemotron-3.5-lightning-nvfp4-local",
+            (
+                ("--gpu-memory-utilization", "0.88"),
+                ("--max-model-len", "8192"),
+                ("--max-num-seqs", "16"),
+                ("--mamba-backend", "flashinfer"),
+                ("--mamba-ssm-cache-dtype", "float16"),
+                ("--mamba-cache-philox-rounds", "5"),
+            ),
+            (
+                "--enable-prefix-caching",
+                "--async-scheduling",
+                "--enable-mamba-cache-stochastic-rounding",
+            ),
+        ),
+    ],
+)
+def test_dedicated_generation_profiles_are_pinned_and_compile_expected_flags(
+    filename: str,
+    model_id: str,
+    revision: str,
+    served_model_name: str,
+    valued_flags: tuple[tuple[str, str], ...],
+    switches: tuple[str, ...],
+) -> None:
+    profile_path = PROFILES / filename
+    assert profile_path.is_file(), f"missing dedicated profile: {filename}"
+
+    plan = compiler.compile_profile(load_profile(profile_path), source_revision="test")
+    argv = plan.command.render_argv()
+
+    assert plan.spec.model.model_id == model_id
+    assert plan.spec.model.revision == revision
+    assert plan.served_model_name == served_model_name
+    assert plan.required_capabilities == ("chat-completions",)
+    assert argv[2] == model_id
+    for flag, expected_value in (("--revision", revision), ("--tokenizer-revision", revision), *valued_flags):
+        flag_index = argv.index(flag)
+        assert argv[flag_index + 1] == expected_value
+    assert all(switch in argv for switch in switches)
+    assert "--vllm-factory-plugin" not in argv
+
+
 def test_plan_keeps_one_endpoint_address_and_one_served_model_vocabulary() -> None:
     plan = compiler.compile_profile(generation(served_model_name="local-generator"), source_revision="test")
 
