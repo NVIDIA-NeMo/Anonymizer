@@ -19,14 +19,25 @@ class _Phase8GroupOutcome:
 
 
 def _run_group_operation(
-    members: tuple[object, ...], baselines: dict[object, str], *, analyze: Callable[[], tuple[bool, bool]], rewrite: Callable[[dict[object, str]], dict[object, str]], evaluate: Callable[[dict[object, str]], _Phase8Metric], repair: Callable[[dict[object, str], int], dict[object, str]], max_repairs: int
+    members: tuple[object, ...],
+    baselines: dict[object, str],
+    *,
+    analyze: Callable[[], tuple[bool, bool]],
+    rewrite: Callable[[dict[object, str]], dict[object, str]],
+    evaluate: Callable[[dict[object, str]], _Phase8Metric],
+    repair: Callable[[dict[object, str], int], dict[object, str]],
+    max_repairs: int,
 ) -> _Phase8GroupOutcome:
     """Run every stage against one exact group, never adopting a subset."""
     if max_repairs < 0 or max_repairs > 3 or not _validate_complete_revisions(members, baselines):
         return _Phase8GroupOutcome("failed", None, 0)
     zero_obligations, zero_route_guards = analyze()
     if zero_obligations:
-        return _Phase8GroupOutcome("succeeded", dict(baselines), 0) if zero_route_guards else _Phase8GroupOutcome("failed", None, 0)
+        return (
+            _Phase8GroupOutcome("succeeded", dict(baselines), 0)
+            if zero_route_guards
+            else _Phase8GroupOutcome("failed", None, 0)
+        )
     current = rewrite(dict(baselines))
     if not _validate_complete_revisions(members, current):
         return _Phase8GroupOutcome("failed", None, 0)

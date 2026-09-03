@@ -40,7 +40,9 @@ class _Phase8ContractRejected(_PrivatePhase8ContractValue):
 
 
 def _canonical_digest(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _freeze(value: object) -> object:
@@ -71,17 +73,30 @@ def _compile_phase8_contract(envelope: object) -> _Phase8GroupedRewriteContract 
         limits = body.get("scheduling_and_limits")
         if type(limits) is not dict:
             raise TypeError
-        integer_limits = tuple(sorted((key, value) for key, value in cast(dict[str, object], limits).items() if type(value) is int))
-        if dict(integer_limits).get("max_repair_iterations") != 3 or dict(integer_limits).get("max_members_per_rewrite_group") != 4:
+        integer_limits = tuple(
+            sorted((key, value) for key, value in cast(dict[str, object], limits).items() if type(value) is int)
+        )
+        if (
+            dict(integer_limits).get("max_repair_iterations") != 3
+            or dict(integer_limits).get("max_members_per_rewrite_group") != 4
+        ):
             raise ValueError
-        return _Phase8GroupedRewriteContract(_DIGEST, cast(str, body["version"]), integer_limits, cast(tuple[tuple[str, object], ...], _freeze(body)), _SEAL)
+        return _Phase8GroupedRewriteContract(
+            _DIGEST,
+            cast(str, body["version"]),
+            integer_limits,
+            cast(tuple[tuple[str, object], ...], _freeze(body)),
+            _SEAL,
+        )
     except (KeyError, TypeError, ValueError, UnicodeError):
         return _Phase8ContractRejected()
 
 
 def _load_phase8_contract() -> _Phase8GroupedRewriteContract | _Phase8ContractRejected:
     try:
-        return _compile_phase8_contract(json.loads(files("anonymizer.engine.execution").joinpath(_RESOURCE).read_text(encoding="utf-8")))
+        return _compile_phase8_contract(
+            json.loads(files("anonymizer.engine.execution").joinpath(_RESOURCE).read_text(encoding="utf-8"))
+        )
     except (OSError, TypeError, ValueError):
         return _Phase8ContractRejected()
 

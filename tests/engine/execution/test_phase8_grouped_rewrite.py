@@ -3,18 +3,41 @@
 
 from __future__ import annotations
 
-from anonymizer.engine.execution.graph import _AtomicGroup, _DatumId, _DatumPurpose, _ProtectionGraph, _RewriteGroup, _TextDatum
-from anonymizer.engine.execution.phase8_admission import _compile_phase8_plan, _Phase8AdmissionCode, _Phase8Plan, _Phase8Rejected
-from anonymizer.engine.execution.phase8_contract import _is_admitted_phase8_contract, _load_phase8_contract, _Phase8GroupedRewriteContract
+import ast
+from pathlib import Path
+
+from anonymizer.engine.execution.graph import (
+    _AtomicGroup,
+    _DatumId,
+    _DatumPurpose,
+    _ProtectionGraph,
+    _RewriteGroup,
+    _TextDatum,
+)
+from anonymizer.engine.execution.phase8_admission import (
+    _compile_phase8_plan,
+    _Phase8AdmissionCode,
+    _Phase8Plan,
+    _Phase8Rejected,
+)
+from anonymizer.engine.execution.phase8_contract import (
+    _is_admitted_phase8_contract,
+    _load_phase8_contract,
+    _Phase8GroupedRewriteContract,
+)
 from anonymizer.engine.execution.phase8_runtime import _run_group_operation
+from anonymizer.engine.execution.phase8_service import _Phase8GroupedRewriteProtectionService
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics
+from tests.engine.execution.phase8_reference_model import Case, reduce
 
 
 def _graph(groups: tuple[tuple[int, ...], ...]) -> _ProtectionGraph:
     ids = tuple(_DatumId(str(index)) for index in range(2))
     return _ProtectionGraph(
         tuple(_TextDatum(identifier, f"text-{index}", _DatumPurpose.TARGET) for index, identifier in enumerate(ids)),
-        (), (), (),
+        (),
+        (),
+        (),
         (_AtomicGroup(ids),),
         rewrite_groups=tuple(_RewriteGroup(tuple(ids[index] for index in group)) for group in groups),
     )
@@ -43,7 +66,8 @@ def test_phase8_runtime_never_adopts_a_partial_group_repair() -> None:
     metric = _evaluate_metrics((), ((1, 0.0),), repair_any_high=False, repair_threshold=0.0, utility_floor=0.5)
     assert metric is not None
     outcome = _run_group_operation(
-        members, baselines,
+        members,
+        baselines,
         analyze=lambda: (False, False),
         rewrite=lambda values: values,
         evaluate=lambda _values: metric,
@@ -57,7 +81,8 @@ def test_phase8_runtime_never_adopts_a_partial_group_repair() -> None:
 def test_phase8_zero_obligation_route_requires_all_guards() -> None:
     member = object()
     outcome = _run_group_operation(
-        (member,), {member: "baseline"},
+        (member,),
+        {member: "baseline"},
         analyze=lambda: (True, False),
         rewrite=lambda values: values,
         evaluate=lambda _values: (_ for _ in ()).throw(AssertionError("no evaluation")),
@@ -65,3 +90,44 @@ def test_phase8_zero_obligation_route_requires_all_guards() -> None:
         max_repairs=0,
     )
     assert outcome.state == "failed"
+
+
+def test_phase8_zero_utility_only_scores_one_for_an_exact_baseline() -> None:
+    non_baseline = _evaluate_metrics(
+        (), (), repair_any_high=False, repair_threshold=0.0, utility_floor=0.5, exact_baseline=False
+    )
+    baseline = _evaluate_metrics(
+        (), (), repair_any_high=False, repair_threshold=0.0, utility_floor=0.5, exact_baseline=True
+    )
+    assert non_baseline is not None
+    assert baseline is not None
+    assert non_baseline.utility_score == 0.0
+    assert non_baseline.needs_repair
+    assert baseline.utility_score == 1.0
+    assert not baseline.needs_repair
+
+
+def test_private_phase8_service_only_returns_a_complete_group_candidate() -> None:
+    members = (object(), object())
+    metric = _evaluate_metrics((), ((1, 1.0),), repair_any_high=False, repair_threshold=0.0, utility_floor=0.5)
+    assert metric is not None
+    result = _Phase8GroupedRewriteProtectionService().run_group(
+        members,
+        {members[0]: "one", members[1]: "two"},
+        analyze=lambda: (False, False),
+        rewrite=lambda values: values,
+        evaluate=lambda _values: metric,
+        repair=lambda values, _round: values,
+        max_repairs=0,
+    )
+    assert result == ((members[0], "one"), (members[1], "two"))
+
+
+def test_phase8_reference_model_is_pure_and_withholds_an_atomic_group() -> None:
+    tree = ast.parse(Path("tests/engine/execution/phase8_reference_model.py").read_text())
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(alias.name for alias in node.names)
+    assert not {"pandas", "data_designer"}.intersection(names)
+    assert reduce(Case((("a", "b"), ("c",)), (("a", "b"), ("c",)), (0,))) == ("c",)

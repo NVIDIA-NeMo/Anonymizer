@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from anonymizer.engine.execution.graph import _AtomicGroup, _DatumId, _DatumPurpose, _ProtectionGraph, _RewriteGroup
+from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _ProtectionGraph, _RewriteGroup
 
 
 class _Phase8AdmissionCode(str, Enum):
