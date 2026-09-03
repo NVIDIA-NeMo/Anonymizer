@@ -167,13 +167,42 @@ _Phase6Candidate: TypeAlias = _Phase6StageReceipt | _Phase6ResolvedDatum | _Veri
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class _Phase6ExecutionProof(_PrivatePhase6RuntimeValue):
+    seal: object = field(compare=False)
+    snapshot: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _Phase6Execution(_PrivatePhase6RuntimeValue):
     accounting: _AccountingResult[_Phase6Candidate]
     released: tuple[_VerifiedDatum, ...]
     handoffs: tuple[_Phase6SubstituteHandoff, ...] = ()
+    _proof: _Phase6ExecutionProof | None = field(default=None, compare=False)
 
 
 _PHASE6_HANDOFF_SEAL = object()
+_PHASE6_EXECUTION_SEAL = object()
+
+
+def _is_admitted_phase6_execution(value: object, plan: object) -> bool:
+    """Accept only the terminal result sealed for this exact Phase 6 plan."""
+    return (
+        isinstance(value, _Phase6Execution)
+        and isinstance(plan, _Phase6Plan)
+        and value._proof is not None
+        and value._proof.seal is _PHASE6_EXECUTION_SEAL
+        and value._proof.snapshot == _phase6_execution_snapshot(plan, value)
+    )
+
+
+def _phase6_execution_snapshot(plan: _Phase6Plan, execution: _Phase6Execution) -> tuple[object, ...] | None:
+    try:
+        # Keep object identity here: a Phase 7 handoff may only consume the
+        # terminal prefix produced by this invocation, never a look-alike
+        # result reconstructed from task keys or candidate values.
+        return (plan._proof, id(execution.accounting), id(execution.released), id(execution.handoffs))
+    except AttributeError:
+        return None
 
 
 class _Phase6RuntimeAdmissionError(TypeError):
@@ -254,7 +283,11 @@ class _Phase6Runtime:
             released = _collect_released(plan, accounting)
             handoff_result = _build_substitute_handoffs(plan, accounting)
             handoffs = () if isinstance(handoff_result, _Phase6HandoffRejected) else handoff_result
-        return _Phase6Execution(accounting, released, handoffs)
+        execution = _Phase6Execution(accounting, released, handoffs)
+        snapshot = _phase6_execution_snapshot(plan, execution)
+        if snapshot is None:
+            raise _Phase6RuntimeAdmissionError
+        return _Phase6Execution(accounting, released, handoffs, _Phase6ExecutionProof(_PHASE6_EXECUTION_SEAL, snapshot))
 
     def _drive_ledger(
         self,

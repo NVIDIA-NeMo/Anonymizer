@@ -69,3 +69,19 @@ def test_close_poison_active_reservations_and_rejects_later_access_or_escape() -
     assert replay_reservation is None
     assert replay == _PlannerSnapshot(_PlannerState.POISONED)
     assert not ledger.terminal(scope, reservation, _PlannerSnapshot(_PlannerState.PLANNED, "bundle"))
+
+
+def test_verified_cleanup_retires_accepted_values_without_rewriting_terminal_state() -> None:
+    ledger: _PlannerLedger[str] = _PlannerLedger()
+    scope = object()
+    reservation, _ = ledger.reserve(scope)
+    assert isinstance(reservation, _Reservation)
+    assert ledger.terminal(scope, reservation, _PlannerSnapshot(_PlannerState.PLANNED, "bundle"))
+
+    ledger.close()
+    ledger.discard_values()
+
+    assert ledger.current(scope) == _PlannerSnapshot(_PlannerState.PLANNED)
+    replay_reservation, replay = ledger.reserve(scope)
+    assert replay_reservation is None
+    assert replay == _PlannerSnapshot(_PlannerState.PLANNED)

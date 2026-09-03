@@ -100,6 +100,9 @@ class _Phase7NddResult(_PrivatePhase7NddValue):
     status: _Phase7NddStatus
     assignments: tuple[_CandidateAssignment, ...] = ()
     reason: _Phase7NddReason | None = None
+    # This is opaque evidence from an authority independent of the candidate
+    # backend.  Runtime verifies both the receipt and its dispatch binding.
+    trusted_stop_receipt: object | None = None
 
 
 class _WireAssignment(BaseModel):
@@ -166,6 +169,35 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
     def close(self) -> None:
         self._planner.close()
 
+    def discard_values(self) -> None:
+        """Release accepted private bundle references after verified cleanup."""
+        self._planner.discard_values()
+
+    def cleanup_attestation(self, cleanup_identity: object) -> object:
+        """Return verifiable, content-free closure evidence for the runtime owner."""
+        # The planner can only discard after close.  Read its sealed state
+        # after retirement; do not fabricate a zero-reference assertion.
+        try:
+            self._planner.discard_values()
+        except RuntimeError:
+            return None
+        observation = self._planner.cleanup_observation()
+        if observation is None:
+            return None
+        active_reservations, provisional_references, values_observable = observation
+        from anonymizer.engine.execution.phase7_runtime import _Phase7CleanupAttestation
+
+        return _Phase7CleanupAttestation(
+            "phase7-cleanup-attestation/v1",
+            active_reservations == 0 and provisional_references == 0 and not values_observable,
+            active_reservations,
+            0,  # Candidate workframes are stack-local and never retained.
+            True,
+            provisional_references,
+            values_observable,
+            cleanup_identity,
+        )
+
     def cancel_scope(self, manifest: object, *, trusted_stop: bool = False) -> _Phase7NddResult | None:
         """Private, bounded cancellation hook used by lifecycle owners/tests."""
         if not isinstance(manifest, _ScopeManifest) or not _is_admitted_scope_manifest(manifest):
@@ -205,7 +237,7 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
         if reservation is None:
             return _Phase7NddResult(_Phase7NddStatus.PENDING)
         self._barrier("reserve")
-        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
         if replayed is not None:
             return replayed
         workframe = _lower_candidate_workframe(
@@ -220,17 +252,17 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
                 ledger, admitted_manifest.id, reservation, _inconsistent(_Phase7NddReason.LIMIT_EXCEEDED)
             )
         if not ledger.mark_dispatched(admitted_manifest.id, reservation):
-            return self._current(ledger, admitted_manifest.id)
+            return self._current(ledger, admitted_manifest.id, dispatch)
         workflow = self._run_candidate_workflow(workframe)
         # This barrier deliberately follows the adapter call.  A reentrant
         # cancellation here is post-dispatch and the received result below is
         # therefore late evidence which must not be published.
         self._barrier("dispatch")
-        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
         if replayed is not None:
             return replayed
         self._barrier("receipt")
-        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
         if replayed is not None:
             return replayed
         crash = self._crash_after_dispatch_callback
@@ -241,21 +273,21 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
                 return self._terminal(ledger, admitted_manifest.id, reservation, _poisoned())
         if isinstance(workflow, _Phase7NddResult):
             self._barrier("validation")
-            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
             if replayed is not None:
                 return replayed
             self._barrier("transformation")
-            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
             if replayed is not None:
                 return replayed
             self._barrier("reconciliation")
-            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
             if replayed is not None:
                 return replayed
             return self._terminal(ledger, admitted_manifest.id, reservation, workflow)
         result = _reconcile_candidate_result(workframe, workflow)
         self._barrier("validation")
-        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
         if replayed is not None:
             return replayed
         if result.status is _Phase7NddStatus.CANDIDATE:
@@ -268,15 +300,15 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
             if not isinstance(validated, _ValidatedBundle):
                 result = _inconsistent(_Phase7NddReason.EVIDENCE_UNATTRIBUTABLE)
         self._barrier("transformation")
-        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
         if replayed is not None:
             return replayed
         self._barrier("reconciliation")
-        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
         if replayed is not None:
             return replayed
         self._barrier("publication")
-        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation, dispatch)
         if replayed is not None:
             return replayed
         return self._terminal(ledger, admitted_manifest.id, reservation, result)
@@ -287,16 +319,22 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
             callback(stage)
 
     def _after_barrier(
-        self, ledger: _PlannerLedger[_Phase7NddResult], scope: object, reservation: _Reservation
+        self,
+        ledger: _PlannerLedger[_Phase7NddResult],
+        scope: object,
+        reservation: _Reservation,
+        dispatch: _Dispatch,
     ) -> _Phase7NddResult | None:
         try:
             if ledger.owns(scope, reservation):
                 return None
         except RuntimeError:
             return _poisoned()
-        return self._current(ledger, scope)
+        return self._current(ledger, scope, dispatch)
 
-    def _current(self, ledger: _PlannerLedger[_Phase7NddResult], scope: object) -> _Phase7NddResult:
+    def _current(
+        self, ledger: _PlannerLedger[_Phase7NddResult], scope: object, dispatch: _Dispatch | None = None
+    ) -> _Phase7NddResult:
         try:
             snapshot = ledger.current(scope)
         except RuntimeError:

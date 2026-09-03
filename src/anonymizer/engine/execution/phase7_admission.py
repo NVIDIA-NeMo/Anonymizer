@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from anonymizer.engine.execution.accounting_plan import _AccountingPlan, _ScopeTaskSubject, _StageId, _TaskKey
 from anonymizer.engine.execution.context_admission import _CompiledContextProjection
 from anonymizer.engine.execution.graph import _CoherenceScope, _DatumId, _TextDatum
 from anonymizer.engine.execution.mention_admission import _MentionId
@@ -155,6 +156,11 @@ class _Phase7PlanProof(_PrivatePhase7AdmissionValue):
 @dataclass(frozen=True, slots=True, repr=False)
 class _Phase7Plan(_PrivatePhase7AdmissionValue):
     manifests: tuple[_ScopeManifest, ...]
+    # These are issued while compiling the Phase 7 declaration.  Runtime must
+    # consume them verbatim; reconstructing scope tasks later loses Phase 4
+    # conservation and turns an opaque owner capability into presentation data.
+    accounting: _AccountingPlan
+    scope_tasks: tuple[_TaskKey, ...]
     _proof: _Phase7PlanProof | None = field(default=None, compare=False)
 
 
@@ -197,11 +203,14 @@ def _compile_phase7_plan(
     if isinstance(materialized, _Phase7Rejected):
         return materialized
     manifests = materialized
-    candidate = _Phase7Plan(manifests)
+    subjects = tuple(_ScopeTaskSubject() for _manifest in manifests)
+    accounting = phase6.accounting.with_scope_tasks(_StageId("phase7-plan"), subjects)
+    scope_tasks = tuple(_TaskKey(_StageId("phase7-plan"), subject) for subject in subjects)
+    candidate = _Phase7Plan(manifests, accounting, scope_tasks)
     snapshot = _phase7_plan_snapshot(candidate)
     if snapshot is None:
         return _Phase7Rejected(_Phase7AdmissionCode.INVALID_INPUT)
-    return _Phase7Plan(manifests, _Phase7PlanProof(_PHASE7_PLAN_SEAL, snapshot))
+    return _Phase7Plan(manifests, accounting, scope_tasks, _Phase7PlanProof(_PHASE7_PLAN_SEAL, snapshot))
 
 
 def _is_admitted_phase7_plan(value: object) -> bool:
@@ -210,6 +219,10 @@ def _is_admitted_phase7_plan(value: object) -> bool:
         and value._proof is not None
         and value._proof.seal is _PHASE7_PLAN_SEAL
         and all(_is_admitted_scope_manifest(manifest) for manifest in value.manifests)
+        and len(value.scope_tasks) == len(value.manifests)
+        and all(
+            task in value.accounting.tasks and isinstance(task.subject, _ScopeTaskSubject) for task in value.scope_tasks
+        )
         and value._proof.snapshot == _phase7_plan_snapshot(value)
     )
 
@@ -618,7 +631,15 @@ def _scope_manifest_snapshot(manifest: _ScopeManifest) -> tuple[object, ...] | N
 
 def _phase7_plan_snapshot(plan: _Phase7Plan) -> tuple[object, ...] | None:
     try:
-        return tuple(manifest._proof for manifest in plan.manifests)
+        return (
+            tuple(manifest._proof for manifest in plan.manifests),
+            plan.accounting._proof,
+            # The accounting-plan proof alone authenticates its own source
+            # compilation, not this Phase 7 expansion.  Seal the concrete
+            # Phase 6 prefix and appended scope-task sequence as well.
+            tuple(plan.accounting.tasks),
+            tuple(plan.scope_tasks),
+        )
     except (AttributeError, TypeError):
         return None
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import reduce, wraps
 from threading import RLock
-from typing import Concatenate, Generic, ParamSpec, TypeAlias, TypeVar, assert_never, final
+from typing import Concatenate, Generic, ParamSpec, TypeAlias, TypeVar, assert_never, cast, final
 
 from anonymizer.engine.execution.accounting_evidence import (
     _AttemptId,
@@ -152,6 +152,7 @@ class _AccountingLedger(Generic[T]):
         self._accepted_records: dict[_AttemptId, _TerminalRecord[T]] = {}
         self._opened = False
         self._closed = False
+        self._mutation_sealed = False
         self._cancellation_requested = False
         self._global_inconsistent = False
         self._invocation_lost = False
@@ -164,6 +165,32 @@ class _AccountingLedger(Generic[T]):
             raise _LedgerStateError
         self._invocation_id = _InvocationId(self._next_identity())
         self._opened = True
+
+    @_serialized
+    def import_terminal_outcomes(self, outcomes: tuple[object, ...]) -> None:
+        """Import an exact earlier-phase terminal prefix into an expanded plan.
+
+        The compiler may append a later-phase scope task to an already closed
+        plan.  Re-reducing that plan must retain the original terminal records,
+        rather than manufacturing new prerequisite failures for them.
+        """
+        self._require_active()
+        if not isinstance(outcomes, tuple) or not all(
+            isinstance(
+                outcome,
+                (_TaskSucceeded, _TaskFailed, _TaskCancelled, _TaskLost, _TaskBlocked, _TaskInconsistent),
+            )
+            for outcome in outcomes
+        ):
+            raise _LedgerStateError
+        typed_outcomes = tuple(cast(_TaskOutcome[T], outcome) for outcome in outcomes)
+        if len({outcome.task for outcome in typed_outcomes}) != len(typed_outcomes) or any(
+            outcome.task not in self._states or not isinstance(self._states[outcome.task], _Planned)
+            for outcome in typed_outcomes
+        ):
+            raise _LedgerStateError
+        for outcome in typed_outcomes:
+            self._states[outcome.task] = outcome
 
     @_serialized
     def ready_tasks(self) -> tuple[_TaskKey, ...]:
@@ -340,6 +367,26 @@ class _AccountingLedger(Generic[T]):
             self._states[task] = _TaskFailed(task, _causes(_CauseCode.KNOWN_FAILURE))
 
     @_serialized
+    def mark_task_succeeded(self, task: _TaskKey, candidate: T) -> None:
+        """Close verified no-work without manufacturing a dispatch attempt."""
+        self._require_active()
+        state = self._states.get(task)
+        if state is None:
+            self._close_globally_inconsistent(_CauseCode.PLAN_MISMATCH)
+        elif isinstance(state, (_Planned, _Ready)):
+            self._states[task] = _TaskSucceeded(task, candidate)
+
+    @_serialized
+    def mark_task_blocked(self, task: _TaskKey) -> None:
+        """Close a known non-dispatch prerequisite gate without an attempt."""
+        self._require_active()
+        state = self._states.get(task)
+        if state is None:
+            self._close_globally_inconsistent(_CauseCode.PLAN_MISMATCH)
+        elif isinstance(state, (_Planned, _Ready)):
+            self._states[task] = _TaskBlocked(task, _causes(_CauseCode.PREREQUISITE))
+
+    @_serialized
     def mark_cleanup_failed(self) -> None:
         self._require_active()
         self._cleanup_failed = True
@@ -350,13 +397,29 @@ class _AccountingLedger(Generic[T]):
         self._cleanup_unconfirmed = True
 
     @_serialized
+    def seal_mutation(self) -> None:
+        """Freeze external lifecycle transitions before cleanup attestation."""
+        self._require_active()
+        self._mutation_sealed = True
+
+    @_serialized
+    def record_cleanup_unconfirmed_after_seal(self) -> None:
+        """Record failed publication-critical cleanup without reopening tasks."""
+        self._require_opened()
+        if self._closed or not self._mutation_sealed:
+            raise _LedgerStateError
+        self._cleanup_unconfirmed = True
+
+    @_serialized
     def finish(
         self,
         *,
         datum_release_predicate: Callable[[_DatumId, T], bool] | None = None,
         group_release_predicate: Callable[[tuple[tuple[_DatumId, T], ...]], bool] = lambda _outputs: True,
     ) -> _AccountingResult[T]:
-        self._require_active()
+        self._require_opened()
+        if self._closed:
+            raise _LedgerClosedError
         if datum_release_predicate is not None:
             if self._datum_qualification:
                 raise _LedgerStateError
@@ -384,7 +447,7 @@ class _AccountingLedger(Generic[T]):
 
     def _accept(self, record: _TerminalRecord[T]) -> _EvidenceAcceptance:
         self._require_opened()
-        if self._closed:
+        if self._closed or self._mutation_sealed:
             return _EvidenceAcceptance.REJECTED_STALE
         dispatch = record.dispatch
         state = self._states.get(dispatch.task)
@@ -585,7 +648,7 @@ class _AccountingLedger(Generic[T]):
 
     def _require_active(self) -> None:
         self._require_opened()
-        if self._closed:
+        if self._closed or self._mutation_sealed:
             raise _LedgerClosedError
 
 

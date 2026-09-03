@@ -29,6 +29,7 @@ class _PlannerState(str, Enum):
 class _PlannerSnapshot(Generic[T]):
     state: _PlannerState
     value: T | None = None
+    trusted_stop: bool = False
 
 
 @dataclass(frozen=True, slots=True, repr=False, eq=False)
@@ -134,7 +135,7 @@ class _PlannerLedger(Generic[T]):
             if entry.reservation is None:
                 return None
             state = _PlannerState.ABORTED if not entry.dispatched or trusted_stop else _PlannerState.POISONED
-            entry.snapshot = _PlannerSnapshot(state, value)
+            entry.snapshot = _PlannerSnapshot(state, value, entry.dispatched and trusted_stop)
             entry.reservation = None
             return entry.snapshot
 
@@ -147,6 +148,32 @@ class _PlannerLedger(Generic[T]):
                     entry.snapshot = _PlannerSnapshot(_PlannerState.POISONED)
                     entry.reservation = None
             self.__closed = True
+
+    def discard_values(self) -> None:
+        """Drop every private bundle after lifecycle cleanup has been verified."""
+        with self.__lock:
+            if not self.__closed:
+                raise RuntimeError("private Phase 7 planner ledger is still active")
+            for entry in self.__entries.values():
+                if entry.snapshot is not None:
+                    entry.snapshot = _PlannerSnapshot(entry.snapshot.state)
+                entry.evidence = None
+
+    def cleanup_observation(self) -> tuple[int, int, bool] | None:
+        """Return content-free, post-retirement facts from this sealed ledger.
+
+        ``None`` means that closure/retirement was not completed, so callers
+        must embargo rather than manufacture a zero-reference attestation.
+        """
+        with self.__lock:
+            if not self.__closed:
+                return None
+            active = sum(entry.reservation is not None for entry in self.__entries.values())
+            provisional = sum(
+                entry.snapshot is not None and entry.snapshot.value is not None for entry in self.__entries.values()
+            )
+            observable = any(entry.evidence is not None for entry in self.__entries.values())
+            return active, provisional, observable
 
     def __active(self) -> None:
         if self.__closed:
