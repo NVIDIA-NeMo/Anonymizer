@@ -21,10 +21,14 @@ from pydantic import BaseModel, ConfigDict, StrictFloat, StrictStr
 
 from anonymizer.engine.constants import (
     COL_PHASE8_ANALYSIS,
+    COL_PHASE8_ATTEMPT_TOKEN,
     COL_PHASE8_EVALUATION,
+    COL_PHASE8_INVOCATION_TOKEN,
     COL_PHASE8_OPERATION,
     COL_PHASE8_REQUEST,
     COL_PHASE8_REVISION,
+    COL_PHASE8_ROW_TOKEN,
+    COL_PHASE8_TASK_TOKEN,
     COL_TARGET_WORK_ID,
     _jinja,
 )
@@ -90,24 +94,41 @@ class _Phase8DispatchResult:
     failure_kind: Literal["local_failure", "invocation_inconsistent"] | None = None
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8Correlation:
+    """Opaque outer workframe tuple, never exposed in requests or diagnostics."""
+
+    invocation_token: str
+    task_token: str
+    attempt_token: str
+    row_token: str
+
+
 class _Phase8NddBackend:
     """Dispatch one bounded complete-group request via ``NddAdapter`` only."""
 
     def __init__(self, adapter: NddAdapter, invocation: _CompiledInvocation) -> None:
         self._adapter = adapter
         self._invocation = invocation
+        self._invocation_token = secrets.token_hex(16)
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> _Phase8DispatchResult:
         encoded = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         limits = dict(getattr(_load_phase8_contract(), "limits", ()))
         if len(encoded.encode()) > limits.get("max_workframe_utf8_bytes_per_operation", 0):
             return _Phase8DispatchResult(operation, None, True, "local_failure")
-        token = secrets.token_hex(16)
+        correlation = _Phase8Correlation(
+            self._invocation_token, secrets.token_hex(16), secrets.token_hex(16), secrets.token_hex(16)
+        )
         frame = pd.DataFrame(
             [
                 {
-                    COL_TARGET_WORK_ID: token,
-                    PRIVATE_CORRELATION_COLUMN: token,
+                    COL_TARGET_WORK_ID: correlation.row_token,
+                    PRIVATE_CORRELATION_COLUMN: correlation.row_token,
+                    COL_PHASE8_INVOCATION_TOKEN: correlation.invocation_token,
+                    COL_PHASE8_TASK_TOKEN: correlation.task_token,
+                    COL_PHASE8_ATTEMPT_TOKEN: correlation.attempt_token,
+                    COL_PHASE8_ROW_TOKEN: correlation.row_token,
                     COL_PHASE8_OPERATION: operation.value,
                     COL_PHASE8_REQUEST: encoded,
                 }
@@ -121,7 +142,7 @@ class _Phase8NddBackend:
                 model_configs=list(self._invocation.model_configs),
                 workflow_name="phase8-grouped-rewrite",
             )
-        return _hydrate(operation, result, token, model, column.name)
+        return _hydrate(operation, result, correlation, model, column.name)
 
 
 def _operation_column(
@@ -152,18 +173,31 @@ def _operation_column(
 
 
 def _hydrate(
-    operation: _Phase8Operation, result: object, token: str, model: type[BaseModel], column: str
+    operation: _Phase8Operation,
+    result: object,
+    correlation: _Phase8Correlation,
+    model: type[BaseModel],
+    column: str,
 ) -> _Phase8DispatchResult:
     if not isinstance(result, WorkflowRunResult):
         return _Phase8DispatchResult(operation, None, True, "invocation_inconsistent")
-    failure_kind = _failed_evidence_kind(result, token)
+    failure_kind = _failed_evidence_kind(result, correlation.row_token)
     if failure_kind is not None:
         return _Phase8DispatchResult(operation, None, True, failure_kind)
     if (
         not isinstance(result.dataframe, pd.DataFrame)
         or len(result.dataframe) != 1
         or column not in result.dataframe
-        or result.dataframe.iloc[0].get(COL_TARGET_WORK_ID) != token
+        or result.dataframe.iloc[0].get(COL_TARGET_WORK_ID) != correlation.row_token
+        or any(
+            result.dataframe.iloc[0].get(column_name) != value
+            for column_name, value in (
+                (COL_PHASE8_INVOCATION_TOKEN, correlation.invocation_token),
+                (COL_PHASE8_TASK_TOKEN, correlation.task_token),
+                (COL_PHASE8_ATTEMPT_TOKEN, correlation.attempt_token),
+                (COL_PHASE8_ROW_TOKEN, correlation.row_token),
+            )
+        )
     ):
         return _Phase8DispatchResult(operation, None, True, "invocation_inconsistent")
     try:

@@ -164,12 +164,14 @@ class _Phase8GroupedRewriteProtectionService:
             if isinstance(getattr(datum, "text", None), str)
         }
         applied_by_datum = {value.datum_id: value.applied for value in phase7.released}
+        registry = _Phase8WireRegistry()
         operations = tuple(
             _backend_group_operation(
                 backend,
                 _phase8_group_input(
                     members, original_by_datum, cast(Mapping[object, bool], applied_by_datum), invocation
                 ),
+                registry,
             )
             for members in groups
         )
@@ -203,8 +205,11 @@ class _Phase8GroupedRewriteProtectionService:
             (getattr(edge, "prerequisite", None), getattr(edge, "dependent", None))
             for edge in getattr(graph, "dependencies", ())
         )
+        registry = _Phase8WireRegistry()
         operations = tuple(
-            _backend_group_operation(backend, _phase8_group_input_from_successor(members, predecessor, invocation))
+            _backend_group_operation(
+                backend, _phase8_group_input_from_successor(members, predecessor, invocation), registry
+            )
             for members in groups
         )
         return self.run_lifecycle(
@@ -233,6 +238,30 @@ class _Phase8WireGroup:
     member_tokens: tuple[str, ...]
     context_tokens: tuple[str, ...] = ()
     mention_tokens: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, repr=False, eq=False)
+class _Phase8ObligationId:
+    """Stable compiler-private obligation identity; wire tokens are never stable."""
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 obligation identities are not serializable")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8Obligation:
+    """Accepted analysis capability with private source lineage."""
+
+    id: _Phase8ObligationId
+    statement: str
+    kind: str | None = None
+    importance: str | None = None
+    sensitivity: str | None = None
+    source_members: tuple[object, ...] = ()
+    source_mentions: tuple[object, ...] = ()
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 obligations are not serializable")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -363,8 +392,10 @@ def _opaque_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | None = None) -> _GroupOperation:
-    registry = _Phase8WireRegistry()
+def _backend_group_operation(
+    backend: object, group_input: _Phase8GroupInput | None = None, registry: _Phase8WireRegistry | None = None
+) -> _GroupOperation:
+    registry = registry or _Phase8WireRegistry()
 
     def operation(members: tuple[object, ...], baselines: dict[object, str]) -> tuple[tuple[object, str], ...] | None:
         if not _valid_group_input(members, baselines, group_input):
@@ -382,8 +413,15 @@ def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | N
             if group_input
             else {}
         )
+        mention_identities = (
+            dict(zip(wire.mention_tokens, (item.identity for item in group_input.accepted_mentions), strict=True))
+            if group_input
+            else {}
+        )
         member_owners = dict(zip(tokens, members, strict=True))
-        obligations = _admit_obligations(analysis, tokens, wire.mention_tokens, mention_owners, member_owners, registry)
+        obligations = _admit_obligations(
+            analysis, tokens, wire.mention_tokens, mention_owners, mention_identities, member_owners, registry
+        )
         if obligations is None:
             return None
         privacy, utility = obligations
@@ -396,8 +434,7 @@ def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | N
         rewrite_map = dict(zip(rewrite_tokens, members, strict=True))
         active_request = {
             **_operation_request(_Phase8Operation.REWRITE, rewrite_wire, members, baselines, group_input),
-            "privacy_obligations": privacy,
-            "utility_obligations": utility,
+            **_wire_obligations(privacy, utility, registry),
         }
         revision = _dispatch(backend, _Phase8Operation.REWRITE, active_request)
         if revision is None or not _reconcile_common(
@@ -414,8 +451,7 @@ def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | N
             evaluation_map = dict(zip(evaluation_tokens, members, strict=True))
             evaluation_request = {
                 **_operation_request(_Phase8Operation.EVALUATE, evaluation_wire, members, baselines, group_input),
-                "privacy_obligations": privacy,
-                "utility_obligations": utility,
+                **_wire_obligations(privacy, utility, registry),
                 "revisions": _revision_request(current, evaluation_map),
             }
             evaluation = _dispatch(backend, _Phase8Operation.EVALUATE, evaluation_request)
@@ -423,8 +459,8 @@ def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | N
                 evaluation,
                 evaluation_tokens,
                 evaluation_wire.context_tokens,
-                _obligation_tokens(privacy),
-                _obligation_tokens(utility),
+                _obligation_tokens(evaluation_request["privacy_obligations"]),
+                _obligation_tokens(evaluation_request["utility_obligations"]),
                 registry,
             )
             if metric is None:
@@ -438,8 +474,7 @@ def _backend_group_operation(backend: object, group_input: _Phase8GroupInput | N
             repair_map = dict(zip(repair_tokens, members, strict=True))
             repair_request = {
                 **_operation_request(_Phase8Operation.REPAIR, repair_wire, members, baselines, group_input),
-                "privacy_obligations": privacy,
-                "utility_obligations": utility,
+                **_wire_obligations(privacy, utility, registry),
                 "revisions": _revision_request(current, repair_map),
                 "repair_round": repair_round + 1,
             }
@@ -622,11 +657,13 @@ def _admit_obligations(
     members: tuple[str, ...],
     mentions: tuple[str, ...],
     mention_owners: dict[str, object],
+    mention_identities: dict[str, object],
     member_owners: dict[str, object],
     registry: _Phase8WireRegistry,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]] | None:
+) -> tuple[list[_Phase8Obligation], list[_Phase8Obligation]] | None:
     """Allocate obligation tokens locally after exact provenance validation."""
-    admitted: list[list[dict[str, object]]] = []
+    admitted: list[list[_Phase8Obligation]] = []
+    covered_mentions: set[str] = set()
     for obligation_field in ("privacy_obligations", "utility_obligations"):
         raw = _field(payload, obligation_field)
         limits = dict(getattr(_load_phase8_contract(), "limits", ()))
@@ -637,7 +674,7 @@ def _admit_obligations(
         )
         if not isinstance(raw, list) or len(raw) > limits.get(limit_name, 0):
             return None
-        values: list[dict[str, object]] = []
+        values: list[_Phase8Obligation] = []
         for value in raw:
             statement = _field(value, "statement")
             if (
@@ -669,30 +706,55 @@ def _admit_obligations(
                 ):
                     _raise_if_retired(mention_tokens, set(mentions), registry)
                     return None
+                assert isinstance(kind, str) and isinstance(sensitivity, str)
+                covered_mentions.update(mention_tokens)
                 values.append(
-                    {
-                        "obligation_token": _opaque_token(),
-                        "statement": statement,
-                        "kind": kind,
-                        "sensitivity": sensitivity,
-                        "source_member_tokens": owners,
-                        "source_mention_tokens": mention_tokens,
-                    }
+                    _Phase8Obligation(
+                        _Phase8ObligationId(),
+                        statement,
+                        kind,
+                        None,
+                        sensitivity,
+                        tuple(member_owners[token] for token in owners),
+                        tuple(mention_identities[token] for token in mention_tokens),
+                    )
                 )
             else:
                 importance = _field(value, "importance")
                 if importance not in {"critical", "important"}:
                     return None
-                values.append({"obligation_token": _opaque_token(), "statement": statement, "importance": importance})
+                assert isinstance(importance, str)
+                values.append(_Phase8Obligation(_Phase8ObligationId(), statement, None, importance))
         admitted.append(values)
-    if set(
-        mention for obligation in admitted[0] for mention in cast(list[str], obligation["source_mention_tokens"])
-    ) != set(mentions):
+    if covered_mentions != set(mentions):
         return None
     return admitted[0], admitted[1]
 
 
-def _obligation_tokens(obligations: list[dict[str, object]]) -> tuple[str, ...]:
+def _wire_obligations(
+    privacy: list[_Phase8Obligation], utility: list[_Phase8Obligation], registry: _Phase8WireRegistry
+) -> dict[str, list[dict[str, object]]]:
+    """Lower stable capabilities to fresh stage-local tokens, omitting source wires."""
+    return {
+        "privacy_obligations": [
+            {
+                "obligation_token": registry.new(),
+                "statement": item.statement,
+                "kind": item.kind,
+                "sensitivity": item.sensitivity,
+            }
+            for item in privacy
+        ],
+        "utility_obligations": [
+            {"obligation_token": registry.new(), "statement": item.statement, "importance": item.importance}
+            for item in utility
+        ],
+    }
+
+
+def _obligation_tokens(obligations: object) -> tuple[str, ...]:
+    if not isinstance(obligations, list):
+        return ()
     return tuple(cast(str, obligation["obligation_token"]) for obligation in obligations)
 
 
@@ -853,7 +915,8 @@ def _run_operations(
         except _Phase8InvocationInconsistent:
             states.append("inconsistent")
             invocation_inconsistent = True
-            continue
+            states.extend("blocked" for _ in groups[len(states) :])
+            break
         except Exception:
             states.append("failed")
             continue
