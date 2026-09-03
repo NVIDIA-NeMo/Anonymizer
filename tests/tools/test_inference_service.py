@@ -4,16 +4,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
-from inference_service_compiler import cli, compiler, models, runtime
+from inference_service_compiler import cli, compiler, lifecycle, models, runtime
 from inference_service_compiler.profiles import load_profile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -346,6 +348,141 @@ def test_launch_records_process_identity_and_resolves_secrets(tmp_path: Path) ->
     assert popen.call_args.kwargs["env"]["VLLM_API_KEY"] == "test-secret"
     assert "test-secret" not in popen.call_args.args[0]
     assert receipt.handle.external_id == "4242:100"
+
+
+def test_launch_requires_scoped_ownership_evidence(tmp_path: Path) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path="out",
+        stderr_path="err",
+    )
+    probe = launch_receipt(plan, handle).probe
+    observed_environment: dict[str, str] = {}
+    observed_token: str | None = None
+
+    def launch_process(
+        _plan: models.RunPlan,
+        _argv: tuple[str, ...],
+        environment: dict[str, str],
+        _log_directory: Path,
+    ) -> models.LocalProcessHandle:
+        observed_environment.update(environment)
+        return handle
+
+    def wait_for_readiness(
+        _plan: models.RunPlan,
+        *,
+        secret_values: object,
+        handle: models.LocalProcessHandle,
+        launch_token: str | None = None,
+    ) -> models.CapabilityProbeReceipt:
+        del secret_values, handle
+        nonlocal observed_token
+        observed_token = launch_token
+        return probe
+
+    with (
+        mock.patch.object(runtime, "_launch_process", side_effect=launch_process),
+        mock.patch.object(runtime, "wait_for_readiness", side_effect=wait_for_readiness),
+    ):
+        receipt = runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
+
+    environment_token = observed_environment.get("ANONYMIZER_INFERENCE_LAUNCH_TOKEN")
+    assert environment_token
+    assert observed_token == environment_token
+    assert environment_token not in receipt.model_dump_json()
+
+
+def test_launch_ownership_endpoint_requires_and_proves_the_scoped_token() -> None:
+    async def next_handler(_request: object) -> object:
+        return mock.sentinel.next_response
+
+    def request(path: str, token: str | None) -> SimpleNamespace:
+        headers = {} if token is None else {lifecycle.LAUNCH_OWNERSHIP_HEADER: token}
+        return SimpleNamespace(url=SimpleNamespace(path=path), headers=headers)
+
+    with mock.patch.dict(
+        runtime.os.environ,
+        {lifecycle.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE: "launch-secret"},
+        clear=True,
+    ):
+        wrong = asyncio.run(lifecycle.launch_ownership(request(lifecycle.LAUNCH_OWNERSHIP_PATH, "wrong"), next_handler))
+        owned = asyncio.run(
+            lifecycle.launch_ownership(request(lifecycle.LAUNCH_OWNERSHIP_PATH, "launch-secret"), next_handler)
+        )
+        passed_through = asyncio.run(lifecycle.launch_ownership(request("/v1/models", None), next_handler))
+
+    assert wrong.status_code == 404
+    assert json.loads(owned.body) == {
+        lifecycle.LAUNCH_OWNERSHIP_PROOF_FIELD: lifecycle.launch_token_proof("launch-secret")
+    }
+    assert passed_through is mock.sentinel.next_response
+
+
+def test_compatible_preexisting_endpoint_cannot_prove_launch_ownership() -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    compatible_response = httpx.Response(200, json={"data": [{"id": plan.served_model_name}]})
+
+    with (
+        mock.patch.object(runtime.httpx, "get", return_value=compatible_response),
+        pytest.raises(runtime.RuntimeEffectError) as exc_info,
+    ):
+        runtime._probe_launch_ownership(plan, "launch-secret")
+
+    assert exc_info.value.diagnostic.code == "launch-ownership-not-observed"
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("unexpected readiness failure"), KeyboardInterrupt()])
+def test_post_spawn_readiness_failures_always_clean_up(tmp_path: Path, failure: BaseException) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path="out",
+        stderr_path="err",
+    )
+
+    with (
+        mock.patch.object(runtime, "_launch_process", return_value=handle),
+        mock.patch.object(runtime, "wait_for_readiness", side_effect=failure),
+        mock.patch.object(runtime, "_cleanup_handle", return_value=True) as cleanup,
+        pytest.raises(type(failure)),
+    ):
+        runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
+
+    cleanup.assert_called_once_with(handle, plan.spec.local.shutdown_timeout_seconds)
+
+
+def test_launch_command_stops_service_when_receipt_write_fails(tmp_path: Path) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path="out",
+        stderr_path="err",
+    )
+    receipt = launch_receipt(plan, handle)
+
+    with (
+        mock.patch.object(cli, "launch_plan", return_value=receipt),
+        mock.patch.object(cli, "write_json", side_effect=PermissionError("read-only destination")),
+        mock.patch.object(cli, "stop_run") as stop,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cli.launch(plan=plan_path, output=tmp_path / "receipt.json", log_directory=tmp_path)
+
+    assert exc_info.value.code == 125
+    stop.assert_called_once_with(receipt)
 
 
 def test_launch_refuses_an_unmarked_process_and_cleans_up(tmp_path: Path) -> None:

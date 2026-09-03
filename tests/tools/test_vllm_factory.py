@@ -127,6 +127,7 @@ def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
     assert arguments.enforce_eager is True
     assert arguments.enable_prefix_caching is True
     assert arguments.async_scheduling is True
+    assert arguments.middleware == [factory.LAUNCH_OWNERSHIP_MIDDLEWARE]
     assert arguments.mamba_backend.value == "flashinfer"
     assert arguments.mamba_ssm_cache_dtype == "float16"
     assert arguments.enable_mamba_cache_stochastic_rounding is True
@@ -153,7 +154,7 @@ def test_factory_constructs_pooling_server_for_external_gliner_plugin() -> None:
     assert arguments.trust_remote_code is True
     assert arguments.enable_prefix_caching is False
     assert arguments.enable_chunked_prefill is False
-    assert arguments.middleware == [factory.ANONYMIZER_CHAT_MIDDLEWARE]
+    assert arguments.middleware == [factory.LAUNCH_OWNERSHIP_MIDDLEWARE, factory.ANONYMIZER_CHAT_MIDDLEWARE]
 
 
 def test_run_server_uses_the_vllm_0_27_lifecycle_boundary() -> None:

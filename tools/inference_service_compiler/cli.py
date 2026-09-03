@@ -7,6 +7,7 @@ from __future__ import annotations
 import functools
 import os
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from tomllib import TOMLDecodeError
@@ -80,12 +81,18 @@ def launch(
     log_directory: Path = Path(".inference-service-runs"),
 ) -> None:
     """Launch a compiled plan and record its observed handle and readiness."""
+    _validate_output_destination(output)
     parsed = load_plan(plan.read_text(encoding="utf-8"))
     secret_values = {name: os.environ[name] for name in parsed.command.secret_sources if name in os.environ}
-    write_json(
-        launch_plan(parsed, secret_values=secret_values, log_directory=log_directory),
-        output,
-    )
+    receipt = launch_plan(parsed, secret_values=secret_values, log_directory=log_directory)
+    try:
+        write_json(receipt, output)
+    except BaseException as exc:
+        try:
+            stop_run(receipt)
+        except BaseException as cleanup_exc:
+            exc.add_note(f"managed-process cleanup failed after receipt write failure: {cleanup_exc}")
+        raise
 
 
 @app.command
@@ -120,4 +127,28 @@ def write_json(value: BaseModel, output: Path | None) -> None:
     if output is None:
         sys.stdout.write(rendered)
     else:
-        output.write_text(rendered, encoding="utf-8")
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=output.parent,
+                prefix=f".{output.name}.",
+                delete=False,
+            ) as temporary_file:
+                temporary_file.write(rendered)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+                temporary_path = Path(temporary_file.name)
+            temporary_path.replace(output)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+
+def _validate_output_destination(output: Path | None) -> None:
+    """Verify that a receipt destination can create files before launching."""
+    if output is None:
+        return
+    with tempfile.NamedTemporaryFile(dir=output.parent, prefix=f".{output.name}.", delete=True):
+        pass

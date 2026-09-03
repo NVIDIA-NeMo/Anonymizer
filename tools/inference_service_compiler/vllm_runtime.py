@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from inference_service_compiler.lifecycle import LAUNCH_OWNERSHIP_MIDDLEWARE
 from inference_service_compiler.models import FactoryPlugin, parse_factory_plugin
 from inference_service_compiler.vllm_factory_integration import (
     io_processor_for,
@@ -151,11 +152,14 @@ def build_server_arguments(parameters: VllmServerParameters) -> Namespace:
     )
     if parameters.max_model_len is not None:
         engine.max_model_len = parameters.max_model_len
+    middleware = [LAUNCH_OWNERSHIP_MIDDLEWARE]
+    if factory_plugin is not None:
+        middleware.append(ANONYMIZER_CHAT_MIDDLEWARE)
     frontend = cli_args.FrontendArgs(
         host=parameters.host,
         port=parameters.port,
         lora_modules=lora_modules,
-        middleware=[ANONYMIZER_CHAT_MIDDLEWARE] if factory_plugin is not None else [],
+        middleware=middleware,
     )
     values = vars(engine) | vars(frontend)
     values.update(
