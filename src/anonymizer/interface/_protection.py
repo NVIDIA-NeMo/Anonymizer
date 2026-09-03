@@ -498,6 +498,21 @@ class _ProtectionFlow(_SafeRepr):
                 graph.dependencies,
                 (_RewriteGroup(tuple(datum.id for datum in datums)),),
             )
+        context_limits = (
+            _ContextLimits(
+                max_context_members_per_target=2,
+                max_context_bytes_per_target=4_096,
+                max_total_context_references=4,
+                max_expanded_frame_bytes=65_536,
+            )
+            if self._plan.profile == _GROUPED_REWRITE_PROFILE
+            else _ContextLimits(
+                max_context_members_per_target=0,
+                max_context_bytes_per_target=0,
+                max_total_context_references=0,
+                max_expanded_frame_bytes=_PHASE6_MAX_EXPANDED_FRAME_BYTES,
+            )
+        )
         try:
             admission_runtime = self._runtime[0] if isinstance(self._runtime, tuple) else self._runtime
             admitted = admission_runtime.admit_context(
@@ -511,12 +526,7 @@ class _ProtectionFlow(_SafeRepr):
                 contract=_ContextExecutionContract(
                     profile=_ContextProfile.TARGET_CONTEXT_V1,
                     schema_version=_ContextSchemaVersion.V1,
-                    limits=_ContextLimits(
-                        max_context_members_per_target=0,
-                        max_context_bytes_per_target=0,
-                        max_total_context_references=0,
-                        max_expanded_frame_bytes=_PHASE6_MAX_EXPANDED_FRAME_BYTES,
-                    ),
+                    limits=context_limits,
                     allow_target_as_context=False,
                     ordering=_ContextOrdering.DECLARED,
                     required_artifacts=(_BackendArtifactClass.CONTEXT_REQUEST,),

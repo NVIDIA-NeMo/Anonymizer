@@ -27,6 +27,7 @@ from anonymizer.engine.execution.phase6_plan import (
 )
 from anonymizer.engine.execution.phase6_runtime import (
     _is_admitted_substitute_handoff,
+    _Phase6Execution,
     _Phase6SubstituteHandoff,
 )
 from anonymizer.engine.execution.phase7_contract import (
@@ -158,6 +159,8 @@ class _ScopeManifest(_PrivatePhase7AdmissionValue):
 class _Phase7PlanProof(_PrivatePhase7AdmissionValue):
     seal: object = field(compare=False)
     snapshot: tuple[object, ...]
+    phase6_plan_id: int
+    phase6_handoffs_id: int
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -245,7 +248,7 @@ def _compile_phase7_plan(
         scope_tasks,
         application_tasks,
         application_predecessors,
-        _Phase7PlanProof(_PHASE7_PLAN_SEAL, snapshot),
+        _Phase7PlanProof(_PHASE7_PLAN_SEAL, snapshot, id(phase6), id(handoffs)),
     )
 
 
@@ -266,6 +269,18 @@ def _is_admitted_phase7_plan(value: object) -> bool:
         )
         and _has_exact_application_predecessors(value)
         and value._proof.snapshot == _phase7_plan_snapshot(value)
+    )
+
+
+def _is_admitted_phase7_plan_for(phase7: object, phase6: object, phase6_execution: object) -> bool:
+    """Require the exact admitted Phase 7 compilation for one sealed Phase 6 run."""
+    return (
+        isinstance(phase7, _Phase7Plan)
+        and _is_admitted_phase7_plan(phase7)
+        and isinstance(phase6_execution, _Phase6Execution)
+        and phase7._proof is not None
+        and phase7._proof.phase6_plan_id == id(phase6)
+        and phase7._proof.phase6_handoffs_id == id(phase6_execution.handoffs)
     )
 
 

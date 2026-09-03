@@ -320,7 +320,7 @@ class _Phase7SubstituteProtectionService:
         if not isinstance(phase7_plan, _Phase7Plan):
             return None
         phase7 = _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7_plan, contract)
-        return _seal_phase8_successor(plan, phase6, phase7)
+        return _seal_phase8_successor(plan, phase6, phase7_plan, phase7)
 
 
 def _preflight_observation_counts(graph: object) -> tuple[int, int]:

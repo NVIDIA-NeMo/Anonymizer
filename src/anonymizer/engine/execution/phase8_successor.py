@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from weakref import ref
 
 from anonymizer.engine.execution.phase6_plan import _is_admitted_phase6_plan, _Phase6Plan
 from anonymizer.engine.execution.phase6_runtime import (
@@ -13,7 +14,8 @@ from anonymizer.engine.execution.phase6_runtime import (
     _is_admitted_substitute_handoff,
     _Phase6Execution,
 )
-from anonymizer.engine.execution.phase7_runtime import _Phase7Execution
+from anonymizer.engine.execution.phase7_admission import _is_admitted_phase7_plan_for, _Phase7Plan
+from anonymizer.engine.execution.phase7_runtime import _Phase7Execution, _take_completed_phase7_execution
 
 
 class _PrivatePhase8SuccessorValue:
@@ -24,48 +26,71 @@ class _PrivatePhase8SuccessorValue:
         raise TypeError("private Phase 8 successor authority is not serializable")
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, weakref_slot=True, repr=False)
 class _Phase8SuccessorHandoff(_PrivatePhase8SuccessorValue):
     """Opaque, invocation-local authority produced only by the Phase 7 owner."""
 
     phase6_plan: _Phase6Plan
     phase6_execution: _Phase6Execution
+    phase7_plan: _Phase7Plan
     phase7_execution: _Phase7Execution
     _seal: object = field(compare=False, default=None)
     _snapshot: tuple[int, ...] = field(compare=False, default=())
 
 
 _SUCCESSOR_SEAL = object()
+_SEALED_SUCCESSORS: dict[int, ref[_Phase8SuccessorHandoff]] = {}
 
 
 def _seal_phase8_successor(
     phase6_plan: _Phase6Plan,
     phase6_execution: _Phase6Execution,
+    phase7_plan: _Phase7Plan,
     phase7_execution: _Phase7Execution,
 ) -> _Phase8SuccessorHandoff | None:
     """Seal the exact predecessor objects while their owning service holds them."""
-    if not _valid_predecessor(phase6_plan, phase6_execution, phase7_execution):
+    if not _valid_predecessor(phase6_plan, phase6_execution, phase7_plan, phase7_execution):
         return None
-    return _Phase8SuccessorHandoff(
+    if not _take_completed_phase7_execution(phase7_plan, phase7_execution):
+        return None
+    handoff = _Phase8SuccessorHandoff(
         phase6_plan,
         phase6_execution,
+        phase7_plan,
         phase7_execution,
         _SUCCESSOR_SEAL,
-        (id(phase6_plan), id(phase6_execution), id(phase7_execution)),
+        (id(phase6_plan), id(phase6_execution), id(phase7_plan), id(phase7_execution)),
     )
+    handoff_id = id(handoff)
+
+    def remove(_value: ref[_Phase8SuccessorHandoff]) -> None:
+        _SEALED_SUCCESSORS.pop(handoff_id, None)
+
+    _SEALED_SUCCESSORS[handoff_id] = ref(handoff, remove)
+    return handoff
 
 
 def _is_admitted_phase8_successor(value: object) -> bool:
-    if not isinstance(value, _Phase8SuccessorHandoff) or value._seal is not _SUCCESSOR_SEAL:
+    if (
+        not isinstance(value, _Phase8SuccessorHandoff)
+        or value._seal is not _SUCCESSOR_SEAL
+        or _SEALED_SUCCESSORS.get(id(value), lambda: None)() is not value
+    ):
         return False
-    if value._snapshot != (id(value.phase6_plan), id(value.phase6_execution), id(value.phase7_execution)):
+    if value._snapshot != (
+        id(value.phase6_plan),
+        id(value.phase6_execution),
+        id(value.phase7_plan),
+        id(value.phase7_execution),
+    ):
         return False
-    return _valid_predecessor(value.phase6_plan, value.phase6_execution, value.phase7_execution)
+    return _valid_predecessor(value.phase6_plan, value.phase6_execution, value.phase7_plan, value.phase7_execution)
 
 
 def _valid_predecessor(
     phase6_plan: object,
     phase6_execution: object,
+    phase7_plan: object,
     phase7_execution: object,
 ) -> bool:
     return (
@@ -73,6 +98,8 @@ def _valid_predecessor(
         and _is_admitted_phase6_plan(phase6_plan)
         and isinstance(phase6_execution, _Phase6Execution)
         and _is_admitted_phase6_execution(phase6_execution, phase6_plan)
+        and isinstance(phase7_plan, _Phase7Plan)
+        and _is_admitted_phase7_plan_for(phase7_plan, phase6_plan, phase6_execution)
         and isinstance(phase7_execution, _Phase7Execution)
         and isinstance(phase7_execution.released, tuple)
         and phase7_execution.cleanup.verified

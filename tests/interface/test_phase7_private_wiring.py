@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -11,11 +11,23 @@ import pytest
 import anonymizer.interface._protection as protection_module
 from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
+from anonymizer.engine.execution.graph import (
+    _AtomicGroup,
+    _CoherenceScope,
+    _ContextScope,
+    _DatumId,
+    _DatumPurpose,
+    _ProtectionGraph,
+    _TextDatum,
+)
+from anonymizer.engine.execution.phase6_plan import _Phase6Plan
 from anonymizer.engine.execution.phase7_admission import _ScopeManifest
+from anonymizer.engine.execution.phase7_contract import _Phase7StableSubstituteContract
 from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddResult, _Phase7NddStatus
 from anonymizer.engine.execution.phase7_runtime import _Phase7CleanupAttestation
 from anonymizer.engine.execution.phase7_validation import _CandidateAssignment
 from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
+from anonymizer.engine.execution.phase8_successor import _Phase8SuccessorHandoff
 from anonymizer.engine.execution.protection_service import _Phase7SubstituteProtectionService
 from anonymizer.interface._protection import (
     _BatchFailureCode,
@@ -87,6 +99,8 @@ class _GroupedRewriteBackend:
     evaluations: int = 0
     member_token_sets: list[tuple[str, ...]] | None = None
     accepted_mention_counts: list[int] | None = None
+    context_binding_sets: list[tuple[dict[str, object], ...]] | None = None
+    consume_context: bool = False
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
         self.calls.append(operation)
@@ -98,6 +112,14 @@ class _GroupedRewriteBackend:
         self.member_token_sets.append(tuple(tokens))
         assert all(isinstance(token, str) for token in tokens)
         assert "context_bindings" in request
+        context_bindings = request["context_bindings"]
+        assert isinstance(context_bindings, list)
+        if self.context_binding_sets is None:
+            self.context_binding_sets = []
+        self.context_binding_sets.append(tuple(context_bindings))
+        context_tokens = [binding["binding_token"] for binding in context_bindings]
+        assert all(isinstance(token, str) for token in context_tokens)
+        consumed_context = context_tokens if self.consume_context else []
         if operation is _Phase8Operation.ANALYZE:
             assert all("accepted_mentions" in member for member in members)
             if self.accepted_mention_counts is None:
@@ -118,7 +140,7 @@ class _GroupedRewriteBackend:
                 operation,
                 {
                     "analyzed_member_tokens": tokens,
-                    "consumed_context_binding_tokens": [],
+                    "consumed_context_binding_tokens": consumed_context,
                     "privacy_obligations": [
                         {
                             "statement": "protect identifier",
@@ -143,7 +165,7 @@ class _GroupedRewriteBackend:
                 operation,
                 {
                     "evaluated_member_tokens": tokens,
-                    "consumed_context_binding_tokens": [],
+                    "consumed_context_binding_tokens": consumed_context,
                     "privacy_answers": [
                         {
                             "obligation_token": privacy_obligation["obligation_token"],
@@ -162,7 +184,7 @@ class _GroupedRewriteBackend:
         return _Dispatch(
             operation,
             {
-                "consumed_context_binding_tokens": [],
+                "consumed_context_binding_tokens": consumed_context,
                 "revisions": [
                     {"member_token": token, "text": f"rewrite-{index}"} for index, token in enumerate(tokens)
                 ],
@@ -236,7 +258,6 @@ def test_private_grouped_rewrite_executes_phase7_then_all_phase8_operations() ->
         phase7_backend=phase7,
         phase8_backend=phase8,
     )
-
     result = flow.protect((_record("source-a", "Alice"),))
 
     assert phase8.calls
@@ -309,6 +330,105 @@ def test_private_grouped_rewrite_rejects_forged_or_mismatched_predecessor_before
 
     assert isinstance(result.outcomes[0], _Failed)
     assert phase8.calls == []
+
+
+@pytest.mark.parametrize("replacement", ("reconstructed_execution", "mixed_execution"))
+def test_private_grouped_rewrite_rejects_a_valid_but_unbound_phase7_predecessor_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
+) -> None:
+    """A sealed handoff is not transferable to a lookalike or another run's execution."""
+    anonymizer = build_synthetic_anonymizer({"Alice": "first_name"})
+    plan = anonymizer._compile_protection_plan(
+        AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True), emit_telemetry=False)
+    )
+    assert isinstance(plan, _ProtectionPlan)
+    phase8 = _GroupedRewriteBackend([])
+    captured: list[_Phase8SuccessorHandoff | None] = []
+    original = _Phase7SubstituteProtectionService.execute_successor
+
+    def capture(
+        self: _Phase7SubstituteProtectionService,
+        phase6: _Phase6Plan,
+        *,
+        contract: _Phase7StableSubstituteContract,
+    ) -> _Phase8SuccessorHandoff | None:
+        result = original(self, phase6, contract=contract)
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(_Phase7SubstituteProtectionService, "execute_successor", capture)
+
+    def new_flow() -> _ProtectionFlow:
+        return _ProtectionFlow(
+            anonymizer,
+            plan,
+            phase6_backend=_AnchoredPhase6Backend.from_entities({"Alice": "first_name"}),
+            phase7_backend=_CandidateBackend("Avery"),
+            phase8_backend=phase8,
+        )
+
+    assert isinstance(new_flow().protect((_record("source-a", "Alice"),)).outcomes[0], _ProtectionSucceeded)
+    assert isinstance(new_flow().protect((_record("source-b", "Alice"),)).outcomes[0], _ProtectionSucceeded)
+    first, second = captured
+    assert isinstance(first, _Phase8SuccessorHandoff)
+    assert isinstance(second, _Phase8SuccessorHandoff)
+    phase8.calls.clear()
+    forged = replace(
+        first,
+        phase7_execution=(
+            replace(first.phase7_execution) if replacement == "reconstructed_execution" else second.phase7_execution
+        ),
+    )
+    monkeypatch.setattr(_Phase7SubstituteProtectionService, "execute_successor", lambda *_args, **_kwargs: forged)
+
+    result = new_flow().protect((_record("source-c", "Alice"),))
+
+    assert isinstance(result.outcomes[0], _Failed)
+    assert phase8.calls == []
+
+
+def test_private_grouped_rewrite_projects_shared_context_per_owner_with_frozen_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shared context is bound separately for each target and never becomes a member."""
+    anonymizer = build_synthetic_anonymizer({})
+    plan = anonymizer._compile_protection_plan(
+        AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=True), emit_telemetry=False)
+    )
+    assert isinstance(plan, _ProtectionPlan)
+    phase8 = _GroupedRewriteBackend([], consume_context=True)
+
+    def graph_with_shared_context(datums: tuple[_TextDatum, ...]) -> _ProtectionGraph:
+        shared = _TextDatum(_DatumId("shared-context"), "shared context", _DatumPurpose.CONTEXT_ONLY)
+        members = tuple(datum.id for datum in datums)
+        return _ProtectionGraph(
+            (*datums, shared),
+            (),
+            tuple(_ContextScope(datum.id, (shared.id,)) for datum in datums),
+            tuple(_CoherenceScope((datum.id,)) for datum in datums),
+            (_AtomicGroup(members),),
+        )
+
+    monkeypatch.setattr(protection_module, "_trivial_graph", graph_with_shared_context)
+    flow = _ProtectionFlow(
+        anonymizer,
+        plan,
+        phase6_backend=_AnchoredPhase6Backend.from_entities({}),
+        phase7_backend=_CandidateBackend("Avery"),
+        phase8_backend=phase8,
+    )
+    result = flow.protect((_record("source-a", "ordinary one"), _record("source-b", "ordinary two")))
+
+    assert all(isinstance(outcome, _ProtectionSucceeded) for outcome in result.outcomes)
+    assert phase8.context_binding_sets is not None
+    bindings = phase8.context_binding_sets[0]
+    assert len(bindings) == 2
+    assert len({binding["binding_token"] for binding in bindings}) == 2
+    assert {binding["ordinal"] for binding in bindings} == {0}
+    assert {binding["text"] for binding in bindings} == {"shared context"}
+    assert phase8.member_token_sets is not None
+    assert {binding["owner_member_token"] for binding in bindings} == set(phase8.member_token_sets[0])
 
 
 def test_private_substitute_releases_only_a_qualified_phase7_output() -> None:
