@@ -61,10 +61,13 @@ This developer tool trusts whoever can write the profile and plan: it does not
 authenticate the plan's author, sign the plan, or recompile the embedded spec to
 prove that every derived field is semantically consistent.
 
-`launch` waits for `/v1/models` and a task-specific request. A generation
-service must return a chat completion. A detector must demonstrate dynamic
-labels, offsets, and scores. The launch receipt records the process group and
-Linux start marker so later commands do not signal a reused PID.
+`launch` first requires a launch-scoped ownership proof from the new process,
+then waits for `/v1/models` and a task-specific request. The ownership check
+prevents an existing compatible service on the target port from satisfying a
+new launch. A generation service must return a chat completion. A detector
+must demonstrate dynamic labels, offsets, and scores. The launch receipt
+records the process group and Linux start marker so later commands do not
+signal a reused PID or an unrelated process group.
 
 The v2 profile schema has four sections:
 
@@ -106,10 +109,13 @@ uv run --python 3.12 python tools/inference_service.py launch \
   --log-directory .inference-service-runs
 ```
 
-The command returns after both readiness checks pass. Keep `gliner-launch.json`:
-it is an unsigned durable operation record containing the observed handle and
-its consistency fingerprint. It does not own or prove process identity; later
-status and stop operations re-check the exact PID and start marker.
+The command returns after the ownership and readiness checks pass. Keep
+`gliner-launch.json`: it is an unsigned durable operation record containing the
+observed handle and its consistency fingerprint. The tool validates the output
+destination before launch and publishes file receipts with atomic replacement.
+If publication still fails, it makes a bounded attempt to stop the launched
+process. Later status and stop operations re-check the exact PID, Linux start
+marker, and process group.
 
 ### Operate the service
 
@@ -126,9 +132,9 @@ uv run --python 3.12 python tools/inference_service.py stop \
   --receipt gliner-launch.json
 ```
 
-`stop` checks the recorded PID and start marker before sending `SIGTERM` to its
-process group, waits for the profile's shutdown timeout, and uses `SIGKILL` if
-the group remains alive.
+`stop` checks the recorded PID, start marker, and live process group before
+sending `SIGTERM`, waits for the profile's shutdown timeout, and uses `SIGKILL`
+if the process remains alive.
 
 ## Deploy in a GPU container
 
