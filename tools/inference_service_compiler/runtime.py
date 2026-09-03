@@ -323,7 +323,7 @@ def wait_for_readiness(
             )
         try:
             if launch_token is not None:
-                _probe_launch_ownership(plan, launch_token)
+                _probe_launch_ownership(plan, launch_token, secret_values)
             receipt = probe_endpoint(plan, secret_values=secret_values)
             if receipt.passed:
                 return receipt
@@ -337,13 +337,19 @@ def wait_for_readiness(
     raise RuntimeEffectError(RuntimeDiagnostic(code="readiness-timeout", message=message))
 
 
-def _probe_launch_ownership(plan: RunPlan, launch_token: str) -> None:
+def _probe_launch_ownership(
+    plan: RunPlan,
+    launch_token: str,
+    secret_values: Mapping[str, str] | None = None,
+) -> None:
     """Require a proof that the responding server inherited this launch's token."""
     url = f"{plan.endpoint.scheme}://{plan.endpoint.host}:{plan.endpoint.port}{LAUNCH_OWNERSHIP_PATH}"
+    headers = _probe_headers(plan, secret_values or {})
+    headers[LAUNCH_OWNERSHIP_HEADER] = launch_token
     try:
         response = httpx.get(
             url,
-            headers={LAUNCH_OWNERSHIP_HEADER: launch_token},
+            headers=headers,
             timeout=10,
         )
         if response.status_code != 200:
