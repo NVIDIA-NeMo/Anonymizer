@@ -183,9 +183,8 @@ def _baseline_only_operation(
 
 def _backend_group_operation(backend: object) -> _GroupOperation:
     def operation(members: tuple[object, ...], baselines: dict[object, str]) -> tuple[tuple[object, str], ...] | None:
-        wire = _Phase8WireGroup(_opaque_token(), tuple(_opaque_token() for _ in members))
+        wire = _new_wire(members)
         tokens = wire.member_tokens
-        token_to_member = dict(zip(tokens, members, strict=True))
         request = _operation_request(wire, members, baselines)
         analysis = _dispatch(backend, _Phase8Operation.ANALYZE, request)
         if analysis is None or not _reconcile_common(analysis, "analyzed_member_tokens", tokens, ()):
@@ -200,36 +199,63 @@ def _backend_group_operation(backend: object) -> _GroupOperation:
             if utility:
                 return None
             return tuple((member, baselines[member]) for member in members)
-        active_request = {**request, "privacy_obligations": privacy, "utility_obligations": utility}
+        rewrite_wire = _new_wire(members)
+        rewrite_tokens = rewrite_wire.member_tokens
+        rewrite_map = dict(zip(rewrite_tokens, members, strict=True))
+        active_request = {
+            **_operation_request(rewrite_wire, members, baselines),
+            "privacy_obligations": privacy,
+            "utility_obligations": utility,
+        }
         revision = _dispatch(backend, _Phase8Operation.REWRITE, active_request)
-        if revision is None or not _reconcile_common(revision, None, tokens, ()):
+        if revision is None or not _reconcile_common(revision, None, rewrite_tokens, ()):
             return None
-        current = _revisions(revision, token_to_member)
+        current = _revisions(revision, rewrite_map)
         if current is None:
             return None
         limits = dict(getattr(_load_phase8_contract(), "limits", ()))
         for repair_round in range(limits.get("max_repair_iterations", 0) + 1):
+            evaluation_wire = _new_wire(members)
+            evaluation_tokens = evaluation_wire.member_tokens
+            evaluation_map = dict(zip(evaluation_tokens, members, strict=True))
             evaluation_request = {
-                **active_request,
-                "revisions": _revision_request(current, token_to_member),
+                **_operation_request(evaluation_wire, members, baselines),
+                "privacy_obligations": privacy,
+                "utility_obligations": utility,
+                "revisions": _revision_request(current, evaluation_map),
             }
             evaluation = _dispatch(backend, _Phase8Operation.EVALUATE, evaluation_request)
-            metric = _metric(evaluation, tokens, _obligation_tokens(privacy), _obligation_tokens(utility))
+            metric = _metric(evaluation, evaluation_tokens, _obligation_tokens(privacy), _obligation_tokens(utility))
             if metric is None:
                 return None
             if not metric.needs_repair:
                 return tuple((member, current[member]) for member in members)
             if repair_round == limits.get("max_repair_iterations", 0):
                 return None
-            repaired = _dispatch(backend, _Phase8Operation.REPAIR, evaluation_request)
-            if repaired is None or not _reconcile_common(repaired, None, tokens, ()):
+            repair_wire = _new_wire(members)
+            repair_tokens = repair_wire.member_tokens
+            repair_map = dict(zip(repair_tokens, members, strict=True))
+            repair_request = {
+                **_operation_request(repair_wire, members, baselines),
+                "privacy_obligations": privacy,
+                "utility_obligations": utility,
+                "revisions": _revision_request(current, repair_map),
+                "repair_round": repair_round + 1,
+            }
+            repaired = _dispatch(backend, _Phase8Operation.REPAIR, repair_request)
+            if repaired is None or not _reconcile_common(repaired, None, repair_tokens, ()):
                 return None
-            current = _revisions(repaired, token_to_member)
+            current = _revisions(repaired, repair_map)
             if current is None:
                 return None
         return None
 
     return operation
+
+
+def _new_wire(members: tuple[object, ...]) -> _Phase8WireGroup:
+    """Allocate attempt-local capabilities; they must never span a stage."""
+    return _Phase8WireGroup(_opaque_token(), tuple(_opaque_token() for _ in members))
 
 
 def _operation_request(
@@ -282,21 +308,43 @@ def _admit_obligations(
         values: list[dict[str, object]] = []
         for value in raw:
             statement = _field(value, "statement")
-            owners = _field(value, "source_member_tokens", [])
             if (
                 not isinstance(statement, str)
                 or not statement
                 or len(statement.encode()) > limits.get("max_obligation_statement_utf8_bytes", 0)
             ):
                 return None
-            if (
-                not isinstance(owners, list)
-                or not owners
-                or len(owners) != len(set(owners))
-                or not set(owners) <= set(members)
-            ):
-                return None
-            values.append({"obligation_token": _opaque_token(), "statement": statement, "source_member_tokens": owners})
+            if field == "privacy_obligations":
+                owners = _field(value, "source_member_tokens", [])
+                kind = _field(value, "kind")
+                sensitivity = _field(value, "sensitivity")
+                mention_tokens = _field(value, "source_mention_tokens", [])
+                if (
+                    not isinstance(owners, list)
+                    or not owners
+                    or len(owners) != len(set(owners))
+                    or not set(owners) <= set(members)
+                    or kind not in {"direct", "latent", "combination"}
+                    or sensitivity not in {"high", "medium", "low"}
+                    or not isinstance(mention_tokens, list)
+                    or len(mention_tokens) != len(set(mention_tokens))
+                ):
+                    return None
+                values.append(
+                    {
+                        "obligation_token": _opaque_token(),
+                        "statement": statement,
+                        "kind": kind,
+                        "sensitivity": sensitivity,
+                        "source_member_tokens": owners,
+                        "source_mention_tokens": mention_tokens,
+                    }
+                )
+            else:
+                importance = _field(value, "importance")
+                if importance not in {"critical", "important"}:
+                    return None
+                values.append({"obligation_token": _opaque_token(), "statement": statement, "importance": importance})
         admitted.append(values)
     return admitted[0], admitted[1]
 
@@ -384,20 +432,20 @@ def _exact_answer_tokens(answers: list[object], expected: tuple[str, ...]) -> bo
 
 def _privacy_answer(answer: object) -> tuple[str, float, bool]:
     sensitivity, confidence, leaked = (
-        _field(answer, "sensitivity"),
+        _field(answer, "sensitivity", "high"),
         _field(answer, "confidence"),
-        _field(answer, "leaked"),
+        _field(answer, "deducible"),
     )
-    if not isinstance(sensitivity, str) or not isinstance(confidence, (int, float)) or not isinstance(leaked, bool):
+    if not isinstance(sensitivity, str) or not isinstance(confidence, (int, float)) or leaked not in {"yes", "no"}:
         raise ValueError
-    return sensitivity, float(confidence), leaked
+    return sensitivity, float(confidence), leaked == "yes"
 
 
 def _utility_answer(answer: object) -> tuple[int, float]:
-    weight, score = _field(answer, "weight"), _field(answer, "score")
-    if not isinstance(weight, int) or not isinstance(score, (int, float)):
+    importance, score = _field(answer, "importance", "important"), _field(answer, "preservation_score")
+    if importance not in {"critical", "important"} or not isinstance(score, (int, float)):
         raise ValueError
-    return weight, float(score)
+    return (2 if importance == "critical" else 1), float(score)
 
 
 def _terminal(

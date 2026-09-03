@@ -84,33 +84,73 @@ class _GroupedRewriteBackend:
 
     calls: list[_Phase8Operation]
     evaluations: int = 0
+    member_token_sets: list[tuple[str, ...]] | None = None
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
         self.calls.append(operation)
-        supplied_tokens = request["member_tokens"]
-        assert isinstance(supplied_tokens, list) and all(isinstance(token, str) for token in supplied_tokens)
-        tokens = supplied_tokens
+        members = request["members"]
+        assert isinstance(members, list)
+        tokens = [member["member_token"] for member in members]
+        if self.member_token_sets is None:
+            self.member_token_sets = []
+        self.member_token_sets.append(tuple(tokens))
+        assert all(isinstance(token, str) for token in tokens)
+        assert "context_bindings" in request
+        assert "accepted_mentions" in request
         if operation is _Phase8Operation.ANALYZE:
-            return _Dispatch(operation, {"analyzed_member_tokens": tokens, "privacy_obligations": [{"id": "p"}]})
+            return _Dispatch(
+                operation,
+                {
+                    "analyzed_member_tokens": tokens,
+                    "consumed_context_binding_tokens": [],
+                    "privacy_obligations": [
+                        {
+                            "statement": "protect identifier",
+                            "kind": "latent",
+                            "sensitivity": "high",
+                            "source_member_tokens": tokens,
+                            "source_mention_tokens": [],
+                        }
+                    ],
+                    "utility_obligations": [{"statement": "preserve meaning", "importance": "important"}],
+                },
+            )
         if operation is _Phase8Operation.EVALUATE:
+            privacy_obligations = request["privacy_obligations"]
+            utility_obligations = request["utility_obligations"]
+            assert isinstance(privacy_obligations, list) and isinstance(utility_obligations, list)
+            privacy_obligation = privacy_obligations[0]
+            utility_obligation = utility_obligations[0]
+            assert isinstance(privacy_obligation, dict) and isinstance(utility_obligation, dict)
             self.evaluations += 1
             return _Dispatch(
                 operation,
                 {
                     "evaluated_member_tokens": tokens,
+                    "consumed_context_binding_tokens": [],
                     "privacy_answers": [
                         {
-                            "sensitivity": "high",
+                            "obligation_token": privacy_obligation["obligation_token"],
+                            "deducible": "yes" if self.evaluations == 1 else "no",
                             "confidence": 1.0 if self.evaluations == 1 else 0.0,
-                            "leaked": self.evaluations == 1,
                         }
                     ],
-                    "utility_answers": [{"weight": 1, "score": 1.0}],
+                    "utility_answers": [
+                        {
+                            "obligation_token": utility_obligation["obligation_token"],
+                            "preservation_score": 1.0,
+                        }
+                    ],
                 },
             )
         return _Dispatch(
             operation,
-            {"revisions": [{"member_token": token, "text": f"rewrite-{index}"} for index, token in enumerate(tokens)]},
+            {
+                "consumed_context_binding_tokens": [],
+                "revisions": [
+                    {"member_token": token, "text": f"rewrite-{index}"} for index, token in enumerate(tokens)
+                ],
+            },
         )
 
 
@@ -190,6 +230,8 @@ def test_private_grouped_rewrite_executes_phase7_then_all_phase8_operations() ->
         _Phase8Operation.REPAIR,
         _Phase8Operation.EVALUATE,
     ]
+    assert phase8.member_token_sets is not None
+    assert len(set(phase8.member_token_sets)) == len(phase8.member_token_sets)
 
 
 def test_private_grouped_rewrite_with_no_entities_makes_no_phase7_or_phase8_calls() -> None:
