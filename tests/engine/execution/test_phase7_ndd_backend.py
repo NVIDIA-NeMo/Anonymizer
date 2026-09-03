@@ -9,7 +9,7 @@ import inspect
 import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import ModuleType
 from typing import Any, cast
 
@@ -30,7 +30,7 @@ from anonymizer.engine.execution.graph import _CoherenceScope
 from anonymizer.engine.execution.mention_resolution import _ClusterId
 from anonymizer.engine.execution.phase7_admission import _Phase7Plan, _ScopeManifest
 from anonymizer.engine.execution.phase7_contract import _load_phase7_contract, _Phase7StableSubstituteContract
-from anonymizer.engine.execution.phase7_validation import _BundleRejected, _validate_scope_bundle, _ValidatedBundle
+from anonymizer.engine.execution.phase7_validation import _validate_scope_bundle, _ValidatedBundle
 from anonymizer.engine.ndd.adapter import (
     RECORD_ID_COLUMN,
     FailedRecord,
@@ -49,6 +49,7 @@ from tests.engine.execution.test_phase7_validation import _compiled_scope
 from tests.streaming.structured_trace_prototype import build_synthetic_anonymizer
 
 _Response = Callable[[pd.DataFrame, list[Any]], WorkflowRunResult]
+_DISPATCH_TASK = _TaskKey(_StageId("phase7-plan"), _ScopeTaskSubject())
 
 
 @dataclass
@@ -107,7 +108,7 @@ def _dispatch(
 ) -> _Dispatch:
     return _Dispatch(
         _InvocationId(invocation),
-        _TaskKey(_StageId("phase7-plan"), _ScopeTaskSubject()),
+        _DISPATCH_TASK,
         _AttemptId(attempt),
         _RowToken(row),
     )
@@ -595,7 +596,7 @@ def test_phase7_failed_row_evidence_without_a_failure_is_inconsistent() -> None:
     assert _status(result) == "invocation_inconsistent"
 
 
-def test_phase7_adapter_exception_is_sanitized_to_the_current_task_failure() -> None:
+def test_phase7_adapter_exception_after_dispatch_poisoned_as_transport_loss() -> None:
     manifest, handoffs = _single_name_scope()
 
     def fail(_frame: pd.DataFrame, _columns: list[Any]) -> WorkflowRunResult:
@@ -604,8 +605,8 @@ def test_phase7_adapter_exception_is_sanitized_to_the_current_task_failure() -> 
     adapter = _ScriptedAdapter(fail)
     result = _propose(_backend(adapter, "task-token", "slot-token"), manifest, handoffs, _dispatch())
 
-    assert _status(result) == "task_failed"
-    assert _reason(result) == "backend_failed"
+    assert _status(result) == "poisoned"
+    assert _reason(result) is None
     assert "SECRET" not in repr(result)
     assert len(adapter.calls) == 1
 
@@ -620,6 +621,111 @@ def test_phase7_rejects_an_over_limit_workframe_before_adapter_execution() -> No
     assert _status(result) == "invocation_inconsistent"
     assert _reason(result) == "limit_exceeded"
     assert adapter.calls == []
+
+
+def test_phase7_planner_replays_an_admitted_manifest_copy_without_redispatch() -> None:
+    manifest, handoffs = _single_name_scope()
+    admitted_copy = replace(manifest)
+    adapter = _ScriptedAdapter(_success_response({"person_given_name": "Mira"}))
+    backend = _backend(adapter, "task-token", "slot-token")
+
+    first = _propose(backend, manifest, handoffs, _dispatch())
+    replay = _propose(backend, admitted_copy, handoffs, _dispatch())
+
+    assert replay is first
+    assert _status(replay) == "candidate"
+    assert len(adapter.calls) == 1
+
+
+def test_phase7_nonidentical_terminal_replay_cannot_read_or_rewrite_planned_result() -> None:
+    manifest, handoffs = _single_name_scope()
+    adapter = _ScriptedAdapter(_success_response({"person_given_name": "Mira"}))
+    backend = _backend(adapter, "task-token", "slot-token")
+
+    accepted = _propose(backend, manifest, handoffs, _dispatch())
+    stale = _propose(backend, replace(manifest), handoffs, _dispatch(attempt="later", row="later-row"))
+    exact = _propose(backend, replace(manifest), handoffs, _dispatch())
+
+    assert _status(accepted) == "candidate"
+    assert _status(stale) == "poisoned"
+    assert exact is accepted
+    assert len(adapter.calls) == 1
+
+
+def test_phase7_nonidentical_replay_before_acceptance_poison_the_reservation() -> None:
+    manifest, handoffs = _single_name_scope()
+    adapter = _ScriptedAdapter(_success_response({"person_given_name": "Mira"}))
+    backend: Any
+
+    def barrier(stage: str) -> None:
+        if stage == "reserve":
+            conflicting = _propose(backend, replace(manifest), handoffs, _dispatch(attempt="other", row="other"))
+            assert _status(conflicting) == "poisoned"
+
+    backend = getattr(_backend_module(), "_Phase7NddBackend")(
+        cast(NddAdapter, adapter), _invocation(), identity_factory=_identity_factory("task", "slot"), barrier=barrier
+    )
+    result = _propose(backend, manifest, handoffs, _dispatch())
+
+    assert _status(result) == "poisoned"
+    assert adapter.calls == []
+
+
+def test_phase7_cancellation_at_reserve_aborts_before_adapter_dispatch() -> None:
+    manifest, handoffs = _single_name_scope()
+    adapter = _ScriptedAdapter(lambda _frame, _columns: pytest.fail("cancelled scope dispatched"))
+    backend: Any
+
+    def barrier(stage: str) -> None:
+        if stage == "reserve":
+            assert backend.cancel_scope(manifest) is not None
+
+    backend = getattr(_backend_module(), "_Phase7NddBackend")(cast(NddAdapter, adapter), _invocation(), barrier=barrier)
+    result = _propose(backend, manifest, handoffs, _dispatch())
+
+    assert _status(result) == "aborted"
+    assert adapter.calls == []
+    assert _propose(backend, manifest, handoffs, _dispatch()) == result
+
+
+def test_phase7_post_dispatch_untrusted_cancellation_poison_rejects_late_success() -> None:
+    manifest, handoffs = _single_name_scope()
+    adapter = _ScriptedAdapter(_success_response({"person_given_name": "Mira"}))
+    backend: Any
+
+    def barrier(stage: str) -> None:
+        if stage == "dispatch":
+            assert backend.cancel_scope(manifest, trusted_stop=False) is not None
+
+    backend = getattr(_backend_module(), "_Phase7NddBackend")(
+        cast(NddAdapter, adapter), _invocation(), identity_factory=_identity_factory("task", "slot"), barrier=barrier
+    )
+    result = _propose(backend, manifest, handoffs, _dispatch())
+
+    assert _status(result) == "poisoned"
+    # The dispatch barrier is post-dispatch: cancellation makes the returned
+    # adapter success late evidence, not a reason to suppress the first call.
+    assert len(adapter.calls) == 1
+
+
+def test_phase7_crash_after_dispatch_poison_replays_without_a_second_effect() -> None:
+    manifest, handoffs = _single_name_scope()
+    adapter = _ScriptedAdapter(_success_response({"person_given_name": "Mira"}))
+
+    def crash() -> None:
+        raise ConnectionError
+
+    backend = getattr(_backend_module(), "_Phase7NddBackend")(
+        cast(NddAdapter, adapter),
+        _invocation(),
+        identity_factory=_identity_factory("task", "slot"),
+        crash_after_dispatch=crash,
+    )
+    result = _propose(backend, manifest, handoffs, _dispatch())
+
+    assert _status(result) == "poisoned"
+    assert len(adapter.calls) == 1
+    assert _propose(backend, manifest, handoffs, _dispatch()) is result
 
 
 def test_phase7_workframe_byte_ceiling_accepts_exactly_limit_and_rejects_one_over() -> None:
@@ -692,20 +798,39 @@ def test_phase7_structural_output_parse_failure_is_content_free_and_inconsistent
     assert "SECRET" not in repr(result)
 
 
-def test_phase7_hydration_is_proposal_only_and_p5_remains_validation_authority() -> None:
+def test_phase7_p5_rejects_an_invalid_candidate_before_publication() -> None:
     manifest, handoffs = _single_name_scope()
     adapter = _ScriptedAdapter(_success_response({"person_given_name": "Alice"}))
-    result = _propose(_backend(adapter, "task-token", "slot-token"), manifest, handoffs, _dispatch())
+    backend = _backend(adapter, "task-token", "slot-token")
+    result = _propose(backend, manifest, handoffs, _dispatch())
+
+    assert _status(result) == "invocation_inconsistent"
+    assert getattr(result, "assignments") == ()
+    assert _propose(backend, manifest, handoffs, _dispatch()) is result
+    assert len(adapter.calls) == 1
+
+
+def test_phase7_reentrant_close_returns_the_absorbing_terminal_result() -> None:
+    manifest, handoffs = _single_name_scope()
+    adapter = _ScriptedAdapter(_success_response({"person_given_name": "Mira"}))
+    backend: Any
+
+    def barrier(stage: str) -> None:
+        if stage == "cleanup":
+            backend.close()
+
+    backend = getattr(_backend_module(), "_Phase7NddBackend")(
+        cast(NddAdapter, adapter),
+        _invocation(),
+        identity_factory=_identity_factory("task", "slot"),
+        barrier=barrier,
+    )
+    result = _propose(backend, manifest, handoffs, _dispatch())
+    replay = _propose(backend, manifest, handoffs, _dispatch())
 
     assert _status(result) == "candidate"
-    p5_result = _validate_scope_bundle(
-        manifest,
-        handoffs,
-        getattr(result, "assignments"),
-        _load_phase7_contract(),
-    )
-    assert isinstance(p5_result, _BundleRejected)
-    assert p5_result.code.value == "candidate_matches_original"
+    assert replay is result
+    assert len(adapter.calls) == 1
 
 
 def test_phase7_hydrated_valid_candidate_can_cross_the_unchanged_p5_boundary() -> None:

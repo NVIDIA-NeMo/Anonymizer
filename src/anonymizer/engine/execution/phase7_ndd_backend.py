@@ -42,10 +42,18 @@ from anonymizer.engine.execution.phase7_contract import (
     _is_admitted_phase7_contract,
     _Phase7StableSubstituteContract,
 )
+from anonymizer.engine.execution.phase7_planner_ledger import (
+    _PlannerLedger,
+    _PlannerSnapshot,
+    _PlannerState,
+    _Reservation,
+)
 from anonymizer.engine.execution.phase7_validation import (
     _CandidateAssignment,
     _index_scope_sources,
     _ScopeSourceIndex,
+    _validate_scope_bundle,
+    _ValidatedBundle,
 )
 from anonymizer.engine.ndd.adapter import (
     RECORD_ID_COLUMN,
@@ -60,6 +68,8 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class _PrivatePhase7NddValue:
+    __slots__ = ()
+
     def __repr__(self) -> str:
         return f"<private {type(self).__name__.strip('_').replace('_', ' ').lower()}>"
 
@@ -69,9 +79,12 @@ class _PrivatePhase7NddValue:
 
 class _Phase7NddStatus(str, Enum):
     NO_WORK = "no_work"
+    PENDING = "pending"
     CANDIDATE = "candidate"
     TASK_FAILED = "task_failed"
     INVOCATION_INCONSISTENT = "invocation_inconsistent"
+    ABORTED = "aborted"
+    POISONED = "poisoned"
 
 
 class _Phase7NddReason(str, Enum):
@@ -123,16 +136,45 @@ def _default_identity() -> str:
 class _Phase7NddBackend(_PrivatePhase7NddValue):
     """Propose and structurally reconcile one complete scope bundle."""
 
+    __slots__ = (
+        "_adapter",
+        "_invocation",
+        "_identity_factory",
+        "_planner",
+        "_barrier_callback",
+        "_crash_after_dispatch_callback",
+    )
+
     def __init__(
         self,
         adapter: NddAdapter,
         invocation: _CompiledInvocation,
         *,
         identity_factory: Callable[[], str] = _default_identity,
+        barrier: Callable[[str], None] | None = None,
+        crash_after_dispatch: Callable[[], None] | None = None,
     ) -> None:
         self._adapter = adapter
         self._invocation = invocation
         self._identity_factory = identity_factory
+        # Kept private to this invocation; it is intentionally unrelated to
+        # Phase 4 accounting and is never accepted from a caller.
+        self._planner = _PlannerLedger[_Phase7NddResult]()
+        self._barrier_callback = barrier
+        self._crash_after_dispatch_callback = crash_after_dispatch
+
+    def close(self) -> None:
+        self._planner.close()
+
+    def cancel_scope(self, manifest: object, *, trusted_stop: bool = False) -> _Phase7NddResult | None:
+        """Private, bounded cancellation hook used by lifecycle owners/tests."""
+        if not isinstance(manifest, _ScopeManifest) or not _is_admitted_scope_manifest(manifest):
+            return _inconsistent(_Phase7NddReason.CONTRACT_INVALID)
+        try:
+            snapshot = self._planner.cancel(manifest.id, trusted_stop=trusted_stop)
+        except RuntimeError:
+            return _poisoned()
+        return None if snapshot is None else _snapshot_result(snapshot)
 
     def propose_scope(
         self,
@@ -153,6 +195,19 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
             return _inconsistent(_Phase7NddReason.EVIDENCE_UNATTRIBUTABLE)
         if not isinstance(self._invocation, _CompiledInvocation):
             return _inconsistent(_Phase7NddReason.CONTRACT_INVALID)
+        ledger = self._planner
+        try:
+            reservation, replay = ledger.reserve(admitted_manifest.id, _dispatch_evidence(dispatch))
+        except RuntimeError:
+            return _poisoned()
+        if replay is not None:
+            return _snapshot_result(replay)
+        if reservation is None:
+            return _Phase7NddResult(_Phase7NddStatus.PENDING)
+        self._barrier("reserve")
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        if replayed is not None:
+            return replayed
         workframe = _lower_candidate_workframe(
             admitted_manifest,
             sources,
@@ -161,11 +216,114 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
             identity_factory=self._identity_factory,
         )
         if workframe is None:
-            return _inconsistent(_Phase7NddReason.LIMIT_EXCEEDED)
+            return self._terminal(
+                ledger, admitted_manifest.id, reservation, _inconsistent(_Phase7NddReason.LIMIT_EXCEEDED)
+            )
+        if not ledger.mark_dispatched(admitted_manifest.id, reservation):
+            return self._current(ledger, admitted_manifest.id)
         workflow = self._run_candidate_workflow(workframe)
+        # This barrier deliberately follows the adapter call.  A reentrant
+        # cancellation here is post-dispatch and the received result below is
+        # therefore late evidence which must not be published.
+        self._barrier("dispatch")
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        if replayed is not None:
+            return replayed
+        self._barrier("receipt")
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        if replayed is not None:
+            return replayed
+        crash = self._crash_after_dispatch_callback
+        if crash is not None:
+            try:
+                crash()
+            except Exception:
+                return self._terminal(ledger, admitted_manifest.id, reservation, _poisoned())
         if isinstance(workflow, _Phase7NddResult):
-            return workflow
-        return _reconcile_candidate_result(workframe, workflow)
+            self._barrier("validation")
+            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+            if replayed is not None:
+                return replayed
+            self._barrier("transformation")
+            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+            if replayed is not None:
+                return replayed
+            self._barrier("reconciliation")
+            replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+            if replayed is not None:
+                return replayed
+            return self._terminal(ledger, admitted_manifest.id, reservation, workflow)
+        result = _reconcile_candidate_result(workframe, workflow)
+        self._barrier("validation")
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        if replayed is not None:
+            return replayed
+        if result.status is _Phase7NddStatus.CANDIDATE:
+            validated = _validate_scope_bundle(
+                admitted_manifest,
+                handoffs,
+                result.assignments,
+                admitted_contract,
+            )
+            if not isinstance(validated, _ValidatedBundle):
+                result = _inconsistent(_Phase7NddReason.EVIDENCE_UNATTRIBUTABLE)
+        self._barrier("transformation")
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        if replayed is not None:
+            return replayed
+        self._barrier("reconciliation")
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        if replayed is not None:
+            return replayed
+        self._barrier("publication")
+        replayed = self._after_barrier(ledger, admitted_manifest.id, reservation)
+        if replayed is not None:
+            return replayed
+        return self._terminal(ledger, admitted_manifest.id, reservation, result)
+
+    def _barrier(self, stage: str) -> None:
+        callback = self._barrier_callback
+        if callback is not None:
+            callback(stage)
+
+    def _after_barrier(
+        self, ledger: _PlannerLedger[_Phase7NddResult], scope: object, reservation: _Reservation
+    ) -> _Phase7NddResult | None:
+        try:
+            if ledger.owns(scope, reservation):
+                return None
+        except RuntimeError:
+            return _poisoned()
+        return self._current(ledger, scope)
+
+    def _current(self, ledger: _PlannerLedger[_Phase7NddResult], scope: object) -> _Phase7NddResult:
+        try:
+            snapshot = ledger.current(scope)
+        except RuntimeError:
+            return _poisoned()
+        return _Phase7NddResult(_Phase7NddStatus.PENDING) if snapshot is None else _snapshot_result(snapshot)
+
+    def _terminal(
+        self,
+        ledger: _PlannerLedger[_Phase7NddResult],
+        scope: object,
+        reservation: _Reservation,
+        result: _Phase7NddResult,
+    ) -> _Phase7NddResult:
+        state = (
+            _PlannerState.PLANNED
+            if result.status is _Phase7NddStatus.CANDIDATE
+            else _PlannerState.POISONED
+            if result.status in {_Phase7NddStatus.INVOCATION_INCONSISTENT, _Phase7NddStatus.POISONED}
+            else _PlannerState.ABORTED
+        )
+        if not ledger.terminal(scope, reservation, _PlannerSnapshot(state, result)):
+            return self._current(ledger, scope)
+        self._barrier("release")
+        released = self._current(ledger, scope)
+        self._barrier("cleanup")
+        cleaned = self._current(ledger, scope)
+        return cleaned if cleaned != released else released
 
     def _run_candidate_workflow(
         self,
@@ -179,12 +337,11 @@ class _Phase7NddBackend(_PrivatePhase7NddValue):
                     columns=[_candidate_column(self._invocation)],
                     workflow_name="phase7-candidate-planning",
                 )
-        except Exception as error:
-            del error
-            return _Phase7NddResult(
-                _Phase7NddStatus.TASK_FAILED,
-                reason=_Phase7NddReason.BACKEND_FAILED,
-            )
+        except Exception:
+            # After dispatch, an exception leaves no trusted terminal run
+            # evidence.  It is transport/process loss, never attributable
+            # FailedRecord task evidence.
+            return _poisoned()
 
 
 def _prepare_scope(
@@ -234,6 +391,16 @@ def _valid_dispatch(value: object) -> TypeGuard[_Dispatch]:
         and isinstance(value.row_token, _RowToken)
         and type(value.row_token.value) is str
         and bool(value.row_token.value)
+    )
+
+
+def _dispatch_evidence(dispatch: _Dispatch) -> tuple[str, _TaskKey, str, str]:
+    """Return the exact compiler-issued correlation evidence for one attempt."""
+    return (
+        dispatch.invocation_id.value,
+        dispatch.task,
+        dispatch.attempt_id.value,
+        dispatch.row_token.value,
     )
 
 
@@ -429,3 +596,17 @@ def _coerce_model(raw: object, model: type[T]) -> T | None:
 
 def _inconsistent(reason: _Phase7NddReason) -> _Phase7NddResult:
     return _Phase7NddResult(_Phase7NddStatus.INVOCATION_INCONSISTENT, reason=reason)
+
+
+def _poisoned() -> _Phase7NddResult:
+    return _Phase7NddResult(_Phase7NddStatus.POISONED)
+
+
+def _snapshot_result(snapshot: _PlannerSnapshot[_Phase7NddResult]) -> _Phase7NddResult:
+    if snapshot.value is not None:
+        return snapshot.value
+    if snapshot.state is _PlannerState.PENDING:
+        return _Phase7NddResult(_Phase7NddStatus.PENDING)
+    if snapshot.state is _PlannerState.ABORTED:
+        return _Phase7NddResult(_Phase7NddStatus.ABORTED)
+    return _poisoned()
