@@ -81,8 +81,8 @@ def test_parse_detection_request_accepts_chunk_budget_boundary() -> None:
     assert request.text == "x" * 256
 
 
-def test_chat_compatibility_bounds_pooling_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Accepted chunks use a bounded worker frontier and preserve result order."""
+def test_chat_compatibility_bounds_aggregate_pooling_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent requests share one worker budget and preserve result order."""
 
     async def exercise() -> None:
         expected_peak = 8
@@ -90,6 +90,7 @@ def test_chat_compatibility_bounds_pooling_concurrency(monkeypatch: pytest.Monke
         max_active = 0
         total_calls = 0
         reached_limit = asyncio.Event()
+        exceeded_limit = asyncio.Event()
         release = asyncio.Event()
 
         async def fake_invoke_pooling(**kwargs: object) -> object:
@@ -99,6 +100,8 @@ def test_chat_compatibility_bounds_pooling_concurrency(monkeypatch: pytest.Monke
             max_active = max(max_active, active)
             if active == expected_peak:
                 reached_limit.set()
+            if active > expected_peak:
+                exceeded_limit.set()
             try:
                 await release.wait()
                 text = kwargs["text"]
@@ -107,39 +110,98 @@ def test_chat_compatibility_bounds_pooling_concurrency(monkeypatch: pytest.Monke
             finally:
                 active -= 1
 
-        async def request_json() -> dict[str, object]:
-            return {
+        async def call_next(_: object) -> None:
+            raise AssertionError("detector requests must not reach the next middleware")
+
+        def request(text: str, app_state: SimpleNamespace) -> SimpleNamespace:
+            async def request_json() -> dict[str, object]:
+                return {
+                    "model": "nvidia/gliner-pii",
+                    "messages": [{"role": "user", "content": text}],
+                    "labels": ["token"],
+                    "chunk_length": 1,
+                    "overlap": 0,
+                }
+
+            return SimpleNamespace(
+                url=SimpleNamespace(path="/v1/chat/completions"),
+                app=SimpleNamespace(state=app_state),
+                json=request_json,
+            )
+
+        monkeypatch.setattr(adapter, "invoke_pooling", fake_invoke_pooling)
+        monkeypatch.setenv("ANONYMIZER_VLLM_FACTORY_PLUGIN", "deberta_gliner")
+        app_state = SimpleNamespace(serving_pooling=object())
+        requests = [request("abcdefghijklmnopq", app_state), request("ABCDEFGHIJKLMNOPQ", app_state)]
+
+        operations = [
+            asyncio.create_task(adapter.anonymizer_chat_compatibility(active_request, call_next))
+            for active_request in requests
+        ]
+        await reached_limit.wait()
+        try:
+            await asyncio.wait_for(exceeded_limit.wait(), timeout=0.05)
+        except TimeoutError:
+            pass
+        observed_peak = max_active
+        release.set()
+        responses = await asyncio.gather(*operations)
+
+        assert all(response.status_code == 200 for response in responses)
+        assert observed_peak <= expected_peak
+        assert total_calls == 34
+        for response in responses:
+            payload = json.loads(response.body)
+            content = json.loads(payload["choices"][0]["message"]["content"])
+            assert [entity["start"] for entity in content["entities"]] == list(range(17))
+
+    asyncio.run(exercise())
+
+
+def test_pooling_budget_is_released_after_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed pooling call cannot consume a service permit permanently."""
+
+    async def exercise() -> None:
+        detection = adapter.parse_detection_request(
+            {
                 "model": "nvidia/gliner-pii",
-                "messages": [{"role": "user", "content": "abcdefghijklmnopq"}],
+                "messages": [{"role": "user", "content": "x"}],
                 "labels": ["token"],
                 "chunk_length": 1,
                 "overlap": 0,
             }
-
-        async def call_next(_: object) -> None:
-            raise AssertionError("detector requests must not reach the next middleware")
-
-        monkeypatch.setattr(adapter, "invoke_pooling", fake_invoke_pooling)
-        monkeypatch.setenv("ANONYMIZER_VLLM_FACTORY_PLUGIN", "deberta_gliner")
-        request = SimpleNamespace(
-            url=SimpleNamespace(path="/v1/chat/completions"),
-            app=SimpleNamespace(state=SimpleNamespace(serving_pooling=object())),
-            json=request_json,
         )
+        chunks = [adapter.TextChunk("x", 0)]
+        limiter = asyncio.Semaphore(1)
 
-        operation = asyncio.create_task(adapter.anonymizer_chat_compatibility(request, call_next))
-        await reached_limit.wait()
-        await asyncio.sleep(0)
-        observed_peak = max_active
-        release.set()
-        response = await operation
+        async def fail(**_kwargs: object) -> object:
+            raise RuntimeError("pooling failed")
 
-        assert response.status_code == 200
-        assert observed_peak <= expected_peak
-        assert total_calls == 17
-        payload = json.loads(response.body)
-        content = json.loads(payload["choices"][0]["message"]["content"])
-        assert [entity["start"] for entity in content["entities"]] == list(range(17))
+        monkeypatch.setattr(adapter, "invoke_pooling", fail)
+        with pytest.raises(RuntimeError, match="pooling failed"):
+            await adapter.invoke_pooling_chunks(
+                handler=object(),
+                plugin="deberta_gliner",
+                detection=detection,
+                chunks=chunks,
+                limiter=limiter,
+            )
+
+        async def succeed(**_kwargs: object) -> object:
+            return []
+
+        monkeypatch.setattr(adapter, "invoke_pooling", succeed)
+        result = await asyncio.wait_for(
+            adapter.invoke_pooling_chunks(
+                handler=object(),
+                plugin="deberta_gliner",
+                detection=detection,
+                chunks=chunks,
+                limiter=limiter,
+            ),
+            timeout=0.1,
+        )
+        assert result == [[]]
 
     asyncio.run(exercise())
 

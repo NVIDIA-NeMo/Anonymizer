@@ -19,7 +19,8 @@ from inference_service_compiler.models import FactoryPlugin, parse_factory_plugi
 DEFAULT_CHUNK_LENGTH = 384
 DEFAULT_OVERLAP = 128
 MAX_CHUNKS_PER_REQUEST = 256
-MAX_CONCURRENT_POOLING_CALLS_PER_REQUEST = 8
+MAX_CONCURRENT_POOLING_CALLS = 8
+POOLING_LIMITER_STATE_ATTRIBUTE = "_anonymizer_pooling_limiter"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,7 @@ async def anonymizer_chat_compatibility(
                 plugin=plugin,
                 detection=detection,
                 chunks=chunks,
+                limiter=_pooling_limiter(request.app.state),
             )
             entities = merge_entities(
                 plugin=plugin,
@@ -201,26 +203,36 @@ async def invoke_pooling_chunks(
     plugin: FactoryPlugin,
     detection: DetectionRequest,
     chunks: Sequence[TextChunk],
+    limiter: asyncio.Semaphore,
 ) -> list[object]:
-    """Process admitted chunks with a bounded asynchronous worker frontier."""
+    """Process admitted chunks within the server-wide pooling budget."""
     results = [object() for _ in chunks]
     pending = iter(enumerate(chunks))
 
     async def worker() -> None:
         for index, chunk in pending:
-            results[index] = await invoke_pooling(
-                handler=handler,
-                model=detection.model,
-                plugin=plugin,
-                text=chunk.text,
-                labels=detection.labels,
-                threshold=detection.threshold,
-                flat_ner=detection.flat_ner,
-            )
+            async with limiter:
+                results[index] = await invoke_pooling(
+                    handler=handler,
+                    model=detection.model,
+                    plugin=plugin,
+                    text=chunk.text,
+                    labels=detection.labels,
+                    threshold=detection.threshold,
+                    flat_ner=detection.flat_ner,
+                )
 
-    worker_count = min(len(chunks), MAX_CONCURRENT_POOLING_CALLS_PER_REQUEST)
+    worker_count = min(len(chunks), MAX_CONCURRENT_POOLING_CALLS)
     await asyncio.gather(*(worker() for _ in range(worker_count)))
     return results
+
+
+def _pooling_limiter(app_state: Any) -> asyncio.Semaphore:
+    limiter = getattr(app_state, POOLING_LIMITER_STATE_ATTRIBUTE, None)
+    if limiter is None:
+        limiter = asyncio.Semaphore(MAX_CONCURRENT_POOLING_CALLS)
+        setattr(app_state, POOLING_LIMITER_STATE_ATTRIBUTE, limiter)
+    return cast(asyncio.Semaphore, limiter)
 
 
 async def invoke_pooling(
