@@ -277,6 +277,20 @@ class _Phase7SubstituteProtectionService:
         *,
         contract: _Phase7StableSubstituteContract,
     ) -> _GraphProtectionResult:
+        execution = self.execute(plan, contract=contract)
+        return (
+            _materialize_phase7(plan, execution)
+            if isinstance(execution, _Phase7Execution)
+            else _fail_all(tuple(datum.id for datum in plan.accounting.datums))
+        )
+
+    def execute(
+        self,
+        plan: _Phase6Plan,
+        *,
+        contract: _Phase7StableSubstituteContract,
+    ) -> _Phase7Execution | None:
+        """Return the released Phase 7 handoff for a private successor only."""
         phase6 = _Phase6Runtime(self._phase6_backend).run(plan)
         phase7 = _compile_phase7_plan(
             plan,
@@ -285,9 +299,8 @@ class _Phase7SubstituteProtectionService:
             contract,
         )
         if not isinstance(phase7, _Phase7Plan):
-            return _fail_all(tuple(datum.id for datum in plan.accounting.datums))
-        execution = _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7, contract)
-        return _materialize_phase7(plan, execution)
+            return None
+        return _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7, contract)
 
 
 def _preflight_observation_counts(graph: object) -> tuple[int, int]:
