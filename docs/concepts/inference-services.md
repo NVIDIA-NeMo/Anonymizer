@@ -19,22 +19,32 @@ The tool lives under `tools/` and is not installed with the
 
 ## Choose models
 
-Seven profiles ship in `tools/inference_service_profiles/`:
+Nine profiles ship in `tools/inference_service_profiles/`:
 
 | Profile | Endpoint model name | Role and hardware guidance |
 | --- | --- | --- |
 | `nvidia-gliner.toml` | `nvidia/gliner-pii` | Default PII detector; can share an 80 GB GPU with a 20B or 30B generator |
 | `gliner2.toml` | `fastino/gliner2-privacy-filter-PII-multi` | Alternative multilingual PII detector |
 | `vllm-local.toml` | `anonymizer-local` | TinyLlama lifecycle smoke test |
+| `gemma-4-12b-it.toml` | `gemma-4-12b-it-local` | Instruction-tuned Gemma 4 generation; requires an NVIDIA GPU with at least 40 GB of memory |
 | `gpt-oss-20b.toml` | `gpt-oss-20b-local` | Compact GPT-OSS generation |
 | `gpt-oss-120b.toml` | `gpt-oss-120b-local` | GPT-OSS generation on a dedicated 80 GB GPU |
 | `qwen3-30b-a3b-instruct.toml` | `qwen3-30b-a3b-instruct-local` | Multilingual generation |
 | `nemotron-3.5-lightning.toml` | `nemotron-3.5-lightning-local` | High-throughput generation on an 80 GB GPU |
+| `nemotron-3.5-lightning-nvfp4.toml` | `nemotron-3.5-lightning-nvfp4-local` | Official NVFP4 checkpoint with a conservative single-H100 configuration |
 
 Each profile pins its Hugging Face revision. Generation profiles use stock
 vLLM. The two detector profiles use the pinned external
 [vLLM Factory](https://github.com/latenceainew/vllm-factory) integration and
 Anonymizer's OpenAI-compatible detector adapter.
+
+The Gemma profile uses the instruction-tuned
+[`google/gemma-4-12B-it`](https://huggingface.co/google/gemma-4-12B-it)
+checkpoint and bounds its larger native context window to 8,192 tokens. The
+Nemotron NVFP4 profile uses NVIDIA's
+[`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4)
+checkpoint. vLLM detects its ModelOpt quantization from the checkpoint, so the
+profile does not request online quantization.
 
 GPU memory also depends on the architecture, context length, concurrency, and
 other processes. Lower `max_model_len`, `max_num_seqs`, or
