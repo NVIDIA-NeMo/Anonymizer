@@ -10,8 +10,10 @@ from typing import cast
 
 from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_runtime import _Phase7Execution
+from anonymizer.engine.execution.phase8_admission import _compile_phase8_plan, _Phase8Plan
+from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
 from anonymizer.engine.execution.phase8_runtime import _Phase8LifecycleExecution, _run_group_operation
-from anonymizer.engine.execution.phase8_validation import _Phase8Metric
+from anonymizer.engine.execution.phase8_validation import _evaluate_metrics, _Phase8Metric
 
 
 class _Phase8GroupedRewriteProtectionService:
@@ -110,6 +112,11 @@ class _Phase8GroupedRewriteProtectionService:
         released = phase7.released
         if not all(isinstance(value, _AppliedDatum) for value in released):
             return _terminal((), tuple("inconsistent" for _ in groups), True, False)
+        applied_by_datum = {value.datum_id: value.applied for value in released}
+        effective_operations = tuple(
+            _baseline_only_operation if all(applied_by_datum.get(member) is False for member in members) else operation
+            for members, operation in zip(groups, operations, strict=True)
+        )
         return self.run_lifecycle(
             groups=groups,
             atomic_groups=atomic_groups,
@@ -117,11 +124,165 @@ class _Phase8GroupedRewriteProtectionService:
             phase7_released=tuple((value.datum_id, value.output) for value in released),
             phase7_cleanup_verified=phase7.cleanup.verified,
             phase7_global_embargo=phase7.phase4.global_embargo,
-            operations=operations,
+            operations=effective_operations,
+        )
+
+    def run_from_phase7_execution_with_backend(
+        self, graph: object, phase7: _Phase7Execution, backend: object
+    ) -> _Phase8LifecycleExecution:
+        """Execute the admitted complete groups through the sole NDD boundary.
+
+        Requests use fresh opaque wire tokens and are reconciled back to the
+        compiler-issued datum keys before any candidate reaches Phase 4.
+        """
+        plan = _compile_phase8_plan(graph)
+        if not isinstance(plan, _Phase8Plan):
+            return _terminal((), (), True, False)
+        groups = tuple(manifest.members for manifest in plan.groups)
+        atomic_groups = tuple(getattr(group, "members", ()) for group in getattr(graph, "atomic_groups", ()))
+        dependencies = tuple(
+            (getattr(edge, "prerequisite", None), getattr(edge, "dependent", None))
+            for edge in getattr(graph, "dependencies", ())
+        )
+        return self.run_from_phase7_execution(
+            groups=groups,
+            atomic_groups=atomic_groups,
+            dependencies=dependencies,
+            phase7=phase7,
+            operations=tuple(_backend_group_operation(backend) for _ in groups),
         )
 
 
 _GroupOperation = Callable[[tuple[object, ...], dict[object, str]], tuple[tuple[object, str], ...] | None]
+
+
+def _baseline_only_operation(
+    members: tuple[object, ...], baselines: dict[object, str]
+) -> tuple[tuple[object, str], ...] | None:
+    """Preserve a no-entity group without opening any Phase 8 operation."""
+    if set(baselines) != set(members) or not all(isinstance(value, str) for value in baselines.values()):
+        return None
+    return tuple((member, baselines[member]) for member in members)
+
+
+def _backend_group_operation(backend: object) -> _GroupOperation:
+    def operation(members: tuple[object, ...], baselines: dict[object, str]) -> tuple[tuple[object, str], ...] | None:
+        tokens = tuple(f"m-{index}" for index in range(len(members)))
+        token_to_member = dict(zip(tokens, members, strict=True))
+        request: dict[str, object] = {
+            "member_tokens": list(tokens),
+            "baselines": [baselines[member] for member in members],
+        }
+        analysis = _dispatch(backend, _Phase8Operation.ANALYZE, request)
+        if analysis is None or not _exact_tokens(analysis, "analyzed_member_tokens", tokens):
+            return None
+        obligations = _field(analysis, "privacy_obligations", [])
+        if not isinstance(obligations, list):
+            return None
+        if not obligations:
+            # The frozen zero route is valid only after exact analysis
+            # reconciliation. It deliberately makes no rewrite/evaluate call.
+            return tuple((member, baselines[member]) for member in members)
+        revision = _dispatch(backend, _Phase8Operation.REWRITE, request)
+        current = _revisions(revision, token_to_member)
+        if current is None:
+            return None
+        for repair_round in range(4):
+            evaluation = _dispatch(backend, _Phase8Operation.EVALUATE, {**request, "revisions": current})
+            metric = _metric(evaluation, tokens)
+            if metric is None:
+                return None
+            if not metric.needs_repair:
+                return tuple((member, current[member]) for member in members)
+            if repair_round == 3:
+                return None
+            repaired = _dispatch(backend, _Phase8Operation.REPAIR, {**request, "revisions": current})
+            current = _revisions(repaired, token_to_member)
+            if current is None:
+                return None
+        return None
+
+    return operation
+
+
+def _dispatch(backend: object, operation: _Phase8Operation, request: dict[str, object]) -> object | None:
+    method = getattr(backend, "run_operation", None)
+    if not callable(method):
+        return None
+    try:
+        result = method(operation, request)
+    except BaseException:
+        return None
+    if getattr(result, "operation", None) is not operation or getattr(result, "failed", True):
+        return None
+    return getattr(result, "payload", None)
+
+
+def _field(payload: object, name: str, default: object = None) -> object:
+    if isinstance(payload, dict):
+        return payload.get(name, default)
+    return getattr(payload, name, default)
+
+
+def _exact_tokens(payload: object, name: str, expected: tuple[str, ...]) -> bool:
+    observed = _field(payload, name)
+    return (
+        isinstance(observed, list)
+        and len(observed) == len(expected)
+        and set(observed) == set(expected)
+        and len(set(observed)) == len(observed)
+    )
+
+
+def _revisions(payload: object, token_to_member: dict[str, object]) -> dict[object, str] | None:
+    revisions = _field(payload, "revisions")
+    if not isinstance(revisions, list):
+        return None
+    result: dict[object, str] = {}
+    for revision in revisions:
+        token, text = _field(revision, "member_token"), _field(revision, "text")
+        if not isinstance(token, str) or not isinstance(text, str) or token not in token_to_member:
+            return None
+        member = token_to_member[token]
+        if member in result:
+            return None
+        result[member] = text
+    return result if len(result) == len(token_to_member) else None
+
+
+def _metric(payload: object, tokens: tuple[str, ...]) -> _Phase8Metric | None:
+    if payload is None or not _exact_tokens(payload, "evaluated_member_tokens", tokens):
+        return None
+    privacy = _field(payload, "privacy_answers", [])
+    utility = _field(payload, "utility_answers", [])
+    if not isinstance(privacy, list) or not isinstance(utility, list):
+        return None
+    try:
+        privacy_values = tuple(_privacy_answer(answer) for answer in privacy)
+        utility_values = tuple(_utility_answer(answer) for answer in utility)
+    except (TypeError, ValueError):
+        return None
+    return _evaluate_metrics(
+        privacy_values, utility_values, repair_any_high=True, repair_threshold=0.0, utility_floor=0.5
+    )
+
+
+def _privacy_answer(answer: object) -> tuple[str, float, bool]:
+    sensitivity, confidence, leaked = (
+        _field(answer, "sensitivity"),
+        _field(answer, "confidence"),
+        _field(answer, "leaked"),
+    )
+    if not isinstance(sensitivity, str) or not isinstance(confidence, (int, float)) or not isinstance(leaked, bool):
+        raise ValueError
+    return sensitivity, float(confidence), leaked
+
+
+def _utility_answer(answer: object) -> tuple[int, float]:
+    weight, score = _field(answer, "weight"), _field(answer, "score")
+    if not isinstance(weight, int) or not isinstance(score, (int, float)):
+        raise ValueError
+    return weight, float(score)
 
 
 def _terminal(

@@ -29,7 +29,7 @@ from anonymizer.engine.execution.context_contract import (
     _ContextProfile,
     _ContextSchemaVersion,
 )
-from anonymizer.engine.execution.graph import _DatumId, _TextDatum, _trivial_graph
+from anonymizer.engine.execution.graph import _AtomicGroup, _DatumId, _RewriteGroup, _TextDatum, _trivial_graph
 from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.execution.mention_admission import _MentionLimits
 from anonymizer.engine.execution.phase6_ndd_backend import _Phase6NddBackend
@@ -47,6 +47,8 @@ from anonymizer.engine.execution.phase8_contract import (
     _load_phase8_contract,
     _Phase8GroupedRewriteContract,
 )
+from anonymizer.engine.execution.phase8_ndd_backend import _Phase8NddBackend
+from anonymizer.engine.execution.phase8_service import _Phase8GroupedRewriteProtectionService
 from anonymizer.engine.execution.protection_service import (
     _GraphProtectionFailed,
     _GraphProtectionResult,
@@ -282,11 +284,17 @@ def _compile_protection_plan(
         if not isinstance(contract, _Phase8GroupedRewriteContract) or not _is_admitted_phase8_contract(contract):
             return _PlanRejected()
         invocation = _CompiledInvocation.compile(config, selected_models, model_configs)
+        phase7_contract = _load_phase7_contract()
+        if not isinstance(phase7_contract, _Phase7StableSubstituteContract) or not _is_admitted_phase7_contract(
+            phase7_contract
+        ):
+            return _PlanRejected()
         max_records = min(_MAX_RECORDS, dict(contract.limits)["max_datums_per_invocation"])
         return _ProtectionPlan(
             _GROUPED_REWRITE_PROFILE,
             _plan_fingerprint(invocation, profile=_GROUPED_REWRITE_PROFILE, contract_digest=contract.digest),
             invocation,
+            phase7_contract=phase7_contract,
             phase8_contract=contract,
             max_records=max_records,
         )
@@ -404,6 +412,7 @@ class _ProtectionFlow(_SafeRepr):
         plan: _ProtectionPlan,
         phase6_backend: _Phase6EffectBackend | None = None,
         phase7_backend: _Phase7EffectBackend | None = None,
+        phase8_backend: object | None = None,
     ) -> None:
         self._plan = plan
         backend = phase6_backend or _Phase6NddBackend(anonymizer._adapter, plan.invocation)
@@ -413,11 +422,11 @@ class _ProtectionFlow(_SafeRepr):
                 mention_limits=_PHASE6_MENTION_LIMITS,
             )
         elif (
-            plan.profile == _SUBSTITUTE_PROFILE
+            plan.profile in {_SUBSTITUTE_PROFILE, _GROUPED_REWRITE_PROFILE}
             and isinstance(plan.phase7_contract, _Phase7StableSubstituteContract)
             and _is_admitted_phase7_contract(plan.phase7_contract)
         ):
-            self._runtime = _Phase7SubstituteProtectionService(
+            phase7_runtime = _Phase7SubstituteProtectionService(
                 backend,
                 (
                     (lambda: phase7_backend)
@@ -425,6 +434,11 @@ class _ProtectionFlow(_SafeRepr):
                     else (lambda: _Phase7NddBackend(anonymizer._adapter, plan.invocation))
                 ),
                 mention_limits=_PHASE6_MENTION_LIMITS,
+            )
+            self._runtime = (
+                (phase7_runtime, _Phase8GroupedRewriteProtectionService(), phase8_backend)
+                if plan.profile == _GROUPED_REWRITE_PROFILE
+                else phase7_runtime
             )
         else:
             raise ValueError("private protection plan is not executable")
@@ -451,7 +465,13 @@ class _ProtectionFlow(_SafeRepr):
             self._guard.release()
 
     def _execute(self, operation: _OperationPlan) -> _ProtectionRunRecord:
-        contract_digest = self._plan.phase7_contract.digest if self._plan.phase7_contract is not None else None
+        contract_digest = (
+            self._plan.phase8_contract.digest
+            if self._plan.phase8_contract is not None
+            else self._plan.phase7_contract.digest
+            if self._plan.phase7_contract is not None
+            else None
+        )
         if (
             _plan_fingerprint(
                 self._plan.invocation,
@@ -461,14 +481,24 @@ class _ProtectionFlow(_SafeRepr):
             != self._plan.digest
         ):
             return self._fail_all(operation)
-        graph = _trivial_graph(
-            tuple(
-                _TextDatum(_DatumId(f"datum-{index}"), record.segments[0].text)
-                for index, record in enumerate(operation.records)
-            )
+        datums = tuple(
+            _TextDatum(_DatumId(f"datum-{index}"), record.segments[0].text)
+            for index, record in enumerate(operation.records)
         )
+        graph = _trivial_graph(datums)
+        if self._plan.profile == _GROUPED_REWRITE_PROFILE:
+            graph = type(graph)(
+                graph.datums,
+                graph.links,
+                graph.context_scopes,
+                graph.coherence_scopes,
+                (_AtomicGroup(tuple(datum.id for datum in datums)),),
+                graph.dependencies,
+                (_RewriteGroup(tuple(datum.id for datum in datums)),),
+            )
         try:
-            admitted = self._runtime.admit_context(
+            admission_runtime = self._runtime[0] if isinstance(self._runtime, tuple) else self._runtime
+            admitted = admission_runtime.admit_context(
                 graph,
                 accounting_limits=_AccountingLimits(
                     max_datums=self._plan.max_records,
@@ -493,7 +523,18 @@ class _ProtectionFlow(_SafeRepr):
             if isinstance(admitted, (_AccountingRejected, _ContextRejected, _Phase6Rejected)):
                 return self._fail_all(operation)
             with self._adapter.private_execution():
-                if isinstance(self._runtime, _Phase7SubstituteProtectionService):
+                if isinstance(self._runtime, tuple):
+                    phase7_runtime, phase8_service, injected_backend = self._runtime
+                    contract = self._plan.phase7_contract
+                    if not isinstance(contract, _Phase7StableSubstituteContract):
+                        return self._fail_all(operation)
+                    phase7 = phase7_runtime.execute(admitted, contract=contract)
+                    if phase7 is None:
+                        return self._fail_all(operation)
+                    backend = injected_backend or _Phase8NddBackend(self._adapter, self._plan.invocation)
+                    execution = phase8_service.run_from_phase7_execution_with_backend(graph, phase7, backend)
+                    execution = _phase8_as_graph_result(execution, tuple(datum.id for datum in datums))
+                elif isinstance(self._runtime, _Phase7SubstituteProtectionService):
                     contract = self._plan.phase7_contract
                     if not isinstance(contract, _Phase7StableSubstituteContract):
                         return self._fail_all(operation)
@@ -579,6 +620,39 @@ class _ProtectionFlow(_SafeRepr):
 
     def __exit__(self, *_args: object) -> None:
         self.close()
+
+
+def _phase8_as_graph_result(execution: object, expected_ids: tuple[_DatumId, ...]) -> _GraphProtectionResult:
+    """Materialize only the complete Phase 8 release projection.
+
+    Phase 7 candidates deliberately never cross this boundary: a datum is
+    successful only when Phase 8's own cleanup-qualified Phase 4 reduction
+    released a replacement for its exact private key.
+    """
+    released = getattr(execution, "released", None)
+    cleanup_verified = getattr(execution, "cleanup_verified", False)
+    global_embargo = getattr(execution, "global_embargo", True)
+    if not isinstance(released, tuple) or not cleanup_verified or global_embargo:
+        return _phase8_failed_graph_result(expected_ids)
+    values = {
+        datum_id: value for datum_id, value in released if isinstance(datum_id, _DatumId) and isinstance(value, str)
+    }
+    if len(values) != len(released):
+        return _phase8_failed_graph_result(expected_ids)
+    return _GraphProtectionResult(
+        tuple(
+            _GraphProtectionSucceeded(datum_id, values[datum_id], True)
+            if datum_id in values
+            else _GraphProtectionFailed(datum_id, "phase8", "datum")
+            for datum_id in expected_ids
+        )
+    )
+
+
+def _phase8_failed_graph_result(expected_ids: tuple[_DatumId, ...]) -> _GraphProtectionResult:
+    return _GraphProtectionResult(
+        tuple(_GraphProtectionFailed(datum_id, "phase8", "datum") for datum_id in expected_ids)
+    )
 
 
 def _failure(code: _FailureCode, stage: str, scope: str) -> _SafeFailure:

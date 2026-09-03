@@ -15,6 +15,7 @@ from anonymizer.engine.execution.phase7_admission import _ScopeManifest
 from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddResult, _Phase7NddStatus
 from anonymizer.engine.execution.phase7_runtime import _Phase7CleanupAttestation
 from anonymizer.engine.execution.phase7_validation import _CandidateAssignment
+from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
 from anonymizer.interface._protection import (
     _BatchFailureCode,
     _Failed,
@@ -77,6 +78,49 @@ class _CandidateBackend:
         )
 
 
+@dataclass
+class _GroupedRewriteBackend:
+    """Deterministic Phase 8 boundary fake used only by the private-flow test."""
+
+    calls: list[_Phase8Operation]
+    evaluations: int = 0
+
+    def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
+        self.calls.append(operation)
+        supplied_tokens = request["member_tokens"]
+        assert isinstance(supplied_tokens, list) and all(isinstance(token, str) for token in supplied_tokens)
+        tokens = supplied_tokens
+        if operation is _Phase8Operation.ANALYZE:
+            return _Dispatch(operation, {"analyzed_member_tokens": tokens, "privacy_obligations": [{"id": "p"}]})
+        if operation is _Phase8Operation.EVALUATE:
+            self.evaluations += 1
+            return _Dispatch(
+                operation,
+                {
+                    "evaluated_member_tokens": tokens,
+                    "privacy_answers": [
+                        {
+                            "sensitivity": "high",
+                            "confidence": 1.0 if self.evaluations == 1 else 0.0,
+                            "leaked": self.evaluations == 1,
+                        }
+                    ],
+                    "utility_answers": [{"weight": 1, "score": 1.0}],
+                },
+            )
+        return _Dispatch(
+            operation,
+            {"revisions": [{"member_token": token, "text": f"rewrite-{index}"} for index, token in enumerate(tokens)]},
+        )
+
+
+@dataclass
+class _Dispatch:
+    operation: _Phase8Operation
+    payload: object
+    failed: bool = False
+
+
 def _private_substitute_flow(
     *,
     original: str,
@@ -117,6 +161,57 @@ def test_private_substitute_plan_selects_phase7_service_without_changing_other_p
         anonymizer._compile_protection_plan(AnonymizerConfig(replace=Substitute(instructions="legacy only"))),
         _PlanRejected,
     )
+
+
+def test_private_grouped_rewrite_executes_phase7_then_all_phase8_operations() -> None:
+    anonymizer = build_synthetic_anonymizer({"Alice": "first_name"})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite(), emit_telemetry=False))
+    assert isinstance(plan, _ProtectionPlan)
+    phase7 = _CandidateBackend("Avery")
+    phase8 = _GroupedRewriteBackend([])
+
+    flow = _ProtectionFlow(
+        anonymizer,
+        plan,
+        phase6_backend=_AnchoredPhase6Backend.from_entities({"Alice": "first_name"}),
+        phase7_backend=phase7,
+        phase8_backend=phase8,
+    )
+
+    result = flow.protect((_record("source-a", "Alice"),))
+
+    assert phase8.calls
+    assert isinstance(result.outcomes[0], _ProtectionSucceeded)
+    assert result.outcomes[0].output == "rewrite-0"
+    assert phase8.calls == [
+        _Phase8Operation.ANALYZE,
+        _Phase8Operation.REWRITE,
+        _Phase8Operation.EVALUATE,
+        _Phase8Operation.REPAIR,
+        _Phase8Operation.EVALUATE,
+    ]
+
+
+def test_private_grouped_rewrite_with_no_entities_makes_no_phase7_or_phase8_calls() -> None:
+    anonymizer = build_synthetic_anonymizer({"Alice": "first_name"})
+    plan = anonymizer._compile_protection_plan(AnonymizerConfig(rewrite=Rewrite(), emit_telemetry=False))
+    assert isinstance(plan, _ProtectionPlan)
+    phase7 = _CandidateBackend("Avery")
+    phase8 = _GroupedRewriteBackend([])
+    flow = _ProtectionFlow(
+        anonymizer,
+        plan,
+        phase6_backend=_AnchoredPhase6Backend.from_entities({"Alice": "first_name"}),
+        phase7_backend=phase7,
+        phase8_backend=phase8,
+    )
+
+    result = flow.protect((_record("source-a", "ordinary text"),))
+
+    assert isinstance(result.outcomes[0], _ProtectionSucceeded)
+    assert result.outcomes[0].output == "ordinary text"
+    assert phase7.calls == 0
+    assert phase8.calls == []
 
 
 def test_private_substitute_releases_only_a_qualified_phase7_output() -> None:
