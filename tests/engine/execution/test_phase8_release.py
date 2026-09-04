@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import pickle
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -12,13 +12,13 @@ import pytest
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
 from anonymizer.engine.execution.accounting_plan import (
     _AccountingPlan,
+    _admit_accounting_plan,
     _AtomicGroupKey,
     _CompiledAtomicGroup,
     _CompiledDependency,
     _DatumTaskSubject,
     _StageId,
     _TaskKey,
-    _admit_accounting_plan,
 )
 from anonymizer.engine.execution.graph import (
     _AtomicGroup,
@@ -29,13 +29,13 @@ from anonymizer.engine.execution.graph import (
     _RewriteGroup,
     _TextDatum,
 )
+from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_runtime import (
     _Phase7CleanupAttestation,
     _Phase7Execution,
     _Phase7Phase4Evidence,
 )
-from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.execution.phase8_admission import (
     _compile_phase8_accounting_plan,
     _compile_phase8_plan,
@@ -57,9 +57,9 @@ from anonymizer.engine.execution.phase8_runtime import (
     _run_group_operation,
 )
 from anonymizer.engine.execution.phase8_service import (
+    _is_sealed_candidate_cell,
     _ManagedGroupOperation,
     _Phase8CleanupRuntime,
-    _is_sealed_candidate_cell,
     _run_accounted_successor,
     _seal_candidate_cell,
 )
@@ -100,9 +100,7 @@ def test_phase8_accounting_extension_conserves_prefix_and_uses_compiler_group_id
     assert composed.accounting.tasks[: len(phase7.tasks)] == phase7.tasks
     assert composed.group_tasks[0].subject is composed.groups[0].accounting_subject
     assert {
-        edge.prerequisite
-        for edge in composed.accounting.task_predecessors
-        if edge.dependent == composed.group_tasks[0]
+        edge.prerequisite for edge in composed.accounting.task_predecessors if edge.dependent == composed.group_tasks[0]
     } == {
         _TaskKey(phase6_final, _DatumTaskSubject(first)),
         _TaskKey(phase6_final, _DatumTaskSubject(second)),
@@ -330,7 +328,10 @@ def test_phase8_phase4_releases_a_disconnected_group_after_local_failure(fault: 
     execution = _run_accounted_successor(composition, phase7, operations, _CleanupBackend())
 
     assert calls == [(first,), (second,)]
-    assert execution.terminal_group_states == ("failed" if fault.kind is _Phase8FaultKind.FAILED else "inconsistent", "succeeded")
+    assert execution.terminal_group_states == (
+        "failed" if fault.kind is _Phase8FaultKind.FAILED else "inconsistent",
+        "succeeded",
+    )
     assert execution.released == ((second, "baseline-second"),)
     assert not execution.global_embargo
     assert execution.cleanup_verified
