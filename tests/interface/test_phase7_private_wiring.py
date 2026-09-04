@@ -32,7 +32,7 @@ from anonymizer.engine.execution.phase8_cleanup import (
     _Phase8CleanupPhase,
     _Phase8CleanupStatus,
 )
-from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
+from anonymizer.engine.execution.phase8_ndd_backend import _compile_phase8_capability, _Phase8Operation
 from anonymizer.engine.execution.phase8_successor import _Phase8SuccessorHandoff
 from anonymizer.engine.execution.protection_service import _Phase7SubstituteProtectionService
 from anonymizer.interface._protection import (
@@ -108,6 +108,9 @@ class _GroupedRewriteBackend:
     context_binding_sets: list[tuple[dict[str, object], ...]] | None = None
     consume_context: bool = False
     retired: int = 0
+
+    def phase8_capability(self, invocation: object) -> object:
+        return _compile_phase8_capability(invocation)
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
         self.calls.append(operation)

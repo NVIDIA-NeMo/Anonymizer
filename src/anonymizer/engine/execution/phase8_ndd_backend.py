@@ -9,6 +9,7 @@ wire surface means a caller cannot accidentally lower individual members.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 from dataclasses import dataclass
@@ -56,6 +57,18 @@ _PROMPTS = {
     "repair": _PREAMBLE
     + "Repair the complete current group revision as one coherent unit using all supplied evaluation evidence. Preserve safe meaning and Phase 7 replacement consistency while removing direct, latent, and cross-member leakage. Return one revision for every supplied member token exactly once, including members that already passed, and every supplied context binding token exactly once in consumed_context_binding_tokens. Return only the declared revision schema. Request: ",
 }
+_CAPABILITY_VERSION = "phase8-grouped-rewrite-capability/v1"
+_CAPABILITY_PROFILE = "anonymizer-phase8-grouped-rewrite/v1"
+_WORKFRAME_SCHEMA = "phase8-group-workframe/v1"
+_RETENTION_DISABLED = "retention_disabled"
+_MODEL_ROLES = ("disposition_analyzer", "rewriter", "evaluator", "repairer")
+_REQUIRED_ARTIFACTS = (
+    "phase8_analysis_request",
+    "phase8_revision_request",
+    "phase8_evaluation_request",
+    "phase8_repair_request",
+    "phase8_cleanup_attestation",
+)
 
 
 class _Phase8Operation(str, Enum):
@@ -124,6 +137,70 @@ class _Phase8Correlation:
     row_token: str
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8BackendCapability:
+    """Typed, content-free snapshot bound across compile/open/dispatch/close."""
+
+    version: str
+    profile: str
+    workframe_schema: str
+    retention: str
+    model_roles: tuple[tuple[str, str, str], ...]
+    required_artifacts: tuple[str, ...]
+    limits: tuple[tuple[str, int], ...]
+    prompt_contract_digest: str
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 backend capabilities are not serializable")
+
+
+def _compile_phase8_capability(invocation: object) -> _Phase8BackendCapability | None:
+    """Freeze the exact Phase 8 execution authority carried by an invocation."""
+    if not isinstance(invocation, _CompiledInvocation):
+        return None
+    contract = _load_phase8_contract()
+    if not hasattr(contract, "limits"):
+        return None
+    configs: dict[str, str] = {}
+    for config in invocation.model_configs:
+        alias = getattr(config, "alias", None)
+        if not isinstance(alias, str) or not alias or alias in configs:
+            return None
+        payload = json.dumps(config.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        configs[alias] = hashlib.sha256(payload.encode()).hexdigest()
+    try:
+        routes = tuple(
+            (role, resolve_model_alias(role, invocation.selected_models.rewrite), "") for role in _MODEL_ROLES
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if any(alias not in configs for _role, alias, _digest in routes):
+        return None
+    roles = tuple((role, alias, configs[alias]) for role, alias, _digest in routes)
+    prompt_bytes = json.dumps(_PROMPTS, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return _Phase8BackendCapability(
+        _CAPABILITY_VERSION,
+        _CAPABILITY_PROFILE,
+        _WORKFRAME_SCHEMA,
+        _RETENTION_DISABLED,
+        roles,
+        _REQUIRED_ARTIFACTS,
+        tuple(getattr(contract, "limits")),
+        hashlib.sha256(prompt_bytes).hexdigest(),
+    )
+
+
+def _snapshot_phase8_capability(backend: object, invocation: _CompiledInvocation) -> _Phase8BackendCapability | None:
+    method = getattr(backend, "phase8_capability", None)
+    if not callable(method):
+        return None
+    try:
+        capability = method(invocation)
+    except Exception:
+        return None
+    return capability if isinstance(capability, _Phase8BackendCapability) else None
+
+
 class _Phase8NddBackend:
     """Dispatch one bounded complete-group request via ``NddAdapter`` only."""
 
@@ -131,10 +208,23 @@ class _Phase8NddBackend:
         self._adapter: NddAdapter | None = adapter
         self._invocation: _CompiledInvocation | None = invocation
         self._invocation_token: str | None = secrets.token_hex(16)
+        self._compiled_capability = _compile_phase8_capability(invocation)
         self._retired = False
 
+    def phase8_capability(self, _invocation: _CompiledInvocation) -> _Phase8BackendCapability | None:
+        if self._retired or self._invocation is None:
+            return None
+        return _compile_phase8_capability(self._invocation)
+
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> _Phase8DispatchResult:
-        if self._retired or self._adapter is None or self._invocation is None or self._invocation_token is None:
+        if (
+            self._retired
+            or self._adapter is None
+            or self._invocation is None
+            or self._invocation_token is None
+            or self._compiled_capability is None
+            or self.phase8_capability(self._invocation) != self._compiled_capability
+        ):
             return _Phase8DispatchResult(operation, None, True, "invocation_inconsistent")
         encoded = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         limits = dict(getattr(_load_phase8_contract(), "limits", ()))
@@ -171,6 +261,9 @@ class _Phase8NddBackend:
         """Drop all retained dispatch authority and issue a sealed receipt."""
         if self._retired or cleanup_identity is None:
             return None
+        verified = (
+            self._invocation is not None and self.phase8_capability(self._invocation) == self._compiled_capability
+        )
         self._retired = True
         self._invocation_token = None
         self._invocation = None
@@ -178,7 +271,7 @@ class _Phase8NddBackend:
         return _issue_phase8_cleanup_receipt(
             _Phase8CleanupPhase.PRE_REDUCTION,
             _Phase8CleanupComponent.BACKEND,
-            _Phase8CleanupStatus.VERIFIED,
+            _Phase8CleanupStatus.VERIFIED if verified else _Phase8CleanupStatus.UNCONFIRMED,
             cleanup_identity,
         )
 

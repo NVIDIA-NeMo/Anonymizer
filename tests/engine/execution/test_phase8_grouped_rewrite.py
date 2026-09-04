@@ -72,6 +72,7 @@ from anonymizer.engine.execution.phase8_service import (
     _Phase8GroupedRewriteProtectionService,
     _Phase8GroupInput,
     _Phase8WireRegistry,
+    _zero_route_admitted,
 )
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult, _FailedRowEvidence
@@ -204,6 +205,18 @@ def test_phase8_zero_obligation_route_requires_all_guards() -> None:
     )
     assert outcome.state == "succeeded"
     assert rewritten
+
+
+def test_phase8_zero_route_rejects_a_mixed_applied_and_no_entity_group() -> None:
+    first, second = object(), object()
+    members = (first, second)
+    baselines = {first: "plain", second: "original"}
+    group_input = _Phase8GroupInput(
+        originals={first: "plain", second: "original"},
+        phase7_applied={first: False, second: True},
+    )
+
+    assert not _zero_route_admitted(members, baselines, group_input)
 
 
 def test_phase8_zero_utility_only_scores_one_for_an_exact_baseline() -> None:
@@ -497,6 +510,24 @@ def test_phase8_failed_record_is_a_local_failure_only_when_bound_to_the_active_w
 
     assert hydrated.failed
     assert hydrated.failure_kind == "local_failure"
+
+
+def test_phase8_public_failed_record_id_without_private_binding_is_invocation_inconsistent() -> None:
+    """A public record ID cannot become private complete-group identity."""
+    token = "active-work-token"
+    failure = FailedRecord(token, "phase8", "dropped")
+    result = WorkflowRunResult(pd.DataFrame(), [failure])
+
+    hydrated = _hydrate(
+        _Phase8Operation.ANALYZE,
+        result,
+        _Phase8Correlation("invocation", "task", "attempt", token),
+        _AnalysisResponse,
+        "analysis",
+    )
+
+    assert hydrated.failed
+    assert hydrated.failure_kind == "invocation_inconsistent"
 
 
 def test_phase8_foreign_or_ambiguous_failed_record_evidence_is_invocation_inconsistent() -> None:

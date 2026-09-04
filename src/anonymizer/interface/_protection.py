@@ -47,7 +47,12 @@ from anonymizer.engine.execution.phase8_contract import (
     _load_phase8_contract,
     _Phase8GroupedRewriteContract,
 )
-from anonymizer.engine.execution.phase8_ndd_backend import _Phase8NddBackend
+from anonymizer.engine.execution.phase8_ndd_backend import (
+    _compile_phase8_capability,
+    _Phase8BackendCapability,
+    _Phase8NddBackend,
+    _snapshot_phase8_capability,
+)
 from anonymizer.engine.execution.phase8_service import _Phase8GroupedRewriteProtectionService
 from anonymizer.engine.execution.protection_service import (
     _GraphProtectionFailed,
@@ -134,6 +139,7 @@ class _ProtectionPlan(_SafeRepr):
     max_record_bytes: int = _MAX_RECORD_BYTES
     max_batch_bytes: int = _MAX_BATCH_BYTES
     phase8_contract: _Phase8GroupedRewriteContract | None = None
+    phase8_capability: _Phase8BackendCapability | None = None
 
     def __reduce__(self) -> str | tuple[object, ...]:
         raise TypeError("private protection plan is not serializable")
@@ -286,6 +292,9 @@ def _compile_protection_plan(
         if not isinstance(contract, _Phase8GroupedRewriteContract) or not _is_admitted_phase8_contract(contract):
             return _PlanRejected()
         invocation = _CompiledInvocation.compile(config, selected_models, model_configs)
+        capability = _compile_phase8_capability(invocation)
+        if capability is None:
+            return _PlanRejected()
         phase7_contract = _load_phase7_contract()
         if not isinstance(phase7_contract, _Phase7StableSubstituteContract) or not _is_admitted_phase7_contract(
             phase7_contract
@@ -299,6 +308,7 @@ def _compile_protection_plan(
             phase7_contract=phase7_contract,
             phase8_contract=contract,
             max_records=max_records,
+            phase8_capability=capability,
         )
     if isinstance(config.replace, Redact):
         if config.replace.format_template != "[REDACTED_{label}]" or not config.replace.normalize_label:
@@ -540,10 +550,16 @@ class _ProtectionFlow(_SafeRepr):
                     contract = self._plan.phase7_contract
                     if not isinstance(contract, _Phase7StableSubstituteContract):
                         return self._fail_all(operation)
+                    expected_capability = self._plan.phase8_capability
+                    backend = injected_backend or _Phase8NddBackend(self._adapter, self._plan.invocation)
+                    if (
+                        expected_capability is None
+                        or _snapshot_phase8_capability(backend, self._plan.invocation) != expected_capability
+                    ):
+                        return self._fail_all(operation)
                     predecessor = phase7_runtime.execute_successor(admitted, contract=contract)
                     if predecessor is None:
                         return self._fail_all(operation)
-                    backend = injected_backend or _Phase8NddBackend(self._adapter, self._plan.invocation)
                     execution = phase8_service.run_from_phase7_successor_with_backend(
                         graph, predecessor, backend, self._plan.invocation
                     )

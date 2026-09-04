@@ -23,6 +23,7 @@ from anonymizer.engine.execution.accounting_plan import (
     _TaskKey,
 )
 from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _TextDatum
+from anonymizer.engine.execution.invocation import _CompiledInvocation
 from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_runtime import _Phase7Execution
 from anonymizer.engine.execution.phase8_admission import (
@@ -44,7 +45,12 @@ from anonymizer.engine.execution.phase8_cleanup import (
     _Phase8CleanupStatus,
 )
 from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
-from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
+from anonymizer.engine.execution.phase8_ndd_backend import (
+    _compile_phase8_capability,
+    _Phase8BackendCapability,
+    _Phase8Operation,
+    _snapshot_phase8_capability,
+)
 from anonymizer.engine.execution.phase8_runtime import (
     _GroupBlocked,
     _GroupCancelled,
@@ -66,6 +72,51 @@ from anonymizer.engine.execution.phase8_validation import (
     _Phase8Metric,
     _validate_complete_revisions,
 )
+
+
+@dataclass(slots=True, repr=False)
+class _Phase8CapabilityGuard:
+    backend: object | None
+    invocation: _CompiledInvocation | None
+    expected: _Phase8BackendCapability | None
+
+    def _matches(self) -> bool:
+        return (
+            self.backend is not None
+            and self.invocation is not None
+            and self.expected is not None
+            and _snapshot_phase8_capability(self.backend, self.invocation) == self.expected
+        )
+
+    def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
+        if not self._matches():
+            return _Phase8CapabilityFault(operation)
+        method = getattr(self.backend, "run_operation", None)
+        return method(operation, request) if callable(method) else _Phase8CapabilityFault(operation)
+
+    def retire_phase8(self, identity: object) -> object:
+        matched = self._matches()
+        method = getattr(self.backend, "retire_phase8", None)
+        receipt = method(identity) if callable(method) else None
+        self.backend = None
+        self.invocation = None
+        self.expected = None
+        if matched:
+            return receipt
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.BACKEND,
+            _Phase8CleanupStatus.UNCONFIRMED,
+            identity,
+        )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8CapabilityFault:
+    operation: _Phase8Operation
+    payload: None = None
+    failed: bool = True
+    failure_kind: str = "invocation_inconsistent"
 
 
 class _Phase8GroupedRewriteProtectionService:
@@ -133,9 +184,7 @@ class _Phase8GroupedRewriteProtectionService:
             return _terminal((), tuple(states), True, False)
 
         qualified = _compatibility_phase4_released(groups, atomic_groups, dependencies, states)
-        released = tuple(
-            (member, candidates[member]) for members in groups for member in members if member in qualified
-        )
+        released = tuple((member, candidates[member]) for member, _baseline in phase7_released if member in qualified)
         # First cleanup attestation: no candidate-bearing ledger or baseline
         # index survives the Phase 4 reduction.  Clear before constructing the
         # terminal result, then retain only the copied release cells.
@@ -188,6 +237,12 @@ class _Phase8GroupedRewriteProtectionService:
         Requests use fresh opaque wire tokens and are reconciled back to the
         compiler-issued datum keys before any candidate reaches Phase 4.
         """
+        if not isinstance(invocation, _CompiledInvocation):
+            return _terminal((), (), True, False)
+        capability = _compile_phase8_capability(invocation)
+        if capability is None or _snapshot_phase8_capability(backend, invocation) != capability:
+            return _terminal((), (), True, False)
+        guarded_backend = _Phase8CapabilityGuard(backend, invocation, capability)
         max_repairs = _phase8_max_repairs(invocation)
         plan = _compile_phase8_plan(graph, max_repairs=max_repairs)
         if not _is_admitted_phase8_plan(plan):
@@ -208,7 +263,7 @@ class _Phase8GroupedRewriteProtectionService:
         registry = _Phase8WireRegistry()
         operations = tuple(
             _backend_group_operation(
-                backend,
+                guarded_backend,
                 _phase8_group_input(
                     members, original_by_datum, cast(Mapping[object, bool], applied_by_datum), invocation
                 ),
@@ -238,6 +293,12 @@ class _Phase8GroupedRewriteProtectionService:
         if not _is_admitted_phase8_successor(predecessor):
             return _terminal((), (), True, False)
         phase7 = predecessor.phase7_execution
+        if not isinstance(invocation, _CompiledInvocation):
+            return _terminal((), (), True, False)
+        capability = _compile_phase8_capability(invocation)
+        if capability is None or _snapshot_phase8_capability(backend, invocation) != capability:
+            return _terminal((), (), True, False)
+        guarded_backend = _Phase8CapabilityGuard(backend, invocation, capability)
         max_repairs = _phase8_max_repairs(invocation)
         plan = _compile_phase8_plan(graph, max_repairs=max_repairs)
         if not _is_admitted_phase8_plan(plan):
@@ -257,14 +318,14 @@ class _Phase8GroupedRewriteProtectionService:
         registry = _Phase8WireRegistry()
         operations = tuple(
             _backend_group_operation(
-                backend,
+                guarded_backend,
                 _phase8_group_input_from_successor(members, predecessor, invocation),
                 registry,
                 operation_plan=manifest.operations,
             )
             for manifest, members in zip(plan.groups, groups, strict=True)
         )
-        return _run_accounted_successor(composition, phase7, operations, backend)
+        return _run_accounted_successor(composition, phase7, operations, guarded_backend)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
