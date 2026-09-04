@@ -39,6 +39,7 @@ from anonymizer.engine.execution.phase8_runtime import (
     _Phase8InvocationLedger,
     _Phase8LifecycleExecution,
     _Phase8OperationFault,
+    _Phase8Reason,
     _run_group_operation,
 )
 from anonymizer.engine.execution.phase8_successor import _is_admitted_phase8_successor, _Phase8SuccessorHandoff
@@ -258,8 +259,8 @@ _GroupOperation = Callable[
 class _Phase8InvocationInconsistent(_Phase8OperationFault):
     """Provider evidence cannot safely be assigned to one complete group."""
 
-    def __init__(self, reason: str) -> None:
-        super().__init__(_Phase8FaultKind.INCONSISTENT, reason, invocation_global=True)
+    def __init__(self, code: _Phase8Reason) -> None:
+        super().__init__(_Phase8FaultKind.INCONSISTENT, code, invocation_global=True)
 
 
 def _phase8_max_repairs(invocation: object | None) -> int:
@@ -498,13 +499,13 @@ def _backend_group_operation(
     def analyze(members: tuple[object, ...], baselines: dict[object, str]) -> tuple[bool, bool]:
         nonlocal privacy, utility
         if not _valid_group_input(members, baselines, group_input):
-            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "invalid_group_input")
+            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.INVALID_GROUP_INPUT)
         wire = _new_wire(members, group_input, registry, include_mentions=True)
         tokens = wire.member_tokens
         request = _operation_request(_Phase8Operation.ANALYZE, wire, members, baselines, group_input)
         analysis = _dispatch(backend, _Phase8Operation.ANALYZE, request)
         if not _reconcile_common(analysis, "analyzed_member_tokens", tokens, wire.context_tokens, registry):
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "analysis_reconciliation")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.ANALYSIS_RECONCILIATION)
         mention_owners = (
             dict(zip(wire.mention_tokens, (item.owner for item in group_input.accepted_mentions), strict=True))
             if group_input
@@ -520,13 +521,13 @@ def _backend_group_operation(
             analysis, tokens, wire.mention_tokens, mention_owners, mention_identities, member_owners, registry
         )
         if obligations is None:
-            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "analysis_invalid")
+            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.ANALYSIS_INVALID)
         privacy, utility = obligations
         return not privacy, _zero_route_admitted(members, baselines, group_input)
 
     def rewrite(members: tuple[object, ...], baselines: dict[object, str]) -> dict[object, str]:
         if privacy is None or utility is None:
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "analysis_state_missing")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.ANALYSIS_STATE_MISSING)
         rewrite_wire = _new_wire(members, group_input, registry)
         rewrite_tokens = rewrite_wire.member_tokens
         rewrite_map = dict(zip(rewrite_tokens, members, strict=True))
@@ -537,17 +538,17 @@ def _backend_group_operation(
         }
         revision = _dispatch(backend, _Phase8Operation.REWRITE, active_request)
         if not _reconcile_common(revision, None, rewrite_tokens, rewrite_wire.context_tokens, registry):
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "rewrite_reconciliation")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.REWRITE_RECONCILIATION)
         current = _revisions(revision, rewrite_map, registry)
         if current is None:
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "rewrite_members")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.REWRITE_MEMBERS)
         return current
 
     def evaluate(
         members: tuple[object, ...], baselines: dict[object, str], current: dict[object, str]
     ) -> _Phase8Metric:
         if privacy is None or utility is None or group_input is None:
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "analysis_state_missing")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.ANALYSIS_STATE_MISSING)
         evaluation_wire = _new_wire(members, group_input, registry)
         evaluation_tokens = evaluation_wire.member_tokens
         evaluation_map = dict(zip(evaluation_tokens, members, strict=True))
@@ -569,14 +570,14 @@ def _backend_group_operation(
             utility_floor=group_input.utility_floor,
         )
         if metric is None:
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "evaluation_reconciliation")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.EVALUATION_RECONCILIATION)
         return metric
 
     def repair(
         members: tuple[object, ...], baselines: dict[object, str], current: dict[object, str], repair_round: int
     ) -> dict[object, str]:
         if privacy is None or utility is None:
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "analysis_state_missing")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.ANALYSIS_STATE_MISSING)
         repair_wire = _new_wire(members, group_input, registry)
         repair_tokens = repair_wire.member_tokens
         repair_map = dict(zip(repair_tokens, members, strict=True))
@@ -589,16 +590,16 @@ def _backend_group_operation(
         }
         repaired = _dispatch(backend, _Phase8Operation.REPAIR, repair_request)
         if not _reconcile_common(repaired, None, repair_tokens, repair_wire.context_tokens, registry):
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "repair_reconciliation")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.REPAIR_RECONCILIATION)
         revised = _revisions(repaired, repair_map, registry)
         if revised is None:
-            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, "repair_members")
+            raise _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.REPAIR_MEMBERS)
         return revised
 
     def operation(members: tuple[object, ...], baselines: dict[object, str]) -> _Phase8GroupOutcome:
         nonlocal completed
         if completed is not None:
-            raise _Phase8InvocationInconsistent("group operation reused")
+            raise _Phase8InvocationInconsistent(_Phase8Reason.GROUP_OPERATION_REUSED)
         max_repairs = operation_plan.max_repairs if operation_plan is not None else -1
         completed = _run_group_operation(
             members,
@@ -869,17 +870,17 @@ def _wire_obligations(
 def _dispatch(backend: object, operation: _Phase8Operation, request: dict[str, object]) -> object:
     method = getattr(backend, "run_operation", None)
     if not callable(method):
-        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "backend_unavailable")
+        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.BACKEND_UNAVAILABLE)
     try:
         result = method(operation, request)
     except Exception:
-        raise _Phase8OperationFault(_Phase8FaultKind.LOST, "transport_lost") from None
+        raise _Phase8OperationFault(_Phase8FaultKind.LOST, _Phase8Reason.TRANSPORT_LOST) from None
     if getattr(result, "operation", None) is not operation:
-        raise _Phase8InvocationInconsistent("operation correlation mismatch")
+        raise _Phase8InvocationInconsistent(_Phase8Reason.OPERATION_CORRELATION_MISMATCH)
     if getattr(result, "failed", True):
         if getattr(result, "failure_kind", None) == "invocation_inconsistent":
-            raise _Phase8InvocationInconsistent("unattributable provider failure")
-        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "backend_failure")
+            raise _Phase8InvocationInconsistent(_Phase8Reason.UNATTRIBUTABLE_PROVIDER_FAILURE)
+        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.BACKEND_FAILURE)
     return getattr(result, "payload", None)
 
 
@@ -900,7 +901,7 @@ def _raise_if_retired(observed: object, current: set[str], registry: _Phase8Wire
     if isinstance(observed, list) and any(
         isinstance(token, str) and token in registry.issued - current for token in observed
     ):
-        raise _Phase8InvocationInconsistent("retired correlation token")
+        raise _Phase8InvocationInconsistent(_Phase8Reason.RETIRED_CORRELATION_TOKEN)
 
 
 def _exact_token_list(observed: object, expected: tuple[str, ...]) -> bool:
@@ -928,15 +929,15 @@ def _revisions(
     for revision in revisions:
         token, text = _field(revision, "member_token"), _field(revision, "text")
         if not isinstance(token, str) or token not in token_to_member or not isinstance(text, str):
-            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "revision_invalid")
+            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.REVISION_INVALID)
         encoded_bytes = len(text.encode("utf-8"))
         total_bytes += encoded_bytes
         if encoded_bytes > limits.get("max_revision_text_utf8_bytes_per_member", 0):
-            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "revision_limit")
+            raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.REVISION_LIMIT)
         member = token_to_member[token]
         result[member] = text
     if total_bytes > limits.get("max_all_member_text_utf8_bytes_per_group", 0):
-        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "revision_limit")
+        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.REVISION_LIMIT)
     return result
 
 
@@ -968,7 +969,7 @@ def _metric(
         privacy_values = tuple(_privacy_answer(answer, privacy_by_token) for answer in privacy)
         utility_values = tuple(_utility_answer(answer, utility_by_token) for answer in utility)
     except (TypeError, ValueError):
-        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "evaluation_invalid") from None
+        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.EVALUATION_INVALID) from None
     metric = _evaluate_metrics(
         privacy_values,
         utility_values,
@@ -977,7 +978,7 @@ def _metric(
         utility_floor=utility_floor,
     )
     if metric is None:
-        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, "evaluation_invalid")
+        raise _Phase8OperationFault(_Phase8FaultKind.FAILED, _Phase8Reason.EVALUATION_INVALID)
     return metric
 
 
@@ -1049,25 +1050,22 @@ def _run_operations(
     invocation = _Phase8InvocationLedger()
     for members, operation in zip(groups, operations, strict=True):
         group_baselines = {member: baselines[member] for member in members if member in baselines}
-        if len(group_baselines) != len(members):
-            states.append("blocked")
-            continue
         try:
             result = operation(members, group_baselines)
         except _Phase8InvocationInconsistent:
             states.append("inconsistent")
-            invocation.admit(_GroupInconsistent("invocation_inconsistent", True))
+            invocation.admit(_GroupInconsistent(_Phase8Reason.INVOCATION_INCONSISTENT, True))
             states.extend("blocked" for _ in groups[len(states) :])
             break
         except Exception:
             states.append("lost")
-            invocation.admit(_GroupLost("transport_lost"))
+            invocation.admit(_GroupLost(_Phase8Reason.TRANSPORT_LOST))
             states.extend("blocked" for _ in groups[len(states) :])
             break
         if isinstance(result, _Phase8GroupOutcome):
             terminal = result.terminal
             if isinstance(terminal, _GroupSucceeded) and not _validate_complete_revisions(members, result.revisions):
-                terminal = _GroupInconsistent("candidate_reconciliation")
+                terminal = _GroupInconsistent(_Phase8Reason.CANDIDATE_RECONCILIATION)
             states.append(result.state)
             if terminal is not result.terminal:
                 states[-1] = "inconsistent"
@@ -1081,7 +1079,7 @@ def _run_operations(
             continue
         if not _complete_candidate(members, result):
             states.append("failed")
-            invocation.admit(_GroupFailed("incomplete_group"))
+            invocation.admit(_GroupFailed(_Phase8Reason.INCOMPLETE_GROUP))
             continue
         candidates.update(cast(tuple[tuple[object, str], ...], result))
         states.append("succeeded")

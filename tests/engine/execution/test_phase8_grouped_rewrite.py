@@ -276,7 +276,7 @@ def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests
     second_outcome = second(members, baselines)
     assert first_outcome.state == "succeeded" and first_outcome.revisions == baselines
     assert second_outcome.state == "succeeded" and second_outcome.revisions == baselines
-    with pytest.raises(Exception, match="group operation reused"):
+    with pytest.raises(Exception, match="group_operation_reused"):
         first(members, baselines)
     assert len(seen) == 2
     assert first_outcome.ledger.is_closed and second_outcome.ledger.is_closed

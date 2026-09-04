@@ -7,7 +7,13 @@ import pytest
 
 from anonymizer.engine.execution.graph import _DatumId
 from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
-from anonymizer.engine.execution.phase8_runtime import _GroupBlocked, _GroupFailed, _run_group_operation, _StageBlocked
+from anonymizer.engine.execution.phase8_runtime import (
+    _GroupBlocked,
+    _GroupFailed,
+    _Phase8Reason,
+    _run_group_operation,
+    _StageBlocked,
+)
 from anonymizer.engine.execution.phase8_service import (
     _backend_group_operation,
     _Phase8GroupedRewriteProtectionService,
@@ -46,6 +52,50 @@ def test_missing_phase7_baseline_blocks_before_analysis_call() -> None:
     assert outcome.ledger.reason(outcome.ledger.plan.stages[1]) == "prerequisite"
 
 
+def test_lifecycle_missing_baseline_closes_compiled_ledger_without_provider_call() -> None:
+    first, second = _DatumId("first"), _DatumId("second")
+    provider_calls = 0
+    outcomes = []
+
+    class ForbiddenBackend:
+        def run_operation(self, _operation: _Phase8Operation, _request: dict[str, object]):
+            nonlocal provider_calls
+            provider_calls += 1
+            raise AssertionError("missing baselines must block before provider dispatch")
+
+    operation = _backend_group_operation(
+        ForbiddenBackend(),
+        _Phase8GroupInput(
+            {first: "one", second: "two"},
+            {first: False, second: False},
+            max_repairs=0,
+        ),
+    )
+
+    def capture(members: tuple[object, ...], baselines: dict[object, str]):
+        outcome = operation(members, baselines)
+        outcomes.append(outcome)
+        return outcome
+
+    execution = _Phase8GroupedRewriteProtectionService().run_lifecycle(
+        groups=((first, second),),
+        atomic_groups=((first, second),),
+        dependencies=(),
+        phase7_released=((first, "one"),),
+        phase7_cleanup_verified=True,
+        phase7_global_embargo=False,
+        operations=(capture,),
+    )
+
+    assert execution.terminal_group_states == ("blocked",)
+    assert execution.released == ()
+    assert provider_calls == 0
+    assert len(outcomes) == 1
+    assert outcomes[0].ledger.is_closed
+    assert outcomes[0].ledger.reason(outcomes[0].ledger.plan.stages[0]) == "missing_baseline"
+    assert all(outcomes[0].ledger.attempt_count(stage) == 0 for stage in outcomes[0].ledger.plan.stages)
+
+
 def test_final_evaluation_needing_repair_fails_without_candidate() -> None:
     member = object()
     outcome = _run_group_operation(
@@ -59,7 +109,7 @@ def test_final_evaluation_needing_repair_fails_without_candidate() -> None:
     )
 
     assert isinstance(outcome.terminal, _GroupFailed)
-    assert outcome.terminal.reason == "repair_exhausted"
+    assert outcome.terminal.code is _Phase8Reason.REPAIR_EXHAUSTED
     assert outcome.revisions is None
     assert not isinstance(outcome.ledger.terminal(outcome.ledger.plan.stages[-1]), _StageBlocked)
 
@@ -162,7 +212,7 @@ def test_repair_exhaustion_closes_the_exact_compiled_route(rounds: int) -> None:
     )
 
     assert isinstance(outcome.terminal, _GroupFailed)
-    assert outcome.terminal.reason == "repair_exhausted"
+    assert outcome.terminal.code is _Phase8Reason.REPAIR_EXHAUSTED
     assert outcome.revisions is None
     assert calls == 3 + 2 * rounds
     assert outcome.ledger.is_closed

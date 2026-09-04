@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 import anonymizer.engine.execution.phase8_runtime as phase8_runtime
@@ -71,7 +73,7 @@ def test_zero_obligation_closes_every_conditional_stage_without_attempts() -> No
 def test_terminal_is_absorbing_and_failure_blocks_descendants() -> None:
     ledger = phase8_runtime._Phase8OperationLedger(_plan(1))
     ledger.succeed(phase8_runtime._Phase8Stage.validate_baselines())
-    ledger.fail(phase8_runtime._Phase8Stage.analyze(), "backend_failure")
+    ledger.fail(phase8_runtime._Phase8Stage.analyze(), phase8_runtime._Phase8Reason.BACKEND_FAILURE)
     ledger.succeed(phase8_runtime._Phase8Stage.analyze())
 
     assert isinstance(ledger.terminal(phase8_runtime._Phase8Stage.analyze()), phase8_runtime._StageFailed)
@@ -129,20 +131,31 @@ def test_pre_dispatch_cancellation_has_no_attempt_and_post_dispatch_without_stop
 def test_receipts_and_terminal_reprs_are_content_free() -> None:
     ledger = phase8_runtime._Phase8OperationLedger(_plan(0))
     ledger.succeed(phase8_runtime._Phase8Stage.validate_baselines())
-    ledger.fail(phase8_runtime._Phase8Stage.analyze(), "backend_failure")
+    ledger.fail(phase8_runtime._Phase8Stage.analyze(), phase8_runtime._Phase8Reason.BACKEND_FAILURE)
 
     assert "text" not in repr(ledger.terminal(phase8_runtime._Phase8Stage.analyze()))
     assert "text" not in repr(ledger._attempts[phase8_runtime._Phase8Stage.analyze()])
     assert ledger._attempts[phase8_runtime._Phase8Stage.analyze()].terminal == "failed"
 
 
+def test_operation_fault_rejects_unbounded_reason_text() -> None:
+    unbounded = cast(phase8_runtime._Phase8Reason, "candidate-text-must-not-survive")
+    with pytest.raises(TypeError, match="closed Phase 8 reason code"):
+        phase8_runtime._Phase8OperationFault(
+            phase8_runtime._Phase8FaultKind.FAILED,
+            unbounded,
+        )
+    with pytest.raises(TypeError, match="closed Phase 8 reason code"):
+        phase8_runtime._GroupFailed(unbounded)
+
+
 def test_local_failure_continues_but_global_terminals_embargo_later_dispatch() -> None:
     invocation = phase8_runtime._Phase8InvocationLedger()
-    assert invocation.admit(phase8_runtime._GroupFailed("backend_failure"))
-    assert invocation.admit(phase8_runtime._GroupInconsistent("local_reconciliation"))
+    assert invocation.admit(phase8_runtime._GroupFailed(phase8_runtime._Phase8Reason.BACKEND_FAILURE))
+    assert invocation.admit(phase8_runtime._GroupInconsistent(phase8_runtime._Phase8Reason.ANALYSIS_RECONCILIATION))
     assert not invocation.global_embargo
 
-    assert not invocation.admit(phase8_runtime._GroupLost("transport_lost"))
+    assert not invocation.admit(phase8_runtime._GroupLost(phase8_runtime._Phase8Reason.TRANSPORT_LOST))
     assert invocation.global_embargo
     assert isinstance(invocation.aggregate(), phase8_runtime._GroupInconsistent)
 
@@ -151,11 +164,11 @@ def test_group_aggregate_uses_frozen_failure_precedence() -> None:
     invocation = phase8_runtime._Phase8InvocationLedger(
         group_terminals=[
             phase8_runtime._GroupSucceeded(),
-            phase8_runtime._GroupBlocked("prerequisite"),
-            phase8_runtime._GroupFailed("backend_failure"),
-            phase8_runtime._GroupCancelled("cancellation"),
-            phase8_runtime._GroupLost("transport_lost"),
-            phase8_runtime._GroupInconsistent("correlation"),
+            phase8_runtime._GroupBlocked(phase8_runtime._Phase8Reason.PREREQUISITE),
+            phase8_runtime._GroupFailed(phase8_runtime._Phase8Reason.BACKEND_FAILURE),
+            phase8_runtime._GroupCancelled(phase8_runtime._Phase8Reason.CANCELLATION),
+            phase8_runtime._GroupLost(phase8_runtime._Phase8Reason.TRANSPORT_LOST),
+            phase8_runtime._GroupInconsistent(phase8_runtime._Phase8Reason.INVOCATION_INCONSISTENT),
         ]
     )
 
