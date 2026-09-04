@@ -78,12 +78,25 @@ class _AnalysisResponse(BaseModel):
     utility_obligations: list[dict[str, Any]]
 
 
+class _PrivacyAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    obligation_token: StrictStr
+    deducible: Literal["yes", "no"]
+    confidence: StrictFloat
+
+
+class _UtilityAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    obligation_token: StrictStr
+    preservation_score: StrictFloat
+
+
 class _EvaluationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evaluated_member_tokens: list[StrictStr]
     consumed_context_binding_tokens: list[StrictStr]
-    privacy_answers: list[dict[str, Any]]
-    utility_answers: list[dict[str, StrictFloat]]
+    privacy_answers: list[_PrivacyAnswer]
+    utility_answers: list[_UtilityAnswer]
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -196,6 +209,7 @@ def _hydrate(
                 (COL_PHASE8_TASK_TOKEN, correlation.task_token),
                 (COL_PHASE8_ATTEMPT_TOKEN, correlation.attempt_token),
                 (COL_PHASE8_ROW_TOKEN, correlation.row_token),
+                (COL_PHASE8_OPERATION, operation.value),
             )
         )
     ):

@@ -265,6 +265,35 @@ class _Phase8Obligation:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class _Phase8WiredObligations:
+    """Fresh stage-local tokens bound to accepted stable obligations."""
+
+    privacy: tuple[tuple[str, _Phase8Obligation], ...]
+    utility: tuple[tuple[str, _Phase8Obligation], ...]
+
+    def request(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            "privacy_obligations": [
+                {
+                    "obligation_token": token,
+                    "statement": item.statement,
+                    "kind": item.kind,
+                    "sensitivity": item.sensitivity,
+                }
+                for token, item in self.privacy
+            ],
+            "utility_obligations": [
+                {
+                    "obligation_token": token,
+                    "statement": item.statement,
+                    "importance": item.importance,
+                }
+                for token, item in self.utility
+            ],
+        }
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _Phase8AcceptedMention:
     """A Phase 6 accepted mention bound to its compiler-owned target."""
 
@@ -432,9 +461,10 @@ def _backend_group_operation(
         rewrite_wire = _new_wire(members, group_input, registry)
         rewrite_tokens = rewrite_wire.member_tokens
         rewrite_map = dict(zip(rewrite_tokens, members, strict=True))
+        rewrite_obligations = _wire_obligations(privacy, utility, registry)
         active_request = {
             **_operation_request(_Phase8Operation.REWRITE, rewrite_wire, members, baselines, group_input),
-            **_wire_obligations(privacy, utility, registry),
+            **rewrite_obligations.request(),
         }
         revision = _dispatch(backend, _Phase8Operation.REWRITE, active_request)
         if revision is None or not _reconcile_common(
@@ -449,9 +479,10 @@ def _backend_group_operation(
             evaluation_wire = _new_wire(members, group_input, registry)
             evaluation_tokens = evaluation_wire.member_tokens
             evaluation_map = dict(zip(evaluation_tokens, members, strict=True))
+            evaluation_obligations = _wire_obligations(privacy, utility, registry)
             evaluation_request = {
                 **_operation_request(_Phase8Operation.EVALUATE, evaluation_wire, members, baselines, group_input),
-                **_wire_obligations(privacy, utility, registry),
+                **evaluation_obligations.request(),
                 "revisions": _revision_request(current, evaluation_map),
             }
             evaluation = _dispatch(backend, _Phase8Operation.EVALUATE, evaluation_request)
@@ -459,8 +490,7 @@ def _backend_group_operation(
                 evaluation,
                 evaluation_tokens,
                 evaluation_wire.context_tokens,
-                _obligation_tokens(evaluation_request["privacy_obligations"]),
-                _obligation_tokens(evaluation_request["utility_obligations"]),
+                evaluation_obligations,
                 registry,
             )
             if metric is None:
@@ -472,9 +502,10 @@ def _backend_group_operation(
             repair_wire = _new_wire(members, group_input, registry)
             repair_tokens = repair_wire.member_tokens
             repair_map = dict(zip(repair_tokens, members, strict=True))
+            repair_obligations = _wire_obligations(privacy, utility, registry)
             repair_request = {
                 **_operation_request(_Phase8Operation.REPAIR, repair_wire, members, baselines, group_input),
-                **_wire_obligations(privacy, utility, registry),
+                **repair_obligations.request(),
                 "revisions": _revision_request(current, repair_map),
                 "repair_round": repair_round + 1,
             }
@@ -688,6 +719,8 @@ def _admit_obligations(
                 kind = _field(value, "kind")
                 sensitivity = _field(value, "sensitivity")
                 mention_tokens = _field(value, "source_mention_tokens", [])
+                _raise_if_retired(owners, set(members), registry)
+                _raise_if_retired(mention_tokens, set(mentions), registry)
                 if (
                     not isinstance(owners, list)
                     or not owners
@@ -704,7 +737,6 @@ def _admit_obligations(
                     )
                     or (kind == "direct" and not mention_tokens)
                 ):
-                    _raise_if_retired(mention_tokens, set(mentions), registry)
                     return None
                 assert isinstance(kind, str) and isinstance(sensitivity, str)
                 covered_mentions.update(mention_tokens)
@@ -733,29 +765,12 @@ def _admit_obligations(
 
 def _wire_obligations(
     privacy: list[_Phase8Obligation], utility: list[_Phase8Obligation], registry: _Phase8WireRegistry
-) -> dict[str, list[dict[str, object]]]:
+) -> _Phase8WiredObligations:
     """Lower stable capabilities to fresh stage-local tokens, omitting source wires."""
-    return {
-        "privacy_obligations": [
-            {
-                "obligation_token": registry.new(),
-                "statement": item.statement,
-                "kind": item.kind,
-                "sensitivity": item.sensitivity,
-            }
-            for item in privacy
-        ],
-        "utility_obligations": [
-            {"obligation_token": registry.new(), "statement": item.statement, "importance": item.importance}
-            for item in utility
-        ],
-    }
-
-
-def _obligation_tokens(obligations: object) -> tuple[str, ...]:
-    if not isinstance(obligations, list):
-        return ()
-    return tuple(cast(str, obligation["obligation_token"]) for obligation in obligations)
+    return _Phase8WiredObligations(
+        tuple((registry.new(), item) for item in privacy),
+        tuple((registry.new(), item) for item in utility),
+    )
 
 
 def _dispatch(backend: object, operation: _Phase8Operation, request: dict[str, object]) -> object | None:
@@ -827,24 +842,25 @@ def _metric(
     payload: object,
     tokens: tuple[str, ...],
     contexts: tuple[str, ...],
-    privacy_tokens: tuple[str, ...],
-    utility_tokens: tuple[str, ...],
+    obligations: _Phase8WiredObligations,
     registry: _Phase8WireRegistry,
 ) -> _Phase8Metric | None:
     if payload is None or not _reconcile_common(payload, "evaluated_member_tokens", tokens, contexts, registry):
         return None
     privacy = _field(payload, "privacy_answers", [])
     utility = _field(payload, "utility_answers", [])
+    privacy_by_token = dict(obligations.privacy)
+    utility_by_token = dict(obligations.utility)
     if (
         not isinstance(privacy, list)
         or not isinstance(utility, list)
-        or not _exact_answer_tokens(privacy, privacy_tokens, registry)
-        or not _exact_answer_tokens(utility, utility_tokens, registry)
+        or not _exact_answer_tokens(privacy, tuple(privacy_by_token), registry)
+        or not _exact_answer_tokens(utility, tuple(utility_by_token), registry)
     ):
         return None
     try:
-        privacy_values = tuple(_privacy_answer(answer) for answer in privacy)
-        utility_values = tuple(_utility_answer(answer) for answer in utility)
+        privacy_values = tuple(_privacy_answer(answer, privacy_by_token) for answer in privacy)
+        utility_values = tuple(_utility_answer(answer, utility_by_token) for answer in utility)
     except (TypeError, ValueError):
         return None
     return _evaluate_metrics(
@@ -858,19 +874,32 @@ def _exact_answer_tokens(answers: list[object], expected: tuple[str, ...], regis
     return _exact_token_list(tokens, expected)
 
 
-def _privacy_answer(answer: object) -> tuple[str, float, bool]:
-    sensitivity, confidence, leaked = (
-        _field(answer, "sensitivity", "high"),
+def _privacy_answer(answer: object, obligations: dict[str, _Phase8Obligation]) -> tuple[str, float, bool]:
+    token, confidence, leaked = (
+        _field(answer, "obligation_token"),
         _field(answer, "confidence"),
         _field(answer, "deducible"),
     )
-    if not isinstance(sensitivity, str) or not isinstance(confidence, (int, float)) or leaked not in {"yes", "no"}:
+    obligation = obligations.get(token) if isinstance(token, str) else None
+    sensitivity = obligation.sensitivity if obligation is not None else None
+    if (
+        sensitivity not in {"high", "medium", "low"}
+        or not isinstance(confidence, (int, float))
+        or leaked
+        not in {
+            "yes",
+            "no",
+        }
+    ):
         raise ValueError
+    assert isinstance(sensitivity, str)
     return sensitivity, float(confidence), leaked == "yes"
 
 
-def _utility_answer(answer: object) -> tuple[int, float]:
-    importance, score = _field(answer, "importance", "important"), _field(answer, "preservation_score")
+def _utility_answer(answer: object, obligations: dict[str, _Phase8Obligation]) -> tuple[int, float]:
+    token, score = _field(answer, "obligation_token"), _field(answer, "preservation_score")
+    obligation = obligations.get(token) if isinstance(token, str) else None
+    importance = obligation.importance if obligation is not None else None
     if importance not in {"critical", "important"} or not isinstance(score, (int, float)):
         raise ValueError
     return (2 if importance == "critical" else 1), float(score)

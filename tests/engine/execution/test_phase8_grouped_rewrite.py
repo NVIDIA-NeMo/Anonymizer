@@ -14,9 +14,11 @@ import pytest
 from pytest import MonkeyPatch
 
 import anonymizer.engine.execution.phase8_contract as phase8_contract
+import anonymizer.engine.execution.phase8_service as phase8_service
 from anonymizer.engine.constants import (
     COL_PHASE8_ATTEMPT_TOKEN,
     COL_PHASE8_INVOCATION_TOKEN,
+    COL_PHASE8_OPERATION,
     COL_PHASE8_ROW_TOKEN,
     COL_PHASE8_TASK_TOKEN,
     COL_TARGET_WORK_ID,
@@ -51,6 +53,7 @@ from anonymizer.engine.execution.phase8_contract import (
 )
 from anonymizer.engine.execution.phase8_ndd_backend import (
     _AnalysisResponse,
+    _EvaluationResponse,
     _hydrate,
     _Phase8Correlation,
     _Phase8Operation,
@@ -529,6 +532,344 @@ def test_phase8_each_stage_receives_disjoint_member_context_and_obligation_wires
     assert all(left.isdisjoint(right) for _, left in seen for _, right in seen if left is not right)
 
 
+def test_phase8_evaluation_attributes_permuted_answers_to_stable_obligations(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Answer order and provider defaults cannot rewrite accepted metadata."""
+    observed: list[tuple[tuple[tuple[str, float, bool], ...], tuple[tuple[int, float], ...]]] = []
+    evaluate_metrics = phase8_service._evaluate_metrics
+
+    def capture_metrics(
+        privacy: tuple[tuple[str, float, bool], ...],
+        utility: tuple[tuple[int, float], ...],
+        *,
+        repair_any_high: bool,
+        repair_threshold: float,
+        utility_floor: float,
+        exact_baseline: bool = False,
+    ):
+        observed.append((privacy, utility))
+        return evaluate_metrics(
+            privacy,
+            utility,
+            repair_any_high=repair_any_high,
+            repair_threshold=repair_threshold,
+            utility_floor=utility_floor,
+            exact_baseline=exact_baseline,
+        )
+
+    monkeypatch.setattr(phase8_service, "_evaluate_metrics", capture_metrics)
+
+    class Backend:
+        evaluation = 0
+
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            members = request["members"]
+            assert isinstance(members, list)
+            member_tokens = [member["member_token"] for member in members]
+            contexts = request["context_bindings"]
+            assert isinstance(contexts, list)
+            context_tokens = [binding["binding_token"] for binding in contexts]
+            if operation is _Phase8Operation.ANALYZE:
+                return _Response(
+                    operation,
+                    {
+                        "analyzed_member_tokens": member_tokens,
+                        "consumed_context_binding_tokens": context_tokens,
+                        "privacy_obligations": [
+                            {
+                                "statement": "low",
+                                "kind": "latent",
+                                "sensitivity": "low",
+                                "source_member_tokens": member_tokens,
+                                "source_mention_tokens": [],
+                            },
+                            {
+                                "statement": "high",
+                                "kind": "latent",
+                                "sensitivity": "high",
+                                "source_member_tokens": member_tokens,
+                                "source_mention_tokens": [],
+                            },
+                        ],
+                        "utility_obligations": [
+                            {"statement": "critical", "importance": "critical"},
+                            {"statement": "important", "importance": "important"},
+                        ],
+                    },
+                )
+            if operation in {_Phase8Operation.REWRITE, _Phase8Operation.REPAIR}:
+                text = "repaired" if operation is _Phase8Operation.REPAIR else "safe"
+                return _Response(
+                    operation,
+                    {
+                        "consumed_context_binding_tokens": context_tokens,
+                        "revisions": [{"member_token": token, "text": text} for token in member_tokens],
+                    },
+                )
+            privacy = request["privacy_obligations"]
+            utility = request["utility_obligations"]
+            assert isinstance(privacy, list) and isinstance(utility, list)
+            self.evaluation += 1
+            if self.evaluation == 1:
+                privacy_answers = [
+                    {"obligation_token": privacy[1]["obligation_token"], "deducible": "no", "confidence": 0.0},
+                    {"obligation_token": privacy[0]["obligation_token"], "deducible": "yes", "confidence": 0.5},
+                ]
+                utility_answers = [
+                    {"obligation_token": utility[1]["obligation_token"], "preservation_score": 1.0},
+                    {"obligation_token": utility[0]["obligation_token"], "preservation_score": 0.0},
+                ]
+            else:
+                privacy_answers = [
+                    {"obligation_token": item["obligation_token"], "deducible": "no", "confidence": 0.0}
+                    for item in reversed(privacy)
+                ]
+                utility_answers = [
+                    {"obligation_token": item["obligation_token"], "preservation_score": 1.0}
+                    for item in reversed(utility)
+                ]
+            return _Response(
+                operation,
+                {
+                    "evaluated_member_tokens": member_tokens,
+                    "consumed_context_binding_tokens": context_tokens,
+                    "privacy_answers": privacy_answers,
+                    "utility_answers": utility_answers,
+                },
+            )
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation, self.payload, self.failed = operation, payload, False
+
+    member = object()
+    backend = Backend()
+    result = _backend_group_operation(backend, _Phase8GroupInput({member: "original"}, {member: True}))(
+        (member,), {member: "baseline"}
+    )
+
+    assert result == ((member, "repaired"),)
+    assert observed[0] == (
+        (("high", 0.0, False), ("low", 0.5, True)),
+        ((1, 1.0), (2, 0.0)),
+    )
+
+
+def test_phase8_cross_group_analysis_member_token_embargoes_invocation() -> None:
+    """A sibling-issued provenance capability is not a local schema failure."""
+    first, second, third = (_DatumId(name) for name in ("first", "second", "third"))
+    registry = phase8_service._Phase8WireRegistry()
+    first_token: list[str] = []
+    calls = 0
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            nonlocal calls
+            assert operation is _Phase8Operation.ANALYZE
+            calls += 1
+            members = request["members"]
+            assert isinstance(members, list)
+            member_token = members[0]["member_token"]
+            if calls == 1:
+                first_token.append(member_token)
+                obligations: list[dict[str, object]] = []
+            else:
+                obligations = [
+                    {
+                        "statement": "sibling provenance",
+                        "kind": "latent",
+                        "sensitivity": "high",
+                        "source_member_tokens": [first_token[0]],
+                        "source_mention_tokens": [],
+                    }
+                ]
+            return _Response(
+                operation,
+                {
+                    "analyzed_member_tokens": [member_token],
+                    "consumed_context_binding_tokens": [],
+                    "privacy_obligations": obligations,
+                    "utility_obligations": [],
+                },
+            )
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation, self.payload, self.failed = operation, payload, False
+
+    backend = Backend()
+    operations = tuple(
+        _backend_group_operation(backend, _Phase8GroupInput({member: value}, {member: False}), registry)
+        for member, value in ((first, "one"), (second, "two"), (third, "three"))
+    )
+    execution = _Phase8GroupedRewriteProtectionService().run_lifecycle(
+        groups=((first,), (second,), (third,)),
+        atomic_groups=((first,), (second,), (third,)),
+        dependencies=(),
+        phase7_released=((first, "one"), (second, "two"), (third, "three")),
+        phase7_cleanup_verified=True,
+        phase7_global_embargo=False,
+        operations=operations,
+    )
+
+    assert execution.released == ()
+    assert execution.global_embargo
+    assert not execution.cleanup_verified
+    assert execution.terminal_group_states == ("succeeded", "inconsistent", "blocked")
+    assert calls == 2
+
+
+def test_phase8_cross_group_context_token_embargoes_invocation() -> None:
+    """A sibling-issued context capability cannot acknowledge the current group."""
+    first, second, third = (_DatumId(name) for name in ("first", "second", "third"))
+    registry = phase8_service._Phase8WireRegistry()
+    first_token: list[str] = []
+    calls = 0
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            nonlocal calls
+            assert operation is _Phase8Operation.ANALYZE
+            calls += 1
+            members = request["members"]
+            contexts = request["context_bindings"]
+            assert isinstance(members, list) and isinstance(contexts, list)
+            member_token = members[0]["member_token"]
+            context_token = contexts[0]["binding_token"]
+            if calls == 1:
+                first_token.append(context_token)
+            return _Response(
+                operation,
+                {
+                    "analyzed_member_tokens": [member_token],
+                    "consumed_context_binding_tokens": [context_token if calls == 1 else first_token[0]],
+                    "privacy_obligations": [],
+                    "utility_obligations": [],
+                },
+            )
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation, self.payload, self.failed = operation, payload, False
+
+    backend = Backend()
+    operations = tuple(
+        _backend_group_operation(
+            backend,
+            _Phase8GroupInput(
+                {member: value},
+                {member: False},
+                context_projections=(_Phase8ContextProjection(member, object(), 0, "context"),),
+            ),
+            registry,
+        )
+        for member, value in ((first, "one"), (second, "two"), (third, "three"))
+    )
+    execution = _Phase8GroupedRewriteProtectionService().run_lifecycle(
+        groups=((first,), (second,), (third,)),
+        atomic_groups=((first,), (second,), (third,)),
+        dependencies=(),
+        phase7_released=((first, "one"), (second, "two"), (third, "three")),
+        phase7_cleanup_verified=True,
+        phase7_global_embargo=False,
+        operations=operations,
+    )
+
+    assert execution.released == ()
+    assert execution.global_embargo
+    assert execution.terminal_group_states == ("succeeded", "inconsistent", "blocked")
+    assert calls == 2
+
+
+def test_phase8_cross_group_obligation_token_embargoes_invocation() -> None:
+    """A sibling-issued obligation capability cannot answer a later group."""
+    first, second, third = (_DatumId(name) for name in ("first", "second", "third"))
+    registry = phase8_service._Phase8WireRegistry()
+    first_token: list[str] = []
+    analyzed: list[str] = []
+    active_group = 0
+
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
+            nonlocal active_group
+            members = request["members"]
+            contexts = request["context_bindings"]
+            assert isinstance(members, list) and isinstance(contexts, list)
+            member_tokens = [member["member_token"] for member in members]
+            if operation is _Phase8Operation.ANALYZE:
+                active_group += 1
+                analyzed.append(cast(str, members[0]["phase7_baseline"]))
+                return _Response(
+                    operation,
+                    {
+                        "analyzed_member_tokens": member_tokens,
+                        "consumed_context_binding_tokens": [],
+                        "privacy_obligations": [
+                            {
+                                "statement": "protect",
+                                "kind": "latent",
+                                "sensitivity": "high",
+                                "source_member_tokens": member_tokens,
+                                "source_mention_tokens": [],
+                            }
+                        ],
+                        "utility_obligations": [{"statement": "meaning", "importance": "important"}],
+                    },
+                )
+            if operation is _Phase8Operation.REWRITE:
+                privacy = request["privacy_obligations"]
+                assert isinstance(privacy, list)
+                if active_group == 1:
+                    first_token.append(privacy[0]["obligation_token"])
+                return _Response(
+                    operation,
+                    {
+                        "consumed_context_binding_tokens": [],
+                        "revisions": [{"member_token": token, "text": "safe"} for token in member_tokens],
+                    },
+                )
+            privacy = request["privacy_obligations"]
+            utility = request["utility_obligations"]
+            assert isinstance(privacy, list) and isinstance(utility, list)
+            answer_token = privacy[0]["obligation_token"] if active_group == 1 else first_token[0]
+            return _Response(
+                operation,
+                {
+                    "evaluated_member_tokens": member_tokens,
+                    "consumed_context_binding_tokens": [],
+                    "privacy_answers": [{"obligation_token": answer_token, "deducible": "no", "confidence": 0.0}],
+                    "utility_answers": [
+                        {"obligation_token": utility[0]["obligation_token"], "preservation_score": 1.0}
+                    ],
+                },
+            )
+
+    class _Response:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation, self.payload, self.failed = operation, payload, False
+
+    backend = Backend()
+    operations = tuple(
+        _backend_group_operation(backend, _Phase8GroupInput({member: value}, {member: True}), registry)
+        for member, value in ((first, "one"), (second, "two"), (third, "three"))
+    )
+    execution = _Phase8GroupedRewriteProtectionService().run_lifecycle(
+        groups=((first,), (second,), (third,)),
+        atomic_groups=((first,), (second,), (third,)),
+        dependencies=(),
+        phase7_released=((first, "one"), (second, "two"), (third, "three")),
+        phase7_cleanup_verified=True,
+        phase7_global_embargo=False,
+        operations=operations,
+    )
+
+    assert execution.released == ()
+    assert execution.global_embargo
+    assert execution.terminal_group_states == ("succeeded", "inconsistent", "blocked")
+    assert analyzed == ["one", "two"]
+
+
 def test_phase8_hydration_rejects_tampered_outer_correlation_tuple() -> None:
     correlation = _Phase8Correlation("invocation", "task", "attempt", "row")
     result = WorkflowRunResult(
@@ -549,6 +890,69 @@ def test_phase8_hydration_rejects_tampered_outer_correlation_tuple() -> None:
     )
     hydrated = _hydrate(_Phase8Operation.ANALYZE, result, correlation, _AnalysisResponse, "analysis")
     assert hydrated.failed and hydrated.failure_kind == "invocation_inconsistent"
+
+
+@pytest.mark.parametrize("returned_operation", [None, _Phase8Operation.REPAIR.value])
+def test_phase8_hydration_rejects_missing_or_tampered_operation(returned_operation: str | None) -> None:
+    correlation = _Phase8Correlation("invocation", "task", "attempt", "row")
+    result = WorkflowRunResult(
+        pd.DataFrame(
+            [
+                {
+                    COL_TARGET_WORK_ID: "row",
+                    COL_PHASE8_INVOCATION_TOKEN: "invocation",
+                    COL_PHASE8_TASK_TOKEN: "task",
+                    COL_PHASE8_ATTEMPT_TOKEN: "attempt",
+                    COL_PHASE8_ROW_TOKEN: "row",
+                    COL_PHASE8_OPERATION: returned_operation,
+                    "analysis": {
+                        "analyzed_member_tokens": [],
+                        "consumed_context_binding_tokens": [],
+                        "privacy_obligations": [],
+                        "utility_obligations": [],
+                    },
+                }
+            ]
+        ),
+        [],
+        (),
+    )
+
+    hydrated = _hydrate(_Phase8Operation.ANALYZE, result, correlation, _AnalysisResponse, "analysis")
+
+    assert hydrated.failed
+    assert hydrated.failure_kind == "invocation_inconsistent"
+
+
+def test_phase8_hydration_accepts_contract_valid_string_obligation_tokens() -> None:
+    correlation = _Phase8Correlation("invocation", "task", "attempt", "row")
+    result = WorkflowRunResult(
+        pd.DataFrame(
+            [
+                {
+                    COL_TARGET_WORK_ID: "row",
+                    COL_PHASE8_INVOCATION_TOKEN: "invocation",
+                    COL_PHASE8_TASK_TOKEN: "task",
+                    COL_PHASE8_ATTEMPT_TOKEN: "attempt",
+                    COL_PHASE8_ROW_TOKEN: "row",
+                    COL_PHASE8_OPERATION: _Phase8Operation.EVALUATE.value,
+                    "evaluation": {
+                        "evaluated_member_tokens": ["member"],
+                        "consumed_context_binding_tokens": [],
+                        "privacy_answers": [],
+                        "utility_answers": [{"obligation_token": "obligation", "preservation_score": 1.0}],
+                    },
+                }
+            ]
+        ),
+        [],
+        (),
+    )
+
+    hydrated = _hydrate(_Phase8Operation.EVALUATE, result, correlation, _EvaluationResponse, "evaluation")
+
+    assert not hydrated.failed
+    assert hydrated.payload is not None
 
 
 def test_phase8_zero_route_rejects_utility_obligations_and_missing_phase7_identity_provenance() -> None:
