@@ -26,6 +26,12 @@ from anonymizer.engine.execution.phase7_contract import _Phase7StableSubstituteC
 from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddResult, _Phase7NddStatus
 from anonymizer.engine.execution.phase7_runtime import _Phase7CleanupAttestation
 from anonymizer.engine.execution.phase7_validation import _CandidateAssignment
+from anonymizer.engine.execution.phase8_cleanup import (
+    _issue_phase8_cleanup_receipt,
+    _Phase8CleanupComponent,
+    _Phase8CleanupPhase,
+    _Phase8CleanupStatus,
+)
 from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
 from anonymizer.engine.execution.phase8_successor import _Phase8SuccessorHandoff
 from anonymizer.engine.execution.protection_service import _Phase7SubstituteProtectionService
@@ -101,6 +107,7 @@ class _GroupedRewriteBackend:
     accepted_mention_counts: list[int] | None = None
     context_binding_sets: list[tuple[dict[str, object], ...]] | None = None
     consume_context: bool = False
+    retired: int = 0
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
         self.calls.append(operation)
@@ -189,6 +196,15 @@ class _GroupedRewriteBackend:
                     {"member_token": token, "text": f"rewrite-{index}"} for index, token in enumerate(tokens)
                 ],
             },
+        )
+
+    def retire_phase8(self, cleanup_identity: object) -> object:
+        self.retired += 1
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.BACKEND,
+            _Phase8CleanupStatus.VERIFIED,
+            cleanup_identity,
         )
 
 

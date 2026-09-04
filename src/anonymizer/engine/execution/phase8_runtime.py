@@ -14,6 +14,13 @@ from anonymizer.engine.execution.phase8_admission import (
     _Phase8GroupOperationPlan,
     _Phase8Stage,
 )
+from anonymizer.engine.execution.phase8_cleanup import (
+    _is_phase8_cleanup_receipt,
+    _Phase8CleanupComponent,
+    _Phase8CleanupPhase,
+    _Phase8CleanupReceipt,
+    _Phase8CleanupStatus,
+)
 from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.execution.phase8_validation import _Phase8Metric, _validate_complete_revisions
 
@@ -150,12 +157,22 @@ class _Phase8OperationLedger:
     _terminals: dict[_Phase8Stage, _Phase8Terminal] = field(default_factory=dict)
     _attempts: dict[_Phase8Stage, _Phase8AttemptReceipt] = field(default_factory=dict)
     _dispatched: set[_Phase8Stage] = field(default_factory=set)
+    _retired: bool = False
 
     @property
     def is_closed(self) -> bool:
-        return len(self._terminals) == len(self.plan.stages)
+        return not self._retired and len(self._terminals) == len(self.plan.stages)
+
+    def discard(self) -> None:
+        """Erase retained operation evidence and permanently close the ledger."""
+        self._terminals.clear()
+        self._attempts.clear()
+        self._dispatched.clear()
+        self._retired = True
 
     def terminal(self, stage: _Phase8Stage) -> _Phase8Terminal | None:
+        if self._retired:
+            return None
         return self._terminals.get(stage)
 
     def reason(self, stage: _Phase8Stage) -> _Phase8Reason | None:
@@ -166,7 +183,7 @@ class _Phase8OperationLedger:
         return int(stage in self._dispatched)
 
     def dispatch(self, stage: _Phase8Stage) -> bool:
-        if stage not in self.plan.stages or stage in self._terminals or stage in self._dispatched:
+        if self._retired or stage not in self.plan.stages or stage in self._terminals or stage in self._dispatched:
             return False
         position = self.plan.stages.index(stage)
         if any(
@@ -384,7 +401,35 @@ class _Phase8LifecycleExecution:
     released: tuple[tuple[object, str], ...]
     terminal_group_states: tuple[str, ...]
     global_embargo: bool
-    cleanup_verified: bool
+    pre_reduction_cleanup: _Phase8CleanupReceipt | None = None
+    post_reduction_cleanup: _Phase8CleanupReceipt | None = None
+
+    @property
+    def cleanup_verified(self) -> bool:
+        """Require two sealed runtime receipts bound to the same invocation."""
+        pre = self.pre_reduction_cleanup
+        post = self.post_reduction_cleanup
+        if pre is None or post is None or pre.identity is not post.identity:
+            return False
+        return (
+            _is_phase8_cleanup_receipt(
+                pre,
+                identity=pre.identity,
+                phase=_Phase8CleanupPhase.PRE_REDUCTION,
+                component=_Phase8CleanupComponent.RUNTIME,
+            )
+            and _is_phase8_cleanup_receipt(
+                post,
+                identity=pre.identity,
+                phase=_Phase8CleanupPhase.POST_REDUCTION,
+                component=_Phase8CleanupComponent.RUNTIME,
+            )
+            and pre.status is _Phase8CleanupStatus.VERIFIED
+            and post.status is _Phase8CleanupStatus.VERIFIED
+            and post.retained_candidate_cell_count == len(self.released)
+            and post.provisional_revision_reference_count == 0
+            and post.withheld_candidate_reference_count == 0
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)

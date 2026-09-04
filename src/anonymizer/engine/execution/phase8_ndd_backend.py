@@ -33,6 +33,13 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.execution.invocation import _CompiledInvocation
+from anonymizer.engine.execution.phase8_cleanup import (
+    _issue_phase8_cleanup_receipt,
+    _Phase8CleanupComponent,
+    _Phase8CleanupPhase,
+    _Phase8CleanupReceipt,
+    _Phase8CleanupStatus,
+)
 from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
@@ -121,11 +128,14 @@ class _Phase8NddBackend:
     """Dispatch one bounded complete-group request via ``NddAdapter`` only."""
 
     def __init__(self, adapter: NddAdapter, invocation: _CompiledInvocation) -> None:
-        self._adapter = adapter
-        self._invocation = invocation
-        self._invocation_token = secrets.token_hex(16)
+        self._adapter: NddAdapter | None = adapter
+        self._invocation: _CompiledInvocation | None = invocation
+        self._invocation_token: str | None = secrets.token_hex(16)
+        self._retired = False
 
     def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> _Phase8DispatchResult:
+        if self._retired or self._adapter is None or self._invocation is None or self._invocation_token is None:
+            return _Phase8DispatchResult(operation, None, True, "invocation_inconsistent")
         encoded = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         limits = dict(getattr(_load_phase8_contract(), "limits", ()))
         if len(encoded.encode()) > limits.get("max_workframe_utf8_bytes_per_operation", 0):
@@ -156,6 +166,21 @@ class _Phase8NddBackend:
                 workflow_name="phase8-grouped-rewrite",
             )
         return _hydrate(operation, result, correlation, model, column.name)
+
+    def retire_phase8(self, cleanup_identity: object) -> _Phase8CleanupReceipt | None:
+        """Drop all retained dispatch authority and issue a sealed receipt."""
+        if self._retired or cleanup_identity is None:
+            return None
+        self._retired = True
+        self._invocation_token = None
+        self._invocation = None
+        self._adapter = None
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.BACKEND,
+            _Phase8CleanupStatus.VERIFIED,
+            cleanup_identity,
+        )
 
 
 def _operation_column(

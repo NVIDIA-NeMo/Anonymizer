@@ -44,6 +44,12 @@ from anonymizer.engine.execution.phase8_admission import (
     _Phase8Plan,
     _Phase8Rejected,
 )
+from anonymizer.engine.execution.phase8_cleanup import (
+    _is_phase8_cleanup_receipt,
+    _Phase8CleanupComponent,
+    _Phase8CleanupPhase,
+    _Phase8CleanupStatus,
+)
 from anonymizer.engine.execution.phase8_contract import (
     _canonical_digest,
     _compile_phase8_contract,
@@ -65,6 +71,7 @@ from anonymizer.engine.execution.phase8_service import (
     _Phase8ContextProjection,
     _Phase8GroupedRewriteProtectionService,
     _Phase8GroupInput,
+    _Phase8WireRegistry,
 )
 from anonymizer.engine.execution.phase8_validation import _evaluate_metrics
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult, _FailedRowEvidence
@@ -295,6 +302,64 @@ def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests
     first_members, second_members = seen[0]["members"], seen[1]["members"]
     assert isinstance(first_members, list) and isinstance(second_members, list)
     assert [member["member_token"] for member in first_members] != [member["member_token"] for member in second_members]
+
+
+def test_phase8_group_operation_cleanup_discards_candidate_evidence_and_token_authority() -> None:
+    class Backend:
+        def run_operation(self, operation: _Phase8Operation, request: dict[str, object]) -> object:
+            members = request["members"]
+            contexts = request["context_bindings"]
+            assert isinstance(members, list)
+            assert isinstance(contexts, list)
+            return _Result(
+                operation,
+                {
+                    "analyzed_member_tokens": [member["member_token"] for member in members],
+                    "consumed_context_binding_tokens": [binding["binding_token"] for binding in contexts],
+                    "privacy_obligations": [],
+                    "utility_obligations": [],
+                },
+            )
+
+    class _Result:
+        def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
+            self.operation, self.payload, self.failed = operation, payload, False
+
+    member = object()
+    privacy_goal = {"protect": "identity", "preserve": "meaning"}
+    group_input = _Phase8GroupInput(
+        {member: "baseline"},
+        {member: False},
+        context_projections=(_Phase8ContextProjection(member, object(), 0, "sensitive context"),),
+        privacy_goal=privacy_goal,
+    )
+    registry = _Phase8WireRegistry()
+    operation = _backend_group_operation(Backend(), group_input, registry)
+    outcome = operation((member,), {member: "baseline"})
+    assert outcome.revisions == {member: "baseline"}
+    assert registry.issued
+
+    identity = object()
+    receipt = operation.discard_private_state(identity)
+
+    assert _is_phase8_cleanup_receipt(
+        receipt,
+        identity=identity,
+        phase=_Phase8CleanupPhase.PRE_REDUCTION,
+        component=_Phase8CleanupComponent.OPERATION,
+    )
+    assert receipt is not None and receipt.status is _Phase8CleanupStatus.VERIFIED
+    assert group_input.originals == {}
+    assert group_input.phase7_applied == {}
+    assert group_input.context_projections == ()
+    assert group_input.privacy_goal is None
+    assert privacy_goal == {}
+    assert registry.issued == set()
+    assert outcome.revisions == {}
+    assert not outcome.ledger.is_closed
+    assert operation.discard_private_state(identity) is None
+    with pytest.raises(Exception, match="group_operation_reused"):
+        operation((member,), {member: "baseline"})
 
 
 def test_phase8_analysis_lowers_only_admitted_provenance_and_binds_privacy_authority() -> None:

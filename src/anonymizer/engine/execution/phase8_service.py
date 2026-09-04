@@ -10,26 +10,44 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import cast
 
+from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
+from anonymizer.engine.execution.accounting_outcomes import _CauseCode, _GroupReleased, _InvocationCompleted
 from anonymizer.engine.execution.accounting_plan import (
     _AccountingPlan,
     _admit_accounting_plan,
     _AtomicGroupKey,
     _CompiledAtomicGroup,
     _CompiledDependency,
+    _DatumTaskSubject,
+    _StageId,
+    _TaskKey,
 )
-from anonymizer.engine.execution.accounting_release import _qualify_release
 from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _TextDatum
 from anonymizer.engine.execution.phase7_application import _AppliedDatum
 from anonymizer.engine.execution.phase7_runtime import _Phase7Execution
 from anonymizer.engine.execution.phase8_admission import (
     _compile_group_operation_plan,
+    _compile_phase8_accounting_plan,
     _compile_phase8_plan,
+    _is_admitted_phase8_accounting_plan,
+    _is_admitted_phase8_plan,
+    _Phase8AccountingPlan,
     _Phase8GroupOperationPlan,
     _Phase8Plan,
+)
+from anonymizer.engine.execution.phase8_cleanup import (
+    _is_phase8_cleanup_receipt,
+    _issue_phase8_cleanup_receipt,
+    _Phase8CleanupComponent,
+    _Phase8CleanupPhase,
+    _Phase8CleanupReceipt,
+    _Phase8CleanupStatus,
 )
 from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.execution.phase8_ndd_backend import _Phase8Operation
 from anonymizer.engine.execution.phase8_runtime import (
+    _GroupBlocked,
+    _GroupCancelled,
     _GroupFailed,
     _GroupInconsistent,
     _GroupLost,
@@ -114,7 +132,7 @@ class _Phase8GroupedRewriteProtectionService:
             baselines.clear()
             return _terminal((), tuple(states), True, False)
 
-        qualified = _phase4_released(groups, atomic_groups, dependencies, states)
+        qualified = _compatibility_phase4_released(groups, atomic_groups, dependencies, states)
         released = tuple(
             (member, candidates[member]) for members in groups for member in members if member in qualified
         )
@@ -172,8 +190,9 @@ class _Phase8GroupedRewriteProtectionService:
         """
         max_repairs = _phase8_max_repairs(invocation)
         plan = _compile_phase8_plan(graph, max_repairs=max_repairs)
-        if not isinstance(plan, _Phase8Plan):
+        if not _is_admitted_phase8_plan(plan):
             return _terminal((), (), True, False)
+        assert isinstance(plan, _Phase8Plan)
         groups = tuple(manifest.members for manifest in plan.groups)
         atomic_groups = tuple(getattr(group, "members", ()) for group in getattr(graph, "atomic_groups", ()))
         dependencies = tuple(
@@ -221,14 +240,20 @@ class _Phase8GroupedRewriteProtectionService:
         phase7 = predecessor.phase7_execution
         max_repairs = _phase8_max_repairs(invocation)
         plan = _compile_phase8_plan(graph, max_repairs=max_repairs)
-        if not isinstance(plan, _Phase8Plan):
+        if not _is_admitted_phase8_plan(plan):
+            return _terminal((), (), True, False)
+        assert isinstance(plan, _Phase8Plan)
+        try:
+            composition = _compile_phase8_accounting_plan(predecessor.phase7_plan.accounting, plan)
+        except TypeError:
+            return _terminal((), (), True, False)
+        # Phase 7's exact terminal prefix is authenticated before any input
+        # projection or provider operation is constructed.
+        prefix = phase7.phase4.accounting.tasks
+        phase7_tasks = predecessor.phase7_plan.accounting.tasks
+        if len(prefix) != len(phase7_tasks) or tuple(outcome.task for outcome in prefix) != phase7_tasks:
             return _terminal((), (), True, False)
         groups = tuple(manifest.members for manifest in plan.groups)
-        atomic_groups = tuple(getattr(group, "members", ()) for group in getattr(graph, "atomic_groups", ()))
-        dependencies = tuple(
-            (getattr(edge, "prerequisite", None), getattr(edge, "dependent", None))
-            for edge in getattr(graph, "dependencies", ())
-        )
         registry = _Phase8WireRegistry()
         operations = tuple(
             _backend_group_operation(
@@ -239,14 +264,395 @@ class _Phase8GroupedRewriteProtectionService:
             )
             for manifest, members in zip(plan.groups, groups, strict=True)
         )
-        return self.run_lifecycle(
-            groups=groups,
-            atomic_groups=atomic_groups,
-            dependencies=dependencies,
-            phase7_released=tuple((value.datum_id, value.output) for value in phase7.released),
-            phase7_cleanup_verified=phase7.cleanup.verified,
-            phase7_global_embargo=phase7.phase4.global_embargo,
-            operations=operations,
+        return _run_accounted_successor(composition, phase7, operations, backend)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8GroupReceipt:
+    """Content-free proof that one complete group reached Phase 4."""
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _SealedCandidateCell:
+    """One private keyed candidate, visible only to Phase 4 reduction."""
+
+    datum_id: _DatumId
+    _value: str = field(repr=False)
+    _proof: _Phase8CandidateCellProof | None = field(default=None, compare=False)
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("Phase 8 candidate cells are not serializable")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8CandidateCellProof:
+    seal: object = field(compare=False)
+    datum_identity: int
+    value_identity: int
+
+
+_CANDIDATE_CELL_SEAL = object()
+
+
+def _seal_candidate_cell(datum_id: _DatumId, value: str) -> _SealedCandidateCell:
+    if not isinstance(datum_id, _DatumId) or not isinstance(value, str):
+        raise TypeError("Phase 8 candidate cell is malformed")
+    return _SealedCandidateCell(
+        datum_id,
+        value,
+        _Phase8CandidateCellProof(_CANDIDATE_CELL_SEAL, id(datum_id), id(value)),
+    )
+
+
+def _is_sealed_candidate_cell(value: object, datum_id: _DatumId | None = None) -> bool:
+    return (
+        isinstance(value, _SealedCandidateCell)
+        and value._proof is not None
+        and value._proof.seal is _CANDIDATE_CELL_SEAL
+        and value._proof.datum_identity == id(value.datum_id)
+        and value._proof.value_identity == id(value._value)
+        and (datum_id is None or value.datum_id == datum_id)
+    )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8CleanupRuntime:
+    """Invocation owner for the two publication-critical cleanup receipts."""
+
+    identity: object = field(default_factory=object, compare=False)
+
+    def attest_pre(
+        self,
+        operation_receipts: tuple[object, ...],
+        backend_receipt: object,
+        *,
+        expected_operation_count: int,
+        retained_candidate_cell_count: int,
+    ) -> _Phase8CleanupReceipt:
+        valid_operations = tuple(
+            receipt
+            for receipt in operation_receipts
+            if isinstance(receipt, _Phase8CleanupReceipt)
+            and _is_phase8_cleanup_receipt(
+                receipt,
+                identity=self.identity,
+                phase=_Phase8CleanupPhase.PRE_REDUCTION,
+                component=_Phase8CleanupComponent.OPERATION,
+            )
+        )
+        backend_valid = _is_phase8_cleanup_receipt(
+            backend_receipt,
+            identity=self.identity,
+            phase=_Phase8CleanupPhase.PRE_REDUCTION,
+            component=_Phase8CleanupComponent.BACKEND,
+        )
+        typed = (*valid_operations, backend_receipt) if backend_valid else valid_operations
+        trusted_failure = any(
+            isinstance(receipt, _Phase8CleanupReceipt) and receipt.status is _Phase8CleanupStatus.FAILED
+            for receipt in typed
+        )
+        evidence_complete = (
+            len(operation_receipts) == expected_operation_count
+            and len(valid_operations) == expected_operation_count
+            and len({id(receipt) for receipt in valid_operations}) == expected_operation_count
+            and backend_valid
+        )
+        confirmed = (
+            evidence_complete
+            and all(_cleanup_component_is_empty(receipt) for receipt in valid_operations)
+            and isinstance(backend_receipt, _Phase8CleanupReceipt)
+            and _cleanup_component_is_empty(backend_receipt)
+        )
+        status = (
+            _Phase8CleanupStatus.VERIFIED
+            if confirmed
+            else _Phase8CleanupStatus.FAILED
+            if evidence_complete and trusted_failure
+            else _Phase8CleanupStatus.UNCONFIRMED
+        )
+        receipts = tuple(receipt for receipt in typed if isinstance(receipt, _Phase8CleanupReceipt))
+        missing_operations = max(0, expected_operation_count - len(valid_operations))
+        duplicate_operations = max(0, len(valid_operations) - len({id(receipt) for receipt in valid_operations}))
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.RUNTIME,
+            status,
+            self.identity,
+            active_operation_count=sum(receipt.active_operation_count for receipt in receipts)
+            + missing_operations
+            + duplicate_operations,
+            active_workframe_reference_count=sum(receipt.active_workframe_reference_count for receipt in receipts)
+            + int(not backend_valid),
+            token_reference_count=sum(receipt.token_reference_count for receipt in receipts),
+            source_projection_reference_count=sum(receipt.source_projection_reference_count for receipt in receipts),
+            baseline_reference_count=sum(receipt.baseline_reference_count for receipt in receipts),
+            obligation_reference_count=sum(receipt.obligation_reference_count for receipt in receipts),
+            provisional_revision_reference_count=sum(
+                receipt.provisional_revision_reference_count for receipt in receipts
+            ),
+            evaluation_evidence_reference_count=sum(
+                receipt.evaluation_evidence_reference_count for receipt in receipts
+            ),
+            retained_candidate_cell_count=retained_candidate_cell_count,
+            withheld_candidate_reference_count=sum(receipt.withheld_candidate_reference_count for receipt in receipts),
+        )
+
+    def attest_post(
+        self,
+        *,
+        released_cell_count: int,
+        provisional_reference_count: int,
+        withheld_reference_count: int,
+    ) -> _Phase8CleanupReceipt:
+        status = (
+            _Phase8CleanupStatus.VERIFIED
+            if provisional_reference_count == 0 and withheld_reference_count == 0
+            else _Phase8CleanupStatus.FAILED
+        )
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.POST_REDUCTION,
+            _Phase8CleanupComponent.RUNTIME,
+            status,
+            self.identity,
+            provisional_revision_reference_count=provisional_reference_count,
+            retained_candidate_cell_count=released_cell_count,
+            withheld_candidate_reference_count=withheld_reference_count,
+        )
+
+
+def _cleanup_component_is_empty(receipt: _Phase8CleanupReceipt) -> bool:
+    return receipt.status is _Phase8CleanupStatus.VERIFIED and all(
+        count == 0
+        for count in (
+            receipt.active_operation_count,
+            receipt.active_workframe_reference_count,
+            receipt.token_reference_count,
+            receipt.source_projection_reference_count,
+            receipt.baseline_reference_count,
+            receipt.obligation_reference_count,
+            receipt.provisional_revision_reference_count,
+            receipt.evaluation_evidence_reference_count,
+            receipt.retained_candidate_cell_count,
+            receipt.withheld_candidate_reference_count,
+        )
+    )
+
+
+def _run_accounted_successor(
+    composition: _Phase8AccountingPlan,
+    phase7: _Phase7Execution,
+    operations: tuple[_GroupOperation, ...],
+    backend: object,
+) -> _Phase8LifecycleExecution:
+    """Project complete-group results into the sole Phase 4 publication ledger."""
+    if not _is_admitted_phase8_accounting_plan(composition):
+        return _terminal((), (), True, False)
+    cleanup = _Phase8CleanupRuntime()
+    group_bindings = tuple(zip(composition.members, composition.group_tasks, operations, strict=True))
+    qualification_tasks = composition.qualification_tasks
+    presentation = tuple(datum.id for datum in composition.accounting.datums)
+    ledger: _AccountingLedger[object] = _AccountingLedger(composition.accounting)
+    ledger.open()
+    try:
+        ledger.import_terminal_outcomes(phase7.phase4.accounting.tasks)
+    except Exception:
+        return _terminal((), (), True, False)
+    baselines = _exact_baseline_index(tuple((value.datum_id, value.output) for value in phase7.released))
+    if baselines is None or not phase7.cleanup.verified or phase7.phase4.global_embargo:
+        ledger.mark_cleanup_unconfirmed()
+        ledger.finish()
+        return _terminal((), tuple("blocked" for _ in composition.groups), True, False)
+    del phase7
+    states: list[str] = []
+    cells: dict[_DatumId, _SealedCandidateCell] = {}
+    qualification_by_datum = {
+        task.subject.datum_id: task for task in qualification_tasks if isinstance(task.subject, _DatumTaskSubject)
+    }
+    invocation_global = False
+    for members, group_task, operation in group_bindings:
+        group_baselines = {member: baselines[member] for member in members if member in baselines}
+        if invocation_global:
+            states.append("blocked")
+            continue
+        try:
+            outcome = operation(cast(tuple[object, ...], members), cast(dict[object, str], group_baselines))
+        except _Phase8InvocationInconsistent:
+            ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+            states.append("inconsistent")
+            invocation_global = True
+            continue
+        except Exception:
+            dispatch = ledger.dispatch(group_task)
+            ledger.mark_transport_lost(dispatch)
+            states.append("lost")
+            invocation_global = True
+            continue
+        if not isinstance(outcome, _Phase8GroupOutcome):
+            ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+            states.append("inconsistent")
+            invocation_global = True
+            continue
+        terminal = outcome.terminal
+        if isinstance(terminal, _GroupFailed):
+            ledger.mark_task_failed(group_task)
+            states.append("failed")
+            continue
+        if isinstance(terminal, _GroupBlocked):
+            ledger.mark_task_blocked(group_task)
+            states.append("blocked")
+            continue
+        if isinstance(terminal, _GroupCancelled):
+            dispatch = ledger.dispatch(group_task)
+            ledger.request_cancellation()
+            ledger.acknowledge_stop(dispatch)
+            states.append("cancelled")
+            invocation_global = True
+            continue
+        if isinstance(terminal, _GroupLost):
+            dispatch = ledger.dispatch(group_task)
+            ledger.mark_transport_lost(dispatch)
+            states.append("lost")
+            invocation_global = True
+            continue
+        if isinstance(terminal, _GroupInconsistent):
+            if terminal.invocation_global:
+                ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
+                invocation_global = True
+            else:
+                ledger.mark_task_inconsistent(group_task, _CauseCode.CONTRADICTORY)
+            states.append("inconsistent")
+            continue
+        if not _validate_complete_revisions(members, outcome.revisions):
+            ledger.mark_task_inconsistent(group_task, _CauseCode.CONTRADICTORY)
+            states.append("inconsistent")
+            continue
+        ledger.mark_task_succeeded(group_task, _Phase8GroupReceipt())
+        assert outcome.revisions is not None
+        for member in members:
+            cell = _seal_candidate_cell(member, outcome.revisions[member])
+            cells[member] = cell
+            ledger.mark_task_succeeded(qualification_by_datum[member], cell)
+        states.append("succeeded")
+
+    operation_receipts = tuple(_discard_operation(operation, cleanup.identity) for _, _, operation in group_bindings)
+    backend_receipt = _retire_backend(backend, cleanup.identity)
+    baselines.clear()
+    pre = cleanup.attest_pre(
+        operation_receipts,
+        backend_receipt,
+        expected_operation_count=len(group_bindings),
+        retained_candidate_cell_count=len(cells),
+    )
+    del backend, group_bindings, operations
+    if not _valid_pre_cleanup(pre, cleanup.identity, len(cells)):
+        pre = _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.RUNTIME,
+            _Phase8CleanupStatus.UNCONFIRMED,
+            cleanup.identity,
+            active_operation_count=1,
+            retained_candidate_cell_count=len(cells),
+        )
+    if pre.status is _Phase8CleanupStatus.FAILED:
+        ledger.mark_cleanup_failed()
+    elif pre.status is not _Phase8CleanupStatus.VERIFIED:
+        ledger.mark_cleanup_unconfirmed()
+    ledger.seal_mutation()
+    accounting = ledger.finish()
+    phase4_embargo = not isinstance(accounting.invocation, _InvocationCompleted)
+    released_cells: dict[_DatumId, _SealedCandidateCell] = {}
+    if pre.status is _Phase8CleanupStatus.VERIFIED and isinstance(accounting.invocation, _InvocationCompleted):
+        for group in accounting.groups:
+            if isinstance(group, _GroupReleased):
+                for datum_id, candidate in group.outputs:
+                    if _is_sealed_candidate_cell(candidate, datum_id):
+                        assert isinstance(candidate, _SealedCandidateCell)
+                        released_cells[datum_id] = candidate
+    cells.clear()
+    del accounting, baselines, cells, composition, ledger, qualification_by_datum, qualification_tasks
+    post = cleanup.attest_post(
+        released_cell_count=len(released_cells),
+        provisional_reference_count=0,
+        withheld_reference_count=0,
+    )
+    if not _valid_post_cleanup(post, cleanup.identity, len(released_cells)):
+        post = _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.POST_REDUCTION,
+            _Phase8CleanupComponent.RUNTIME,
+            _Phase8CleanupStatus.UNCONFIRMED,
+            cleanup.identity,
+            provisional_revision_reference_count=1,
+        )
+    if post.status is not _Phase8CleanupStatus.VERIFIED:
+        released_cells.clear()
+        return _terminal_with_cleanup((), tuple(states), True, pre, post)
+    ordered = tuple(
+        (datum_id, released_cells[datum_id]._value) for datum_id in presentation if datum_id in released_cells
+    )
+    released_cells.clear()
+    embargo = phase4_embargo or pre.status is not _Phase8CleanupStatus.VERIFIED
+    return _terminal_with_cleanup(ordered if not embargo else (), tuple(states), embargo, pre, post)
+
+
+def _valid_pre_cleanup(receipt: object, identity: object, retained_candidate_cell_count: int) -> bool:
+    return (
+        isinstance(receipt, _Phase8CleanupReceipt)
+        and _is_phase8_cleanup_receipt(
+            receipt,
+            identity=identity,
+            phase=_Phase8CleanupPhase.PRE_REDUCTION,
+            component=_Phase8CleanupComponent.RUNTIME,
+        )
+        and receipt.retained_candidate_cell_count == retained_candidate_cell_count
+    )
+
+
+def _valid_post_cleanup(receipt: object, identity: object, released_cell_count: int) -> bool:
+    return (
+        isinstance(receipt, _Phase8CleanupReceipt)
+        and _is_phase8_cleanup_receipt(
+            receipt,
+            identity=identity,
+            phase=_Phase8CleanupPhase.POST_REDUCTION,
+            component=_Phase8CleanupComponent.RUNTIME,
+        )
+        and receipt.retained_candidate_cell_count == released_cell_count
+        and (
+            receipt.status is not _Phase8CleanupStatus.VERIFIED
+            or (receipt.provisional_revision_reference_count == 0 and receipt.withheld_candidate_reference_count == 0)
+        )
+    )
+
+
+def _discard_operation(operation: _GroupOperation, identity: object) -> object:
+    discard = getattr(operation, "discard_private_state", None)
+    if not callable(discard):
+        return None
+    try:
+        return discard(identity)
+    except Exception:
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.OPERATION,
+            _Phase8CleanupStatus.FAILED,
+            identity,
+            active_operation_count=1,
+        )
+
+
+def _retire_backend(backend: object, identity: object) -> object:
+    retire = getattr(backend, "retire_phase8", None)
+    if not callable(retire):
+        return None
+    try:
+        return retire(identity)
+    except Exception:
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.BACKEND,
+            _Phase8CleanupStatus.FAILED,
+            identity,
+            active_workframe_reference_count=1,
         )
 
 
@@ -254,6 +660,45 @@ _GroupOperation = Callable[
     [tuple[object, ...], dict[object, str]],
     _Phase8GroupOutcome | tuple[tuple[object, str], ...] | None,
 ]
+
+
+@dataclass(slots=True, repr=False)
+class _ManagedGroupOperation:
+    """One-shot callable whose owner can irreversibly discard private state."""
+
+    _runner: _GroupOperation | None
+    _discard: Callable[[], None] | None
+    _retired: bool = False
+
+    def __call__(self, members: tuple[object, ...], baselines: dict[object, str]) -> _Phase8GroupOutcome:
+        if self._retired or self._runner is None:
+            raise _Phase8InvocationInconsistent(_Phase8Reason.GROUP_OPERATION_REUSED)
+        outcome = self._runner(members, baselines)
+        if not isinstance(outcome, _Phase8GroupOutcome):
+            raise _Phase8InvocationInconsistent(_Phase8Reason.INVOCATION_INCONSISTENT)
+        return outcome
+
+    def discard_private_state(self, cleanup_identity: object) -> _Phase8CleanupReceipt | None:
+        if self._retired or self._discard is None:
+            return None
+        discard = self._discard
+        self._runner = None
+        self._discard = None
+        self._retired = True
+        try:
+            discard()
+        except Exception:
+            status = _Phase8CleanupStatus.FAILED
+        else:
+            status = _Phase8CleanupStatus.VERIFIED
+        del discard
+        return _issue_phase8_cleanup_receipt(
+            _Phase8CleanupPhase.PRE_REDUCTION,
+            _Phase8CleanupComponent.OPERATION,
+            status,
+            cleanup_identity,
+            active_operation_count=int(status is _Phase8CleanupStatus.FAILED),
+        )
 
 
 class _Phase8InvocationInconsistent(_Phase8OperationFault):
@@ -484,7 +929,7 @@ def _backend_group_operation(
     registry: _Phase8WireRegistry | None = None,
     *,
     operation_plan: _Phase8GroupOperationPlan | None = None,
-) -> Callable[[tuple[object, ...], dict[object, str]], _Phase8GroupOutcome]:
+) -> _ManagedGroupOperation:
     registry = registry or _Phase8WireRegistry()
     limits = dict(getattr(_load_phase8_contract(), "limits", ()))
     if operation_plan is None:
@@ -613,7 +1058,27 @@ def _backend_group_operation(
         )
         return completed
 
-    return operation
+    def discard_private_state() -> None:
+        if completed is not None:
+            if completed.revisions is not None:
+                completed.revisions.clear()
+            completed.ledger.discard()
+        if privacy is not None:
+            privacy.clear()
+        if utility is not None:
+            utility.clear()
+        if group_input is not None:
+            group_input.originals.clear()
+            group_input.phase7_applied.clear()
+            if group_input.privacy_goal is not None:
+                group_input.privacy_goal.clear()
+            object.__setattr__(group_input, "accepted_mentions", ())
+            object.__setattr__(group_input, "context_projections", ())
+            object.__setattr__(group_input, "privacy_goal", None)
+        if registry is not None:
+            registry.issued.clear()
+
+    return _ManagedGroupOperation(operation, discard_private_state)
 
 
 def _zero_route_admitted(
@@ -1022,7 +1487,32 @@ def _utility_answer(answer: object, obligations: dict[str, _Phase8Obligation]) -
 def _terminal(
     released: tuple[tuple[object, str], ...], states: tuple[str, ...], global_embargo: bool, cleanup_verified: bool
 ) -> _Phase8LifecycleExecution:
-    return _Phase8LifecycleExecution(released, states, global_embargo, cleanup_verified)
+    if not cleanup_verified:
+        return _Phase8LifecycleExecution(released, states, global_embargo)
+    cleanup = _Phase8CleanupRuntime()
+    pre = _issue_phase8_cleanup_receipt(
+        _Phase8CleanupPhase.PRE_REDUCTION,
+        _Phase8CleanupComponent.RUNTIME,
+        _Phase8CleanupStatus.VERIFIED,
+        cleanup.identity,
+        retained_candidate_cell_count=len(released),
+    )
+    post = cleanup.attest_post(
+        released_cell_count=len(released),
+        provisional_reference_count=0,
+        withheld_reference_count=0,
+    )
+    return _terminal_with_cleanup(released, states, global_embargo, pre, post)
+
+
+def _terminal_with_cleanup(
+    released: tuple[tuple[object, str], ...],
+    states: tuple[str, ...],
+    global_embargo: bool,
+    pre: _Phase8CleanupReceipt,
+    post: _Phase8CleanupReceipt,
+) -> _Phase8LifecycleExecution:
+    return _Phase8LifecycleExecution(released, states, global_embargo, pre, post)
 
 
 def _lifecycle_preflight(
@@ -1129,13 +1619,13 @@ def _complete_candidate(members: tuple[object, ...], result: object) -> bool:
     )
 
 
-def _phase4_released(
+def _compatibility_phase4_released(
     groups: tuple[tuple[object, ...], ...],
     atomic_groups: tuple[tuple[object, ...], ...],
     dependencies: tuple[tuple[object, object], ...],
     states: list[str],
 ) -> set[object]:
-    """Delegate atomic/dependency withholding to the Phase 4 fixed point."""
+    """Compatibility seam reduced by the Phase 4 ledger, never a set helper."""
     members = tuple(member for group in groups for member in group)
     if not all(isinstance(member, _DatumId) for member in members):
         return set()
@@ -1147,8 +1637,8 @@ def _phase4_released(
     try:
         plan: _AccountingPlan = _admit_accounting_plan(
             datums,
-            (),
-            (),
+            (_StageId("phase8-compatibility"),),
+            tuple(_TaskKey(_StageId("phase8-compatibility"), _DatumTaskSubject(datum.id)) for datum in datums),
             tuple(
                 _CompiledDependency(cast(_DatumId, prerequisite), cast(_DatumId, dependent))
                 for prerequisite, dependent in dependencies
@@ -1160,11 +1650,19 @@ def _phase4_released(
         )
     except (TypeError, ValueError):
         return set()
-    locally_qualified = frozenset(
-        member
-        for group, state in zip(groups, states, strict=True)
-        if state == "succeeded"
-        for member in group
-        if isinstance(member, _DatumId)
-    )
-    return set(_qualify_release(plan, locally_qualified).release_eligible)
+    ledger: _AccountingLedger[object] = _AccountingLedger(plan)
+    ledger.open()
+    for group, state in zip(groups, states, strict=True):
+        for member in group:
+            task = _TaskKey(_StageId("phase8-compatibility"), _DatumTaskSubject(cast(_DatumId, member)))
+            if state == "succeeded":
+                ledger.mark_task_succeeded(task, object())
+            else:
+                ledger.mark_task_failed(task)
+    result = ledger.finish()
+    return {
+        datum_id
+        for group in result.groups
+        if isinstance(group, _GroupReleased)
+        for datum_id, _candidate in group.outputs
+    }

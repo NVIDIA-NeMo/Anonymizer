@@ -5,9 +5,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
+from anonymizer.engine.execution.accounting_plan import (
+    _AccountingPlan,
+    _DatumTaskSubject,
+    _is_admitted_accounting_plan,
+    _ScopeTaskSubject,
+    _StageId,
+    _TaskKey,
+    _TaskPredecessor,
+)
 from anonymizer.engine.execution.graph import _DatumId, _DatumPurpose, _ProtectionGraph, _RewriteGroup
 from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 
@@ -135,6 +144,45 @@ class _Phase8GroupManifest:
 @dataclass(frozen=True, slots=True, repr=False)
 class _Phase8Plan:
     groups: tuple[_Phase8GroupManifest, ...]
+    _proof: _Phase8PlanProof | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8PlanProof:
+    seal: object = field(compare=False)
+    snapshot: tuple[object, ...]
+
+
+_PHASE8_PLAN_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8AccountingGroup:
+    """One compiler-bound Phase 4 scope task for an opaque rewrite group."""
+
+    id: _Phase8GroupId
+    accounting_subject: _ScopeTaskSubject
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8AccountingPlan:
+    """Exact Phase 7 prefix plus the Phase 8 group/qualification suffix."""
+
+    accounting: _AccountingPlan
+    groups: tuple[_Phase8AccountingGroup, ...]
+    members: tuple[tuple[_DatumId, ...], ...]
+    group_tasks: tuple[_TaskKey, ...]
+    qualification_tasks: tuple[_TaskKey, ...]
+    _proof: _Phase8AccountingProof | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase8AccountingProof:
+    seal: object = field(compare=False)
+    snapshot: tuple[object, ...]
+
+
+_PHASE8_ACCOUNTING_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -190,4 +238,117 @@ def _compile_phase8_plan(graph: object, *, max_repairs: int | None = None) -> _P
         operations = _compile_group_operation_plan(requested_repairs, repair_limit, group_id)
         assert operations is not None
         manifests.append(_Phase8GroupManifest(group_id, members, operations))
-    return _Phase8Plan(tuple(manifests))
+    candidate = _Phase8Plan(tuple(manifests))
+    snapshot = _phase8_plan_snapshot(candidate)
+    assert snapshot is not None
+    return _Phase8Plan(candidate.groups, _Phase8PlanProof(_PHASE8_PLAN_SEAL, snapshot))
+
+
+def _is_admitted_phase8_plan(value: object) -> bool:
+    return (
+        isinstance(value, _Phase8Plan)
+        and value._proof is not None
+        and value._proof.seal is _PHASE8_PLAN_SEAL
+        and value._proof.snapshot == _phase8_plan_snapshot(value)
+    )
+
+
+def _phase8_plan_snapshot(plan: _Phase8Plan) -> tuple[object, ...] | None:
+    try:
+        return tuple(
+            (
+                id(manifest.id),
+                tuple(member.value for member in manifest.members),
+                id(manifest.operations.group_id),
+                manifest.operations.max_repairs,
+                tuple((stage.kind, stage.round_number) for stage in manifest.operations.stages),
+            )
+            for manifest in plan.groups
+        )
+    except (AttributeError, TypeError):
+        return None
+
+
+def _compile_phase8_accounting_plan(phase7_accounting: object, phase8: object) -> _Phase8AccountingPlan:
+    """Extend one admitted Phase 7 plan without recreating any identity.
+
+    The Phase 8 group relation is compiler-owned.  Scope subjects are issued
+    here and retained beside their group IDs so runtime code never derives an
+    accounting identity from members, text, or presentation position.
+    """
+    if not _is_admitted_accounting_plan(phase7_accounting) or not _is_admitted_phase8_plan(phase8):
+        raise TypeError("admitted Phase 7 accounting and Phase 8 plan required")
+    assert isinstance(phase7_accounting, _AccountingPlan)
+    assert isinstance(phase8, _Phase8Plan)
+    group_stage = _StageId("phase8-group")
+    qualification_stage = _StageId("phase8-qualification")
+    bindings = tuple(_Phase8AccountingGroup(manifest.id, _ScopeTaskSubject()) for manifest in phase8.groups)
+    grouped = phase7_accounting.with_scope_tasks(group_stage, tuple(binding.accounting_subject for binding in bindings))
+    group_tasks = tuple(_TaskKey(group_stage, binding.accounting_subject) for binding in bindings)
+    expanded = grouped.with_datum_stage(qualification_stage)
+    qualification_tasks = tuple(
+        _TaskKey(qualification_stage, _DatumTaskSubject(datum.id)) for datum in phase7_accounting.datums
+    )
+    qualification_by_datum = {
+        task.subject.datum_id: task for task in qualification_tasks if isinstance(task.subject, _DatumTaskSubject)
+    }
+    # Phase 7 adds its datum application stage after the final Phase 6 stage.
+    # Group work is scope-owned, while each qualification task also retains
+    # the implicit Phase 7 datum-stage predecessor.
+    if len(phase7_accounting.stages) < 2:
+        raise TypeError("admitted Phase 7 accounting has no Phase 6 terminal stage")
+    phase6_final = phase7_accounting.stages[-2]
+    predecessors = list(expanded.task_predecessors)
+    for manifest, group_task in zip(phase8.groups, group_tasks, strict=True):
+        predecessors.extend(
+            _TaskPredecessor(_TaskKey(phase6_final, _DatumTaskSubject(member)), group_task)
+            for member in manifest.members
+        )
+        predecessors.extend(_TaskPredecessor(group_task, qualification_by_datum[member]) for member in manifest.members)
+    accounting = expanded.with_task_predecessors(tuple(predecessors))
+    values = (accounting, bindings, tuple(item.members for item in phase8.groups), group_tasks, qualification_tasks)
+    candidate = _Phase8AccountingPlan(*values)
+    snapshot = _phase8_accounting_snapshot(candidate, phase7_accounting, phase8)
+    assert snapshot is not None
+    return _Phase8AccountingPlan(
+        *values,
+        _Phase8AccountingProof(_PHASE8_ACCOUNTING_SEAL, snapshot),
+    )
+
+
+def _is_admitted_phase8_accounting_plan(value: object) -> bool:
+    if not isinstance(value, _Phase8AccountingPlan) or value._proof is None:
+        return False
+    return value._proof.seal is _PHASE8_ACCOUNTING_SEAL and value._proof.snapshot == _phase8_accounting_snapshot(value)
+
+
+def _phase8_accounting_snapshot(
+    plan: _Phase8AccountingPlan,
+    phase7_accounting: _AccountingPlan | None = None,
+    phase8: _Phase8Plan | None = None,
+) -> tuple[object, ...] | None:
+    try:
+        source_ids = (
+            (
+                id(phase7_accounting),
+                id(phase8),
+            )
+            if phase7_accounting is not None and phase8 is not None
+            else plan._proof.snapshot[:2]
+            if plan._proof
+            else (0, 0)
+        )
+        return (
+            *source_ids,
+            id(plan.accounting),
+            tuple((id(group.id), id(group.accounting_subject)) for group in plan.groups),
+            tuple(tuple(member.value for member in members) for members in plan.members),
+            tuple((task.stage.value, id(task.subject)) for task in plan.group_tasks),
+            tuple(
+                (task.stage.value, task.subject.datum_id.value)
+                for task in plan.qualification_tasks
+                if isinstance(task.subject, _DatumTaskSubject)
+            ),
+        )
+    except (AttributeError, TypeError):
+        return None
