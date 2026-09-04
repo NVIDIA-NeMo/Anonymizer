@@ -68,6 +68,13 @@ class _AtomicGroup(_PrivateGraphValue):
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class _RewriteGroup(_PrivateGraphValue):
+    """Private author declaration for one complete Phase 8 rewrite unit."""
+
+    members: tuple[_DatumId, ...]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _ProtectionGraph(_PrivateGraphValue):
     datums: tuple[_TextDatum, ...]
     links: tuple[_DatumLink, ...]
@@ -75,6 +82,7 @@ class _ProtectionGraph(_PrivateGraphValue):
     coherence_scopes: tuple[_CoherenceScope, ...]
     atomic_groups: tuple[_AtomicGroup, ...]
     dependencies: tuple[_DatumDependency, ...] = ()
+    rewrite_groups: tuple[_RewriteGroup, ...] = ()
 
 
 def _trivial_graph(datums: tuple[_TextDatum, ...]) -> _ProtectionGraph:

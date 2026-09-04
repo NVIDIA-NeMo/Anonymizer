@@ -32,6 +32,18 @@ COL_PHASE7_INVOCATION_ID = "__anonymizer_phase7_invocation_identity__"
 COL_PHASE7_CANDIDATE_REQUEST = "__anonymizer_phase7_candidate_request__"
 COL_PHASE7_CANDIDATE_BUNDLE = "__anonymizer_phase7_candidate_bundle__"
 
+# Private Phase 8 grouped-rewrite workframes.  They are intentionally not
+# projected into the public Rewrite result or trace schema.
+COL_PHASE8_REQUEST = "__anonymizer_phase8_request__"
+COL_PHASE8_ANALYSIS = "__anonymizer_phase8_analysis__"
+COL_PHASE8_REVISION = "__anonymizer_phase8_revision__"
+COL_PHASE8_EVALUATION = "__anonymizer_phase8_evaluation__"
+COL_PHASE8_OPERATION = "__anonymizer_phase8_operation__"
+COL_PHASE8_INVOCATION_TOKEN = "__anonymizer_phase8_invocation_token__"
+COL_PHASE8_TASK_TOKEN = "__anonymizer_phase8_task_token__"
+COL_PHASE8_ATTEMPT_TOKEN = "__anonymizer_phase8_attempt_token__"
+COL_PHASE8_ROW_TOKEN = "__anonymizer_phase8_row_token__"
+
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"
 

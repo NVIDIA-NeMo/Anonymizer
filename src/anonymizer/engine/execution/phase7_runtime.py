@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Protocol, cast
+from weakref import ref
 
 from anonymizer.engine.execution.accounting_ledger import _AccountingLedger, _EvidenceAcceptance
 from anonymizer.engine.execution.accounting_outcomes import (
@@ -28,7 +29,12 @@ from anonymizer.engine.execution.phase6_runtime import (
     _is_admitted_substitute_handoff,
     _Phase6Execution,
 )
-from anonymizer.engine.execution.phase7_admission import _is_admitted_phase7_plan, _Phase7Plan, _ScopeManifest
+from anonymizer.engine.execution.phase7_admission import (
+    _is_admitted_phase7_plan,
+    _is_admitted_phase7_plan_for,
+    _Phase7Plan,
+    _ScopeManifest,
+)
 from anonymizer.engine.execution.phase7_application import (
     _AppliedDatum,
     _apply_substitute_datum,
@@ -94,12 +100,33 @@ class _Phase7Phase4Evidence(_PrivatePhase7RuntimeValue):
     global_embargo: bool
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, weakref_slot=True, repr=False)
 class _Phase7Execution(_PrivatePhase7RuntimeValue):
     scopes: tuple[_Phase7ScopeOutcome, ...]
     cleanup: _Phase7CleanupAttestation
     phase4: _Phase7Phase4Evidence
     released: tuple[_AppliedDatum, ...] = ()
+
+
+_COMPLETED_PHASE7_EXECUTIONS: dict[int, tuple[ref[_Phase7Execution], _Phase7Plan]] = {}
+
+
+def _register_completed_phase7_execution(plan: _Phase7Plan, execution: _Phase7Execution) -> None:
+    """Hold the exact runtime-to-plan binding until its private successor is sealed."""
+    execution_id = id(execution)
+
+    def remove(_value: ref[_Phase7Execution]) -> None:
+        _COMPLETED_PHASE7_EXECUTIONS.pop(execution_id, None)
+
+    _COMPLETED_PHASE7_EXECUTIONS[execution_id] = (ref(execution, remove), plan)
+
+
+def _take_completed_phase7_execution(plan: object, execution: object) -> bool:
+    """Consume the unforgeable runtime receipt while sealing the Phase 8 successor."""
+    if not isinstance(plan, _Phase7Plan) or not isinstance(execution, _Phase7Execution):
+        return False
+    registered = _COMPLETED_PHASE7_EXECUTIONS.pop(id(execution), None)
+    return registered is not None and registered[0]() is execution and registered[1] is plan
 
 
 class _Phase7EffectBackend(Protocol):
@@ -212,7 +239,9 @@ class _Phase7Runtime:
         )
         # Cleanup retired every provisional bundle before this result crosses
         # the owner boundary. Only release-qualified protected text remains.
-        return _Phase7Execution(frozen, cleanup, phase4, released)
+        execution = _Phase7Execution(frozen, cleanup, phase4, released)
+        _register_completed_phase7_execution(plan, execution)
+        return execution
 
     def _preflight(
         self,
@@ -227,6 +256,7 @@ class _Phase7Runtime:
             or not _is_admitted_phase6_execution(phase6_execution, phase6)
             or not isinstance(plan, _Phase7Plan)
             or not _is_admitted_phase7_plan(plan)
+            or not _is_admitted_phase7_plan_for(plan, phase6, phase6_execution)
             or not isinstance(contract, _Phase7StableSubstituteContract)
             or not _is_admitted_phase7_contract(contract)
             or not callable(getattr(self._backend, "propose_scope", None))

@@ -64,6 +64,7 @@ from anonymizer.engine.execution.phase7_runtime import (
     _Phase7Execution,
     _Phase7Runtime,
 )
+from anonymizer.engine.execution.phase8_successor import _Phase8SuccessorHandoff, _seal_phase8_successor
 from anonymizer.engine.execution.redact_patches import _VerifiedDatum
 
 
@@ -277,6 +278,20 @@ class _Phase7SubstituteProtectionService:
         *,
         contract: _Phase7StableSubstituteContract,
     ) -> _GraphProtectionResult:
+        execution = self.execute(plan, contract=contract)
+        return (
+            _materialize_phase7(plan, execution)
+            if isinstance(execution, _Phase7Execution)
+            else _fail_all(tuple(datum.id for datum in plan.accounting.datums))
+        )
+
+    def execute(
+        self,
+        plan: _Phase6Plan,
+        *,
+        contract: _Phase7StableSubstituteContract,
+    ) -> _Phase7Execution | None:
+        """Return the released Phase 7 handoff for a private successor only."""
         phase6 = _Phase6Runtime(self._phase6_backend).run(plan)
         phase7 = _compile_phase7_plan(
             plan,
@@ -285,9 +300,27 @@ class _Phase7SubstituteProtectionService:
             contract,
         )
         if not isinstance(phase7, _Phase7Plan):
-            return _fail_all(tuple(datum.id for datum in plan.accounting.datums))
-        execution = _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7, contract)
-        return _materialize_phase7(plan, execution)
+            return None
+        return _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7, contract)
+
+    def execute_successor(
+        self,
+        plan: _Phase6Plan,
+        *,
+        contract: _Phase7StableSubstituteContract,
+    ) -> _Phase8SuccessorHandoff | None:
+        """Create the nonserializable Phase 8 authority without exposing P7 bundles."""
+        phase6 = _Phase6Runtime(self._phase6_backend).run(plan)
+        phase7_plan = _compile_phase7_plan(
+            plan,
+            phase6.handoffs,
+            _Phase7Declarations(plan.coherence_scopes),
+            contract,
+        )
+        if not isinstance(phase7_plan, _Phase7Plan):
+            return None
+        phase7 = _Phase7Runtime(self._phase7_backend_factory()).run(plan, phase6, phase7_plan, contract)
+        return _seal_phase8_successor(plan, phase6, phase7_plan, phase7)
 
 
 def _preflight_observation_counts(graph: object) -> tuple[int, int]:
