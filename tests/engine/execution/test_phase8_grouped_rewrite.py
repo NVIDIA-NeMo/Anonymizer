@@ -58,7 +58,7 @@ from anonymizer.engine.execution.phase8_ndd_backend import (
     _Phase8Correlation,
     _Phase8Operation,
 )
-from anonymizer.engine.execution.phase8_runtime import _run_group_operation
+from anonymizer.engine.execution.phase8_runtime import _GroupInconsistent, _GroupLost, _run_group_operation
 from anonymizer.engine.execution.phase8_service import (
     _backend_group_operation,
     _Phase8AcceptedMention,
@@ -130,12 +130,31 @@ def test_phase8_contract_loader_rejects_digest_valid_type_and_limit_mutations(mo
 
 
 def test_phase8_admission_requires_one_flat_exact_target_partition() -> None:
-    accepted = _compile_phase8_plan(_graph(((1, 0),)))
+    accepted = _compile_phase8_plan(_graph(((1, 0),)), max_repairs=2)
     assert isinstance(accepted, _Phase8Plan)
     assert tuple(tuple(member.value for member in group.members) for group in accepted.groups) == (("1", "0"),)
+    assert accepted.groups[0].operations.group_id is accepted.groups[0].id
+    assert tuple(stage.name for stage in accepted.groups[0].operations.stages) == (
+        "validate-baselines",
+        "analyze",
+        "rewrite",
+        "evaluate-0",
+        "repair-1",
+        "evaluate-1",
+        "repair-2",
+        "evaluate-2",
+    )
     rejected = _compile_phase8_plan(_graph(((0,),)))
     assert isinstance(rejected, _Phase8Rejected)
     assert rejected.code is _Phase8AdmissionCode.COVERAGE_GAP
+    too_many_repairs = _compile_phase8_plan(_graph(((1, 0),)), max_repairs=4)
+    assert isinstance(too_many_repairs, _Phase8Rejected)
+    assert too_many_repairs.code is _Phase8AdmissionCode.LIMIT_EXCEEDED
+
+    split = _compile_phase8_plan(_graph(((0,), (1,))), max_repairs=0)
+    assert isinstance(split, _Phase8Plan)
+    assert all(group.operations.group_id is group.id for group in split.groups)
+    assert split.groups[0].id is not split.groups[1].id
 
 
 def test_phase8_runtime_never_adopts_a_partial_group_repair() -> None:
@@ -152,22 +171,32 @@ def test_phase8_runtime_never_adopts_a_partial_group_repair() -> None:
         repair=lambda values, _round: {next(iter(values)): "only-one"},
         max_repairs=1,
     )
-    assert outcome.state == "failed"
+    assert outcome.state == "inconsistent"
     assert outcome.revisions is None
 
 
 def test_phase8_zero_obligation_route_requires_all_guards() -> None:
     member = object()
+    rewritten = False
+
+    def rewrite(values: dict[object, str]) -> dict[object, str]:
+        nonlocal rewritten
+        rewritten = True
+        return values
+
+    metric = _evaluate_metrics((), (), repair_any_high=False, repair_threshold=0.0, utility_floor=0.0)
+    assert metric is not None
     outcome = _run_group_operation(
         (member,),
         {member: "baseline"},
         analyze=lambda: (True, False),
-        rewrite=lambda values: values,
-        evaluate=lambda _values: (_ for _ in ()).throw(AssertionError("no evaluation")),
+        rewrite=rewrite,
+        evaluate=lambda _values: metric,
         repair=lambda values, _round: values,
         max_repairs=0,
     )
-    assert outcome.state == "failed"
+    assert outcome.state == "succeeded"
+    assert rewritten
 
 
 def test_phase8_zero_utility_only_scores_one_for_an_exact_baseline() -> None:
@@ -243,8 +272,26 @@ def test_phase8_backend_uses_fresh_opaque_tokens_and_complete_operation_requests
     input = _Phase8GroupInput(dict(baselines), {member: False for member in members})
     first = _backend_group_operation(Backend(), input)
     second = _backend_group_operation(Backend(), input)
-    assert first(members, baselines) == ((members[0], "one"), (members[1], "two"))
-    assert second(members, baselines) == ((members[0], "one"), (members[1], "two"))
+    first_outcome = first(members, baselines)
+    second_outcome = second(members, baselines)
+    assert first_outcome.state == "succeeded" and first_outcome.revisions == baselines
+    assert second_outcome.state == "succeeded" and second_outcome.revisions == baselines
+    with pytest.raises(Exception, match="group operation reused"):
+        first(members, baselines)
+    assert len(seen) == 2
+    assert first_outcome.ledger.is_closed and second_outcome.ledger.is_closed
+    assert tuple(first_outcome.ledger.attempt_count(stage) for stage in first_outcome.ledger.plan.stages) == (
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
     first_members, second_members = seen[0]["members"], seen[1]["members"]
     assert isinstance(first_members, list) and isinstance(second_members, list)
     assert [member["member_token"] for member in first_members] != [member["member_token"] for member in second_members]
@@ -321,7 +368,8 @@ def test_phase8_analysis_lowers_only_admitted_provenance_and_binds_privacy_autho
         privacy_goal={"protect": "hide", "preserve": "meaning"},
         strict_entity_protection=True,
     )
-    assert _backend_group_operation(Backend(), provenance)((member,), {member: "replacement"}) is None
+    outcome = _backend_group_operation(Backend(), provenance)((member,), {member: "replacement"})
+    assert isinstance(outcome.terminal, _GroupLost)
 
 
 def test_phase8_retired_member_token_is_invocation_inconsistent_not_a_local_failure() -> None:
@@ -363,8 +411,9 @@ def test_phase8_retired_member_token_is_invocation_inconsistent_not_a_local_fail
         def __init__(self, operation: _Phase8Operation, payload: dict[str, object]) -> None:
             self.operation, self.payload, self.failed = operation, payload, False
 
-    with pytest.raises(Exception, match="correlation"):
-        _backend_group_operation(Backend())((member,), {member: "baseline"})
+    outcome = _backend_group_operation(Backend())((member,), {member: "baseline"})
+    assert isinstance(outcome.terminal, _GroupInconsistent)
+    assert outcome.terminal.invocation_global
 
 
 def test_phase8_failed_record_is_a_local_failure_only_when_bound_to_the_active_work_token() -> None:
@@ -523,7 +572,9 @@ def test_phase8_each_stage_receives_disjoint_member_context_and_obligation_wires
         {"protect": "hide", "preserve": "meaning"},
         True,
     )
-    assert _backend_group_operation(Backend(), provenance)((member,), {member: "baseline"}) == ((member, "safe"),)
+    outcome = _backend_group_operation(Backend(), provenance)((member,), {member: "baseline"})
+    assert outcome.state == "succeeded"
+    assert outcome.revisions == {member: "safe"}
     assert [operation for operation, _ in seen] == [
         _Phase8Operation.ANALYZE,
         _Phase8Operation.REWRITE,
@@ -649,7 +700,8 @@ def test_phase8_evaluation_attributes_permuted_answers_to_stable_obligations(
         (member,), {member: "baseline"}
     )
 
-    assert result == ((member, "repaired"),)
+    assert result.state == "succeeded"
+    assert result.revisions == {member: "repaired"}
     assert observed[0] == (
         (("high", 0.0, False), ("low", 0.5, True)),
         ((1, 1.0), (2, 0.0)),
@@ -955,14 +1007,18 @@ def test_phase8_hydration_accepts_contract_valid_string_obligation_tokens() -> N
     assert hydrated.payload is not None
 
 
-def test_phase8_zero_route_rejects_utility_obligations_and_missing_phase7_identity_provenance() -> None:
-    """An empty privacy analysis is not a baseline fallback."""
+def test_phase8_zero_route_requires_phase7_identity_provenance() -> None:
+    """An empty privacy analysis is not a baseline fallback without every identity guard."""
+
+    calls: list[_Phase8Operation] = []
 
     class Backend:
         def run_operation(self, operation: _Phase8Operation, request: dict[str, object]):
-            assert operation is _Phase8Operation.ANALYZE
+            calls.append(operation)
             members = request["members"]
             assert isinstance(members, list)
+            if operation is not _Phase8Operation.ANALYZE:
+                raise RuntimeError
             return _Response(
                 operation,
                 {
@@ -982,7 +1038,9 @@ def test_phase8_zero_route_rejects_utility_obligations_and_missing_phase7_identi
     member = object()
     baseline = {member: "baseline"}
     provenance = _Phase8GroupInput({member: "original"}, {member: False})
-    assert _backend_group_operation(Backend(), provenance)((member,), baseline) is None
+    outcome = _backend_group_operation(Backend(), provenance)((member,), baseline)
+    assert isinstance(outcome.terminal, _GroupLost)
+    assert calls == [_Phase8Operation.ANALYZE, _Phase8Operation.REWRITE]
 
 
 def test_phase8_backend_rejects_missing_or_duplicate_obligation_answers() -> None:
@@ -1030,7 +1088,8 @@ def test_phase8_backend_rejects_missing_or_duplicate_obligation_answers() -> Non
             self.failed = False
 
     member = object()
-    assert _backend_group_operation(Backend())((member,), {member: "baseline"}) is None
+    outcome = _backend_group_operation(Backend())((member,), {member: "baseline"})
+    assert outcome.state == "failed"
 
 
 def test_phase8_lifecycle_requires_a_released_phase7_baseline_and_withholds_the_atomic_group() -> None:
