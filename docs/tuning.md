@@ -44,7 +44,7 @@ Replace and Rewrite share a core detection sequence: the GLiNER detector propose
 
 Choose the detection taxonomy, data context, anonymization mode, and model assignments before tuning performance:
 
-- With `entity_labels=None` (permissive mode), the augmenter may infer labels beyond the defaults. An explicit list enables strict mode and limits output to those labels. Strict mode controls the taxonomy, not individual values or fields.
+- With `entity_labels=None` (permissive mode), the augmenter may infer labels beyond the defaults. An explicit list enables strict mode and limits standard detected entities to those labels. Rewrite's separate latent-entity detector is not constrained by this label list. Strict mode controls the standard detection taxonomy, not individual values or fields.
 - `AnonymizerInput.data_summary` supplies context to detection prompts and, in Rewrite mode, rewrite prompts. It does not change local Replace strategies or Substitute replacement-map prompts, and it is not a deterministic exclusion rule.
 - Assign models by measured quality, latency, and cost. Keep aliases in one validator pool behaviorally equivalent in quality, context limits, and safety settings.
 
