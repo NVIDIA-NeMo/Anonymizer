@@ -13,7 +13,9 @@ invocation. Telemetry is opt-out via:
 Related environment variables (read at runtime, not import time):
 
 - ``NEMO_TELEMETRY_ENABLED``: set to ``false`` / ``0`` / ``no`` to disable.
-- ``NEMO_DEPLOYMENT_TYPE``: ``cli``, ``sdk``, ``nmp``, ``nvidia-internal``. Defaults to ``sdk``.
+- ``ANONYMIZER_USAGE_TYPE``: ``cli``, ``sdk``, or ``nmp``. Defaults to ``sdk``.
+- ``NEMO_DEPLOYMENT_TYPE``: optional shared NeMo deployment override, such as
+  ``nvidia-internal``. When set, it takes precedence over ``ANONYMIZER_USAGE_TYPE``.
 - ``NEMO_TELEMETRY_ENDPOINT``: override the destination URL.
 - ``NEMO_SESSION_PREFIX``: prepended to session IDs. Set to ``"anonymizer-"``
   automatically by ``Anonymizer.__init__`` for dashboard filtering.
@@ -89,7 +91,8 @@ def _telemetry_endpoint() -> str:
 
 
 def _deployment_type() -> DeploymentTypeEnum:
-    raw = os.getenv("NEMO_DEPLOYMENT_TYPE", "sdk").lower()
+    raw = os.getenv("NEMO_DEPLOYMENT_TYPE") or os.getenv("ANONYMIZER_USAGE_TYPE", "sdk")
+    raw = raw.lower()
     try:
         return DeploymentTypeEnum(raw)
     except ValueError:
