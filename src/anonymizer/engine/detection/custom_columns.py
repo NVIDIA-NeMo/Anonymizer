@@ -140,7 +140,7 @@ def apply_validation_to_seed_entities(
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    validated_seed = merge_entity_sources(accepted_regex, llm_validated_seed)
+    validated_seed = _merge_detection_routes(accepted_regex, llm_validated_seed)
     validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
@@ -210,7 +210,7 @@ def apply_validation_and_finalize(
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    protected = merge_entity_sources(accepted_regex, validated)
+    protected = _merge_detection_routes(accepted_regex, validated)
     if allowed_entity_labels is not None:
         allowed = normalize_labels(allowed_entity_labels)
         protected = [entity for entity in protected if normalize_label(entity.label) in allowed]
@@ -237,3 +237,16 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
         )
         for e in parsed.entities
     ]
+
+
+def _merge_detection_routes(*routes: list[EntitySpan]) -> list[EntitySpan]:
+    """Merge validation routes without allowing route order to change source precedence."""
+    entities = [entity for route in routes for entity in route]
+    user_regex = [entity for entity in entities if entity.source.startswith("regex_user:")]
+    builtin_regex = [entity for entity in entities if entity.source.startswith("regex_builtin:")]
+    other_sources = [
+        entity
+        for entity in entities
+        if not entity.source.startswith("regex_user:") and not entity.source.startswith("regex_builtin:")
+    ]
+    return merge_entity_sources(user_regex, builtin_regex, other_sources)
