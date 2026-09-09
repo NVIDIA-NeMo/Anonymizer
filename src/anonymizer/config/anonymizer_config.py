@@ -84,7 +84,9 @@ class Detect(BaseModel):
         description=(
             "Entity labels to never detect, even if present in entity_labels or the default set. "
             "Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered "
-            "from the final entity output as a safety net."
+            "from the final entity output as a safety net. If this entirely overlaps an explicit "
+            "entity_labels, leaving an empty effective detection set, Detect raises a ValueError "
+            "at construction time."
         ),
     )
     gliner_threshold: float = Field(

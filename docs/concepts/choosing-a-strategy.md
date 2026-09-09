@@ -91,6 +91,9 @@ Detect(excluded_entity_labels=["occupation", "gender"])
 Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
 ```
 
+!!! warning
+    If `entity_labels` and `excluded_entity_labels` partially overlap, the shared labels are dropped and Anonymizer logs a warning. If `excluded_entity_labels` entirely overlaps `entity_labels` — leaving an empty effective detection set — `Detect` raises a `ValueError` at config time instead of silently detecting nothing.
+
 ### `gliner_threshold`
 
 Default `0.3`. The validator catches false positives downstream, so erring low is safe.
