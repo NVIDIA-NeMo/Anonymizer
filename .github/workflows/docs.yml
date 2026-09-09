@@ -11,6 +11,10 @@ on:
       - "mkdocs.yml"
       - "src/**"
       - ".github/workflows/docs.yml"
+      - ".github/actions/setup-python-env/action.yml"
+      - ".mise.toml"
+      - "mise.lock"
+      - ".mise/tasks/**"
   pull_request:
     branches: [main]
     paths:
@@ -18,6 +22,10 @@ on:
       - "mkdocs.yml"
       - "src/**"
       - ".github/workflows/docs.yml"
+      - ".github/actions/setup-python-env/action.yml"
+      - ".mise.toml"
+      - "mise.lock"
+      - ".mise/tasks/**"
   workflow_dispatch:
   release:
     types: [published]
@@ -48,10 +56,9 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           fetch-depth: "0"
-
-      - name: Install docs dependencies
-        run: uv sync --group dev --group docs
+          dependency-profile: "docs"
 
       - name: Configure git for mike
         run: |
@@ -59,11 +66,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Build docs
-        run: make docs-build
+        run: mise run docs:build
 
       - name: Deploy docs with mike
         if: github.event_name == 'push'
-        run: uv run --group docs mike deploy --push --update-aliases dev
+        run: uv run --locked --group docs mike deploy --push --update-aliases dev
 
   deploy-release:
     if: github.event_name == 'release'
@@ -78,10 +85,9 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           fetch-depth: "0"
-
-      - name: Install docs dependencies
-        run: uv sync --group dev --group docs
+          dependency-profile: "docs"
 
       - name: Download notebook artifacts
         uses: actions/download-artifact@v5
@@ -95,9 +101,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Build docs
-        run: make docs-build
+        run: mise run docs:build
 
       - name: Deploy release docs with mike
         run: |
           VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//' | sed 's/ .*$//')
-          uv run --group docs mike deploy --push --update-aliases "$VERSION" latest
+          uv run --locked --group docs mike deploy --push --update-aliases "$VERSION" latest

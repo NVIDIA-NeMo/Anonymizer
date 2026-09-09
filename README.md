@@ -25,7 +25,7 @@ Or install from source:
 ```bash
 git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
 cd Anonymizer
-make install
+make setup
 ```
 
 ### 2. Set up model providers
@@ -146,13 +146,51 @@ After installation, invoke it with `/anonymizer` in an agent that supports slash
 ## Development
 
 ```bash
-make install-dev          # Install with dev dependencies
-make test                 # Run tests
-make coverage             # Run with coverage report
-make format-check         # Lint + format check (read-only)
-anonymizer --help         # CLI usage
-make install-pre-commit   # Install pre-commit hooks
+make setup                  # Install pinned tools, dev dependencies, and hooks
+mise run setup all          # Install every locked dependency group
+mise run test               # Run tests
+mise run test:all           # Run unit and end-to-end tests
+mise run test:coverage      # Run with coverage report
+mise run check              # Run all read-only static checks
+anonymizer --help           # CLI usage
+mise run hooks:install      # Reinstall repository hooks
 ```
+
+Run `mise tasks` to list the available developer commands. Tasks live in `.mise/tasks/` and are used by CI. The
+Makefile only exposes `help`, `install-mise`, and `setup`; run developer commands with Mise.
+
+### Local endpoint credentials
+
+Mise loads `.env` and `.env.local` from the repository root. Keep endpoint credentials in `.env.local`, which is ignored by Git:
+
+```bash
+# .env.local
+NVIDIA_API_KEY=your-nvidia-build-key
+OPENAI_API_KEY=your-openai-key
+OPENROUTER_API_KEY=your-openrouter-key
+```
+
+Use `.mise.local.toml` for local Mise-specific overrides. It is ignored by Git, so it can hold redacted environment values when that layout is more convenient:
+
+```toml
+# .mise.local.toml
+[env]
+NVIDIA_API_KEY = { value = "your-nvidia-build-key", redact = true }
+```
+
+Do not commit credentials. Provider YAML should refer to environment variable names, never raw keys.
+
+### Benchmark profiles
+
+The benchmark task loads the same local credentials and accepts runner options after `--`:
+
+```bash
+mise run benchmark smoke
+mise run benchmark smoke-traces
+mise run benchmark smoke -- --dry-run
+```
+
+`smoke` runs the repository data smoke suite. `smoke-traces` adds DataDesigner message and scheduler task traces. Set `BENCHMARK_OUTPUT_DIR` in `.env.local` when you need a different output directory.
 
 ---
 

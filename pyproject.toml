@@ -29,7 +29,7 @@ dev = [
     "pre-commit>=4.0.0,<5",
     "pytest>=9.0.3,<10",
     "pytest-cov>=7.0,<8",
-    "ruff>=0.12.3,<1",
+    "ruff==0.16.2",
     "ty==0.0.69",
     {include-group = "measurement"},
 ]
@@ -70,7 +70,7 @@ style = "pep440"
 packages = ["src/anonymizer"]
 
 [tool.uv]
-required-version = ">=0.5.0"
+required-version = ">=0.12.3"
 package = true
 
 constraint-dependencies = [

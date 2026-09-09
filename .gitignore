@@ -56,6 +56,13 @@ ipython_config.py
 .uv/
 uv.lock.bak
 
+# mise local overrides
+.mise.local.toml
+mise.local.toml
+mise.*.local.toml
+!.mise/tasks/build/
+!.mise/tasks/build/**
+
 # Environments
 .env
 .env.*

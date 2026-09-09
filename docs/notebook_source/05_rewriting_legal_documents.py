@@ -187,7 +187,7 @@ result.dataframe[["text_rewritten", "utility_score", "leakage_mass", "needs_huma
 
 # %%
 df = result.dataframe
-flagged = df[df["needs_human_review"] == True]  # noqa: E712
+flagged = df[df["needs_human_review"] == True]
 print(f"{len(flagged)} of {len(df)} records flagged for human review")
 flagged.head()
 

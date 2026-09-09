@@ -39,8 +39,8 @@ require_tool() {
 # collect_py_files -- parse args and populate PY_FILES array
 #
 # Modes:
-#   (no args)                    → all tracked .py files
-#   file1.py file2.py ...        → those exact files
+#   (no args)                    → all tracked .py and .ipynb files
+#   file1.py notebook.ipynb ...  → those exact files
 #
 # Also strips --check from the arg list and exports CHECK_MODE.
 #
@@ -67,12 +67,12 @@ collect_py_files() {
     else
         local IFS=$'\n'
         # shellcheck disable=SC2207
-        PY_FILES=($(git ls-files '*.py'))
+        PY_FILES=($(git ls-files '*.py' '*.ipynb'))
         unset IFS
     fi
 
     if [[ ${#PY_FILES[@]} -eq 0 ]]; then
-        echo "No Python files to check" >&2
+        echo "No Python files or notebooks to check" >&2
         return 0
     fi
 }

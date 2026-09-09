@@ -739,7 +739,8 @@ def _save_report(report: Any, *, draft: bool) -> Any:
     """Save a report, falling back around a W&B SDK project-list auth edge."""
     try:
         return report.save(draft=draft)
-    except Exception as exc:  # noqa: BLE001 -- preserve the SDK error as fallback context
+    # Preserve the SDK error as fallback context.
+    except Exception as exc:
         if "relogin required" not in str(exc).lower():
             raise
         logger.info("Falling back to direct W&B report upsert after project preflight auth failure.")

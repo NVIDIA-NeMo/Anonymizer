@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -278,7 +278,7 @@ class TestAnonymizerEvent:
 class TestBuildPayload:
     def _make_queued(self, *, task: TaskEnum = TaskEnum.BATCH) -> QueuedEvent:
         event = _minimal_event(task=task)
-        return QueuedEvent(event=event, timestamp=datetime(2026, 5, 11, 12, 0, 0, tzinfo=timezone.utc))
+        return QueuedEvent(event=event, timestamp=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC))
 
     def test_envelope_shape(self) -> None:
         payload = build_payload([self._make_queued()], source_client_version="1.2.3", session_id="anonymizer-abc")
@@ -356,7 +356,7 @@ class TestSendSemantics:
     def _make(self) -> tuple[TelemetryHandler, QueuedEvent]:
         handler = TelemetryHandler(source_client_version="1.0", session_id="s1")
         event = _minimal_event()
-        return handler, QueuedEvent(event=event, timestamp=datetime.now(timezone.utc))
+        return handler, QueuedEvent(event=event, timestamp=datetime.now(UTC))
 
     def test_successful_send_does_not_dlq(self) -> None:
         handler, q = self._make()
@@ -390,7 +390,7 @@ class TestSendSemantics:
 
     def test_413_splits_and_retries(self) -> None:
         handler = TelemetryHandler(source_client_version="1.0", session_id="s1")
-        events = [QueuedEvent(event=_minimal_event(), timestamp=datetime.now(timezone.utc)) for _ in range(2)]
+        events = [QueuedEvent(event=_minimal_event(), timestamp=datetime.now(UTC)) for _ in range(2)]
         too_large = MagicMock(status_code=413, is_success=False)
         success = MagicMock(status_code=200, is_success=True)
         mock_client = AsyncMock()
@@ -460,7 +460,7 @@ class TestFlushFromRunningLoop:
     def test_run_sync_uses_thread_when_loop_is_running(self) -> None:
         sent: list[int] = []
 
-        async def fake_flush(self) -> None:  # noqa: ARG001 - bound-method signature
+        async def fake_flush(self) -> None:
             sent.append(1)
 
         async def driver() -> None:
@@ -469,7 +469,7 @@ class TestFlushFromRunningLoop:
             # want to prove _run_sync drove the coroutine to completion from
             # inside a running loop.
             with patch.object(TelemetryHandler, "_flush_events", new=fake_flush):
-                handler._events.append(QueuedEvent(event=_minimal_event(), timestamp=datetime.now(timezone.utc)))
+                handler._events.append(QueuedEvent(event=_minimal_event(), timestamp=datetime.now(UTC)))
                 handler.flush()
 
         asyncio.run(driver())
@@ -483,7 +483,7 @@ class TestFlushFromRunningLoop:
         monkeypatch.setenv("NEMO_TELEMETRY_ENABLED", "true")
         sent: list[int] = []
 
-        async def fake_send(self, client, events):  # noqa: ARG001 - mirror real signature
+        async def fake_send(self, client, events):
             sent.append(len(events))
 
         async def driver() -> None:

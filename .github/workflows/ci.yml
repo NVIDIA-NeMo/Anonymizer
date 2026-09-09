@@ -16,6 +16,16 @@ env:
   DEFAULT_PYTHON_VERSION: "3.11"
 
 jobs:
+  benchmark-task-shell:
+    name: Benchmark task (macOS Bash 3.2)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test benchmark task
+        run: bash tests/tools/test_benchmark_task.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -32,14 +42,12 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           fetch-depth: "0"
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: uv sync --group dev
-
       - name: Run tests with coverage
-        run: make coverage
+        run: mise run test:coverage
 
   check:
     name: Check
@@ -53,20 +61,21 @@ jobs:
 
       - uses: ./.github/actions/setup-python-env
         with:
+          checkout: "false"
           fetch-depth: "0"
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: uv sync --group dev
+      - name: Check formatting
+        run: mise run check:format
 
-      - name: Check format and lint
-        run: make format-check
+      - name: Check lint rules
+        run: mise run check:lint
 
       - name: Run type checks
-        run: make typecheck
+        run: mise run check:type
 
       - name: Check uv.lock is up to date
-        run: make lock-check
+        run: mise run check:lock
 
       - name: Check copyright headers
-        run: make copyright-check
+        run: mise run check:license:headers
