@@ -188,7 +188,7 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 ### Model roles
 
-The entity coverage judge defaults to `nemotron-super`; the other replace-evaluation judges default to `gpt-oss-120b`. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them by passing a `model_configs` YAML to `Anonymizer(model_configs=...)` — see [Models](models.md) for the full override pattern.
+All replace-evaluation judges default to `nemotron-super`. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them by passing a `model_configs` YAML to `Anonymizer(model_configs=...)` — see [Models](models.md) for the full override pattern.
 
 The roles are `entity_coverage_judge`, `detection_validity_judge`, `replace_type_fidelity_judge`, `replace_attribute_fidelity_judge`, and `replace_relational_consistency_judge`.
 
@@ -344,7 +344,7 @@ Use `trace_dataframe` for the full internal trace including raw judge outputs.
 
 ### Model roles
 
-The rewrite quality judge defaults to `nemotron-30b-thinking` and the entity coverage judge to `nemotron-super`. The detection validity judge shares the `detection_validity_judge` role used by replace evaluation. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them via `model_configs`:
+The rewrite quality, entity coverage, and detection validity judges default to `nemotron-super`. The detection validity judge shares the `detection_validity_judge` role used by replace evaluation. Defaults are defined in [`evaluate.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/evaluate.yaml). Override them via `model_configs`:
 
 ```yaml
 # my_models.yaml

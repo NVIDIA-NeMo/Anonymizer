@@ -218,7 +218,13 @@ def test_parse_model_configs_none_uses_defaults() -> None:
     result = parse_model_configs(None)
     assert len(result.model_configs) > 0
     assert all(model_config.provider is not None for model_config in result.model_configs)
-    assert result.selected_models.detection.entity_detector == "gliner-pii-detector"
+    assert {model_config.alias for model_config in result.model_configs} == {"nemotron-super"}
+    assert set(result.selected_models.detection.model_dump()["entity_validator"]) == {"nemotron-super"}
+    for workflow in result.selected_models.model_dump().values():
+        aliases = workflow.values()
+        assert all(
+            alias == "nemotron-super" for value in aliases for alias in (value if isinstance(value, list) else [value])
+        )
 
 
 def test_parse_model_configs_yaml_string_extracts_selections() -> None:
@@ -236,7 +242,7 @@ model_configs:
 """
     result = parse_model_configs(yaml_str)
     assert result.selected_models.detection.entity_detector == "custom-detector"
-    assert result.selected_models.replace.replacement_generator == "gpt-oss-120b"
+    assert result.selected_models.replace.replacement_generator == "nemotron-super"
     assert len(result.model_configs) == 2
 
 
@@ -249,7 +255,7 @@ model_configs:
 """
     result = parse_model_configs(yaml_str)
     assert len(result.model_configs) == 1
-    assert result.selected_models.detection.entity_detector == "gliner-pii-detector"
+    assert result.selected_models.detection.entity_detector == "nemotron-super"
 
 
 # parse_model_configs regression tests: user overrides in selected_models must

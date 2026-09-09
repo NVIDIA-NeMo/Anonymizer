@@ -26,29 +26,15 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
-    COL_ANY_HIGH_LEAKED,
-    COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
-    COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
-    COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
-    COL_LEAKAGE_MASS,
-    COL_MISSED_ENTITIES,
-    COL_NEEDS_HUMAN_REVIEW,
-    COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_VALID,
-    COL_REPLACED_TEXT,
-    COL_REWRITTEN_TEXT,
-    COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
     COL_TYPE_FIDELITY_VALID,
-    COL_UTILITY_SCORE,
-    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -73,6 +59,12 @@ from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.interface._result_compatibility import (
+    _materialize_evaluation_result,
+    _materialize_preview_result,
+    _materialize_run_result,
+    _unrename_output_columns,
+)
 from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
@@ -418,16 +410,10 @@ class Anonymizer:
             raise public_error from None
         if result is None:  # pragma: no cover - defensive typing guard
             raise RuntimeError("Anonymizer preview pipeline returned no result")
-        return PreviewResult(
-            dataframe=result.dataframe,
-            trace_dataframe=result.trace_dataframe,
-            resolved_text_column=result.resolved_text_column,
-            failed_records=result.failed_records,
+        return _materialize_preview_result(
+            result,
+            config=config,
             preview_num_records=num_records,
-            replace_method=config.replace,
-            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
-            entity_labels=config.detect.entity_labels,
-            data_summary=result.data_summary,
         )
 
     def evaluate(
@@ -575,16 +561,11 @@ class Anonymizer:
                 time.perf_counter() - stage_start,
             )
             all_failed.extend(coverage_failed)
-            renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
-            result = AnonymizerResult(
-                dataframe=_build_user_dataframe(
-                    renamed_trace,
-                    resolved_text_column=text_column,
-                    compute_detection_validity=evaluate_config.compute_detection_validity,
-                ),
-                trace_dataframe=renamed_trace,
+            result = _materialize_evaluation_result(
+                judged_df,
                 resolved_text_column=text_column,
                 failed_records=all_failed,
+                compute_detection_validity=evaluate_config.compute_detection_validity,
                 rewrite_config=rewrite_config,
                 entity_labels=entity_labels,
                 data_summary=data_summary,
@@ -623,16 +604,11 @@ class Anonymizer:
                 LOG_INDENT + "📋 Replace judges complete [%.1fs]",
                 time.perf_counter() - stage_start,
             )
-            renamed_trace = _rename_output_columns(replace_result.dataframe, resolved_text_column=text_column)
-            result = AnonymizerResult(
-                dataframe=_build_user_dataframe(
-                    renamed_trace,
-                    resolved_text_column=text_column,
-                    compute_detection_validity=evaluate_config.compute_detection_validity,
-                ),
-                trace_dataframe=renamed_trace,
+            result = _materialize_evaluation_result(
+                replace_result.dataframe,
                 resolved_text_column=text_column,
                 failed_records=replace_result.failed_records,
+                compute_detection_validity=evaluate_config.compute_detection_validity,
                 replace_method=replace_method,
                 entity_labels=entity_labels,
                 data_summary=data_summary,
@@ -742,7 +718,6 @@ class Anonymizer:
             verifier=verifier,
         )
         final_df = execution.dataframe
-        renamed_trace = _rename_output_columns(final_df, resolved_text_column=context.resolved_text_column)
         record_record_metrics(
             final_df,
             mode="replace" if config.replace is not None else "rewrite",
@@ -750,14 +725,11 @@ class Anonymizer:
             text_column=COL_TEXT,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
         )
-        return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=context.resolved_text_column),
-            trace_dataframe=renamed_trace,
+        return _materialize_run_result(
+            final_df,
+            config=config,
             resolved_text_column=context.resolved_text_column,
             failed_records=execution.failed_records,
-            replace_method=config.replace,
-            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
-            entity_labels=config.detect.entity_labels,
             data_summary=data.data_summary,
         )
 
@@ -967,106 +939,6 @@ def _resolve_model_providers(
     if not raw_providers:
         raise ValueError("model_providers must contain at least one provider.")
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
-
-
-def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
-    """Rename internal column names to user-facing names."""
-    rename_map: dict[str, str] = {}
-    if COL_TEXT in df.columns:
-        rename_map[COL_TEXT] = resolved_text_column
-    if COL_REPLACED_TEXT in df.columns:
-        rename_map[COL_REPLACED_TEXT] = f"{resolved_text_column}_replaced"
-    if COL_TAGGED_TEXT in df.columns:
-        rename_map[COL_TAGGED_TEXT] = f"{resolved_text_column}_with_spans"
-    if COL_REWRITTEN_TEXT in df.columns:
-        rename_map[COL_REWRITTEN_TEXT] = f"{resolved_text_column}_rewritten"
-    if not rename_map:
-        return df
-    return df.rename(columns=rename_map)
-
-
-def _unrename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
-    """Reverse of :func:`_rename_output_columns`.
-
-    Converts user-facing column names (``biography``, ``biography_replaced``, …)
-    back to the internal names (``__nemo_anonymizer_text_input__``, …) that the
-    judges' prompt templates reference. No-op if the dataframe is already in
-    internal form (``COL_TEXT`` already present).
-    """
-    if COL_TEXT in df.columns:
-        return df
-    rename_map: dict[str, str] = {}
-    if resolved_text_column in df.columns:
-        rename_map[resolved_text_column] = COL_TEXT
-    if f"{resolved_text_column}_replaced" in df.columns:
-        rename_map[f"{resolved_text_column}_replaced"] = COL_REPLACED_TEXT
-    if f"{resolved_text_column}_with_spans" in df.columns:
-        rename_map[f"{resolved_text_column}_with_spans"] = COL_TAGGED_TEXT
-    if f"{resolved_text_column}_rewritten" in df.columns:
-        rename_map[f"{resolved_text_column}_rewritten"] = COL_REWRITTEN_TEXT
-    if not rename_map:
-        return df
-    return df.rename(columns=rename_map)
-
-
-def _build_user_dataframe(
-    trace_dataframe: pd.DataFrame,
-    *,
-    resolved_text_column: str,
-    compute_detection_validity: bool = False,
-) -> pd.DataFrame:
-    """Filter trace dataframe to the public column set for the active mode.
-
-    Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
-                 entity_coverage, missed_entities (always after evaluate()),
-                 detection_valid, detection_invalid_entities (only when compute_detection_validity=True)
-    Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
-                 any_high_leaked, needs_human_review
-    Detect-only: {text_col}, {text_col}_with_spans, final_entities
-    """
-    t = trace_dataframe
-    text_col = resolved_text_column
-
-    if f"{text_col}_rewritten" in t.columns:
-        allowed = {
-            text_col,
-            f"{text_col}_rewritten",
-            COL_UTILITY_SCORE,
-            COL_LEAKAGE_MASS,
-            COL_WEIGHTED_LEAKAGE_RATE,
-            COL_ANY_HIGH_LEAKED,
-            COL_NEEDS_HUMAN_REVIEW,
-            COL_JUDGE_EVALUATION,  # only present after evaluate()
-            COL_ENTITY_COVERAGE,  # only present after evaluate()
-            COL_MISSED_ENTITIES,  # only present after evaluate()
-        }
-        if compute_detection_validity:
-            allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}
-    elif f"{text_col}_replaced" in t.columns:
-        allowed = {
-            text_col,
-            f"{text_col}_replaced",
-            f"{text_col}_with_spans",
-            COL_FINAL_ENTITIES,
-            COL_ENTITY_COVERAGE,
-            COL_MISSED_ENTITIES,
-            COL_TYPE_FIDELITY_VALID,
-            COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
-            COL_RELATIONAL_CONSISTENCY_VALID,
-            COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
-            COL_ATTRIBUTE_FIDELITY_VALID,
-            COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
-        }
-        if compute_detection_validity:
-            allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}
-    else:
-        allowed = {
-            text_col,
-            f"{text_col}_with_spans",
-            COL_FINAL_ENTITIES,
-        }
-
-    return t[[col for col in t.columns if col in allowed]].copy()
 
 
 # ----------------------------------------------------------------- telemetry helpers

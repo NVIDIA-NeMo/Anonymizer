@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 selected_models:
-  domain_classifier: gpt-oss-120b
-  disposition_analyzer: gpt-oss-120b
-  meaning_extractor: gpt-oss-120b
-  qa_generator: gpt-oss-120b
-  rewriter: gpt-oss-120b
-  evaluator: nemotron-30b-thinking
-  repairer: gpt-oss-120b
+  domain_classifier: nemotron-super
+  disposition_analyzer: nemotron-super
+  meaning_extractor: nemotron-super
+  qa_generator: nemotron-super
+  rewriter: nemotron-super
+  evaluator: nemotron-super
+  repairer: nemotron-super

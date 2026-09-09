@@ -44,11 +44,11 @@ def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> Reso
 
 
 # Suffixes appended to the user's text column to form per-mode output columns
-# (see ``_rename_output_columns`` in ``anonymizer.interface.anonymizer``).
+# (see ``_rename_output_columns`` in ``anonymizer.interface._result_compatibility``).
 _OUTPUT_COLUMN_SUFFIXES: tuple[str, ...] = ("_replaced", "_with_spans", "_rewritten")
 
 # Fixed user-facing output column names that don't depend on the text column
-# (see ``_build_user_dataframe`` in ``anonymizer.interface.anonymizer``).
+# (see ``_build_user_dataframe`` in ``anonymizer.interface._result_compatibility``).
 _STATIC_OUTPUT_COLUMNS: tuple[str, ...] = (
     COL_FINAL_ENTITIES,
     COL_UTILITY_SCORE,

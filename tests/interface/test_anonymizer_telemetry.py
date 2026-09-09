@@ -404,6 +404,27 @@ class TestFieldPopulation:
 
 
 class TestFailureAggregation:
+    def test_duplicate_failure_entries_are_counted_and_success_is_clamped(
+        self,
+        captured_events: list[AnonymizerEvent],
+        stub_input: AnonymizerInput,
+    ) -> None:
+        failure = FailedRecord(record_id="same", step="entity-detection", reason="x")
+        detection_return = EntityDetectionResult(
+            dataframe=pd.DataFrame({COL_TEXT: ["a"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+            failed_records=[failure, failure, failure],
+        )
+        anonymizer, *_ = _make_anonymizer(detection_return=detection_return)
+
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+        event = captured_events[0]
+        assert event.task_status == TaskStatusEnum.COMPLETED
+        assert event.num_input_records == 1
+        assert event.num_failure_records == 3
+        assert event.num_success_records == 0
+        assert event.entity_detection_failure_count == 3
+
     def test_failure_counts_grouped_by_workflow_name(
         self,
         captured_events: list[AnonymizerEvent],

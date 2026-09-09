@@ -34,11 +34,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, cast
 
 from data_designer.config import custom_column_generator
+from data_designer.engine.models.parsers.errors import ParserException
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
@@ -299,6 +300,23 @@ def merge_chunk_decisions(
 # ---------------------------------------------------------------------------
 
 
+def _validation_response_parser(
+    recipe: PydanticResponseRecipe,
+) -> Callable[[str], RawValidationDecisionsSchema]:
+    """Accept the documented fenced payload and provider-native bare JSON."""
+
+    def parse(response: str) -> RawValidationDecisionsSchema:
+        try:
+            return cast(RawValidationDecisionsSchema, recipe.parse(response))
+        except ParserException as fenced_error:
+            try:
+                return RawValidationDecisionsSchema.model_validate_json(response)
+            except Exception:
+                raise fenced_error from None
+
+    return parse
+
+
 def _dispatch_chunk(
     *,
     facades: list[tuple[str, Any]],
@@ -331,13 +349,14 @@ def _dispatch_chunk(
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
     final_prompt = recipe.apply_recipe_to_user_prompt(prompt)
     final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
+    parser = _validation_response_parser(recipe)
 
     last_exc: BaseException | None = None
     for attempt_index, (alias, facade) in enumerate(facades):
         try:
             output, _messages = facade.generate(
                 prompt=final_prompt,
-                parser=recipe.parse,
+                parser=parser,
                 system_prompt=final_system,
                 purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
             )
@@ -398,13 +417,14 @@ async def _dispatch_chunk_async(
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
     final_prompt = recipe.apply_recipe_to_user_prompt(prompt)
     final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
+    parser = _validation_response_parser(recipe)
 
     last_exc: BaseException | None = None
     for attempt_index, (alias, facade) in enumerate(facades):
         try:
             output, _messages = await facade.agenerate(
                 prompt=final_prompt,
-                parser=recipe.parse,
+                parser=parser,
                 system_prompt=final_system,
                 purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
             )

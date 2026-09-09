@@ -1,0 +1,296 @@
+{
+  "schema_version": "anonymizer-phase9-result-compatibility-owner-contract-envelope/v1",
+  "digest_algorithm": "sha256_of_UTF8_compact_sorted_key_JSON_of_contract_member_with_no_trailing_newline",
+  "digest": "c91a410289c3549f608cc0b088da3ce9db56ac10aeabe430a8254b637ef4b12d",
+  "contract": {
+    "delivery_name": "p10-sdk-phase9-result-compatibility",
+    "sdk_phase": 9,
+    "version": "result-compatibility-v1",
+    "status": "candidate_owner_freeze_required",
+    "base": {
+      "branch": "codex/anonymizer-grouped-rewrite-p9",
+      "commit": "614e1f4104e107a673864eb7a2e12de5e49607f0",
+      "commit_signature": "verified",
+      "p10_branch": "codex/anonymizer-result-compatibility-p10",
+      "stacked_target": "codex/anonymizer-grouped-rewrite-p9"
+    },
+    "authority": {
+      "operator_is_approval_router_and_owner": true,
+      "prior_p9_approval_authorizes_p10": false,
+      "implementation_before_exact_digest_approval": "forbidden",
+      "public_api_change": "forbidden_without_separate_public_api_review",
+      "platform_compatibility_claim": "requires_platform_owner_cross_repository_validation",
+      "merge_or_ready_transition": "requires_separate_operator_approval"
+    },
+    "scope": {
+      "purpose": "Move current legacy pandas result assembly behind a private pure compatibility materializer without changing execution selection or observable behavior.",
+      "admitted_materialization_sources": [
+        "verified legacy pandas execution dataframe plus ordered legacy FailedRecord list",
+        "already-judged legacy evaluation dataframe plus current-evaluation FailedRecord list",
+        "an already-materialized AnonymizerResult plus requested preview count"
+      ],
+      "private_graph_outcome_admission": "none",
+      "reason_graph_outcomes_are_not_admitted": [
+        "Phase 6 private Redact semantics differ from public legacy Redact",
+        "Phase 7 private Substitute semantics differ from public legacy Substitute",
+        "Phase 8 release carries protected strings but not legacy trace payloads or per-member metrics",
+        "private graph failures do not retain attributable public FailedRecord detail",
+        "Annotate and Hash have no qualified private graph profiles"
+      ],
+      "execution_routing": "unchanged",
+      "allowed_new_surface": "private module, private version marker, private frozen test fixtures, and tests only",
+      "public_exports": "unchanged"
+    },
+    "non_goals": [
+      "public graph, result, target-outcome, session, explain, inspect, or diagnose APIs",
+      "SDK RFC Phase 10 Bounded Inspection",
+      "switching run, preview, evaluate, Redact, Annotate, Hash, Substitute, or Rewrite to private graph execution",
+      "independent runtime, durable state, streaming, retries, persistence, deduplication, or delivery",
+      "production Intake, OpenShell, Relay, or NeMo Platform integration",
+      "new artifact schema, wire format, telemetry field, result attribute, dataframe column, or failure vocabulary",
+      "changing prompts, model routing, DataDesigner calls, evaluation arithmetic, repair behavior, or no-entity behavior"
+    ],
+    "public_types": {
+      "module_paths": {
+        "AnonymizerResult": "anonymizer.interface.results.AnonymizerResult",
+        "PreviewResult": "anonymizer.interface.results.PreviewResult",
+        "FailedRecord": "anonymizer.engine.ndd.adapter.FailedRecord"
+      },
+      "AnonymizerResult_field_order": [
+        "dataframe",
+        "trace_dataframe",
+        "resolved_text_column",
+        "failed_records",
+        "replace_method",
+        "rewrite_config",
+        "entity_labels",
+        "data_summary",
+        "_display_cycle_index"
+      ],
+      "PreviewResult_field_order": [
+        "dataframe",
+        "trace_dataframe",
+        "resolved_text_column",
+        "failed_records",
+        "preview_num_records",
+        "replace_method",
+        "rewrite_config",
+        "entity_labels",
+        "data_summary",
+        "_display_cycle_index"
+      ],
+      "FailedRecord_field_order": ["record_id", "step", "reason"],
+      "constructor_signatures_defaults_repr_display_pickle_paths": "unchanged",
+      "new_contract_version_on_public_objects": false
+    },
+    "column_renaming": {
+      "mapping": {
+        "__nemo_anonymizer_text_input__": "{resolved_text_column}",
+        "__nemo_anonymizer_text_output__": "{resolved_text_column}_replaced",
+        "tagged_text": "{resolved_text_column}_with_spans",
+        "_rewritten_text": "{resolved_text_column}_rewritten"
+      },
+      "only_present_columns_are_renamed": true,
+      "forward_noop_identity": "when none of the four internal names is present, return the exact input dataframe object",
+      "unlisted_columns": "unchanged and remain in their existing positions",
+      "resolved_text_column_source": "ResolvedInput.resolved_text_column only; never DataFrame.attrs",
+      "input_collision_resolution": "retain the existing fixed-point __input then numeric-suffix algorithm",
+      "reverse_for_evaluate": "if the internal text column is absent, reverse only the four known resolved names; otherwise return the exact input dataframe object; if no known resolved name is present, also return the exact input object"
+    },
+    "dataframe_contract": {
+      "trace_dataframe": "the complete verified workflow dataframe after the existing four-column rename and after private correlation removal",
+      "public_dataframe": "a copy selecting allowed columns in trace_dataframe order",
+      "row_order": "exact workflow result presentation order",
+      "column_order": "exact trace order; never sort or rebuild from a set",
+      "columns": "preserve labels, duplicates, column-index type, and column-index name; retain current pandas label-selection expansion when an allowed label occurs more than once",
+      "index": "preserve values, type, duplicates, null-like values, order, and name; never reset",
+      "dtypes": "preserve every selected Series dtype exactly; no coercion, inference, JSON normalization, or nullable-dtype conversion",
+      "empty_frames": "preserve existing columns, order, index metadata, and dtypes",
+      "attrs": "preserve the same attrs propagation produced by the current pandas rename and copy operations; attrs never decide column naming",
+      "copy_semantics": "retain current pandas behavior: public dataframe is a dataframe copy, trace is the renamed frame, and nested Python cell objects are not recursively deep-copied",
+      "replace_allowed_columns": [
+        "{text}",
+        "{text}_replaced",
+        "{text}_with_spans",
+        "final_entities",
+        "entity_coverage",
+        "missed_entities",
+        "type_fidelity_valid",
+        "type_fidelity_invalid_replacements",
+        "relational_consistency_valid",
+        "relational_consistency_invalid_relations",
+        "attribute_fidelity_valid",
+        "attribute_fidelity_invalid_entities",
+        "detection_valid when requested",
+        "detection_invalid_entities when requested"
+      ],
+      "rewrite_allowed_columns": [
+        "{text}",
+        "{text}_rewritten",
+        "utility_score",
+        "leakage_mass",
+        "weighted_leakage_rate",
+        "any_high_leaked",
+        "needs_human_review",
+        "judge_evaluation when present",
+        "entity_coverage when present",
+        "missed_entities when present",
+        "detection_valid when requested",
+        "detection_invalid_entities when requested"
+      ]
+    },
+    "metadata_contract": {
+      "replace_run": {
+        "replace_method": "the exact config.replace object",
+        "rewrite_config": null
+      },
+      "rewrite_run": {
+        "replace_method": null,
+        "rewrite_config": "the exact config.rewrite.privacy_goal object, not Rewrite or EvaluationCriteria"
+      },
+      "entity_labels": "the exact config.detect.entity_labels value/reference",
+      "data_summary": "the exact AnonymizerInput.data_summary value",
+      "preview_num_records": "the requested count, not the number of returned rows",
+      "preview_other_metadata": "take replace_method, rewrite_config, and entity_labels from the exact config objects as current preview construction does; take data_summary from the already-materialized run result; reuse the run result dataframe, trace_dataframe, and failed_records list objects",
+      "evaluate_metadata": "read with getattr compatibility defaults and retain the input result values/references",
+      "evaluate_dispatch_precedence": "when a hand-built or legacy object has both rewrite_config and replace_method, rewrite_config wins and the evaluated result has replace_method=None",
+      "evaluate_input_validation": "retain current duck-typed attribute access; add no runtime isinstance gate",
+      "mutual_exclusivity": "replace_method and rewrite_config remain mutually exclusive for produced results"
+    },
+    "outcome_to_result_mapping": {
+      "verified_legacy_success_rows": "materialize every surviving row exactly once in the existing trace order and public projection",
+      "legacy_ndd_dropped_rows": "omit from both dataframes and return the original FailedRecord objects in existing stage order",
+      "legacy_degraded_success": "return a normal result whenever legacy execution returns a dataframe plus FailedRecord list; do not deduplicate failures",
+      "prior_run_failures_during_evaluate": "do not carry forward; evaluated results contain current evaluation failures only",
+      "rewrite_evaluation_failure_order": "rewrite judge failures followed by entity coverage failures",
+      "rewrite_evaluation_failure_container": "create a new list while retaining each original failure object and duplicate",
+      "replace_evaluation_failure_order": "exact order returned by the existing replace evaluation workflow",
+      "replace_evaluation_failure_container": "reuse the exact failure-list object returned by the replace evaluation workflow",
+      "private_graph_released_or_non_success_outcome": "not an admitted public materializer input in v1; no dataframe, FailedRecord, or exception mapping is introduced",
+      "materializer_construction_failure": "publish no result and preserve the current owning caller's exception translation boundary"
+    },
+    "exception_contract": {
+      "run_preview_private_row_verification_failure": "cause-free AnonymizerWorkflowError with exact message Anonymization pipeline failed.",
+      "run_preview_other_exception": "preserve current propagation behavior",
+      "preflight_and_input_errors": "occur before task telemetry and retain current direct propagation",
+      "preview_factory_exception": "the PreviewResult construction remains after COMPLETED telemetry; a construction exception propagates directly after that telemetry and publishes no PreviewResult",
+      "keyboard_interrupt": "propagate and retain cancelled telemetry status",
+      "evaluate": "retain current direct ValueError, InvalidConfigError, workflow, and unexpected-exception behavior; add no telemetry wrapper",
+      "legacy_result_without_strategy_metadata": "retain the current actionable ValueError text",
+      "cli": "retain Error: {message} on stderr plus exit status 1 for the existing caught exception classes",
+      "partial_result_on_exception": false,
+      "exception_causes_with_private_content": "forbidden"
+    },
+    "degraded_success_and_telemetry": {
+      "task_status": "completed when a result is returned even when failed_records is non-empty",
+      "failure_count": "len(result.failed_records), not unique record identifiers",
+      "success_count": "max(input_record_count - failure_count, 0)",
+      "failure_stage_buckets": "retain the existing exact FailedRecord.step mapping and unknown fallback",
+      "repair_iterations_triggered": "retain the existing FailedRecord-step-derived behavior",
+      "telemetry_best_effort_non_interference": true,
+      "new_result_or_graph_fields_in_telemetry": false
+    },
+    "privacy_and_cleanup": {
+      "materialization_point": "after the existing legacy verifier has accepted terminal rows and removed private correlation state",
+      "phase4_to_phase8_rule": "an adapter must never enlarge the accepted release set, reinterpret accounting, resurrect withheld candidates, or run before publication-critical cleanup",
+      "public_content_exception": "only already-grandfathered public dataframe and trace fields may contain source, entity, replacement, or protected text",
+      "public_failed_record_identity_exception": "retain each received FailedRecord object, record_id value, and position exactly; do not recompute, normalize, or promise cross-invocation stability because P9 adapter ingress may include an invocation-private correlation in its full-row-plus-index derivation; do not reuse that derivation for graph identity or any new field",
+      "forbidden_everywhere_new": [
+        "graph, datum, group, scope, task, attempt, row, member, mention, binding, obligation, slot, bundle, or capability identities",
+        "contract or plan digests",
+        "candidate, baseline, provisional revision, prompt, provider payload, or cleanup object",
+        "new content-derived identifiers or hashes, and exception chains"
+      ],
+      "adapter_logging": "none",
+      "adapter_serialization_of_private_objects": false,
+      "post_acceptance_teardown": "cannot retroactively change an accepted result"
+    },
+    "serialization_and_consumers": {
+      "pickle": "existing result and failure module paths, field layouts, defaults, values, dataframe state, and legacy getattr behavior round-trip unchanged",
+      "cli_run": "serialize result.dataframe only to CSV or Parquet with index=false and print the same output path message",
+      "cli_preview": "print result.dataframe.to_string(max_colwidth=80)",
+      "platform_run": "preserve dataset.parquet and trace.parquet column/value/dtype behavior with index=false, metadata original_text_column fallback, and optional failed_records.json field/order behavior",
+      "platform_preview": "preserve dataframe and trace conversion to JSON records and the three-field failure records",
+      "display": "preserve trace_dataframe positional display and all existing render inputs",
+      "artifact_atomicity": "not claimed; Platform writes remain sequential",
+      "cross_repository_status": "consumer behavior is pinned-source verified but execution remains required before claiming Platform compatibility"
+    },
+    "reference_model": {
+      "version": "phase9-result-compatibility-reference-v1",
+      "independence": "the symbolic oracle imports no production materializer, interface result class, private graph runtime, DataDesigner, workflow, or production column constants",
+      "symbolic_inputs": [
+        "mode and evaluation flags",
+        "ordered column descriptors and symbolic values",
+        "dtype descriptors",
+        "index values, type, name, and duplicates",
+        "attrs",
+        "resolved text name and collision history",
+        "ordered failure tokens",
+        "metadata identity tokens",
+        "run, preview, or evaluate operation"
+      ],
+      "symbolic_outputs": [
+        "renamed trace descriptor",
+        "selected public descriptor",
+        "field order and metadata bindings",
+        "failure order and degraded-success classification",
+        "exception or returned-result classification",
+        "CLI, pickle, and Platform projection descriptors"
+      ],
+      "pandas_bridge": "frozen fixtures build real pandas frames from symbolic descriptors and compare with assert_frame_equal using dtype, index type, column type, and names checks; attrs and nested-cell identity are asserted separately",
+      "graph_outcome_oracle": "separate negative-admission model proving all private graph outcomes are rejected as v1 materializer inputs",
+      "corpus": "finite pairwise core plus directed boundary witnesses; manifest freezes model version, generator version, case count, and canonical digest",
+      "reviewer_separation": "the independent reference reviewer must not author the production materializer paths they approve"
+    },
+    "mutation_contract": [
+      "sort or reconstruct public columns instead of preserving trace order",
+      "reset, coerce, deduplicate, or sort the index",
+      "coerce a dtype or normalize an empty frame",
+      "drop, consult, or overwrite dataframe attrs differently",
+      "deep-copy nested cell objects or alias the public dataframe to the trace",
+      "rename from requested text name, workflow attrs, or a non-fixed-point collision map",
+      "swap replace and rewrite projections or include an unapproved column",
+      "add, reorder, remove, rename, or default a public dataclass field",
+      "copy Rewrite or EvaluationCriteria instead of the PrivacyGoal reference",
+      "replace requested preview count with returned row count",
+      "append prior run failures during evaluate, reorder, clone, or deduplicate failures",
+      "derive telemetry counts from rows or unique failure IDs",
+      "change exception class, exact canonical message, cause suppression, or CLI handling",
+      "admit a private graph outcome or derive public identity from private IDs, text, index, or hashes",
+      "materialize before verifier completion, release reconciliation, or cleanup",
+      "leak any private identity, digest, candidate, prompt, provider payload, or cause",
+      "call DataDesigner outside NddAdapter.run_workflow",
+      "export the adapter or change result/failure module paths",
+      "omit the private module or frozen contract from the built wheel"
+    ],
+    "ownership": {
+      "semantic_and_public_compatibility_owner": "operator",
+      "execution_and_module_owner": "operator",
+      "reference_model_reviewer": "independent from production materializer author",
+      "privacy_and_measurement_review": "Anonymizer privacy and measurement owners",
+      "platform_projection_review": "NeMo Platform Anonymizer plugin owner before cross-repository compatibility claim",
+      "source_adapter_intake_openshell_owners": "out of scope; no decision imported"
+    },
+    "acceptance": {
+      "required_before_implementation": [
+        "semantic/public-compatibility owner approval of this exact contract digest",
+        "execution owner approval of this exact contract digest and exact plan digest",
+        "operator implementation checkpoint naming both digests and the pinned P9 base"
+      ],
+      "required_before_package_acceptance": [
+        "independent reference-model review",
+        "independent complete-diff semantic, compatibility, privacy, measurement, packaging, and ownership review",
+        "frozen corpus conformance and every named mutation killed",
+        "targeted and full repository tests, format, typecheck, coverage, wheel-content, clean-wheel, pickle, CLI, and serialization checks",
+        "pinned Platform consumer fixture or cross-repository execution; Platform-owner approval before an external compatibility claim",
+        "signed exact commit and green stacked-PR CI"
+      ],
+      "does_not_authorize": [
+        "public graph/session/result APIs",
+        "production integration",
+        "PR readiness or merge",
+        "merging PR 253, PR 260, or P10"
+      ]
+    }
+  }
+}

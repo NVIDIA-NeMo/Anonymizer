@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 from data_designer.config import SkipConfig, custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
@@ -65,6 +65,9 @@ from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDisposi
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 from anonymizer.measurement import stage_timer
 
 

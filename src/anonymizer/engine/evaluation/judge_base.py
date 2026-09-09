@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from typing import ClassVar, Protocol, cast
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
@@ -31,6 +30,9 @@ from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 
 logger = logging.getLogger("anonymizer.evaluation.judge_base")
 

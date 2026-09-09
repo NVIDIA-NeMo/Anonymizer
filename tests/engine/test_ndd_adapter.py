@@ -82,6 +82,54 @@ def test_attach_record_ids_adds_deterministic_ids() -> None:
     assert output_a[RECORD_ID_COLUMN].tolist() == output_b[RECORD_ID_COLUMN].tolist()
 
 
+def test_run_workflow_restores_seed_columns_after_backend_serialization() -> None:
+    input_df = pd.DataFrame(
+        {
+            "text": pd.array(["Alice", "Bob"], dtype="string[pyarrow]"),
+            "final_entities": [
+                {"entities": [{"value": "Alice", "label": "first_name"}]},
+                {"entities": []},
+            ],
+            "output": ["old-alice", "old-bob"],
+        },
+        index=pd.Index([10, 20], name="source_row"),
+    )
+    input_df.attrs["origin"] = "synthetic"
+    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
+    attached = adapter._attach_record_ids(input_df)
+    serialized = attached.iloc[::-1].copy()
+    serialized["text"] = serialized["text"].astype(object)
+    serialized["final_entities"] = [
+        {"entities": "[]"},
+        {"entities": "[{'value': 'Alice', 'label': 'first_name'}]"},
+    ]
+    serialized["output"] = ["generated-bob", "generated-alice"]
+
+    class SerializingDataDesigner:
+        def preview(self, _builder: object, *, num_records: int) -> SimpleNamespace:
+            return SimpleNamespace(dataset=serialized.iloc[:num_records].copy(), task_traces=[])
+
+    adapter = NddAdapter(data_designer=cast(DataDesigner, SerializingDataDesigner()))
+    result = adapter.run_workflow(
+        input_df,
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="replace-workflow",
+        preview_num_records=2,
+    )
+
+    assert result.dataframe["text"].tolist() == ["Bob", "Alice"]
+    assert str(result.dataframe["text"].dtype) == "string"
+    assert result.dataframe.index.tolist() == [20, 10]
+    assert result.dataframe.index.name == "source_row"
+    assert result.dataframe.attrs == {"origin": "synthetic"}
+    assert result.dataframe["final_entities"].tolist() == [
+        {"entities": []},
+        {"entities": [{"value": "Alice", "label": "first_name"}]},
+    ]
+    assert result.dataframe["output"].tolist() == ["generated-bob", "generated-alice"]
+
+
 def test_total_input_tokens_defaults_to_zero() -> None:
     adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
 

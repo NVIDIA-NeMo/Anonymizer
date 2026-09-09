@@ -20,6 +20,7 @@ from anonymizer.config.replace_strategies import (
 )
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
+    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -222,10 +223,11 @@ class ReplacementWorkflow:
         # verdicts instead of disappearing from a previously successful run.
         adapter = cast(NddAdapter, self._adapter)
         prepared = adapter._attach_record_ids(prepared)
+        workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
 
         try:
             run_result = adapter.run_workflow(
-                prepared,
+                workflow_input,
                 model_configs=model_configs,
                 columns=[judge.column_config(selected_models) for judge in active],
                 workflow_name="replace-judges",

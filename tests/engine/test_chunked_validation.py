@@ -459,6 +459,26 @@ class TestChunkedValidateRowPoolOfOne:
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
         assert {d["id"]: d["decision"] for d in decisions} == {"a": "keep", "b": "drop"}
 
+    def test_single_chunk_accepts_unfenced_json_from_provider(self) -> None:
+        text = "Alice spoke."
+        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
+        candidates = _candidates_schema(("a", "Alice", "first_name"))
+        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        facade = FakeFacade(
+            "v0",
+            response=json.dumps({"decisions": [{"id": "a", "decision": "keep"}]}),
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=10,
+            excerpt_window_chars=100,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        out = chunked_validate_row(row, params, {"v0": facade})
+
+        assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["decision"] == "keep"
+
     def test_single_chunk_sends_single_chunk_tagged_text_not_windowed_excerpt(self) -> None:
         """Single-chunk rows must receive the fully tagged document, not a windowed excerpt.
 

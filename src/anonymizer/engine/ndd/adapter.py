@@ -107,6 +107,41 @@ def _missing_private_row_tokens(input_df: pd.DataFrame, output_df: pd.DataFrame)
     return tuple(token for token in expected if token not in observed_set)
 
 
+def _restore_seed_columns(
+    input_df: pd.DataFrame,
+    output_df: pd.DataFrame,
+    columns: list[ColumnConfigT],
+) -> pd.DataFrame:
+    """Restore seed values that DataDesigner may coerce during serialization."""
+    if RECORD_ID_COLUMN not in input_df.columns or RECORD_ID_COLUMN not in output_df.columns:
+        return output_df
+    input_ids = input_df[RECORD_ID_COLUMN].tolist()
+    output_ids = output_df[RECORD_ID_COLUMN].tolist()
+    if len(set(input_ids)) != len(input_ids) or not set(output_ids).issubset(input_ids):
+        return output_df
+
+    generated_columns = {column.name for column in columns}
+    for column in columns:
+        generated_columns.update(getattr(column, "side_effect_columns", []))
+        if getattr(column, "with_trace", TraceType.NONE) != TraceType.NONE:
+            generated_columns.add(f"{column.name}{TRACE_COLUMN_POSTFIX}")
+
+    restored = output_df.copy()
+    aligned_seed = input_df.set_index(RECORD_ID_COLUMN, drop=False).loc[output_ids]
+    for name in input_df.columns:
+        if name in generated_columns:
+            continue
+        values = aligned_seed[name].copy()
+        values.index = restored.index
+        restored[name] = values
+
+    input_indexes = dict(zip(input_ids, input_df.index, strict=True))
+    restored.index = [input_indexes[record_id] for record_id in output_ids]
+    restored.index.name = input_df.index.name
+    restored.attrs = {**input_df.attrs, **output_df.attrs}
+    return restored
+
+
 @dataclass(frozen=True)
 class _NativeTraceColumn:
     column_name: str
@@ -490,6 +525,8 @@ class NddAdapter:
 
             if workflow_error is not None:
                 raise workflow_error from None
+
+            output_df = _restore_seed_columns(workflow_input_df, output_df, columns)
 
             output_df = trace_plan.record_and_strip_native_traces(
                 output_df=output_df,

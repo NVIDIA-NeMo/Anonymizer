@@ -1,0 +1,28 @@
+{
+  "schema_version": "anonymizer-phase9-result-compatibility-mutation-manifest/v1",
+  "contract_digest": "c91a410289c3549f608cc0b088da3ce9db56ac10aeabe430a8254b637ef4b12d",
+  "digest_algorithm": "sha256_of_UTF8_compact_sorted_key_JSON_of_mutations_member_with_no_trailing_newline",
+  "mutation_count": 19,
+  "digest": "951d5dc36c7619507bea6c1ec90305df749048af9872099fb42ef4fb1208b2d4",
+  "mutations": [
+    {"id": "column-order", "rule": "sort or reconstruct public columns instead of preserving trace order", "witness": "test_executable_projection_mutants_are_killed[column-order]"},
+    {"id": "index-reset", "rule": "reset, coerce, deduplicate, or sort the index", "witness": "test_executable_projection_mutants_are_killed[index-reset]"},
+    {"id": "dtype-coercion", "rule": "coerce a dtype or normalize an empty frame", "witness": "test_executable_projection_mutants_are_killed[dtype-coercion]"},
+    {"id": "attrs-drop", "rule": "drop, consult, or overwrite dataframe attrs differently", "witness": "test_executable_projection_mutants_are_killed[attrs-drop]"},
+    {"id": "copy-aliasing", "rule": "deep-copy nested cell objects or alias the public dataframe to the trace", "witness": "test_executable_projection_mutants_are_killed[copy-aliasing]"},
+    {"id": "rename-source", "rule": "rename from requested text name, workflow attrs, or a non-fixed-point collision map", "witness": "test_executable_projection_mutants_are_killed[rename-source]"},
+    {"id": "mode-projection", "rule": "swap replace and rewrite projections or include an unapproved column", "witness": "test_executable_projection_mutants_are_killed[mode-projection]"},
+    {"id": "public-field-drift", "rule": "add, reorder, remove, rename, or default a public dataclass field", "witness": "test_remaining_contract_mutants_are_killed_public_field_drift"},
+    {"id": "rewrite-metadata", "rule": "copy Rewrite or EvaluationCriteria instead of the PrivacyGoal reference", "witness": "test_executable_factory_mutants_are_killed[rewrite-metadata]"},
+    {"id": "preview-count", "rule": "replace requested preview count with returned row count", "witness": "test_executable_factory_mutants_are_killed[preview-count]"},
+    {"id": "evaluation-failures", "rule": "append prior run failures during evaluate, reorder, clone, or deduplicate failures", "witness": "test_remaining_contract_mutants_are_killed_evaluation_failures"},
+    {"id": "telemetry-counts", "rule": "derive telemetry counts from rows or unique failure IDs", "witness": "test_remaining_contract_mutants_are_killed_telemetry_counts"},
+    {"id": "exception-drift", "rule": "change exception class, exact canonical message, cause suppression, or CLI handling", "witness": "test_remaining_contract_mutants_are_killed_exception_drift"},
+    {"id": "graph-admission", "rule": "admit a private graph outcome or derive public identity from private IDs, text, index, or hashes", "witness": "test_remaining_contract_mutants_are_killed_graph_admission"},
+    {"id": "early-materialization", "rule": "materialize before verifier completion, release reconciliation, or cleanup", "witness": "test_remaining_contract_mutants_are_killed_early_materialization"},
+    {"id": "private-leakage", "rule": "leak any private identity, digest, candidate, prompt, provider payload, or cause", "witness": "test_remaining_contract_mutants_are_killed_private_leakage"},
+    {"id": "ndd-bypass", "rule": "call DataDesigner outside NddAdapter.run_workflow", "witness": "test_remaining_contract_mutants_are_killed_ndd_bypass"},
+    {"id": "public-export", "rule": "export the adapter or change result/failure module paths", "witness": "test_remaining_contract_mutants_are_killed_public_export"},
+    {"id": "wheel-omission", "rule": "omit the private module or frozen contract from the built wheel", "witness": "test_remaining_contract_mutants_are_killed_wheel_omission"}
+  ]
+}

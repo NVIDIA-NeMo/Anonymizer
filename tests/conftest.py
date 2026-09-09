@@ -94,7 +94,12 @@ def stub_known_model_configs() -> list[ModelConfig]:
 
 @pytest.fixture
 def stub_detection_model_selection() -> DetectionModelSelection:
-    return load_default_model_selection().detection
+    return DetectionModelSelection(
+        entity_detector="gliner-pii-detector",
+        entity_validator="gpt-oss-120b",
+        entity_augmenter="gpt-oss-120b",
+        latent_detector="nemotron-30b-thinking",
+    )
 
 
 @pytest.fixture

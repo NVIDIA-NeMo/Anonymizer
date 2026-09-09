@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -36,6 +36,9 @@ from anonymizer.engine.schemas import (
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
     SensitivityLevel,
+)
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
 )
 
 # Derived from the schema so the Jinja key stays in sync with the field name.

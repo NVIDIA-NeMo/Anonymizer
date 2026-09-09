@@ -9,7 +9,7 @@
 
 ## What can you do with Anonymizer?
 
-- **Detect entities** using GLiNER-PII and LLM-based augmentation and validation
+- **Detect entities** using LLM-based detection, augmentation, and validation
 - **Replace with 4 strategies** — LLM-generated substitute, redact, annotate, or hash (deterministic, local)
 - **Preview results** before full runs with `display_record()` visualization
 
@@ -30,7 +30,7 @@ make install
 
 ### 2. Set up model providers
 
-By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — GLiNER-PII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
+By default, Anonymizer uses Nemotron Super hosted on [build.nvidia.com](https://build.nvidia.com/models) for its model-backed workflow roles. You can also bring your own models, including a self-hosted GLiNER detector, via custom provider configs.
 
 The default build.nvidia.com (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
 
@@ -160,7 +160,7 @@ make install-pre-commit   # Install pre-commit hooks
 
 - Python 3.11+
 - [NeMo Data Designer](https://github.com/NVIDIA-NeMo/DataDesigner) (installed as dependency)
-- [NVIDIA API key](https://build.nvidia.com) for default model providers (GLiNER-PII + text LLM), or custom model endpoints
+- [NVIDIA API key](https://build.nvidia.com) for the default Nemotron Super provider, or custom model endpoints
 
 ---
 

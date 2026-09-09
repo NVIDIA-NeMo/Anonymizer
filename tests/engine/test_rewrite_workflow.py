@@ -25,6 +25,7 @@ from anonymizer.engine.constants import (
     COL_NEEDS_REPAIR,
     COL_PRIVACY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_APPLICATION,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -128,12 +129,16 @@ def stub_pipeline_df(stub_pre_gen_df: pd.DataFrame) -> pd.DataFrame:
     df = stub_pre_gen_df.copy()
     df[COL_REWRITTEN_TEXT] = "Maria works"
     df[COL_REPAIR_ITERATIONS] = 0
+    df[COL_REPLACEMENT_APPLICATION] = (
+        '{"applied_span_count": 1, "skipped_span_count": 0, "skipped_span_label_counts": {}, "targeted_span_count": 1}'
+    )
     return df
 
 
 @pytest.fixture
 def stub_eval_df(stub_pipeline_df: pd.DataFrame) -> pd.DataFrame:
     df = stub_pipeline_df.copy()
+    df[COL_REPLACEMENT_APPLICATION] = df[COL_REPLACEMENT_APPLICATION].map(json.loads)
     df[COL_NEEDS_REPAIR] = False
     df[COL_UTILITY_SCORE] = 0.9
     df[COL_LEAKAGE_MASS] = 0.1
@@ -278,6 +283,12 @@ def test_calls_sub_workflows_in_order(
     assert "rewrite-final-judge" not in workflow_names
 
     assert len(result.dataframe) == 1
+    assert result.dataframe.iloc[0][COL_REPLACEMENT_APPLICATION] == {
+        "applied_span_count": 1,
+        "skipped_span_count": 0,
+        "skipped_span_label_counts": {},
+        "targeted_span_count": 1,
+    }
 
 
 # ---------------------------------------------------------------------------

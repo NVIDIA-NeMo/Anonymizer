@@ -8,7 +8,6 @@ import re
 from typing import ClassVar, Mapping, TypeVar, cast
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
@@ -19,6 +18,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_JUDGE,
     COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_MISSED_ENTITIES,
+    COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
     _jinja,
@@ -29,6 +29,9 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 
 logger = logging.getLogger("anonymizer.evaluation.entity_coverage_judge")
 
@@ -528,8 +531,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             had_record_ids = RECORD_ID_COLUMN in dataframe.columns
             adapter = cast(NddAdapter, self._adapter)
             prepared = adapter._attach_record_ids(dataframe)
+            workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
             result = self.evaluate(
-                prepared,
+                workflow_input,
                 model_configs=model_configs,
                 selected_models=selected_models,
                 preview_num_records=preview_num_records,

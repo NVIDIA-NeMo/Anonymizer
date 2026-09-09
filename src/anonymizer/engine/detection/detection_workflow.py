@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import cast
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
@@ -56,9 +56,14 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.detection")
+
+_GLINER_DETECTOR_ALIAS = "gliner-pii-detector"
 
 # Defaults for the two chunked-validation knobs. Sourced from the Detect config
 # so there is a single source of truth; the workflow method defaults exist so
@@ -98,10 +103,10 @@ class EntityDetectionWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
-        """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
+        """Run the core detector, LLM validation, LLM augmentation, and finalization pipeline.
 
-        This is the primary detection workflow. It detects entities via GLiNER,
-        validates/reclassifies them with an LLM (chunked across a pool of
+        This is the primary detection workflow. It detects entities through the
+        configured detector, validates/reclassifies them with an LLM (chunked across a pool of
         validator aliases), augments with additional entities the detector may
         have missed, and produces final standoff entity spans with overlap
         resolution.
@@ -180,14 +185,29 @@ class EntityDetectionWorkflow:
                 validator_aliases,
             )
 
+        detector_column: ColumnConfigT
+        if detection_alias == _GLINER_DETECTOR_ALIAS:
+            detector_column = LLMTextColumnConfig(
+                name=COL_RAW_DETECTED,
+                prompt=_jinja(COL_TEXT),
+                model_alias=detection_alias,
+            )
+        else:
+            detector_column = LLMStructuredColumnConfig(
+                name=COL_RAW_DETECTED,
+                prompt=_get_detector_prompt(
+                    data_summary=data_summary,
+                    labels=labels,
+                    strict_labels=entity_labels is not None,
+                ),
+                model_alias=detection_alias,
+                output_format=AugmentedEntitiesSchema,
+            )
+
         columns = cast(
             list[ColumnConfigT],
             [
-                LLMTextColumnConfig(
-                    name=COL_RAW_DETECTED,
-                    prompt=_jinja(COL_TEXT),
-                    model_alias=detection_alias,
-                ),
+                detector_column,
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
@@ -470,8 +490,10 @@ def _inject_detector_params(
     labels: list[str],
     gliner_detection_threshold: float,
 ) -> list[ModelConfig]:
-    """Return detached GLiNER model configs for one detector workflow."""
+    """Return detached model configs with GLiNER parameters when required."""
     resolved = deepcopy(model_configs)
+    if selected_models.entity_detector != _GLINER_DETECTOR_ALIAS:
+        return resolved
     for config in resolved:
         if config.alias != selected_models.entity_detector:
             continue
@@ -533,6 +555,37 @@ def _format_label_examples(labels: list[str]) -> str:
         else:
             lines.append(f"- {label}")
     return "\n".join(lines)
+
+
+def _get_detector_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool) -> str:
+    if strict_labels:
+        label_guidance = (
+            "Use only these entity labels; skip sensitive values that do not fit one of them:\n<<LABEL_EXAMPLES>>"
+        )
+    else:
+        label_guidance = (
+            "Strongly prefer these entity labels when they fit:\n"
+            "<<LABEL_EXAMPLES>>\n"
+            "If none fits, create a concise snake_case label."
+        )
+    prompt = """Find every privacy-sensitive entity in the input text.
+
+Data context: <<DATA_SUMMARY>>
+
+<<LABEL_GUIDANCE>>
+
+Include direct identifiers, quasi-identifiers, demographics, credentials, account identifiers, URLs, file paths, and other values that could identify or reveal sensitive information about a person. Return each value exactly as it appears in the text. Do not return placeholders, field names, syntax, generic words, or duplicate entries.
+
+Input text: <<TEXT>>
+"""
+    return substitute_placeholders(
+        prompt,
+        {
+            "<<DATA_SUMMARY>>": data_summary if data_summary else "Not provided",
+            "<<LABEL_GUIDANCE>>": label_guidance.replace("<<LABEL_EXAMPLES>>", _format_label_examples(labels)),
+            "<<TEXT>>": _jinja(COL_TEXT),
+        },
+    )
 
 
 def _get_validation_prompt(*, data_summary: str | None, labels: list[str]) -> str:

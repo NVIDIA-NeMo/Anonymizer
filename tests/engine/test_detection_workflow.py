@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -45,7 +46,7 @@ from anonymizer.engine.ndd.model_loader import (
     resolve_model_alias,
     resolve_model_aliases,
 )
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import AugmentedEntitiesSchema, EntitiesSchema
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
@@ -311,6 +312,64 @@ def test_inject_detector_params_no_matching_alias_leaves_configs_unchanged(
         gliner_detection_threshold=0.42,
     )
     assert all(config.inference_parameters.extra_body is None for config in updated)
+
+
+def test_nemotron_detector_uses_structured_output_without_gliner_request_fields(
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    model_configs = [
+        ModelConfig(
+            alias="nemotron-super",
+            model="nvidia/nemotron-3-super-120b-a12b",
+            provider="stub",
+        )
+    ]
+    selected_models = stub_detection_model_selection.model_copy(
+        update={
+            "entity_detector": "nemotron-super",
+            "entity_validator": ["nemotron-super"],
+            "entity_augmenter": "nemotron-super",
+        }
+    )
+
+    workflow = EntityDetectionWorkflow(adapter=Mock())
+    workflow_model_configs, columns = workflow._build_detection_spec(
+        model_configs=model_configs,
+        selected_models=selected_models,
+        gliner_detection_threshold=0.42,
+        entity_labels=["first_name", "city"],
+    )
+
+    detector_column = _find_column(columns, COL_RAW_DETECTED)
+    assert isinstance(detector_column, LLMStructuredColumnConfig)
+    assert detector_column.output_format == AugmentedEntitiesSchema.model_json_schema()
+    assert "- first_name:" in detector_column.prompt
+    assert "- city:" in detector_column.prompt
+    assert COL_TEXT in detector_column.prompt
+    assert workflow_model_configs[0].inference_parameters.extra_body is None
+
+
+def test_gliner_detector_keeps_text_output_contract(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    workflow = EntityDetectionWorkflow(adapter=Mock())
+    workflow_model_configs, columns = workflow._build_detection_spec(
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.42,
+        entity_labels=["first_name", "city"],
+    )
+
+    detector_column = _find_column(columns, COL_RAW_DETECTED)
+    assert isinstance(detector_column, LLMTextColumnConfig)
+    assert workflow_model_configs[0].inference_parameters.extra_body == {
+        "labels": ["first_name", "city"],
+        "threshold": 0.42,
+        "chunk_length": 384,
+        "overlap": 128,
+        "flat_ner": False,
+    }
 
 
 def test_resolve_model_alias_reads_from_selection_model() -> None:

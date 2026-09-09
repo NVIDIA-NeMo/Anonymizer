@@ -8,12 +8,12 @@
 selected_models:
   # --- Shared ---
   entity_coverage_judge: nemotron-super
-  detection_validity_judge: gpt-oss-120b
+  detection_validity_judge: nemotron-super
 
   # --- Replace evaluation ---
-  replace_type_fidelity_judge: gpt-oss-120b
-  replace_relational_consistency_judge: gpt-oss-120b
-  replace_attribute_fidelity_judge: gpt-oss-120b
+  replace_type_fidelity_judge: nemotron-super
+  replace_relational_consistency_judge: nemotron-super
+  replace_attribute_fidelity_judge: nemotron-super
 
   # --- Rewrite evaluation ---
-  rewrite_judge: nemotron-30b-thinking
+  rewrite_judge: nemotron-super
