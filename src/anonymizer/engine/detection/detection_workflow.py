@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
@@ -528,6 +529,13 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
     if isinstance(raw, LatentEntitiesSchema):
         kept = [entity for entity in raw.latent_entities if entity.label.strip().casefold() not in excluded]
         return LatentEntitiesSchema(latent_entities=kept).model_dump(mode="json")
+
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw
+        return _filter_excluded_latent_entities(parsed, excluded_entity_labels)
 
     if isinstance(raw, dict):
         entities = raw.get("latent_entities")

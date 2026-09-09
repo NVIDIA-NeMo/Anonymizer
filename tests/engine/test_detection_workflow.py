@@ -180,6 +180,19 @@ def test_filter_excluded_latent_entities_normalizes_configured_labels() -> None:
     assert result == {"latent_entities": [{"label": "employer", "value": "Acme"}]}
 
 
+def test_filter_excluded_latent_entities_handles_json_string_payload() -> None:
+    raw = json.dumps(
+        {
+            "latent_entities": [
+                {"label": "Health_Condition", "value": "diabetes"},
+                {"label": "employer", "value": "Acme"},
+            ]
+        }
+    )
+    result = _filter_excluded_latent_entities(raw, [" HEALTH_CONDITION "])
+    assert result == {"latent_entities": [{"label": "employer", "value": "Acme"}]}
+
+
 def test_identify_latent_entities_filters_excluded_labels(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,

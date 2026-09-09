@@ -120,6 +120,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 
 !!! warning
     If every label in `entity_labels` is also in `excluded_entity_labels`, the effective detection set is empty and no entities will be detected. Anonymizer logs a warning when this happens.
+
 ## Tuning the threshold
 
 For `gliner_threshold`, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.
