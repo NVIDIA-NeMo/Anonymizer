@@ -65,7 +65,7 @@ PR 253 is an active development and research PR. Its protected branch contains t
 | 5 | Implemented privately and hardened | Frozen Phase 5 reference-model evidence and focused context admission, execution, reconciliation, cleanup, privacy, and public-compatibility tests are present; 2026-08-31 PR checks pass | Preserve the qualified private boundary; publication and production use require separate gates |
 | 6 | Implemented privately and hardened | Frozen Phase 6 reference-model evidence and focused mention, resolution, role-policy, Redact, backend, lifecycle, privacy, and public-compatibility tests are present; 2026-08-31 PR checks pass | Preserve the qualified private Redact boundary; Phase 7 requires its own contract and authorization |
 | 7 | Designed and independently reviewed; implementation authorization pending | Test strategy reviewed, but implementation evidence does not yet exist | Freeze the Phase 7 semantic and execution contract and obtain separate authorization |
-| 8–11 | RFC plan only | No phase implementation evidence | Refine and authorize bounded branch checkpoints in order |
+| 8–12 | RFC plan only | No phase implementation evidence | Refine and authorize bounded branch checkpoints in order |
 
 For phases that remain proposals, “test strategy reviewed” means reviewers found the proposed evidence plan sufficient to begin the corresponding branch work when authorized. It does not mean that phase has been implemented or its tests have passed.
 
@@ -535,6 +535,10 @@ Status: proposed. Add bounded explain, inspect, and diagnose views, then prepare
 ### Phase 11: Lifecycle and Independent Runtime
 
 Status: proposed. Validate lifecycle behavior through a process-backed host and the agreed conformance subset through a materially different semantic runtime. The Python host supplies lifecycle evidence only.
+
+### Phase 12: Public Surface Qualification and Publication
+
+Status: proposed future phase. Phase 12 starts only after reviewers accept the Phase 10 private inspection evidence and Phase 11 lifecycle and independent-runtime evidence. At that point, freeze and review an exact public graph, session, and inspection contract. Implementation and publication require a new owner contract and plan, explicit public-API authorization, and acceptance of every named stable-promotion gate. Completing Phase 10 or Phase 11 does not grant experimental or stable publication authority.
 
 ## Related Proposals
 
