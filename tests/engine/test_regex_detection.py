@@ -59,6 +59,27 @@ def test_builtin_validators_reject_invalid_values(label: str, text: str) -> None
     assert result.accepted_entities == []
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("See https://en.wikipedia.org/wiki/Foo_(bar).", "https://en.wikipedia.org/wiki/Foo_(bar)"),
+        ("See https://example.com/Foo_(bar)).", "https://example.com/Foo_(bar)"),
+        ("See https://example.com/a_(b_(c)).", "https://example.com/a_(b_(c))"),
+        ("请访问https://例子.公司/路径（内部）。", "https://例子.公司/路径（内部）"),
+        ("请访问https://例子.公司/路径【内部】】。", "https://例子.公司/路径【内部】"),
+        ("See http://[2001:db8::1]/docs.", "http://[2001:db8::1]/docs"),
+    ],
+)
+def test_url_trimming_preserves_balanced_delimiters(text: str, expected: str) -> None:
+    rules = resolve_regex_rules(labels=["url"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert [(entity.value, text[entity.start_position : entity.end_position]) for entity in result.llm_entities] == [
+        (expected, expected)
+    ]
+
+
 def test_builtin_rules_only_activate_for_requested_labels() -> None:
     rules = resolve_regex_rules(
         labels=["email"],

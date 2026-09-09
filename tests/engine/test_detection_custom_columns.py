@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
@@ -112,6 +114,72 @@ def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:
     result = apply_validation_to_seed_entities(row)
 
     assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [entity]
+
+
+@pytest.mark.parametrize(
+    ("accepted_source", "validated_source"),
+    [
+        ("regex_builtin:nemo.email.v1", "regex_user:user:contact:v1"),
+        ("regex_user:user:contact:v1", "regex_builtin:nemo.email.v1"),
+    ],
+)
+def test_user_regex_wins_same_span_across_validation_routes(
+    accepted_source: str,
+    validated_source: str,
+) -> None:
+    def entity(label: str, source: str) -> dict[str, Any]:
+        return {
+            "id": f"{label}_0_17",
+            "value": "alice@example.com",
+            "label": label,
+            "start_position": 0,
+            "end_position": 17,
+            "score": 1.0,
+            "source": source,
+        }
+
+    accepted_label = "user_contact" if accepted_source.startswith("regex_user:") else "email"
+    validated_label = "user_contact" if validated_source.startswith("regex_user:") else "email"
+    accepted = entity(accepted_label, accepted_source)
+    validated = entity(validated_label, validated_source)
+    row: dict[str, Any] = {
+        COL_TEXT: "alice@example.com",
+        COL_SEED_ENTITIES: {"entities": [validated]},
+        COL_VALIDATED_ENTITIES: {"decisions": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+    }
+
+    result = apply_validation_to_seed_entities(row)
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [entity("user_contact", "regex_user:user:contact:v1")]
+
+
+def test_user_regex_wins_same_span_during_finalization() -> None:
+    user_entity = {
+        "id": "user_contact_0_17",
+        "value": "alice@example.com",
+        "label": "user_contact",
+        "start_position": 0,
+        "end_position": 17,
+        "score": 1.0,
+        "source": "regex_user:user:contact:v1",
+    }
+    builtin_entity = {
+        **user_entity,
+        "id": "email_0_17",
+        "label": "email",
+        "source": "regex_builtin:nemo.email.v1",
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "alice@example.com",
+        COL_MERGED_ENTITIES: {"entities": [user_entity]},
+        COL_VALIDATED_ENTITIES: {"decisions": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [builtin_entity]},
+    }
+
+    result = apply_validation_and_finalize(row)
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == [user_entity]
 
 
 def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:

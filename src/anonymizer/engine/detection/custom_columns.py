@@ -128,7 +128,7 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    validated_seed = merge_entity_sources(accepted_regex, llm_validated_seed)
+    validated_seed = _merge_detection_routes(accepted_regex, llm_validated_seed)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
@@ -192,7 +192,7 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    protected = merge_entity_sources(accepted_regex, validated)
+    protected = _merge_detection_routes(accepted_regex, validated)
     expanded = expand_entity_occurrences(text=text, entities=protected)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
         mode="json"
@@ -215,3 +215,16 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
         )
         for e in parsed.entities
     ]
+
+
+def _merge_detection_routes(*routes: list[EntitySpan]) -> list[EntitySpan]:
+    """Merge validation routes without allowing route order to change source precedence."""
+    entities = [entity for route in routes for entity in route]
+    user_regex = [entity for entity in entities if entity.source.startswith("regex_user:")]
+    builtin_regex = [entity for entity in entities if entity.source.startswith("regex_builtin:")]
+    other_sources = [
+        entity
+        for entity in entities
+        if not entity.source.startswith("regex_user:") and not entity.source.startswith("regex_builtin:")
+    ]
+    return merge_entity_sources(user_regex, builtin_regex, other_sources)

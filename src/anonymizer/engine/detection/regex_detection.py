@@ -29,7 +29,17 @@ DEFAULT_MAX_MATCHES_PER_RULE = 1000
 REGEX_VALIDATOR_ENTRYPOINT_GROUP = "nemo_anonymizer.regex_validators"
 _REGEX_SCORE = 1.0
 _CONTEXT_WINDOW = 64
-_URL_TRAILING_PUNCTUATION = ".,;:!?)]}>'\"。，、；：！？）】》」』"
+_URL_TRAILING_PUNCTUATION = ".,;:!?>'\"。，、；：！？"
+_URL_DELIMITER_PAIRS = {
+    ")": "(",
+    "]": "[",
+    "}": "{",
+    "）": "（",
+    "】": "【",
+    "》": "《",
+    "」": "「",
+    "』": "『",
+}
 
 
 class ResolvedRegexRule(BaseModel):
@@ -127,7 +137,7 @@ def detect_regex_entities(
                         f"{max_matches_per_rule} matches for one record."
                     )
                 if rule.label == "url":
-                    trimmed = text[start:end].rstrip(_URL_TRAILING_PUNCTUATION)
+                    trimmed = _trim_url_trailing_punctuation(text[start:end])
                     end = start + len(trimmed)
                     if end <= start:
                         continue
@@ -172,6 +182,18 @@ def _merge_regex_sources(entities: list[EntitySpan]) -> list[EntitySpan]:
     users = [entity for entity in entities if entity.source.startswith("regex_user:")]
     builtins = [entity for entity in entities if entity.source.startswith("regex_builtin:")]
     return merge_entity_sources(_deduplicate(users), _deduplicate(builtins))
+
+
+def _trim_url_trailing_punctuation(value: str) -> str:
+    """Remove prose punctuation while preserving balanced URL delimiters."""
+    trimmed = value.rstrip(_URL_TRAILING_PUNCTUATION)
+    while trimmed:
+        closing = trimmed[-1]
+        opening = _URL_DELIMITER_PAIRS.get(closing)
+        if opening is None or trimmed.count(closing) <= trimmed.count(opening):
+            break
+        trimmed = trimmed[:-1].rstrip(_URL_TRAILING_PUNCTUATION)
+    return trimmed
 
 
 def _passes_validator(
