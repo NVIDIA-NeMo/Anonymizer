@@ -21,7 +21,13 @@
 ```bash
 pip install nemo-anonymizer
 ```
-Or install from source: 
+
+> [!NOTE]
+> This project will download and install additional third-party open source
+> software projects. Review the license terms of these open source projects
+> before use.
+
+Or install from source:
 ```bash
 git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
 cd Anonymizer
@@ -51,7 +57,7 @@ DATA_URL="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/ma
 uv run anonymizer preview --source $DATA_URL --text-column biography --replace redact --num_records 3
 
 # Full run with output file
-uv run anonymizer run --source $DATA_URL --text-column biography --replace redact --output result.csv 
+uv run anonymizer run --source $DATA_URL --text-column biography --replace redact --output result.csv
 
 # Validate config without running
 uv run anonymizer validate --source $DATA_URL --text-column biography --replace hash
