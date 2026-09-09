@@ -1,0 +1,260 @@
+{
+  "schema_version": "anonymizer-phase9-result-compatibility-reference-manifest/v1",
+  "reference_version": "phase9-result-compatibility-reference-v1",
+  "generator_version": "phase9-result-compatibility-pairwise-corpus-v1",
+  "digest_algorithm": "sha256_of_UTF8_compact_sorted_key_JSON_of_directed_cases_and_generated_pairwise_cases_with_no_trailing_newline",
+  "case_count": 33,
+  "directed_case_count": 22,
+  "pairwise_case_count": 11,
+  "pairwise_digest": "591fd8117cb0dbd6335762ee2cd0824a164d9604c0d7021d1bc995983ea7265c",
+  "pairwise_dimensions": {
+    "mode": ["replace", "rewrite"],
+    "value_dtype": ["string", "Float64", "boolean"],
+    "index_shape": ["range-unnamed", "string-duplicate-named", "multi-duplicate-named"],
+    "attrs_shape": ["none", "nested"],
+    "collision_history": ["none", "fixed-point"],
+    "metadata_token": ["strategy", "entity-labels"]
+  },
+  "digest": "478b7ef5d052146ac8642faec3fc22168ffc33b3dc388929fad98d84da99b6ae",
+  "cases": [
+    {
+      "name": "replace-trace-order",
+      "operation": "project",
+      "columns": ["_trace", "__nemo_anonymizer_text_output__", "entity_coverage", "__nemo_anonymizer_text_input__", "type_fidelity_valid", "tagged_text", "final_entities", "detection_valid", "_tail"],
+      "resolved_text_column": "body",
+      "compute_detection_validity": false,
+      "expected": {
+        "trace_columns": ["_trace", "body_replaced", "entity_coverage", "body", "type_fidelity_valid", "body_with_spans", "final_entities", "detection_valid", "_tail"],
+        "public_columns": ["body_replaced", "entity_coverage", "body", "type_fidelity_valid", "body_with_spans", "final_entities"],
+        "forward_returns_same_object": false
+      }
+    },
+    {
+      "name": "replace-detection-validity",
+      "operation": "project",
+      "columns": ["__nemo_anonymizer_text_input__", "detection_invalid_entities", "__nemo_anonymizer_text_output__", "detection_valid", "tagged_text", "final_entities"],
+      "resolved_text_column": "body",
+      "compute_detection_validity": true,
+      "expected": {
+        "trace_columns": ["body", "detection_invalid_entities", "body_replaced", "detection_valid", "body_with_spans", "final_entities"],
+        "public_columns": ["body", "detection_invalid_entities", "body_replaced", "detection_valid", "body_with_spans", "final_entities"],
+        "forward_returns_same_object": false
+      }
+    },
+    {
+      "name": "rewrite-precedes-replace",
+      "operation": "project",
+      "columns": ["junk", "__nemo_anonymizer_text_output__", "__nemo_anonymizer_text_input__", "utility_score", "_rewritten_text", "final_entities"],
+      "resolved_text_column": "bio",
+      "compute_detection_validity": false,
+      "expected": {
+        "trace_columns": ["junk", "bio_replaced", "bio", "utility_score", "bio_rewritten", "final_entities"],
+        "public_columns": ["bio", "utility_score", "bio_rewritten"],
+        "forward_returns_same_object": false
+      }
+    },
+    {
+      "name": "detect-only",
+      "operation": "project",
+      "columns": ["noise", "tagged_text", "final_entities", "__nemo_anonymizer_text_input__"],
+      "resolved_text_column": "note",
+      "compute_detection_validity": false,
+      "expected": {
+        "trace_columns": ["noise", "note_with_spans", "final_entities", "note"],
+        "public_columns": ["note_with_spans", "final_entities", "note"],
+        "forward_returns_same_object": false
+      }
+    },
+    {
+      "name": "duplicate-column-expansion",
+      "operation": "project",
+      "columns": ["bio", "bio", "bio_replaced"],
+      "resolved_text_column": "bio",
+      "compute_detection_validity": false,
+      "expected": {
+        "trace_columns": ["bio", "bio", "bio_replaced"],
+        "public_columns": ["bio", "bio", "bio", "bio", "bio_replaced"],
+        "forward_returns_same_object": true
+      }
+    },
+    {
+      "name": "rename-noop",
+      "operation": "project",
+      "columns": ["bio", "bio_replaced", "final_entities"],
+      "resolved_text_column": "bio",
+      "compute_detection_validity": false,
+      "expected": {
+        "trace_columns": ["bio", "bio_replaced", "final_entities"],
+        "public_columns": ["bio", "bio_replaced", "final_entities"],
+        "forward_returns_same_object": true
+      }
+    },
+    {
+      "name": "unrename-partial",
+      "operation": "unrename",
+      "columns": ["noise", "bio_replaced", "bio_with_spans"],
+      "resolved_text_column": "bio",
+      "expected": {
+        "columns": ["noise", "__nemo_anonymizer_text_output__", "tagged_text"],
+        "returns_same_object": false
+      }
+    },
+    {
+      "name": "unrename-internal-short-circuit",
+      "operation": "unrename",
+      "columns": ["__nemo_anonymizer_text_input__", "bio_replaced"],
+      "resolved_text_column": "bio",
+      "expected": {
+        "columns": ["__nemo_anonymizer_text_input__", "bio_replaced"],
+        "returns_same_object": true
+      }
+    },
+    {
+      "name": "unrename-noop",
+      "operation": "unrename",
+      "columns": ["noise", "other"],
+      "resolved_text_column": "bio",
+      "expected": {
+        "columns": ["noise", "other"],
+        "returns_same_object": true
+      }
+    },
+    {
+      "name": "preview-over-request",
+      "operation": "preview",
+      "requested": 10,
+      "returned_rows": 2,
+      "expected": {
+        "result_type": "PreviewResult",
+        "preview_num_records": 10,
+        "dataframe_binding": "run.dataframe",
+        "trace_binding": "run.trace_dataframe",
+        "failures_binding": "run.failed_records",
+        "strategy_binding": "config",
+        "data_summary_binding": "run.data_summary"
+      }
+    },
+    {
+      "name": "replace-evaluation-failures",
+      "operation": "evaluate_failures",
+      "rewrite": false,
+      "prior_failures": ["run-a"],
+      "primary_failures": ["evaluate-a", "evaluate-a"],
+      "coverage_failures": [],
+      "expected": {
+        "result_type": "AnonymizerResult",
+        "failures": ["evaluate-a", "evaluate-a"],
+        "failure_container": "primary",
+        "prior_failures_retained": false
+      }
+    },
+    {
+      "name": "rewrite-evaluation-failures",
+      "operation": "evaluate_failures",
+      "rewrite": true,
+      "prior_failures": ["run-a"],
+      "primary_failures": ["rewrite-a"],
+      "coverage_failures": ["coverage-a", "coverage-a"],
+      "expected": {
+        "result_type": "AnonymizerResult",
+        "failures": ["rewrite-a", "coverage-a", "coverage-a"],
+        "failure_container": "new",
+        "prior_failures_retained": false
+      }
+    },
+    {
+      "name": "pickle-anonymizer-result",
+      "operation": "pickle",
+      "result_type": "AnonymizerResult",
+      "expected": {
+        "module": "anonymizer.interface.results",
+        "fields": ["dataframe", "trace_dataframe", "resolved_text_column", "failed_records", "replace_method", "rewrite_config", "entity_labels", "data_summary", "_display_cycle_index"]
+      }
+    },
+    {
+      "name": "pickle-preview-result",
+      "operation": "pickle",
+      "result_type": "PreviewResult",
+      "expected": {
+        "module": "anonymizer.interface.results",
+        "fields": ["dataframe", "trace_dataframe", "resolved_text_column", "failed_records", "preview_num_records", "replace_method", "rewrite_config", "entity_labels", "data_summary", "_display_cycle_index"]
+      }
+    },
+    {
+      "name": "pickle-failed-record",
+      "operation": "pickle",
+      "result_type": "FailedRecord",
+      "expected": {
+        "module": "anonymizer.engine.ndd.adapter",
+        "fields": ["record_id", "step", "reason"]
+      }
+    },
+    {
+      "name": "cli-run-degraded-success",
+      "operation": "cli",
+      "command": "run",
+      "expected": {
+        "serialized_frame": "result.dataframe",
+        "index": false,
+        "degraded_success_exit": 0,
+        "failure_details_printed": false
+      }
+    },
+    {
+      "name": "cli-preview",
+      "operation": "cli",
+      "command": "preview",
+      "expected": {
+        "render": "result.dataframe.to_string(max_colwidth=80)",
+        "failure_details_printed": false
+      }
+    },
+    {
+      "name": "telemetry-duplicate-failures",
+      "operation": "telemetry",
+      "input_count": 2,
+      "failures": ["opaque-a", "opaque-a", "opaque-b"],
+      "expected": {
+        "status": "completed",
+        "failure_count": 3,
+        "success_count": 0,
+        "deduplicate_failures": false
+      }
+    },
+    {
+      "name": "private-row-verification-exception",
+      "operation": "exception",
+      "expected": {
+        "type": "AnonymizerWorkflowError",
+        "message": "Anonymization pipeline failed.",
+        "cause": null,
+        "partial_result": false
+      }
+    },
+    {
+      "name": "pinned-platform-projection",
+      "operation": "platform",
+      "expected": {
+        "run_frames": ["result.dataframe", "result.trace_dataframe"],
+        "run_format": "parquet-index-false",
+        "metadata_key": "original_text_column",
+        "failure_fields": ["record_id", "step", "reason"],
+        "failure_order": "result.failed_records",
+        "preview_format": "json-records",
+        "claim_status": "pinned-source-only"
+      }
+    },
+    {
+      "name": "graph-released",
+      "operation": "graph",
+      "shape": "released",
+      "expected": {"admission": "rejected", "public_projection": null}
+    },
+    {
+      "name": "graph-non-success",
+      "operation": "graph",
+      "shape": "failed-cancelled-lost-withheld-inconsistent",
+      "expected": {"admission": "rejected", "public_projection": null}
+    }
+  ]
+}

@@ -15,6 +15,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_JUDGE,
     COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_MISSED_ENTITIES,
+    COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
 )
 from anonymizer.engine.evaluation.entity_coverage_judge import (
@@ -407,6 +408,47 @@ def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> 
     assert result[COL_MISSED_ENTITIES].tolist() == [[], []]
     assert RECORD_ID_COLUMN not in result.columns
     assert failed_records == [failed_record]
+
+
+def test_run_non_critical_keeps_replacement_diagnostics_out_of_workflow_seed() -> None:
+    application = {
+        "targeted_span_count": 1,
+        "applied_span_count": 1,
+        "skipped_span_count": 0,
+        "skipped_span_label_counts": {},
+    }
+    adapter = Mock()
+    adapter._attach_record_ids.side_effect = lambda dataframe: dataframe.assign(**{RECORD_ID_COLUMN: ["row-0"]})
+    workflow = EntityCoverageWorkflow(adapter=adapter)
+
+    def fake_evaluate(dataframe: pd.DataFrame, **_: object) -> JudgeResult:
+        assert COL_REPLACEMENT_APPLICATION not in dataframe.columns
+        return JudgeResult(
+            dataframe=dataframe.assign(
+                **{
+                    COL_ENTITY_COVERAGE_JUDGE: [{"candidate_entities": []}],
+                    COL_ENTITY_COVERAGE: [1.0],
+                    COL_MISSED_ENTITIES: [[]],
+                }
+            ),
+            failed_records=[],
+        )
+
+    workflow.evaluate = Mock(side_effect=fake_evaluate)
+    result, failed_records = workflow.run_non_critical(
+        pd.DataFrame(
+            {
+                "input_value": ["scored"],
+                COL_REPLACEMENT_APPLICATION: [application],
+            }
+        ),
+        model_configs=[],
+        selected_models=_stub_evaluate_selection(),
+    )
+
+    assert result[COL_ENTITY_COVERAGE].iloc[0] == 1.0
+    assert result[COL_REPLACEMENT_APPLICATION].iloc[0] is application
+    assert failed_records == []
 
 
 def test_filter_out_of_scope_entities_drops_out_of_scope_label() -> None:

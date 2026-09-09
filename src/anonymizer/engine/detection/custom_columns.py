@@ -61,10 +61,30 @@ from anonymizer.engine.schemas import (
 def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
     """Parse detector payload and produce seed entities."""
     text = str(row.get(COL_TEXT, ""))
-    entities = parse_raw_entities(
-        raw_response=str(row.get(COL_RAW_DETECTED, "")),
-        text=text,
-    )
+    raw_response = row.get(COL_RAW_DETECTED, "")
+    if isinstance(raw_response, dict):
+        structured_entities = apply_augmented_entities(
+            text=text,
+            entities=[],
+            augmented_output=raw_response,
+        )
+        entities = [
+            EntitySpan(
+                entity_id=entity.entity_id,
+                value=entity.value,
+                label=entity.label,
+                start_position=entity.start_position,
+                end_position=entity.end_position,
+                score=entity.score,
+                source="detector" if entity.source == "augmenter" else entity.source,
+            )
+            for entity in structured_entities
+        ]
+    else:
+        entities = parse_raw_entities(
+            raw_response=str(raw_response),
+            text=text,
+        )
     seed_entities = [entity.as_dict() for entity in entities]
     row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_TAG_NOTATION] = get_tag_notation(text=text)

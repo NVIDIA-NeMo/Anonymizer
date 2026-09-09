@@ -23,10 +23,7 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 
 | Alias | Model | Used by |
 |-------|-------|---------|
-| `gliner-pii-detector` | [`nvidia/gliner-pii`](https://build.nvidia.com/nvidia/gliner-pii) | Entity detection (NER) |
-| `gpt-oss-120b` | [`openai/gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Detection validation & augmentation, replacement, replace evaluation, rewriting |
-| `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, rewrite evaluation, final judge |
-| `nemotron-super` | [`nvidia/nemotron-3-super-v3`](https://build.nvidia.com/nvidia/nemotron-3-super-v3) | Entity coverage evaluation |
+| `nemotron-super` | [`nvidia/nemotron-3-super-120b-a12b`](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b) | All default detection, replacement, rewrite, and evaluation roles |
 
 Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the default configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
 
@@ -142,6 +139,8 @@ anonymizer = Anonymizer(
 ```
 
 You can pass `model_configs` as either a YAML file path or a YAML string.
+
+The detector alias selects its wire contract. The reserved `gliner-pii-detector` alias receives GLiNER-specific labels, threshold, and span parameters and must return GLiNER span JSON. Any other detector alias uses the structured LLM detector contract and returns exact entity values and labels; Anonymizer materializes those values as text spans.
 
 Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
 

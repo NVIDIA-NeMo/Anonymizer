@@ -126,6 +126,28 @@ def test_run_explicit_output(tmp_path: Path, capsys: pytest.CaptureFixture, csv_
     assert str(out_file) in capsys.readouterr().out
 
 
+def test_run_with_failed_records_remains_successful_and_does_not_print_failure_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    csv_source: Path,
+) -> None:
+    out_file = tmp_path / "degraded.csv"
+    mock_anonymizer = MagicMock()
+    mock_anonymizer.run.return_value = _make_result(num_rows=1, num_failures=2)
+
+    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
+        with pytest.raises(SystemExit) as exc_info:
+            app(["run", "--source", str(csv_source), "--replace", "redact", "--output", str(out_file)])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert out_file.exists()
+    assert "Output written to:" in captured.out
+    assert "record_id" not in captured.out
+    assert "reason" not in captured.out
+    assert captured.err == ""
+
+
 # ---------------------------------------------------------------------------
 # preview subcommand output tests
 # ---------------------------------------------------------------------------

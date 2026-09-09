@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -42,6 +43,9 @@ from anonymizer.engine.schemas import (
     EntitiesSchema,
     EntitySchema,
     RewriteOutputSchema,
+)
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
 )
 
 logger = logging.getLogger("anonymizer.rewrite.generation")
@@ -211,7 +215,7 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
     baseline, application = apply_replacements_to_spans(
         str(row.get(COL_TEXT, "")), target_entities, replacements, allow_value_fallback=False
     )
-    row[COL_REPLACEMENT_APPLICATION] = application.to_metrics()
+    row[COL_REPLACEMENT_APPLICATION] = json.dumps(application.to_metrics(), sort_keys=True)
     admitted_pairs = {(entity.value, entity.label) for entity in target_entities.entities}
     row[COL_REWRITE_REPLACEMENT_READY] = (
         replace_pairs <= admitted_pairs and application.applied_span_count == application.targeted_span_count

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -241,7 +242,7 @@ def test_prepare_rewrite_tagged_text_is_label_aware_and_preserves_tag_label() ->
     assert result[COL_REWRITE_TAGGED_TEXT] == "[[Maria|first_name]] met [[Nova|company_name]]"
     assert result[COL_REWRITE_BASELINE_TEXT] == "Maria met Nova"
     assert result[COL_REWRITE_REPLACEMENT_READY] is True
-    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 2
+    assert json.loads(result[COL_REPLACEMENT_APPLICATION])["applied_span_count"] == 2
 
 
 def test_prepare_rewrite_tagged_text_fails_closed_for_partial_map() -> None:
@@ -263,9 +264,10 @@ def test_prepare_rewrite_tagged_text_fails_closed_for_partial_map() -> None:
     }
     result = _prepare_rewrite_tagged_text(row)
     assert result[COL_REWRITE_REPLACEMENT_READY] is False
-    assert result[COL_REPLACEMENT_APPLICATION]["targeted_span_count"] == 2
-    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 1
-    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == {"first_name": 1}
+    assert json.loads(result[COL_REPLACEMENT_APPLICATION])["targeted_span_count"] == 2
+    assert json.loads(result[COL_REPLACEMENT_APPLICATION])["applied_span_count"] == 1
+    application = json.loads(result[COL_REPLACEMENT_APPLICATION])
+    assert application["skipped_span_label_counts"] == {"first_name": 1}
 
 
 def test_prepare_rewrite_tagged_text_preserves_side_effects_through_data_designer() -> None:
@@ -298,7 +300,7 @@ def test_prepare_rewrite_tagged_text_preserves_side_effects_through_data_designe
     assert result[COL_REWRITE_TAGGED_TEXT] == "[[Maria|first_name]]"
     assert result[COL_REWRITE_BASELINE_TEXT] == "Maria"
     assert result[COL_REWRITE_REPLACEMENT_READY] is True
-    assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 1
+    assert json.loads(result[COL_REPLACEMENT_APPLICATION])["applied_span_count"] == 1
 
 
 def test_prepare_rewrite_tagged_text_never_rewrites_tag_metadata() -> None:

@@ -9,7 +9,7 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines a lightweight NER model (GLiNER-PII) with LLM-based refinement. GLiNER PII produces an initial set of entity spans, then an LLM augments it with entities the NER missed and validates each detection -- keeping, reclassifying, or dropping entities based on context. 
+By default, detection uses Nemotron Super to produce an initial set of entity values, materializes those values as text spans, then validates and augments them. A custom `gliner-pii-detector` alias instead uses the GLiNER request and span-response protocol, which supports lightweight self-hosted NER.
 
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
@@ -44,7 +44,7 @@ config = AnonymizerConfig(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
-| `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
+| `gliner_threshold` | `0.3` | Confidence threshold for a detector configured with the `gliner-pii-detector` alias. It does not affect the default LLM detector. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
 
@@ -95,7 +95,7 @@ print(DEFAULT_ENTITY_LABELS)
 
 ### Custom labels
 
-When you pass `entity_labels` explicitly, the augmenter operates in **strict mode** -- it only outputs entities matching your list. When `entity_labels=None`, the augmenter can create additional labels beyond the defaults (e.g., `clinic_name`, `server_name`).
+When you pass `entity_labels` explicitly, the LLM detector and augmenter operate in **strict mode** -- they only output entities matching your list. When `entity_labels=None`, they can create additional labels beyond the defaults (e.g., `clinic_name`, `server_name`).
 
 ```python
 # Strict: only detect these 3 labels
@@ -106,7 +106,7 @@ Detect()  # entity_labels=None
 ```
 ## Tuning the threshold
 
-For `gliner_threshold`, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.
+If you configure the self-hosted `gliner-pii-detector` alias, start with the default `gliner_threshold` of `0.3`. Raise it to `0.5` to reduce false positives, or lower it to `0.2` to improve recall. The setting does not apply to the default Nemotron Super detector.
 
 ---
 
@@ -116,9 +116,9 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 
 | Role | Default alias | Purpose |
 |------|--------------|---------|
-| `entity_detector` | [`gliner-pii-detector`](https://build.nvidia.com/nvidia/gliner-pii) | GLiNER-PII NER model. |
-| `entity_validator` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Validates and reclassifies detected entities. |
-| `entity_augmenter` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Finds entities the NER model missed. |
-| `latent_detector` | [`nemotron-30b-thinking`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
+| `entity_detector` | `nemotron-super` | Finds sensitive entity values. |
+| `entity_validator` | `nemotron-super` | Validates and reclassifies detected entities. |
+| `entity_augmenter` | `nemotron-super` | Finds entities the first pass missed. |
+| `latent_detector` | `nemotron-super` | Identifies inferable entities (rewrite only). |
 
 See [Models](models.md) for how to override these.

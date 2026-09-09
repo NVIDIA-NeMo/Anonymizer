@@ -178,13 +178,13 @@ Rewrite uses multiple LLM roles. All default to models in the [default config](m
 
 | Role | Default | Purpose |
 |------|---------|---------|
-| `domain_classifier` | `gpt-oss-120b` | Classifies text domain. |
-| `disposition_analyzer` | `gpt-oss-120b` | Assigns sensitivity levels. |
-| `meaning_extractor` | `gpt-oss-120b` | Extracts meaning units. |
-| `qa_generator` | `gpt-oss-120b` | Generates QA pairs for evaluation. |
-| `rewriter` | `gpt-oss-120b` | Generates the rewritten text. |
-| `evaluator` | `nemotron-30b-thinking` | Evaluates quality and leakage. |
-| `repairer` | `gpt-oss-120b` | Repairs high-leakage rewrites. |
+| `domain_classifier` | `nemotron-super` | Classifies text domain. |
+| `disposition_analyzer` | `nemotron-super` | Assigns sensitivity levels. |
+| `meaning_extractor` | `nemotron-super` | Extracts meaning units. |
+| `qa_generator` | `nemotron-super` | Generates QA pairs for evaluation. |
+| `rewriter` | `nemotron-super` | Generates the rewritten text. |
+| `evaluator` | `nemotron-super` | Evaluates quality and leakage. |
+| `repairer` | `nemotron-super` | Repairs high-leakage rewrites. |
 
 ---
 

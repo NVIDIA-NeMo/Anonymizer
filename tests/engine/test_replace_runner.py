@@ -316,6 +316,49 @@ def test_evaluate_threads_entity_labels_and_data_summary_into_coverage_prompt(
     assert "Employee HR records." in coverage_col.prompt
 
 
+def test_evaluate_keeps_replacement_diagnostics_out_of_datadesigner_seed(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection: EvaluateModelSelection,
+) -> None:
+    """Nested diagnostic payloads are not judge inputs and may be invalid Parquet structs."""
+    application = {
+        "targeted_span_count": 1,
+        "applied_span_count": 1,
+        "skipped_span_count": 0,
+        "skipped_span_label_counts": {},
+    }
+    saved_trace = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice"],
+            COL_FINAL_ENTITIES: [{"entities": []}],
+            COL_REPLACED_TEXT: ["[REDACTED]"],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}],
+            COL_REPLACEMENT_APPLICATION: [application],
+        }
+    )
+
+    def fake_run_workflow(df: pd.DataFrame, *, columns, **_: object) -> WorkflowRunResult:
+        assert COL_REPLACEMENT_APPLICATION not in df.columns
+        out = df.copy()
+        for column in columns:
+            out[column.name] = [{"candidate_entities": []}] * len(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = fake_run_workflow
+    adapter._attach_record_ids.side_effect = lambda df: df.assign(**{RECORD_ID_COLUMN: ["id-0"]})
+
+    result = ReplacementWorkflow(adapter=adapter).evaluate(
+        saved_trace,
+        replace_method=Redact(),
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+    )
+
+    assert result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0] is application
+    assert result.dataframe[COL_ENTITY_COVERAGE].iloc[0] == 1.0
+
+
 def test_evaluate_preserves_all_rows_when_llm_drops_some(
     stub_model_configs: list[ModelConfig],
     stub_evaluate_model_selection: EvaluateModelSelection,

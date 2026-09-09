@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -21,6 +20,9 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import SensitivityDispositionSchema, StrictSensitivityDispositionSchema
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 
 
 def _get_sensitivity_disposition_prompt(

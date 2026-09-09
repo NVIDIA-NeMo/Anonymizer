@@ -151,8 +151,8 @@ for label, count in label_counts.most_common():
 # ## 📡 Sources
 #
 # - Where each entity came from in the pipeline:
-#     - `detector` -- GLiNER NER
-#     - `augmenter` -- LLM-added (missed by GLiNER)
+#     - `detector` -- the configured first-pass detector
+#     - `augmenter` -- LLM-added (missed by the configured detector)
 #     - `validator` -- LLM decision step over detector-seed entities (keep/reclass/drop); does not emit a separate source value
 #     - `name_split` -- derived from splitting full names
 #     - `propagation` -- expanded from validated entities to all text occurrences

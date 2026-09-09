@@ -9,7 +9,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
 
@@ -28,6 +27,9 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
 REPLACEMENT_MAP_SOURCE_LLM = "llm"

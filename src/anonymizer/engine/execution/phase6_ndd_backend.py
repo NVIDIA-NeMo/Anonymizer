@@ -10,7 +10,7 @@ from enum import Enum
 from typing import TypeVar
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import LLMTextColumnConfig
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 
 from anonymizer.engine.constants import (
@@ -48,6 +48,9 @@ from anonymizer.engine.execution.phase6_runtime import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 
 T = TypeVar("T", bound=BaseModel)
 

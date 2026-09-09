@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_APPLICATION,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -326,6 +327,10 @@ class RewriteWorkflow:
                 workflow_name="rewrite-pipeline",
                 preview_num_records=preview_num_records,
             )
+            if COL_REPLACEMENT_APPLICATION in pipeline_result.dataframe.columns:
+                pipeline_result.dataframe[COL_REPLACEMENT_APPLICATION] = pipeline_result.dataframe[
+                    COL_REPLACEMENT_APPLICATION
+                ].map(normalize_payload)
             entity_rows = _join_new_columns(entity_rows, pipeline_result.dataframe)
             all_failed.extend(pipeline_result.failed_records)
             all_failed_row_evidence.extend(pipeline_result.failed_row_evidence)

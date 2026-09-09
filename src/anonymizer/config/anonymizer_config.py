@@ -80,7 +80,10 @@ class Detect(BaseModel):
         ),
     )
     gliner_threshold: float = Field(
-        default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for a detector configured with the gliner-pii-detector alias (0.0-1.0).",
     )
     validation_max_entities_per_call: int = Field(
         default=100,

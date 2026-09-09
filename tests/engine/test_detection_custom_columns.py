@@ -73,6 +73,31 @@ def test_parse_produces_seed_entities_and_notation() -> None:
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
 
 
+def test_parse_structured_detector_output_materializes_canonical_spans() -> None:
+    text = "Alice Example met Alice in Austin at alice@example.test."
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: {
+            "entities": [
+                {"value": "Alice Example", "label": "full_name"},
+                {"value": "Austin", "label": "city"},
+                {"value": "alice@example.test", "label": "email"},
+            ]
+        },
+    }
+
+    result = parse_detected_entities(row)
+    entities = result[COL_SEED_ENTITIES]["entities"]
+
+    assert [(item["value"], item["label"], item["start_position"], item["end_position"]) for item in entities] == [
+        ("Alice Example", "full_name", 0, 13),
+        ("Alice", "first_name", 18, 23),
+        ("Austin", "city", 27, 33),
+        ("alice@example.test", "email", 37, 55),
+    ]
+    assert [item["source"] for item in entities] == ["detector", "name_split", "detector", "detector"]
+
+
 def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "Alice works at Acme in Seattle.",

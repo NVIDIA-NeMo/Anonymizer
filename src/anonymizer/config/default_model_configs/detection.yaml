@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 selected_models:
-  entity_detector: gliner-pii-detector
-  entity_validator: gpt-oss-120b
-  entity_augmenter: gpt-oss-120b
-  latent_detector: nemotron-30b-thinking
+  entity_detector: nemotron-super
+  entity_validator: nemotron-super
+  entity_augmenter: nemotron-super
+  latent_detector: nemotron-super

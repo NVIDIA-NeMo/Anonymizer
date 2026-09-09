@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -21,6 +21,9 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
+from anonymizer.engine.workflow_columns.structured.config import (
+    TolerantStructuredColumnConfig as LLMStructuredColumnConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Single source of truth for rewrite-domain metadata.

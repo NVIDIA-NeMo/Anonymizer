@@ -23,6 +23,7 @@ anonymizer = "anonymizer.interface.cli.main:main"
 [project.entry-points."data_designer.plugins"]
 anonymizer-detection-transform = "anonymizer.engine.workflow_columns.detection.plugins:detection_transform_plugin"
 anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.plugins:chunked_validation_plugin"
+anonymizer-tolerant-structured = "anonymizer.engine.workflow_columns.structured.plugins:tolerant_structured_plugin"
 
 [dependency-groups]
 dev = [

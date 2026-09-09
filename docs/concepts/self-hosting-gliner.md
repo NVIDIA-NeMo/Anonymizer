@@ -3,7 +3,7 @@
 
 # Self-hosting GLiNER
 
-By default, Anonymizer's entity detection stage calls the hosted `nvidia/gliner-pii` model on `build.nvidia.com`. For PHI-sensitive workloads that cannot leave the host, or latency-critical setups, you can serve GLiNER locally instead.
+By default, Anonymizer's entity detection stage uses Nemotron Super on `build.nvidia.com`. For PHI-sensitive workloads that cannot leave the host, or latency-critical setups, you can replace that role with a locally served GLiNER detector.
 
 The model is small (~500 MB) and runs comfortably on CPU — making it a good fit to run alongside a local LLM without competing for GPU memory. It also runs on GPU if one is available, which cuts detection latency on long documents.
 
@@ -169,7 +169,7 @@ An empty `"entities": []` means either no `labels` in the request matched real P
 
 ## Pointing Anonymizer at the local server
 
-Pass separate `model_providers` and `model_configs` files to `Anonymizer`. **`model_configs` replaces the entire model pool** — it is not merged with defaults. Copy the bundled [`models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/models.yaml), change only the `gliner-pii-detector` entry's `provider`, and keep the other default aliases (`gpt-oss-120b`, `nemotron-30b-thinking`). Default role→alias mappings still apply unless you override `selected_models` (see [Custom models](models.md#custom-models)).
+Pass separate `model_providers` and `model_configs` files to `Anonymizer`. **`model_configs` replaces the entire model pool** — it is not merged with defaults. Keep the bundled `nemotron-super` entry, add the local `gliner-pii-detector` entry, and override the `entity_detector` role as shown below. Other roles retain their `nemotron-super` defaults.
 
 Custom `model_providers` also replaces the provider list, so include both your local GLiNER endpoint and the `nvidia` provider used by the LLM roles:
 
@@ -191,6 +191,10 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 ```
 
 ```yaml title="models.yaml"
+selected_models:
+  detection:
+    entity_detector: gliner-pii-detector
+
 model_configs:
   - alias: gliner-pii-detector
     model: nvidia/gliner-pii
@@ -200,8 +204,8 @@ model_configs:
       max_parallel_requests: 8   # send concurrent rows; the reference server batches them
       timeout: 120
 
-  - alias: gpt-oss-120b
-    model: openai/gpt-oss-120b
+  - alias: nemotron-super
+    model: nvidia/nemotron-3-super-120b-a12b
     provider: nvidia
     inference_parameters:
       max_parallel_requests: 16
@@ -209,16 +213,10 @@ model_configs:
       temperature: 0.3
       top_p: 0.95
       timeout: 300
-
-  - alias: nemotron-30b-thinking
-    model: nvidia/nemotron-3-nano-30b-a3b
-    provider: nvidia
-    inference_parameters:
-      max_parallel_requests: 16
-      max_tokens: 8192
-      temperature: 0.4
-      top_p: 1.0
-      timeout: 300
+      extra_body:
+        reasoning_effort: none
+        chat_template_kwargs:
+          enable_thinking: false
 ```
 
 ```python
