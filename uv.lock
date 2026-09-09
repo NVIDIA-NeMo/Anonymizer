@@ -2464,6 +2464,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pygments" },
+    { name = "regex" },
     { name = "tiktoken" },
 ]
 
@@ -2506,6 +2507,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "pydantic-settings", specifier = ">=2.12,<3" },
     { name = "pygments", specifier = ">=2.20.0" },
+    { name = "regex", specifier = ">=2025.11.3" },
     { name = "tiktoken", specifier = ">=0.9.0" },
 ]
 

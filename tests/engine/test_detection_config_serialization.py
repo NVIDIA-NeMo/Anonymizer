@@ -27,14 +27,16 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 from anonymizer.engine.workflow_columns.detection.plugins import (
     chunked_validation_plugin,
     detection_transform_plugin,
+    regex_detection_plugin,
 )
 
 
-@pytest.mark.parametrize("plugin", [detection_transform_plugin, chunked_validation_plugin])
+@pytest.mark.parametrize("plugin", [detection_transform_plugin, chunked_validation_plugin, regex_detection_plugin])
 def test_detection_plugin_satisfies_data_designer_contract(plugin: Plugin) -> None:
     assert_valid_plugin(plugin)
 
@@ -72,7 +74,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert seed_config.selection_strategy == PartitionBlock(index=1, num_partitions=3)
 
     columns = restored.get_column_configs()
-    assert len(columns) == 9
+    assert len(columns) == 10
     assert all(column.column_type != "custom" for column in columns)
 
     transforms = [column for column in columns if isinstance(column, DetectionTransformConfig)]
@@ -85,10 +87,14 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert validation.pool == parsed_models.selected_models.detection.entity_validator
     assert "Customer support messages" in validation.prompt_template
 
+    regex_detection = next(column for column in columns if isinstance(column, RegexDetectionConfig))
+    assert [rule.label for rule in regex_detection.rules] == ["email"]
+
     serialized = json.loads(payload)
     serialized_text = json.dumps(serialized)
     assert "anonymizer-detection-transform" in serialized_text
     assert "anonymizer-chunked-validation" in serialized_text
+    assert "anonymizer-regex-detection" in serialized_text
     assert "generator_function" not in serialized_text
     assert "generator_params" not in serialized_text
 
@@ -138,3 +144,4 @@ Path(sys.argv[2]).write_text(json.dumps(columns))
     restored_types = {(column["column_type"], column["class_name"]) for column in restored_columns}
     assert ("anonymizer-detection-transform", "DetectionTransformConfig") in restored_types
     assert ("anonymizer-chunked-validation", "ChunkedValidationConfig") in restored_types
+    assert ("anonymizer-regex-detection", "RegexDetectionConfig") in restored_types

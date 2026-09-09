@@ -44,6 +44,7 @@ regulatory and business context.
 
 - **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected. To add domain labels, *extend* the default, don't replace it: `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", ...]` (`DEFAULT_ENTITY_LABELS` is a tuple, so unpack it into a list). Match the snake_case convention of `DEFAULT_ENTITY_LABELS`.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
+- **Built-in regex recognition is on by default** for `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url` whenever those labels are in scope. Users normally omit `builtin_regexes=True`; use `builtin_regexes=False` to disable all built-ins. The single `regex_rules` list accepts `BuiltinRegex(label="email", enabled=False)` to configure one built-in and `RegexRule(...)` for custom patterns. Both default `validate_with_llm` to `True`.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
@@ -104,6 +105,7 @@ from anonymizer import (
     AnonymizerInput,
     DEFAULT_ENTITY_LABELS,
     Detect,
+    BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult,
     # Pick what you need:
     # Replace mode:
     Substitute, Redact, Annotate, Hash,
@@ -124,6 +126,8 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
         # Add domain labels by *extending* the default, not replacing it.
         # entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code"],
         gliner_threshold=0.3,  # default; lower (0.2) for recall, raise (0.5) for cost savings
+        # Built-in regexes are enabled by default for supported labels in scope.
+        # regex_rules=[RegexRule(label="ticket_id", pattern=r"TKT-\d+", validate_with_llm=True)],
     )
 
     # ---- Pick ONE of the two strategies below ----

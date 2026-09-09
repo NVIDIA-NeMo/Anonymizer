@@ -17,6 +17,7 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
@@ -27,6 +28,7 @@ from anonymizer.engine.constants import (
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
@@ -42,6 +44,12 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
+from anonymizer.engine.detection.regex_detection import (
+    DEFAULT_MAX_MATCHES_PER_RULE,
+    DEFAULT_REGEX_TIMEOUT_SECONDS,
+    resolve_regex_rules,
+    validate_exportable_regex_rules,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
@@ -55,6 +63,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 from anonymizer.measurement import stage_timer
 
@@ -94,6 +103,8 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
@@ -113,6 +124,8 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            builtin_regexes=builtin_regexes,
+            regex_rules=regex_rules,
             data_summary=data_summary,
         )
         detection_result = self._adapter.run_workflow(
@@ -135,6 +148,8 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
         """Build the (model_configs, columns) for the core detection workflow.
@@ -143,7 +158,13 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
-        labels = _resolve_detection_labels(entity_labels)
+        custom_rules = regex_rules or []
+        labels = _resolve_detection_labels(entity_labels, regex_rules=custom_rules)
+        resolved_regex_rules = resolve_regex_rules(
+            labels=labels,
+            builtin_regexes=builtin_regexes,
+            rules=custom_rules,
+        )
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -178,6 +199,12 @@ class EntityDetectionWorkflow:
         columns = cast(
             list[ColumnConfigT],
             [
+                RegexDetectionConfig(
+                    name=COL_REGEX_ENTITIES,
+                    rules=resolved_regex_rules,
+                    timeout_seconds=DEFAULT_REGEX_TIMEOUT_SECONDS,
+                    max_matches_per_rule=DEFAULT_MAX_MATCHES_PER_RULE,
+                ),
                 LLMTextColumnConfig(
                     name=COL_RAW_DETECTED,
                     prompt=_jinja(COL_TEXT),
@@ -240,6 +267,8 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
@@ -247,6 +276,7 @@ class EntityDetectionWorkflow:
         as :meth:`detect_and_validate_entities` (culminating in final entities); the
         external runtime supplies the model providers and the seed dataset.
         """
+        validate_exportable_regex_rules(regex_rules)
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -255,6 +285,8 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            builtin_regexes=builtin_regexes,
+            regex_rules=regex_rules,
             data_summary=data_summary,
         )
         return self._adapter.build_config(
@@ -275,6 +307,8 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
@@ -287,6 +321,7 @@ class EntityDetectionWorkflow:
         orchestrator), the plugin column configs remain serializable and the model aliases
         are resolved by the runtime's providers.
         """
+        validate_exportable_regex_rules(regex_rules)
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -295,6 +330,8 @@ class EntityDetectionWorkflow:
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
+            builtin_regexes=builtin_regexes,
+            regex_rules=regex_rules,
             data_summary=data_summary,
         )
         return self._adapter.build_config_for_seed(
@@ -360,6 +397,8 @@ class EntityDetectionWorkflow:
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -390,6 +429,8 @@ class EntityDetectionWorkflow:
                 validation_excerpt_window_chars=validation_excerpt_window_chars,
                 validation_single_chunk_full_text=validation_single_chunk_full_text,
                 entity_labels=entity_labels,
+                builtin_regexes=builtin_regexes,
+                regex_rules=regex_rules,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
             )
@@ -455,9 +496,21 @@ class EntityDetectionWorkflow:
         return resolved
 
 
-def _resolve_detection_labels(entity_labels: list[str] | None) -> list[str]:
+def _resolve_detection_labels(
+    entity_labels: list[str] | None,
+    *,
+    regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+) -> list[str]:
     if entity_labels is None:
-        return list(DEFAULT_ENTITY_LABELS)
+        labels = list(DEFAULT_ENTITY_LABELS)
+        known = set(labels)
+        for rule in regex_rules or []:
+            if isinstance(rule, BuiltinRegex):
+                continue
+            if rule.label not in known:
+                labels.append(rule.label)
+                known.add(rule.label)
+        return labels
     return list(entity_labels)
 
 

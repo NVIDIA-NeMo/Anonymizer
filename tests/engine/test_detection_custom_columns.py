@@ -18,6 +18,8 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
@@ -30,6 +32,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.custom_columns import (
     _parse_entity_spans,
     apply_validation_and_finalize,
+    apply_validation_to_seed_entities,
     enrich_validation_decisions,
     merge_and_build_candidates,
     parse_detected_entities,
@@ -66,11 +69,49 @@ def test_parse_produces_seed_entities_and_notation() -> None:
             },
         ]
     )
-    row: dict[str, Any] = {COL_TEXT: text, COL_RAW_DETECTED: raw}
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: raw,
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
     result = parse_detected_entities(row)
     assert len(result[COL_SEED_ENTITIES]["entities"]) == 1
     assert result[COL_SEED_ENTITIES]["entities"][0]["value"] == "(555) 123-4567"
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
+
+
+def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:
+    entity = {
+        "id": "email_6_23",
+        "value": "alice@example.com",
+        "label": "email",
+        "start_position": 6,
+        "end_position": 23,
+        "score": 1.0,
+        "source": "regex_builtin:nemo.email.v1",
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "Email alice@example.com",
+        COL_SEED_ENTITIES: {"entities": [entity]},
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "email_6_23",
+                    "value": "alice@example.com",
+                    "label": "email",
+                    "decision": "drop",
+                    "proposed_label": "",
+                    "reason": "test",
+                }
+            ]
+        },
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [entity]},
+    }
+
+    result = apply_validation_to_seed_entities(row)
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [entity]
 
 
 def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:
