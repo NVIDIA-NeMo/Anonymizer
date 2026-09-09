@@ -53,7 +53,10 @@ from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
-from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
+from anonymizer.engine.rewrite.rewrite_generation import (
+    RewriteGenerationWorkflow,
+    restore_empty_skipped_span_label_counts,
+)
 from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteResult,
     RewriteWorkflow,
@@ -520,6 +523,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 workflow_name="rewrite-combined",
                 preview_num_records=preview_num_records,
             )
+            restore_empty_skipped_span_label_counts(run_result.dataframe)
             entity_rows = _join_new_columns(entity_rows, run_result.dataframe)
             entity_rows = entity_rows.drop(columns=graph.internal_columns, errors="ignore")
             _apply_passthrough_defaults(passthrough_rows)

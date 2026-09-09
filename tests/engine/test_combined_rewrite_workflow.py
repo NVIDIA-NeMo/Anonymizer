@@ -27,6 +27,7 @@ from anonymizer.engine.constants import (
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_APPLICATION,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
@@ -300,6 +301,55 @@ def test_run_executes_one_data_designer_workflow(
     assert stage_records[0]["input_row_count"] == 1
     assert stage_records[0]["output_row_count"] == 1
     assert stage_records[0]["failed_record_count"] == 0
+
+
+def test_run_restores_skipped_span_label_counts_json_string_to_dict(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """CombinedRewriteWorkflow reuses RewriteGenerationWorkflow's columns, which encode
+    ``skipped_span_label_counts`` as a JSON string for Parquet schema stability. The
+    combined-graph path must restore it to a dict in the final trace, same as the
+    legacy RewriteWorkflow path, or measurement parsing silently drops real counts to {}.
+    """
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+        }
+    )
+    output = dataframe.copy()
+    output[COL_REWRITTEN_TEXT] = "Maria works at a company"
+    output[COL_UTILITY_SCORE] = 0.9
+    output[COL_LEAKAGE_MASS] = 0.1
+    output[COL_WEIGHTED_LEAKAGE_RATE] = 0.05
+    output[COL_ANY_HIGH_LEAKED] = False
+    output[COL_NEEDS_REPAIR] = False
+    output[COL_REPAIR_ITERATIONS] = 1
+    output[COL_NEEDS_HUMAN_REVIEW] = False
+    output[COL_REPLACEMENT_APPLICATION] = [
+        {
+            "targeted_span_count": 2,
+            "applied_span_count": 1,
+            "skipped_span_count": 1,
+            "skipped_span_label_counts": '{"first_name": 1}',
+        }
+    ]
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=output, failed_records=[])
+
+    result = CombinedRewriteWorkflow(adapter=adapter).run(
+        dataframe,
+        model_configs=stub_model_configs,
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=2),
+    )
+
+    counts = result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"]
+    assert counts == {"first_name": 1}
 
 
 def test_run_reports_combined_failure_and_drops_only_failed_entity_row(

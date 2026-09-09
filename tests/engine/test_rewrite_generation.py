@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pandas as pd
 import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
@@ -35,6 +36,7 @@ from anonymizer.engine.rewrite.rewrite_generation import (
     _format_rewrite_disposition_block,
     _get_rewrite_prompt,
     _prepare_rewrite_tagged_text,
+    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.schemas import EntityReplacementMapSchema, RewriteOutputSchema
 
@@ -265,7 +267,7 @@ def test_prepare_rewrite_tagged_text_fails_closed_for_partial_map() -> None:
     assert result[COL_REWRITE_REPLACEMENT_READY] is False
     assert result[COL_REPLACEMENT_APPLICATION]["targeted_span_count"] == 2
     assert result[COL_REPLACEMENT_APPLICATION]["applied_span_count"] == 1
-    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == {"first_name": 1}
+    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == '{"first_name": 1}'
 
 
 def test_prepare_rewrite_tagged_text_preserves_side_effects_through_data_designer() -> None:
@@ -340,6 +342,177 @@ def test_rewrite_replacement_fails_closed_for_absent_or_malformed_map(replacemen
 
     assert result[COL_REWRITE_REPLACEMENT_READY] is False
     assert result[COL_REWRITE_BASELINE_TEXT] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Parquet-safe skipped_span_label_counts round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_rewrite_tagged_text_serializes_zero_skipped_spans_as_json_string() -> None:
+    """When nothing is skipped, the diagnostic dict must not reach DataDesigner as a bare `{}`.
+
+    A dict column that is `{}` on some rows and non-empty on others gets inferred
+    as incompatible Arrow types (`null` vs. `struct`) across independently-checkpointed
+    Parquet batches, so `_prepare_rewrite_tagged_text` always encodes it as a JSON
+    string -- a stable Arrow type regardless of content.
+    """
+    row = {
+        COL_TEXT: "Alice",
+        COL_FINAL_ENTITIES: {
+            "entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice|first_name]]",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_count"] == 0
+    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == "{}"
+
+
+def test_prepare_rewrite_tagged_text_no_targeted_spans_serializes_as_json_string() -> None:
+    """Rows with zero targeted spans hit the early-return path in apply_replacements_to_spans."""
+    row = {
+        COL_TEXT: "Nothing sensitive here",
+        COL_FINAL_ENTITIES: {"entities": []},
+        COL_REPLACEMENT_MAP: {"replacements": []},
+        COL_REWRITE_DISPOSITION_BLOCK: [],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "Nothing sensitive here",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REPLACEMENT_APPLICATION]["targeted_span_count"] == 0
+    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == "{}"
+
+
+def test_prepare_rewrite_tagged_text_serializes_non_empty_skipped_label_counts_as_json_string() -> None:
+    row = {
+        COL_TEXT: "Alice met Bob",
+        COL_FINAL_ENTITIES: {
+            "entities": [
+                {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                {"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 13},
+            ]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+            {"entity_value": "Bob", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice|first_name]] met [[Bob|first_name]]",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == '{"first_name": 1}'
+
+
+def test_restore_empty_skipped_span_label_counts_mixed_empty_and_non_empty() -> None:
+    df = pd.DataFrame(
+        {
+            COL_REPLACEMENT_APPLICATION: [
+                {
+                    "targeted_span_count": 1,
+                    "applied_span_count": 1,
+                    "skipped_span_count": 0,
+                    "skipped_span_label_counts": "{}",
+                },
+                {
+                    "targeted_span_count": 2,
+                    "applied_span_count": 1,
+                    "skipped_span_count": 1,
+                    "skipped_span_label_counts": '{"first_name": 1}',
+                },
+            ]
+        }
+    )
+    restore_empty_skipped_span_label_counts(df)
+    assert df[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"] == {}
+    assert df[COL_REPLACEMENT_APPLICATION].iloc[1]["skipped_span_label_counts"] == {"first_name": 1}
+
+
+def test_restore_empty_skipped_span_label_counts_restores_final_trace_contract() -> None:
+    """The public `ReplacementApplication.to_metrics()` contract always returns a dict."""
+    df = pd.DataFrame(
+        {
+            COL_REPLACEMENT_APPLICATION: [
+                {
+                    "targeted_span_count": 0,
+                    "applied_span_count": 0,
+                    "skipped_span_count": 0,
+                    "skipped_span_label_counts": "{}",
+                },
+            ]
+        }
+    )
+    restore_empty_skipped_span_label_counts(df)
+    counts = df[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"]
+    assert counts == {}
+    assert isinstance(counts, dict)
+
+
+def test_restore_empty_skipped_span_label_counts_noop_when_column_absent() -> None:
+    df = pd.DataFrame({"other_column": [1, 2, 3]})
+    restore_empty_skipped_span_label_counts(df)
+    assert list(df.columns) == ["other_column"]
+
+
+def test_skipped_span_label_counts_survives_multi_file_parquet_dataset(tmp_path) -> None:
+    """Regression for schema drift across independently-checkpointed Parquet batches.
+
+    Before JSON-string encoding, writing an all-empty batch and a non-empty batch to
+    separate Parquet files (as DataDesigner's checkpointing does) produced incompatible
+    inferred types (`null` vs. `struct<...>`), and reading them back as one dataset
+    raised ``ArrowNotImplementedError: Unsupported cast from struct<...> to null``.
+    """
+    pyarrow = pytest.importorskip("pyarrow")
+    pyarrow_dataset = pytest.importorskip("pyarrow.dataset")
+    pyarrow_parquet = pytest.importorskip("pyarrow.parquet")
+
+    empty_row = _prepare_rewrite_tagged_text(
+        {
+            COL_TEXT: "Nothing sensitive here",
+            COL_FINAL_ENTITIES: {"entities": []},
+            COL_REPLACEMENT_MAP: {"replacements": []},
+            COL_REWRITE_DISPOSITION_BLOCK: [],
+            COL_TAG_NOTATION: "bracket",
+            COL_TAGGED_TEXT: "Nothing sensitive here",
+        }
+    )
+    non_empty_row = _prepare_rewrite_tagged_text(
+        {
+            COL_TEXT: "Alice met Bob",
+            COL_FINAL_ENTITIES: {
+                "entities": [
+                    {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                    {"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 13},
+                ]
+            },
+            COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+            COL_REWRITE_DISPOSITION_BLOCK: [
+                {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+                {"entity_value": "Bob", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+            ],
+            COL_TAG_NOTATION: "bracket",
+            COL_TAGGED_TEXT: "[[Alice|first_name]] met [[Bob|first_name]]",
+        }
+    )
+
+    empty_batch_df = pd.DataFrame({COL_REPLACEMENT_APPLICATION: [empty_row[COL_REPLACEMENT_APPLICATION]]})
+    non_empty_batch_df = pd.DataFrame({COL_REPLACEMENT_APPLICATION: [non_empty_row[COL_REPLACEMENT_APPLICATION]]})
+
+    pyarrow_parquet.write_table(pyarrow.Table.from_pandas(empty_batch_df), tmp_path / "batch-0.parquet")
+    pyarrow_parquet.write_table(pyarrow.Table.from_pandas(non_empty_batch_df), tmp_path / "batch-1.parquet")
+
+    dataset = pyarrow_dataset.dataset(tmp_path, format="parquet")
+    combined = dataset.to_table().to_pandas()
+
+    restore_empty_skipped_span_label_counts(combined)
+    assert combined[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"] == {}
+    assert combined[COL_REPLACEMENT_APPLICATION].iloc[1]["skipped_span_label_counts"] == {"first_name": 1}
 
 
 # ---------------------------------------------------------------------------
