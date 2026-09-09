@@ -23,6 +23,8 @@ from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
@@ -44,6 +46,7 @@ from anonymizer.engine.detection.postprocess import (
     expand_entity_occurrences,
     filter_excluded_entity_spans,
     get_tag_notation,
+    merge_entity_sources,
     normalize_label,
     normalize_labels,
     parse_raw_entities,
@@ -58,16 +61,30 @@ from anonymizer.engine.schemas import (
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_RAW_DETECTED],
+    required_columns=[COL_TEXT, COL_RAW_DETECTED, COL_REGEX_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_TAG_NOTATION],
 )
 def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
     """Parse detector payload and produce seed entities."""
     text = str(row.get(COL_TEXT, ""))
-    entities = parse_raw_entities(
+    detector_entities = parse_raw_entities(
         raw_response=str(row.get(COL_RAW_DETECTED, "")),
         text=text,
     )
+    regex_entities = _parse_entity_spans(row.get(COL_REGEX_ENTITIES, {}))
+    accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    accepted_identities = {(entity.label, entity.start_position, entity.end_position) for entity in accepted_regex}
+    detector_entities = [
+        entity
+        for entity in detector_entities
+        if (entity.label, entity.start_position, entity.end_position) not in accepted_identities
+    ]
+    regex_entities = [
+        entity
+        for entity in regex_entities
+        if (entity.label, entity.start_position, entity.end_position) not in accepted_identities
+    ]
+    entities = merge_entity_sources(regex_entities, detector_entities)
     seed_entities = [entity.as_dict() for entity in entities]
     row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_TAG_NOTATION] = get_tag_notation(text=text)
@@ -107,7 +124,7 @@ def merge_and_build_candidates(
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
 )
 def apply_validation_to_seed_entities(
@@ -118,10 +135,12 @@ def apply_validation_to_seed_entities(
     """Apply validation decisions to detector entities before augmentation."""
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
-    validated_seed = apply_validation_decisions(
+    llm_validated_seed = apply_validation_decisions(
         entities=seed_spans,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
+    accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    validated_seed = merge_entity_sources(accepted_regex, llm_validated_seed)
     validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
@@ -174,7 +193,7 @@ def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
+    required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_TAGGED_TEXT],
 )
 def apply_validation_and_finalize(
@@ -190,11 +209,13 @@ def apply_validation_and_finalize(
         entities=merged,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
+    accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    protected = merge_entity_sources(accepted_regex, validated)
     if allowed_entity_labels is not None:
         allowed = normalize_labels(allowed_entity_labels)
-        validated = [entity for entity in validated if normalize_label(entity.label) in allowed]
-    validated = filter_excluded_entity_spans(validated, excluded_entity_labels)
-    expanded = expand_entity_occurrences(text=text, entities=validated)
+        protected = [entity for entity in protected if normalize_label(entity.label) in allowed]
+    protected = filter_excluded_entity_spans(protected, excluded_entity_labels)
+    expanded = expand_entity_occurrences(text=text, entities=protected)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
         mode="json"
     )

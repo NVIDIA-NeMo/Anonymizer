@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
@@ -125,6 +126,14 @@ class Detect(BaseModel):
             "validator sees per chunk; it is NOT the LLM's context window limit."
         ),
     )
+    builtin_regexes: bool = Field(
+        default=True,
+        description="Run built-in regex recognizers for labels in the effective detection scope.",
+    )
+    regex_rules: list[BuiltinRegex | RegexRule] = Field(
+        default_factory=list,
+        description="Per-label built-in settings and user-defined regex candidate rules.",
+    )
 
     @field_validator("entity_labels")
     @classmethod
@@ -209,6 +218,22 @@ class Detect(BaseModel):
             raise ValueError(
                 f"excluded_entity_labels entirely overlaps {source}, leaving an empty effective detection set."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_regex_rule_scope(self) -> Detect:
+        custom_rules = [rule for rule in self.regex_rules if isinstance(rule, RegexRule)]
+        builtin_rules = [rule for rule in self.regex_rules if isinstance(rule, BuiltinRegex)]
+        identities = [(rule.label, rule.pattern) for rule in custom_rules]
+        if len(set(identities)) != len(identities):
+            raise ValueError("regex_rules contains duplicate label and pattern pairs.")
+        builtin_labels = [rule.label for rule in builtin_rules]
+        if len(set(builtin_labels)) != len(builtin_labels):
+            raise ValueError("regex_rules contains duplicate built-in labels.")
+        if self.entity_labels is not None:
+            missing = sorted({rule.label for rule in custom_rules} - set(self.entity_labels))
+            if missing:
+                raise ValueError(f"Regex rule labels {missing!r} are missing from explicit entity_labels.")
         return self
 
 

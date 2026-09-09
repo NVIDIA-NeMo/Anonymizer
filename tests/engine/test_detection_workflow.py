@@ -15,6 +15,7 @@ from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
 
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.regex import RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
@@ -42,6 +43,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_latent_prompt,
     _get_validation_prompt,
     _materialize_final_entities,
+    _resolve_detection_labels,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -417,6 +419,20 @@ def test_resolve_entity_label_config_none_uses_defaults() -> None:
 def test_resolve_entity_label_config_does_not_append_defaults_for_explicit_label_set() -> None:
     label_config = resolve_entity_label_config(entity_labels=["non_default_label"])
     assert label_config.labels == ["non_default_label"]
+
+
+def test_resolve_detection_labels_adds_custom_regex_labels_to_defaults() -> None:
+    merged = _resolve_detection_labels(
+        None,
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-\d+")],
+    )
+
+    assert merged == [*DEFAULT_ENTITY_LABELS, "support_case"]
+
+
+def test_resolve_detection_labels_does_not_append_defaults_when_custom_labels_provided() -> None:
+    merged = _resolve_detection_labels(["custom_label"])
+    assert merged == ["custom_label"]
 
 
 def test_resolve_entity_label_config_normalizes_provided_labels() -> None:
