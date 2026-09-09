@@ -9,7 +9,7 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines a lightweight NER model (GLiNER-PII) with LLM-based refinement. GLiNER PII produces an initial set of entity spans, then an LLM augments it with entities the NER missed and validates each detection -- keeping, reclassifying, or dropping entities based on context. 
+Detection combines built-in regex recognizers, a lightweight NER model (GLiNER-PII), and LLM-based refinement. Regex and GLiNER candidates are merged, then an LLM augments them with entities the other detectors missed and validates each candidate -- keeping, reclassifying, or dropping entities based on context.
 
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
@@ -47,6 +47,79 @@ config = AnonymizerConfig(
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
+| `builtin_regexes` | `True` | Run built-in regex recognizers when their labels are in the effective detection label set. |
+| `regex_rules` | `[]` | Per-label `BuiltinRegex` settings and user-defined `RegexRule` recognizers. |
+
+## Regex recognition
+
+Built-in regex recognition is enabled by default. Users normally do not write `builtin_regexes=True`; selecting a supported label is enough:
+
+```python
+Detect(entity_labels=["email", "url"])
+```
+
+The initial built-in labels are `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url`. These are jurisdiction-neutral technical and payment formats rather than country-issued identifiers. Email and URL matching supports Unicode domains, including IDNA-compatible and CJK domains. Each recognizer combines a regex candidate pattern with structural validation, such as Luhn for payment cards and address parsing for IP values.
+
+Built-in matches receive the same contextual LLM validation as GLiNER matches by default. Disable it for a specific built-in when its deterministic checks are sufficient for your application:
+
+```python
+from anonymizer import BuiltinRegex, Detect
+
+detect = Detect(
+    entity_labels=["email", "ipv4"],
+    regex_rules=[BuiltinRegex(label="ipv4", validate_with_llm=False)],
+)
+```
+
+Set `builtin_regexes=False` on `Detect` to disable all built-in recognizers while retaining GLiNER and LLM detection.
+
+To replace one built-in while keeping the others, disable that label and add a
+custom rule with the same label:
+
+```python
+from anonymizer import BuiltinRegex, Detect, RegexRule
+
+detect = Detect(
+    regex_rules=[
+        BuiltinRegex(label="email", enabled=False),
+        RegexRule(
+            label="email",
+            pattern=MY_EMAIL_PATTERN,
+            validator=my_email_validator,
+        )
+    ],
+)
+```
+
+### Custom regex rules and validators
+
+`regex_rules` is the single collection for built-in settings and custom recognizers. Use `BuiltinRegex` to configure one curated recognizer and `RegexRule` for domain identifiers. `validate_with_llm` defaults to `True` on both types, so a regex match still receives contextual review unless explicitly disabled.
+
+```python
+from anonymizer import Detect, RegexCandidate, RegexRule, RegexValidationResult
+
+
+def validate_support_case(candidate: RegexCandidate) -> RegexValidationResult:
+    number = candidate.groups["number"]
+    return RegexValidationResult(valid=not number.startswith("000"))
+
+
+detect = Detect(
+    entity_labels=["support_case"],
+    regex_rules=[
+        RegexRule(
+            label="support_case",
+            pattern=r"CASE-(?P<number>\d{6})",
+            validator=validate_support_case,
+            # validate_with_llm=True is the default
+        )
+    ],
+)
+```
+
+A validator receives the matched value, character offsets, named capture groups, nearby context, and the rule ID. It returns `bool` or `RegexValidationResult`. Direct callables work for in-process `run()` and `preview()` calls. Exported detection configurations require a validator package registered under the `nemo_anonymizer.regex_validators` Python entry-point group; pass that entry-point name as `validator` so every worker resolves the same code.
+
+When `entity_labels` is explicit, it must include every custom rule label. With `entity_labels=None`, custom rule labels are added to the default detection scope automatically.
 
 ---
 

@@ -15,6 +15,7 @@ dependencies = [
     "cryptography>=46.0.6",
     "httpx>=0.27.0",
     "tiktoken>=0.9.0",
+    "regex>=2025.11.3",
 ]
 
 [project.scripts]
@@ -23,6 +24,7 @@ anonymizer = "anonymizer.interface.cli.main:main"
 [project.entry-points."data_designer.plugins"]
 anonymizer-detection-transform = "anonymizer.engine.workflow_columns.detection.plugins:detection_transform_plugin"
 anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.plugins:chunked_validation_plugin"
+anonymizer-regex-detection = "anonymizer.engine.workflow_columns.detection.plugins:regex_detection_plugin"
 
 [dependency-groups]
 dev = [

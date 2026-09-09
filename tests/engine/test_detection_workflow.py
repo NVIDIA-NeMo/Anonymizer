@@ -14,6 +14,7 @@ from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
 
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.regex import RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
@@ -334,6 +335,15 @@ def test_resolve_model_aliases_wraps_scalar_roles() -> None:
 def test_resolve_detection_labels_none_uses_defaults() -> None:
     merged = _resolve_detection_labels(None)
     assert merged == DEFAULT_ENTITY_LABELS
+
+
+def test_resolve_detection_labels_adds_custom_regex_labels_to_defaults() -> None:
+    merged = _resolve_detection_labels(
+        None,
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-\d+")],
+    )
+
+    assert merged == [*DEFAULT_ENTITY_LABELS, "support_case"]
 
 
 def test_resolve_detection_labels_does_not_append_defaults_when_custom_labels_provided() -> None:

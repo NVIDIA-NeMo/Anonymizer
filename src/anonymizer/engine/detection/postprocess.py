@@ -263,6 +263,40 @@ def resolve_overlaps(entities: list[EntitySpan], *, prefer_highest_score: bool =
     return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
 
 
+def merge_entity_sources(*sources: list[EntitySpan]) -> list[EntitySpan]:
+    """Merge detection sources with deterministic provenance-aware tie breaking.
+
+    Source order is priority order. Longer spans still win genuine overlap
+    conflicts; source priority decides otherwise-identical spans.
+    """
+    ranked: list[tuple[int, EntitySpan]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for priority, entities in enumerate(sources):
+        for entity in entities:
+            identity = (entity.label, entity.start_position, entity.end_position)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            ranked.append((priority, entity))
+
+    ordered = sorted(
+        ranked,
+        key=lambda item: (
+            -(item[1].end_position - item[1].start_position),
+            item[1].start_position,
+            item[1].end_position,
+            item[0],
+            item[1].label,
+        ),
+    )
+    accepted: list[EntitySpan] = []
+    for _, candidate in ordered:
+        if any(_spans_overlap(candidate, existing) for existing in accepted):
+            continue
+        accepted.append(candidate)
+    return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
+
+
 def build_tagged_text(
     text: str,
     entities: list[EntitySpan],
@@ -311,16 +345,15 @@ def get_tag_notation(text: str) -> str:
 
 
 def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Expand each validated entity to ALL its occurrences in the text.
+    """Expand validated non-regex entities to all occurrences in the text.
 
-    After validation, entities only have the positions where the detector
-    originally found them. This function finds every word-boundary-matched
-    occurrence of each unique entity value in the text, creating new spans
-    for positions not already covered. Overlaps are resolved by preferring
-    longer spans.
+    Regex spans are not propagated because their pattern or validator may
+    intentionally accept only some occurrences. Other detected values are
+    expanded as before, and overlaps prefer longer spans.
     """
     entity_map: dict[str, str] = {}
-    for entity in entities:
+    propagatable_entities = [entity for entity in entities if not entity.source.startswith("regex_")]
+    for entity in propagatable_entities:
         key = entity.value.lower()
         if key not in entity_map:
             entity_map[key] = entity.label
@@ -328,7 +361,7 @@ def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[Ent
     original_positions: set[tuple[int, int]] = {(e.start_position, e.end_position) for e in entities}
     expanded: list[EntitySpan] = []
     for idx, (key, label) in enumerate(entity_map.items()):
-        original_value = next(e.value for e in entities if e.value.lower() == key)
+        original_value = next(e.value for e in propagatable_entities if e.value.lower() == key)
         for start, end in _find_all_occurrences(text=text, needle=original_value):
             if (start, end) in original_positions:
                 continue  # already covered by a detector span; skip to preserve its provenance
