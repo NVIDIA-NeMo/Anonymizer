@@ -222,3 +222,39 @@ def test_excluded_entity_labels_overlap_warning_only_fires_when_allowlist_explic
             replace=Redact(),
         )
     assert "will never be detected" not in caplog.text
+
+
+def test_excluded_entity_labels_fully_overlapping_entity_labels_raises() -> None:
+    with pytest.raises(ValidationError, match="entirely overlaps"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["email", "city"]},
+            replace=Redact(),
+        )
+
+
+def test_excluded_entity_labels_superset_of_entity_labels_raises() -> None:
+    """excluded_entity_labels covering entity_labels plus extra labels still empties the set."""
+    with pytest.raises(ValidationError, match="entirely overlaps"):
+        AnonymizerConfig(
+            detect={
+                "entity_labels": ["email", "city"],
+                "excluded_entity_labels": ["email", "city", "bank_account"],
+            },
+            replace=Redact(),
+        )
+
+
+def test_entity_labels_superset_of_excluded_entity_labels_only_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """entity_labels covering excluded_entity_labels plus extra labels still detects something."""
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        config = AnonymizerConfig(
+            detect={
+                "entity_labels": ["email", "city", "bank_account"],
+                "excluded_entity_labels": ["email", "city"],
+            },
+            replace=Redact(),
+        )
+    assert config.detect.entity_labels == ["bank_account", "city", "email"]
+    assert "will never be detected" in caplog.text

@@ -136,14 +136,25 @@ class Detect(BaseModel):
         return deduped
 
     @model_validator(mode="after")
-    def warn_on_entity_label_overlap(self) -> "Detect":
+    def validate_entity_label_overlap(self) -> "Detect":
         if self.entity_labels is not None and self.excluded_entity_labels is not None:
-            overlap = sorted(set(self.entity_labels) & set(self.excluded_entity_labels))
-            if overlap:
-                logger.warning(
-                    "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
-                    overlap,
+            entity_labels_set = set(self.entity_labels)
+            excluded_set = set(self.excluded_entity_labels)
+            overlap = sorted(entity_labels_set & excluded_set)
+            if not overlap:
+                return self
+            if entity_labels_set <= excluded_set:
+                raise ValueError(
+                    "excluded_entity_labels entirely overlaps entity_labels, leaving an empty "
+                    f"effective detection set. Overlapping labels: {overlap}. Remove these labels from "
+                    "excluded_entity_labels, add other labels to entity_labels, or unset entity_labels "
+                    "(use None) to fall back to the default detection set — note excluded_entity_labels "
+                    "still applies against it."
                 )
+            logger.warning(
+                "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
+                overlap,
+            )
         return self
 
 
