@@ -17,9 +17,23 @@ from anonymizer.engine.detection.postprocess import (
     expand_entity_occurrences,
     get_tag_notation,
     group_entities_by_value,
+    normalize_label,
+    normalize_labels,
     parse_raw_entities,
     resolve_overlaps,
 )
+
+
+def test_normalize_label_strips_and_casefolds() -> None:
+    assert normalize_label(" Health_Condition ") == "health_condition"
+
+
+def test_normalize_labels_dedupes_and_drops_empty_entries() -> None:
+    assert normalize_labels([" Email ", "email", "  ", "City"]) == {"email", "city"}
+
+
+def test_normalize_labels_none_returns_empty_set() -> None:
+    assert normalize_labels(None) == set()
 
 
 def test_parse_raw_entities_parses_valid_spans() -> None:

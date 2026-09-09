@@ -42,7 +42,12 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
-from anonymizer.engine.detection.postprocess import EntitySpan, group_entities_by_value
+from anonymizer.engine.detection.postprocess import (
+    EntitySpan,
+    group_entities_by_value,
+    normalize_label,
+    normalize_labels,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
@@ -493,8 +498,8 @@ def _resolve_detection_labels(
 ) -> list[str]:
     labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
     if excluded_entity_labels:
-        excluded = {label.strip().casefold() for label in excluded_entity_labels}
-        labels = [label for label in labels if label.strip().casefold() not in excluded]
+        excluded = normalize_labels(excluded_entity_labels)
+        labels = [label for label in labels if normalize_label(label) not in excluded]
     if not labels:
         logger.warning(
             "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
@@ -510,24 +515,24 @@ def _materialize_final_entities(
 ) -> dict:
     """Build COL_FINAL_ENTITIES, applying the configured label scope."""
     parsed = EntitiesSchema.from_raw(raw)
-    allowed = {label.strip().casefold() for label in allowed_labels} if allowed_labels is not None else None
-    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
+    allowed = normalize_labels(allowed_labels) if allowed_labels is not None else None
+    excluded = normalize_labels(excluded_entity_labels)
     kept = [
         e
         for e in parsed.entities
-        if (allowed is None or e.label.strip().casefold() in allowed) and e.label.strip().casefold() not in excluded
+        if (allowed is None or normalize_label(e.label) in allowed) and normalize_label(e.label) not in excluded
     ]
     return EntitiesSchema(entities=kept).model_dump()
 
 
 def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[str] | None) -> object:
     """Remove excluded latent labels while preserving the structured payload shape."""
-    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
+    excluded = normalize_labels(excluded_entity_labels)
     if not excluded:
         return raw
 
     if isinstance(raw, LatentEntitiesSchema):
-        kept = [entity for entity in raw.latent_entities if entity.label.strip().casefold() not in excluded]
+        kept = [entity for entity in raw.latent_entities if normalize_label(entity.label) not in excluded]
         return LatentEntitiesSchema(latent_entities=kept).model_dump(mode="json")
 
     if isinstance(raw, str):
@@ -546,7 +551,7 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
             "latent_entities": [
                 entity
                 for entity in entities
-                if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in excluded
+                if not isinstance(entity, dict) or normalize_label(str(entity.get("label", ""))) not in excluded
             ],
         }
 
@@ -794,7 +799,7 @@ def _get_latent_prompt(
 ) -> str:
     summary_line = data_summary.strip() if data_summary else "Not provided"
     privacy_goal_text = _format_privacy_goal(privacy_goal)
-    excluded_labels = sorted({label.strip().casefold() for label in excluded_entity_labels or [] if label.strip()})
+    excluded_labels = sorted(normalize_labels(excluded_entity_labels))
     exclusion_block = (
         "\n<excluded_entity_labels>\n"
         f"Do NOT return latent entities with these labels: {', '.join(excluded_labels)}.\n"

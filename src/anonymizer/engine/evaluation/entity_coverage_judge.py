@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABELS,
     _jinja,
 )
+from anonymizer.engine.detection.postprocess import normalize_label, normalize_labels
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
@@ -83,8 +84,8 @@ def _effective_entity_labels(
         return None
     if not excluded_entity_labels:
         return entity_labels
-    excluded = {label.casefold() for label in excluded_entity_labels}
-    effective = [label for label in entity_labels if label.casefold() not in excluded]
+    excluded = normalize_labels(excluded_entity_labels)
+    effective = [label for label in entity_labels if normalize_label(label) not in excluded]
     return effective
 
 
@@ -93,7 +94,7 @@ def _entity_type_scope_block(
     excluded_entity_labels: list[str] | None = None,
 ) -> str:
     if entity_labels is None:
-        excluded = sorted({label.strip().casefold() for label in excluded_entity_labels or [] if label.strip()})
+        excluded = sorted(normalize_labels(excluded_entity_labels))
         exclusion = (
             f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(excluded)}."
             if excluded
@@ -409,14 +410,14 @@ def _filter_out_of_scope_entities(
     descriptions. The filter therefore drops genuine hallucinated labels without
     meaningfully risking false negatives on well-formed responses.
     """
-    allowed = {label.casefold() for label in entity_labels} if entity_labels is not None else None
-    excluded = {label.casefold() for label in excluded_entity_labels or []}
+    allowed = normalize_labels(entity_labels) if entity_labels is not None else None
+    excluded = normalize_labels(excluded_entity_labels)
     result = []
     for entity in entities:
         label = str(entity.get("label", "")).strip()
         if not label:
             continue
-        normalized_label = label.casefold()
+        normalized_label = normalize_label(label)
         if (allowed is not None and normalized_label not in allowed) or normalized_label in excluded:
             continue
         result.append(entity)
