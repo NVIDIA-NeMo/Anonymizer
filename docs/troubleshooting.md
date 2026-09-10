@@ -5,6 +5,8 @@
 
 Symptom-first guide to common problems and how to fix them. Each entry says how to diagnose, what knob to turn, and what to verify after.
 
+For a controlled campaign that establishes quality thresholds before testing concurrency, see [Tune quality before throughput](tuning.md).
+
 When something looks wrong, **first confirm the run completed cleanly** (no `failed_records` — these are rows that didn't make it through the pipeline at all, usually a rate-limit / infra issue). Once you know the pipeline ran, **run `preview` and inspect rows with quality issues** (`needs_human_review=True`) — the trace columns it produces are where to start.
 
 !!! note "This guide is written against the Python API"
@@ -49,6 +51,8 @@ Fix in this order:
 4. **Re-run on just the failed records** — filter the input dataframe to those `record_id`s and call `anonymizer.run` again. Failures are usually transient.
 
 See [Models](concepts/models.md) and [Validator pools](concepts/models.md#validator-pools) for the config shape.
+
+To compare request limits and pool topology without changing accepted quality settings, see [Tune throughput one layer at a time](tuning.md#4-tune-throughput-one-layer-at-a-time).
 
 ### Read the preview trace
 
@@ -212,4 +216,3 @@ Configuration is structurally valid but a runtime model call failed. Check:
 1. The provider for the model alias has an API key set in your environment.
 2. The base URL is reachable (corporate VPN / proxy).
 3. The model alias actually exists at the provider — `anonymizer validate` checks the alias is in your config; it doesn't dial out to confirm the model is live.
-
