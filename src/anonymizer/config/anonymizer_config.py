@@ -17,6 +17,7 @@ from anonymizer.config.rewrite import (
     PrivacyGoal,
     RiskTolerance,
 )
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +85,9 @@ class Detect(BaseModel):
         description=(
             "Entity labels to never detect, even if present in entity_labels or the default set. "
             "Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered "
-            "from the final entity output as a safety net. If this entirely overlaps an explicit "
-            "entity_labels, leaving an empty effective detection set, Detect raises a ValueError "
-            "at config time."
+            "from the final entity output as a safety net. If this entirely overlaps the effective "
+            "allowlist (entity_labels if set, otherwise the default label set), leaving an empty "
+            "effective detection set, Detect raises a ValueError at config time."
         ),
     )
     gliner_threshold: float = Field(
@@ -139,9 +140,12 @@ class Detect(BaseModel):
 
     @model_validator(mode="after")
     def validate_entity_label_overlap(self) -> "Detect":
-        if self.entity_labels is not None and self.excluded_entity_labels is not None:
+        if self.excluded_entity_labels is None:
+            return self
+        excluded_set = set(self.excluded_entity_labels)
+
+        if self.entity_labels is not None:
             entity_labels_set = set(self.entity_labels)
-            excluded_set = set(self.excluded_entity_labels)
             overlap = sorted(entity_labels_set & excluded_set)
             if not overlap:
                 return self
@@ -156,6 +160,16 @@ class Detect(BaseModel):
             logger.warning(
                 "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
                 overlap,
+            )
+            return self
+
+        # entity_labels=None falls back to DEFAULT_ENTITY_LABELS; guard that path too.
+        if set(DEFAULT_ENTITY_LABELS) <= excluded_set:
+            raise ValueError(
+                "excluded_entity_labels entirely overlaps DEFAULT_ENTITY_LABELS, leaving an empty "
+                "effective detection set (entity_labels is unset, so the default label set applies). "
+                "Set entity_labels explicitly to a non-empty subset of labels you still want detected, "
+                "or remove some labels from excluded_entity_labels."
             )
         return self
 

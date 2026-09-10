@@ -119,7 +119,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 ```
 
 !!! warning
-    If `entity_labels` and `excluded_entity_labels` partially overlap, the shared labels are dropped and Anonymizer logs a warning. If `excluded_entity_labels` entirely overlaps `entity_labels` — leaving an empty effective detection set — `Detect` raises a `ValueError` at config time instead of silently detecting nothing. This only applies when `entity_labels` is explicitly set; `entity_labels=None` (the default set) can never be fully excluded this way, since removing all default labels via `excluded_entity_labels` still only logs a warning.
+    `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A partial overlap just drops the shared labels and logs a warning. If the overlap is total, leaving an empty effective detection set, `Detect` raises a `ValueError` at config time instead of silently detecting nothing.
 
 ## Tuning the threshold
 

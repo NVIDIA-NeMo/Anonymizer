@@ -20,6 +20,7 @@ from anonymizer.config.replace_strategies import (
     Hash,
     Redact,
 )
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
 
 def test_hash_is_deterministic() -> None:
@@ -222,6 +223,24 @@ def test_excluded_entity_labels_overlap_warning_only_fires_when_allowlist_explic
             replace=Redact(),
         )
     assert "will never be detected" not in caplog.text
+
+
+def test_excluded_entity_labels_covering_all_defaults_raises() -> None:
+    """entity_labels=None falls back to DEFAULT_ENTITY_LABELS; excluding all of it must also raise."""
+    with pytest.raises(ValidationError, match="entirely overlaps DEFAULT_ENTITY_LABELS"):
+        AnonymizerConfig(
+            detect={"excluded_entity_labels": list(DEFAULT_ENTITY_LABELS)},
+            replace=Redact(),
+        )
+
+
+def test_excluded_entity_labels_partial_default_coverage_does_not_raise() -> None:
+    """Excluding some — but not all — default labels is the documented common case."""
+    config = AnonymizerConfig(
+        detect={"excluded_entity_labels": ["occupation", "gender"]},
+        replace=Redact(),
+    )
+    assert config.detect.excluded_entity_labels == ["gender", "occupation"]
 
 
 def test_excluded_entity_labels_fully_overlapping_entity_labels_raises() -> None:
