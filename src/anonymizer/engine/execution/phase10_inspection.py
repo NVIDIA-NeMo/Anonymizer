@@ -9,12 +9,56 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from threading import Lock
-from typing import TypeVar, cast, final
+from typing import Protocol, TypeAlias, TypeVar, cast, final
+
+from anonymizer.engine.execution.accounting_admission import (
+    _AccountingAdmissionCode,
+    _AccountingRejected,
+)
+from anonymizer.engine.execution.accounting_outcomes import _CauseCode
+from anonymizer.engine.execution.accounting_plan import _AccountingPlan, _is_admitted_accounting_plan
+from anonymizer.engine.execution.context_admission import (
+    _ContextAdmissionCode,
+    _ContextPlan,
+    _ContextRejected,
+    _is_admitted_context_plan,
+)
+from anonymizer.engine.execution.context_workframes import _ContextBindingFault
+from anonymizer.engine.execution.mention_admission import _MentionRejectionCode
+from anonymizer.engine.execution.mention_resolution import _ResolutionRejectionCode
+from anonymizer.engine.execution.phase6_plan import (
+    _is_admitted_phase6_plan,
+    _Phase6Plan,
+    _Phase6PlanRejectionCode,
+    _Phase6ProfileVersion,
+    _Phase6Rejected,
+)
+from anonymizer.engine.execution.phase7_admission import (
+    _is_admitted_phase7_plan,
+    _Phase7AdmissionCode,
+    _Phase7Plan,
+    _Phase7Rejected,
+)
+from anonymizer.engine.execution.phase7_application import _ApplicationRejectionCode
+from anonymizer.engine.execution.phase7_contract import _Phase7ContractRejectionCode
+from anonymizer.engine.execution.phase7_ndd_backend import _Phase7NddReason
+from anonymizer.engine.execution.phase7_validation import _BundleRejectionCode
+from anonymizer.engine.execution.phase8_admission import (
+    _is_admitted_phase8_plan,
+    _Phase8AdmissionCode,
+    _Phase8Plan,
+    _Phase8Rejected,
+)
+from anonymizer.engine.execution.phase8_runtime import _Phase8Reason
+from anonymizer.engine.execution.redact_patches import _PatchRejectionCode
+from anonymizer.engine.execution.role_policy import _RolePolicyRejectionCode, _UnsupportedRoleReason
 
 _MAX_STAGE_SUMMARIES = 8
 _MAX_TERMINAL_SUMMARIES = 48
 _MAX_DIAGNOSTICS = 64
+_MAX_REASON_CODES_PER_DIAGNOSTIC = 4
 _MAX_CANONICAL_JSON_BYTES = 16_384
+_MAX_BUILDER_WORKING_BYTES = 65_536
 _MAX_DECLARED_INTEGER = 65_536
 _GRANT_SEAL = object()
 _ENCODING_SEAL = object()
@@ -231,7 +275,234 @@ class _Phase10AggregateDimension(str, Enum):
     RETAINED_REFERENCES = "retained_references"
 
 
+_PHASE10_REASON_TABLE: dict[type[Enum], dict[Enum, _Phase10ReasonCategory]] = {
+    _AccountingAdmissionCode: {
+        _AccountingAdmissionCode.MALFORMED_GRAPH: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.TOO_MANY_DATUMS: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _AccountingAdmissionCode.DATUM_TOO_LARGE: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _AccountingAdmissionCode.GRAPH_TOO_LARGE: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _AccountingAdmissionCode.DUPLICATE_DATUM_ID: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.TOO_MANY_DEPENDENCIES: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _AccountingAdmissionCode.TOO_MANY_ATOMIC_GROUPS: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _AccountingAdmissionCode.MALFORMED_DEPENDENCY: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.DANGLING_DEPENDENCY: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.SELF_DEPENDENCY: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.DUPLICATE_DEPENDENCY: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.DEPENDENCY_CYCLE: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.EMPTY_ATOMIC_GROUP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.DANGLING_ATOMIC_MEMBER: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.DUPLICATE_ATOMIC_MEMBER: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.DUPLICATE_ATOMIC_GROUP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.ATOMIC_COVERAGE_GAP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.ATOMIC_GROUP_OVERLAP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _AccountingAdmissionCode.UNSUPPORTED_ATOMIC_NESTING: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _AccountingAdmissionCode.UNSUPPORTED_RELATIONSHIPS: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _AccountingAdmissionCode.UNSUPPORTED_CONTEXT: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _AccountingAdmissionCode.UNSUPPORTED_COHERENCE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _AccountingAdmissionCode.UNSUPPORTED_TASK_CARDINALITY: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+    },
+    _ContextAdmissionCode: {
+        _ContextAdmissionCode.MALFORMED_GRAPH: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.INVALID_DATUM_PURPOSE: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.MISSING_CONTEXT_SCOPE: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.DUPLICATE_CONTEXT_SCOPE: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.UNKNOWN_CONTEXT_TARGET: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.UNKNOWN_CONTEXT_DATUM: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.CONTEXT_ONLY_TARGET: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.ORPHAN_CONTEXT_DATUM: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.SELF_CONTEXT: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.DUPLICATE_CONTEXT_MEMBER: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _ContextAdmissionCode.TARGET_CONTEXT_DISABLED: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _ContextAdmissionCode.CONTEXT_MEMBERS_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _ContextAdmissionCode.CONTEXT_BYTES_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _ContextAdmissionCode.TOTAL_CONTEXT_REFERENCES_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _ContextAdmissionCode.EXPANDED_FRAME_BYTES_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _ContextAdmissionCode.UNSUPPORTED_CONTEXT_CONTRACT: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _ContextAdmissionCode.BACKEND_INCOMPATIBLE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+    },
+    _CauseCode: {
+        _CauseCode.KNOWN_FAILURE: _Phase10ReasonCategory.BACKEND_FAILED,
+        _CauseCode.VERIFICATION_FAILED: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _CauseCode.RELEASE_PREDICATE_FAILED: _Phase10ReasonCategory.PUBLICATION_FAILED,
+        _CauseCode.CANCELLATION: _Phase10ReasonCategory.CANCELLATION_BEFORE_DISPATCH,
+        _CauseCode.STOP_ACKNOWLEDGED: _Phase10ReasonCategory.STOP_ACKNOWLEDGED,
+        _CauseCode.TRANSPORT_LOST: _Phase10ReasonCategory.EXECUTION_LOST,
+        _CauseCode.MISSING: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.DUPLICATE: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.UNKNOWN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.FOREIGN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.STALE: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.SWAPPED: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.CONTRADICTORY: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.PLAN_MISMATCH: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _CauseCode.PREREQUISITE: _Phase10ReasonCategory.PREREQUISITE_BLOCKED,
+        _CauseCode.RESULT_CONSTRUCTION_FAILED: _Phase10ReasonCategory.UNEXPECTED_FAILURE,
+        _CauseCode.CLEANUP_FAILED: _Phase10ReasonCategory.CLEANUP_FAILED,
+        _CauseCode.CLEANUP_UNCONFIRMED: _Phase10ReasonCategory.CLEANUP_UNCONFIRMED,
+    },
+    _ContextBindingFault: {
+        _ContextBindingFault.MISSING: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _ContextBindingFault.DUPLICATE: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _ContextBindingFault.CONTRADICTORY: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+    },
+    _MentionRejectionCode: {
+        _MentionRejectionCode.UNKNOWN_TARGET: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _MentionRejectionCode.INVALID_OFFSET: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _MentionRejectionCode.SOURCE_SLICE_MISMATCH: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _MentionRejectionCode.UNSUPPORTED_PROVENANCE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _MentionRejectionCode.MISSING_DECISION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _MentionRejectionCode.DUPLICATE_DECISION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _MentionRejectionCode.OVERLAP: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _MentionRejectionCode.FOREIGN_TOKEN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _MentionRejectionCode.STALE_TOKEN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _MentionRejectionCode.CONTRADICTORY_CANDIDATE: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+    },
+    _ResolutionRejectionCode: {
+        _ResolutionRejectionCode.FOREIGN_TOKEN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _ResolutionRejectionCode.STALE_TOKEN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _ResolutionRejectionCode.INVALID_EVIDENCE: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _ResolutionRejectionCode.EVIDENCE_CONTRADICTION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+    },
+    _UnsupportedRoleReason: {
+        _UnsupportedRoleReason.UNSUPPORTED_ROLE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+    },
+    _RolePolicyRejectionCode: {
+        _RolePolicyRejectionCode.UNSUPPORTED_ROLE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+    },
+    _Phase6PlanRejectionCode: {
+        _Phase6PlanRejectionCode.INVALID_PROFILE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+    },
+    _PatchRejectionCode: {
+        _PatchRejectionCode.FOREIGN_TOKEN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _PatchRejectionCode.STALE_TOKEN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _PatchRejectionCode.INVALID_PATCH: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _PatchRejectionCode.RELEASE_PREDICATE_FAILED: _Phase10ReasonCategory.PUBLICATION_FAILED,
+    },
+    _Phase7ContractRejectionCode: {
+        _Phase7ContractRejectionCode.INVALID_CONTRACT: _Phase10ReasonCategory.ADMISSION_REJECTED,
+    },
+    _Phase7AdmissionCode: {
+        _Phase7AdmissionCode.INVALID_INPUT: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.LIMIT_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _Phase7AdmissionCode.EMPTY_SCOPE: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.DUPLICATE_SCOPE: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.DUPLICATE_SCOPE_MEMBER: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.UNKNOWN_SCOPE_DATUM: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.SCOPE_COVERAGE_GAP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.SCOPE_OVERLAP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.UNSUPPORTED_SCOPE_NESTING: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _Phase7AdmissionCode.PHASE6_HANDOFF_MISMATCH: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase7AdmissionCode.UNSUPPORTED_SELECTOR: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _Phase7AdmissionCode.SELECTOR_MISSING: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.SELECTOR_AMBIGUOUS: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase7AdmissionCode.UNSUPPORTED_RELATION: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _Phase7AdmissionCode.CROSS_SCOPE_RELATION: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7AdmissionCode.RELATION_ROLE_MISMATCH: _Phase10ReasonCategory.VERIFICATION_FAILED,
+    },
+    _ApplicationRejectionCode: {
+        _ApplicationRejectionCode.INVALID_APPLICATION: _Phase10ReasonCategory.VERIFICATION_FAILED,
+    },
+    _BundleRejectionCode: {
+        _BundleRejectionCode.INVALID_INPUT: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _BundleRejectionCode.DUPLICATE_SLOT: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _BundleRejectionCode.FOREIGN_SLOT: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _BundleRejectionCode.PARTIAL_BUNDLE: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _BundleRejectionCode.CANDIDATE_MATCHES_ORIGINAL: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _BundleRejectionCode.LIMIT_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _BundleRejectionCode.UNSUPPORTED_ROLE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _BundleRejectionCode.CANONICAL_COLLISION: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _BundleRejectionCode.UNSUPPORTED_CONSTRAINT: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _BundleRejectionCode.RELATION_FAILED: _Phase10ReasonCategory.VERIFICATION_FAILED,
+    },
+    _Phase7NddReason: {
+        _Phase7NddReason.BACKEND_FAILED: _Phase10ReasonCategory.BACKEND_FAILED,
+        _Phase7NddReason.EVIDENCE_UNATTRIBUTABLE: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase7NddReason.LIMIT_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _Phase7NddReason.CONTRACT_INVALID: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase7NddReason.PHASE6_HANDOFF_MISMATCH: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+    },
+    _Phase8AdmissionCode: {
+        _Phase8AdmissionCode.INVALID_INPUT: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.EMPTY_GROUP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.COVERAGE_GAP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.DUPLICATE_GROUP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.DUPLICATE_MEMBER: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.OVERLAP: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.UNKNOWN_MEMBER: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.CROSS_ATOMIC: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8AdmissionCode.LIMIT_EXCEEDED: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+    },
+    _Phase8Reason: {
+        _Phase8Reason.ANALYSIS_INVALID: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _Phase8Reason.ANALYSIS_RECONCILIATION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.ANALYSIS_STATE_MISSING: _Phase10ReasonCategory.UNEXPECTED_FAILURE,
+        _Phase8Reason.BACKEND_FAILURE: _Phase10ReasonCategory.BACKEND_FAILED,
+        _Phase8Reason.BACKEND_UNAVAILABLE: _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+        _Phase8Reason.CANCELLATION: _Phase10ReasonCategory.STOP_ACKNOWLEDGED,
+        _Phase8Reason.CANDIDATE_RECONCILIATION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.EVALUATION_INVALID: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _Phase8Reason.EVALUATION_RECONCILIATION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.GROUP_OPERATION_REUSED: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.INCOMPLETE_GROUP: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.INVALID_EVALUATION: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _Phase8Reason.INVALID_GROUP_INPUT: _Phase10ReasonCategory.ADMISSION_REJECTED,
+        _Phase8Reason.INVALID_REPAIR_BOUND: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _Phase8Reason.INVOCATION_INCONSISTENT: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.MISSING_BASELINE: _Phase10ReasonCategory.PREREQUISITE_BLOCKED,
+        _Phase8Reason.NO_REPAIR_NEEDED: _Phase10ReasonCategory.PREREQUISITE_BLOCKED,
+        _Phase8Reason.OPERATION_CORRELATION_MISMATCH: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.PREREQUISITE: _Phase10ReasonCategory.PREREQUISITE_BLOCKED,
+        _Phase8Reason.REPAIR_EXHAUSTED: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _Phase8Reason.REPAIR_MEMBERS: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _Phase8Reason.REPAIR_RECONCILIATION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.RETIRED_CORRELATION_TOKEN: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.REVISION_INVALID: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _Phase8Reason.REVISION_LIMIT: _Phase10ReasonCategory.LIMIT_EXCEEDED,
+        _Phase8Reason.REWRITE_MEMBERS: _Phase10ReasonCategory.VERIFICATION_FAILED,
+        _Phase8Reason.REWRITE_RECONCILIATION: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+        _Phase8Reason.ROUTE_NOT_SELECTED: _Phase10ReasonCategory.PREREQUISITE_BLOCKED,
+        _Phase8Reason.TRANSPORT_LOST: _Phase10ReasonCategory.EXECUTION_LOST,
+        _Phase8Reason.UNATTRIBUTABLE_PROVIDER_FAILURE: _Phase10ReasonCategory.BACKEND_FAILED,
+    },
+}
+
+
+def _map_phase10_reason(value: object) -> _Phase10ReasonCategory:
+    mapping = _PHASE10_REASON_TABLE.get(type(value))
+    return (
+        mapping.get(cast(Enum, value), _Phase10ReasonCategory.UNEXPECTED_FAILURE)
+        if mapping
+        else _Phase10ReasonCategory.UNEXPECTED_FAILURE
+    )
+
+
+def _unmapped_phase10_reason_values() -> tuple[Enum, ...]:
+    return tuple(
+        value for reason_type, mapping in _PHASE10_REASON_TABLE.items() for value in reason_type if value not in mapping
+    )
+
+
 E = TypeVar("E", bound=Enum)
+
+
+class _Phase10AccountingPlanLike(Protocol):
+    @property
+    def datums(self) -> tuple[object, ...]: ...
+
+    @property
+    def dependencies(self) -> tuple[object, ...]: ...
+
+    @property
+    def task_predecessors(self) -> tuple[object, ...]: ...
+
+    @property
+    def stages(self) -> tuple[object, ...]: ...
+
+    @property
+    def tasks(self) -> tuple[object, ...]: ...
+
+    @property
+    def atomic_groups(self) -> tuple[object, ...]: ...
 
 
 def _require_enum(value: object, expected: type[E]) -> None:
@@ -338,6 +609,23 @@ class _Phase10Diagnostic(_PrivatePhase10InspectionValue):
 
 @final
 @dataclass(frozen=True, slots=True, repr=False)
+class _Phase10OwnerCapture(_PrivatePhase10InspectionValue):
+    """Detached owner-issued input for one bounded inspect or diagnose call."""
+
+    subject_kind: _Phase10SubjectKind
+    semantic_profile_version: _Phase10SemanticProfile
+    capture_boundary: _Phase10CaptureBoundary
+    capture_lifecycle_state: _Phase10LifecycleState
+    snapshot: _Phase10Snapshot
+    diagnostics: tuple[_Phase10Diagnostic, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not _valid_owner_capture(self):
+            raise TypeError("invalid private Phase 10 owner capture")
+
+
+@final
+@dataclass(frozen=True, slots=True, repr=False)
 class _Phase10DeclaredLimit(_PrivatePhase10InspectionValue):
     name: _Phase10LimitName
     value: int
@@ -357,6 +645,16 @@ class _Phase10Aggregate(_PrivatePhase10InspectionValue):
     def __post_init__(self) -> None:
         _require_enum(self.dimension, _Phase10AggregateDimension)
         _require_enum(self.count_bucket, _Phase10CountBucket)
+
+
+_Phase10ExplainDetails: TypeAlias = tuple[
+    _Phase10SubjectKind,
+    _Phase10SemanticProfile,
+    _Phase10Route,
+    tuple[_Phase10Capability, ...],
+    tuple[_Phase10Aggregate, ...],
+    _Phase10ReasonCategory | None,
+]
 
 
 @final
@@ -453,6 +751,377 @@ def _revoke_phase10_inspection_grant(grant: object) -> None:
             _expire_grant_state(state)
 
 
+def _explain_phase10(
+    owner: object,
+    subject: object,
+    grant: object,
+) -> _Phase10ExplainView | _Phase10InspectionRejected:
+    if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.EXPLAIN):
+        return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
+    details = _phase10_explain_details(subject)
+    if isinstance(details, _Phase10InspectionRejected):
+        return details
+    subject_kind, profile, route, capabilities, aggregates, rejection = details
+    view = _Phase10ExplainView(
+        _phase10_provenance(
+            _Phase10ViewKind.EXPLAIN,
+            subject_kind,
+            profile,
+            _Phase10CaptureBoundary.ADMISSION_TERMINAL,
+            _Phase10LifecycleState.REJECTED if rejection is not None else _Phase10LifecycleState.TERMINAL,
+        ),
+        route,
+        capabilities,
+        _phase10_declared_limits(),
+        aggregates,
+        rejection,
+    )
+    if _phase10_builder_bytes(view) > _MAX_BUILDER_WORKING_BYTES:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+    return view
+
+
+def _inspect_phase10(
+    owner: object,
+    subject: object,
+    grant: object,
+) -> _Phase10InspectView | _Phase10InspectionRejected:
+    if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.INSPECT):
+        return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
+    if not _valid_owner_capture(subject):
+        return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+    capture = cast(_Phase10OwnerCapture, subject)
+    view = _Phase10InspectView(
+        _phase10_provenance(
+            _Phase10ViewKind.INSPECT,
+            capture.subject_kind,
+            capture.semantic_profile_version,
+            capture.capture_boundary,
+            capture.capture_lifecycle_state,
+        ),
+        capture.snapshot,
+    )
+    if _phase10_builder_bytes(view) > _MAX_BUILDER_WORKING_BYTES:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+    return view
+
+
+def _diagnose_phase10(
+    owner: object,
+    subject: object,
+    grant: object,
+) -> _Phase10DiagnoseView | _Phase10InspectionRejected:
+    if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.DIAGNOSE):
+        return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
+    admission = _phase10_admission_diagnostic(subject)
+    if admission is not None:
+        profile, diagnostic = admission
+        view = _Phase10DiagnoseView(
+            _phase10_provenance(
+                _Phase10ViewKind.DIAGNOSE,
+                _Phase10SubjectKind.ADMISSION_REJECTION,
+                profile,
+                _Phase10CaptureBoundary.ADMISSION_TERMINAL,
+                _Phase10LifecycleState.REJECTED,
+            ),
+            (diagnostic,),
+        )
+    elif _valid_owner_capture(subject):
+        capture = cast(_Phase10OwnerCapture, subject)
+        if not capture.diagnostics:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
+        view = _Phase10DiagnoseView(
+            _phase10_provenance(
+                _Phase10ViewKind.DIAGNOSE,
+                capture.subject_kind,
+                capture.semantic_profile_version,
+                capture.capture_boundary,
+                capture.capture_lifecycle_state,
+            ),
+            capture.diagnostics,
+        )
+    else:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+    if _phase10_builder_bytes(view) > _MAX_BUILDER_WORKING_BYTES:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+    return view
+
+
+def _phase10_provenance(
+    view_kind: _Phase10ViewKind,
+    subject_kind: _Phase10SubjectKind,
+    profile: _Phase10SemanticProfile,
+    boundary: _Phase10CaptureBoundary,
+    lifecycle: _Phase10LifecycleState,
+) -> _Phase10Provenance:
+    return _Phase10Provenance(
+        _Phase10InspectionSchemaVersion.V1,
+        _Phase10ContractVersion.V1,
+        view_kind,
+        subject_kind,
+        profile,
+        _Phase10ImplementationProfile.PANDAS_RUNTIME_V1,
+        boundary,
+        lifecycle,
+    )
+
+
+def _phase10_declared_limits() -> tuple[_Phase10DeclaredLimit, ...]:
+    values = (
+        (_Phase10LimitName.SUBJECTS_PER_CALL, 1),
+        (_Phase10LimitName.VIEWS_PER_CALL, 1),
+        (_Phase10LimitName.MAX_STAGE_SUMMARIES, _MAX_STAGE_SUMMARIES),
+        (_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS, _MAX_TERMINAL_SUMMARIES),
+        (_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES, _MAX_DIAGNOSTICS),
+        (_Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY, _MAX_REASON_CODES_PER_DIAGNOSTIC),
+        (_Phase10LimitName.MAX_PROVENANCE_FIELDS, 8),
+        (_Phase10LimitName.MAX_TOP_LEVEL_FIELDS, 12),
+        (_Phase10LimitName.MAX_JSON_NESTING_DEPTH, 5),
+        (_Phase10LimitName.MAX_ALLOWLISTED_STRING_UTF8_BYTES, 96),
+        (_Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES, _MAX_CANONICAL_JSON_BYTES),
+        (_Phase10LimitName.MAX_BUILDER_WORKING_BYTES, _MAX_BUILDER_WORKING_BYTES),
+    )
+    return tuple(_Phase10DeclaredLimit(name, value) for name, value in values)
+
+
+def _phase10_count_bucket(value: object) -> _Phase10CountBucket | None:
+    if type(value) is not int or value < 0:
+        return None
+    if value == 0:
+        return _Phase10CountBucket.ZERO
+    if value == 1:
+        return _Phase10CountBucket.ONE
+    if value <= 4:
+        return _Phase10CountBucket.TWO_TO_FOUR
+    if value <= 16:
+        return _Phase10CountBucket.FIVE_TO_SIXTEEN
+    if value <= 64:
+        return _Phase10CountBucket.SEVENTEEN_TO_SIXTY_FOUR
+    return _Phase10CountBucket.SIXTY_FIVE_PLUS
+
+
+def _phase10_stage(value: object) -> _Phase10Stage | None:
+    if type(value) is not str:
+        return None
+    direct = {stage.value: stage for stage in _Phase10Stage}
+    aliases = {
+        "protect": _Phase10Stage.TRANSFORM,
+        "phase7-plan": _Phase10Stage.RESOLVE,
+        "phase7-apply": _Phase10Stage.TRANSFORM,
+        "phase8-group": _Phase10Stage.REWRITE,
+        "phase8-qualification": _Phase10Stage.VERIFY,
+        "phase8-compatibility": _Phase10Stage.VERIFY,
+        "validate-baselines": _Phase10Stage.VALIDATE,
+    }
+    if value.removeprefix("evaluate-") in {"0", "1", "2", "3"} and value.startswith("evaluate-"):
+        return _Phase10Stage.EVALUATE
+    if value.removeprefix("repair-") in {"1", "2", "3"} and value.startswith("repair-"):
+        return _Phase10Stage.REPAIR
+    return direct.get(value, aliases.get(value))
+
+
+def _phase10_builder_bytes(value: object) -> int:
+    if isinstance(value, _Phase10ExplainView):
+        rows = len(value.required_capabilities) + len(value.declared_limits) + len(value.relationship_buckets)
+    elif isinstance(value, _Phase10InspectView):
+        rows = len(value.snapshot.stage_summaries) + len(value.snapshot.terminal_summaries)
+    elif isinstance(value, _Phase10DiagnoseView):
+        rows = len(value.diagnostics)
+    else:
+        return _MAX_BUILDER_WORKING_BYTES + 1
+    return 2_048 + 512 * rows
+
+
+def _phase10_explain_details(
+    subject: object,
+) -> _Phase10ExplainDetails | _Phase10InspectionRejected:
+    rejection = _phase10_admission_reason(subject)
+    if rejection is not None:
+        profile, category = rejection
+        return (
+            _Phase10SubjectKind.ADMISSION_REJECTION,
+            profile,
+            _Phase10Route.REJECTED,
+            (),
+            (),
+            category,
+        )
+    if type(subject) is _AccountingPlan and _is_admitted_accounting_plan(subject):
+        return _phase10_accounting_explain_details(
+            subject,
+            _Phase10SemanticProfile.TARGET_CONTEXT_V1,
+            _Phase10Route.NDD,
+            (_Phase10Capability.TERMINAL_ACCOUNTING,),
+        )
+    if type(subject) is _ContextPlan and _is_admitted_context_plan(subject):
+        relationship_count = sum(len(projection.bindings) for projection in subject.projections)
+        return _phase10_accounting_explain_details(
+            subject.accounting,
+            _Phase10SemanticProfile.TARGET_CONTEXT_V1,
+            _Phase10Route.NDD,
+            (_Phase10Capability.TERMINAL_ACCOUNTING, _Phase10Capability.BOUNDED_CONTEXT),
+            relationship_count,
+        )
+    if type(subject) is _Phase6Plan and _is_admitted_phase6_plan(subject):
+        return _phase10_phase6_explain_details(subject)
+    if type(subject) is _Phase7Plan and _is_admitted_phase7_plan(subject):
+        relationship_count = sum(len(manifest.relations) for manifest in subject.manifests)
+        return _phase10_accounting_explain_details(
+            subject.accounting,
+            _Phase10SemanticProfile.SUBSTITUTE_V1,
+            _Phase10Route.MIXED,
+            (
+                _Phase10Capability.TERMINAL_ACCOUNTING,
+                _Phase10Capability.BOUNDED_CONTEXT,
+                _Phase10Capability.ANCHORED_MENTIONS,
+                _Phase10Capability.STABLE_SUBSTITUTE,
+            ),
+            relationship_count,
+        )
+    if type(subject) is _Phase8Plan and _is_admitted_phase8_plan(subject):
+        return _phase10_phase8_explain_details(subject)
+    return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+
+
+def _phase10_accounting_explain_details(
+    plan: _Phase10AccountingPlanLike,
+    profile: _Phase10SemanticProfile,
+    route: _Phase10Route,
+    capabilities: tuple[_Phase10Capability, ...],
+    extra_relationships: int = 0,
+) -> _Phase10ExplainDetails:
+    return (
+        _Phase10SubjectKind.ADMITTED_PLAN,
+        profile,
+        route,
+        capabilities,
+        _phase10_accounting_aggregates(plan, extra_relationships),
+        None,
+    )
+
+
+def _phase10_phase6_explain_details(plan: _Phase6Plan) -> _Phase10ExplainDetails:
+    profile = (
+        _Phase10SemanticProfile.REDACT_V1
+        if plan.profile_version is _Phase6ProfileVersion.REDACT_V1
+        else _Phase10SemanticProfile.SUBSTITUTE_V1
+    )
+    relationships = sum(len(projection.bindings) for projection in plan.context.projections)
+    return _phase10_accounting_explain_details(
+        plan.accounting,
+        profile,
+        _Phase10Route.MIXED,
+        (
+            _Phase10Capability.TERMINAL_ACCOUNTING,
+            _Phase10Capability.BOUNDED_CONTEXT,
+            _Phase10Capability.ANCHORED_MENTIONS,
+        ),
+        relationships,
+    )
+
+
+def _phase10_phase8_explain_details(
+    plan: _Phase8Plan,
+) -> _Phase10ExplainDetails | _Phase10InspectionRejected:
+    aggregates = _phase10_aggregates(
+        (
+            (_Phase10AggregateDimension.DATUMS, sum(len(group.members) for group in plan.groups)),
+            (_Phase10AggregateDimension.GROUPS, len(plan.groups)),
+            (_Phase10AggregateDimension.OPERATIONS, sum(len(group.operations.stages) for group in plan.groups)),
+            (_Phase10AggregateDimension.REPAIRS, sum(group.operations.max_repairs for group in plan.groups)),
+        )
+    )
+    if aggregates is None:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+    return (
+        _Phase10SubjectKind.ADMITTED_PLAN,
+        _Phase10SemanticProfile.GROUPED_REWRITE_V1,
+        _Phase10Route.NDD,
+        (
+            _Phase10Capability.TERMINAL_ACCOUNTING,
+            _Phase10Capability.BOUNDED_CONTEXT,
+            _Phase10Capability.ANCHORED_MENTIONS,
+            _Phase10Capability.STABLE_SUBSTITUTE,
+            _Phase10Capability.GROUPED_REWRITE,
+        ),
+        aggregates,
+        None,
+    )
+
+
+def _phase10_accounting_aggregates(
+    plan: _Phase10AccountingPlanLike,
+    extra_relationships: int = 0,
+) -> tuple[_Phase10Aggregate, ...]:
+    counts = (
+        (_Phase10AggregateDimension.DATUMS, len(plan.datums)),
+        (
+            _Phase10AggregateDimension.RELATIONSHIPS,
+            len(plan.dependencies) + len(plan.task_predecessors) + extra_relationships,
+        ),
+        (_Phase10AggregateDimension.STAGES, len(plan.stages)),
+        (_Phase10AggregateDimension.TASKS, len(plan.tasks)),
+        (_Phase10AggregateDimension.GROUPS, len(plan.atomic_groups)),
+    )
+    aggregates = _phase10_aggregates(counts)
+    if aggregates is None:
+        return ()
+    return aggregates
+
+
+def _phase10_aggregates(
+    counts: tuple[tuple[_Phase10AggregateDimension, int], ...],
+) -> tuple[_Phase10Aggregate, ...] | None:
+    aggregates: list[_Phase10Aggregate] = []
+    for dimension, count in counts:
+        bucket = _phase10_count_bucket(count)
+        if type(dimension) is not _Phase10AggregateDimension or bucket is None:
+            return None
+        aggregates.append(_Phase10Aggregate(dimension, bucket))
+    return tuple(aggregates)
+
+
+def _phase10_admission_reason(
+    subject: object,
+) -> tuple[_Phase10SemanticProfile, _Phase10ReasonCategory] | None:
+    if type(subject) is _AccountingRejected:
+        profile = _Phase10SemanticProfile.TARGET_CONTEXT_V1
+        code = subject.code
+    elif type(subject) is _ContextRejected:
+        profile = _Phase10SemanticProfile.TARGET_CONTEXT_V1
+        code = subject.code
+    elif type(subject) is _Phase6Rejected:
+        profile = _Phase10SemanticProfile.REDACT_V1
+        code = subject.code
+    elif type(subject) is _Phase7Rejected:
+        profile = _Phase10SemanticProfile.SUBSTITUTE_V1
+        code = subject.code
+    elif type(subject) is _Phase8Rejected:
+        profile = _Phase10SemanticProfile.GROUPED_REWRITE_V1
+        code = subject.code
+    else:
+        return None
+    return profile, _map_phase10_reason(code)
+
+
+def _phase10_admission_diagnostic(
+    subject: object,
+) -> tuple[_Phase10SemanticProfile, _Phase10Diagnostic] | None:
+    rejection = _phase10_admission_reason(subject)
+    if rejection is None:
+        return None
+    profile, category = rejection
+    return profile, _Phase10Diagnostic(
+        _Phase10CaptureBoundary.ADMISSION_TERMINAL,
+        _Phase10Stage.ADMISSION,
+        _Phase10TerminalState.REJECTED,
+        category,
+        _Phase10CountBucket.ONE,
+        _Phase10ReconciliationState.NOT_ENTERED,
+        _Phase10CleanupState.NOT_ENTERED,
+    )
+
+
 def _grant_matches(
     grant: _Phase10InspectionGrant,
     state: _Phase10GrantState | None,
@@ -543,6 +1212,74 @@ def _valid_diagnostic(value: object) -> bool:
         (value.cleanup_state, _Phase10CleanupState),
     )
     return all(type(field_value) is field_type for field_value, field_type in fields)
+
+
+def _valid_owner_capture(value: object) -> bool:
+    if not (
+        type(value) is _Phase10OwnerCapture
+        and type(value.subject_kind) is _Phase10SubjectKind
+        and value.subject_kind
+        in {
+            _Phase10SubjectKind.INVOCATION_SNAPSHOT,
+            _Phase10SubjectKind.TERMINAL_RECEIPT,
+            _Phase10SubjectKind.CLEANUP_RECEIPT,
+            _Phase10SubjectKind.PUBLICATION_RECEIPT,
+        }
+        and type(value.semantic_profile_version) is _Phase10SemanticProfile
+        and type(value.capture_boundary) is _Phase10CaptureBoundary
+        and type(value.capture_lifecycle_state) is _Phase10LifecycleState
+        and _valid_snapshot(value.snapshot)
+        and type(value.diagnostics) is tuple
+        and len(value.diagnostics) <= _MAX_DIAGNOSTICS
+        and all(_valid_diagnostic(item) for item in value.diagnostics)
+    ):
+        return False
+    boundary_lifecycle = {
+        _Phase10CaptureBoundary.INVOCATION_OPENED: _Phase10LifecycleState.OPENED,
+        _Phase10CaptureBoundary.PRE_DISPATCH: _Phase10LifecycleState.PRE_DISPATCH,
+        _Phase10CaptureBoundary.POST_DISPATCH: _Phase10LifecycleState.POST_DISPATCH,
+        _Phase10CaptureBoundary.TERMINAL_EVIDENCE_ACCEPTED: _Phase10LifecycleState.TERMINAL,
+        _Phase10CaptureBoundary.PRE_REDUCTION_CLEANUP_TERMINAL: _Phase10LifecycleState.CLEANUP_TERMINAL,
+        _Phase10CaptureBoundary.POST_REDUCTION_CLEANUP_TERMINAL: _Phase10LifecycleState.CLEANUP_TERMINAL,
+        _Phase10CaptureBoundary.RELEASE_TERMINAL: _Phase10LifecycleState.RELEASE_TERMINAL,
+        _Phase10CaptureBoundary.INVOCATION_CLOSED: _Phase10LifecycleState.CLOSED,
+    }
+    allowed_boundaries = {
+        _Phase10SubjectKind.INVOCATION_SNAPSHOT: set(boundary_lifecycle),
+        _Phase10SubjectKind.TERMINAL_RECEIPT: {
+            _Phase10CaptureBoundary.TERMINAL_EVIDENCE_ACCEPTED,
+            _Phase10CaptureBoundary.RELEASE_TERMINAL,
+            _Phase10CaptureBoundary.INVOCATION_CLOSED,
+        },
+        _Phase10SubjectKind.CLEANUP_RECEIPT: {
+            _Phase10CaptureBoundary.PRE_REDUCTION_CLEANUP_TERMINAL,
+            _Phase10CaptureBoundary.POST_REDUCTION_CLEANUP_TERMINAL,
+        },
+        _Phase10SubjectKind.PUBLICATION_RECEIPT: {
+            _Phase10CaptureBoundary.RELEASE_TERMINAL,
+            _Phase10CaptureBoundary.INVOCATION_CLOSED,
+        },
+    }
+    stages = tuple(item.stage for item in value.snapshot.stage_summaries)
+    terminals = tuple((item.stage, item.terminal_state) for item in value.snapshot.terminal_summaries)
+    diagnostic_keys = tuple(
+        (item.boundary, item.stage, item.terminal_state, item.reason_category) for item in value.diagnostics
+    )
+    return (
+        boundary_lifecycle.get(value.capture_boundary) is value.capture_lifecycle_state
+        and value.capture_boundary in allowed_boundaries[value.subject_kind]
+        and len(stages) == len(set(stages))
+        and len(terminals) == len(set(terminals))
+        and len(diagnostic_keys) == len(set(diagnostic_keys))
+        and all(
+            item.boundary is value.capture_boundary
+            and item.reconciliation_state is value.snapshot.reconciliation_state
+            and item.cleanup_state is value.snapshot.cleanup_state
+            and item.stage in stages
+            and (item.stage, item.terminal_state) in terminals
+            for item in value.diagnostics
+        )
+    )
 
 
 def _unique_enum_fields(values: tuple[object, ...], field_name: str) -> bool:

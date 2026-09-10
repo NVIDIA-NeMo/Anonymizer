@@ -8,6 +8,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import wraps
+from threading import RLock
+from typing import TYPE_CHECKING, Concatenate, ParamSpec, TypeVar
 
 from anonymizer.engine.execution.phase8_admission import (
     _compile_group_operation_plan,
@@ -23,6 +26,31 @@ from anonymizer.engine.execution.phase8_cleanup import (
 )
 from anonymizer.engine.execution.phase8_contract import _load_phase8_contract
 from anonymizer.engine.execution.phase8_validation import _Phase8Metric, _validate_complete_revisions
+
+if TYPE_CHECKING:
+    from anonymizer.engine.execution.phase10_inspection import (
+        _Phase10CleanupState,
+        _Phase10CountBucket,
+        _Phase10InspectionRejected,
+        _Phase10OwnerCapture,
+        _Phase10ReasonCategory,
+        _Phase10Stage,
+        _Phase10TerminalState,
+    )
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _phase8_serialized(
+    method: Callable[Concatenate[_Phase8OperationLedger, P], R],
+) -> Callable[Concatenate[_Phase8OperationLedger, P], R]:
+    @wraps(method)
+    def wrapped(ledger: _Phase8OperationLedger, /, *args: P.args, **kwargs: P.kwargs) -> R:
+        with ledger._lock:
+            return method(ledger, *args, **kwargs)
+
+    return wrapped
 
 
 class _Phase8Terminal:
@@ -158,41 +186,219 @@ class _Phase8OperationLedger:
     _attempts: dict[_Phase8Stage, _Phase8AttemptReceipt] = field(default_factory=dict)
     _dispatched: set[_Phase8Stage] = field(default_factory=set)
     _retired: bool = False
+    _lock: RLock = field(default_factory=RLock, repr=False, compare=False)
 
     @property
+    @_phase8_serialized
     def is_closed(self) -> bool:
-        return not self._retired and len(self._terminals) == len(self.plan.stages)
+        with self._lock:
+            return not self._retired and len(self._terminals) == len(self.plan.stages)
 
+    @_phase8_serialized
     def discard(self) -> None:
         """Erase retained operation evidence and permanently close the ledger."""
-        self._terminals.clear()
-        self._attempts.clear()
-        self._dispatched.clear()
-        self._retired = True
+        with self._lock:
+            self._terminals.clear()
+            self._attempts.clear()
+            self._dispatched.clear()
+            self._retired = True
 
+    @_phase8_serialized
     def terminal(self, stage: _Phase8Stage) -> _Phase8Terminal | None:
-        if self._retired:
-            return None
-        return self._terminals.get(stage)
+        with self._lock:
+            if self._retired:
+                return None
+            return self._terminals.get(stage)
 
+    @_phase8_serialized
     def reason(self, stage: _Phase8Stage) -> _Phase8Reason | None:
-        terminal = self.terminal(stage)
-        return getattr(terminal, "code", None)
+        with self._lock:
+            terminal = self.terminal(stage)
+            return getattr(terminal, "code", None)
 
+    @_phase8_serialized
     def attempt_count(self, stage: _Phase8Stage) -> int:
-        return int(stage in self._dispatched)
+        with self._lock:
+            return int(stage in self._dispatched)
 
+    @_phase8_serialized
     def dispatch(self, stage: _Phase8Stage) -> bool:
-        if self._retired or stage not in self.plan.stages or stage in self._terminals or stage in self._dispatched:
-            return False
-        position = self.plan.stages.index(stage)
-        if any(
-            not isinstance(self._terminals.get(previous), _StageSucceeded) for previous in self.plan.stages[:position]
-        ):
-            return False
-        self._dispatched.add(stage)
-        return True
+        with self._lock:
+            if self._retired or stage not in self.plan.stages or stage in self._terminals or stage in self._dispatched:
+                return False
+            position = self.plan.stages.index(stage)
+            if any(
+                not isinstance(self._terminals.get(previous), _StageSucceeded)
+                for previous in self.plan.stages[:position]
+            ):
+                return False
+            self._dispatched.add(stage)
+            return True
 
+    @_phase8_serialized
+    def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Issue one aggregate snapshot without retaining operation identities."""
+        from anonymizer.engine.execution.phase10_inspection import (
+            _map_phase10_reason,
+            _phase10_count_bucket,
+            _phase10_stage,
+            _Phase10CaptureBoundary,
+            _Phase10CleanupState,
+            _Phase10Diagnostic,
+            _Phase10InspectionRejected,
+            _Phase10LifecycleState,
+            _Phase10OwnerCapture,
+            _Phase10ReasonCategory,
+            _Phase10ReconciliationState,
+            _Phase10RejectionCode,
+            _Phase10ReleaseState,
+            _Phase10SemanticProfile,
+            _Phase10Snapshot,
+            _Phase10StageSummary,
+            _Phase10SubjectKind,
+            _Phase10TerminalState,
+            _Phase10TerminalSummary,
+        )
+
+        with self._lock:
+            if self._retired:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
+            grouped: dict[_Phase10Stage, list[_Phase8Stage]] = {}
+            for stage in self.plan.stages:
+                mapped = _phase10_stage(stage.name)
+                if mapped is None:
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                grouped.setdefault(mapped, []).append(stage)
+            if len(grouped) > 8:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+            stage_summaries = []
+            terminal_summaries = []
+            diagnostics: list[
+                tuple[
+                    _Phase10Stage,
+                    _Phase10TerminalState,
+                    _Phase10ReasonCategory,
+                    _Phase10CountBucket,
+                ]
+            ] = []
+            any_terminal = False
+            any_dispatched = False
+            any_inconsistent = False
+            for mapped_stage, source_stages in grouped.items():
+                terminals = tuple(self._terminals[stage] for stage in source_stages if stage in self._terminals)
+                any_terminal = any_terminal or bool(terminals)
+                any_dispatched = any_dispatched or any(stage in self._dispatched for stage in source_stages)
+                any_inconsistent = any_inconsistent or any(isinstance(item, _StageInconsistent) for item in terminals)
+                lifecycle = (
+                    _Phase10LifecycleState.TERMINAL
+                    if len(terminals) == len(source_stages)
+                    else _Phase10LifecycleState.POST_DISPATCH
+                    if any(stage in self._dispatched for stage in source_stages)
+                    else _Phase10LifecycleState.PRE_DISPATCH
+                )
+                task_bucket = _phase10_count_bucket(len(source_stages))
+                if task_bucket is None:
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                stage_summaries.append(_Phase10StageSummary(mapped_stage, lifecycle, task_bucket))
+                for terminal_state in _Phase10TerminalState:
+                    matches = tuple(
+                        terminal
+                        for terminal in terminals
+                        if _Phase10TerminalState(_terminal_name(terminal).value) is terminal_state
+                    )
+                    if not matches:
+                        continue
+                    impact = _phase10_count_bucket(len(matches))
+                    if impact is None:
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                    terminal_summaries.append(_Phase10TerminalSummary(mapped_stage, terminal_state, impact))
+                    category_counts: dict[_Phase10ReasonCategory, int] = {}
+                    for reason in _Phase8Reason:
+                        reason_terminals = tuple(
+                            terminal for terminal in matches if getattr(terminal, "code", None) is reason
+                        )
+                        count = len(reason_terminals)
+                        if count:
+                            if reason in {
+                                _Phase8Reason.NO_REPAIR_NEEDED,
+                                _Phase8Reason.ROUTE_NOT_SELECTED,
+                            }:
+                                continue
+                            if reason is _Phase8Reason.CANCELLATION:
+                                before_dispatch = sum(
+                                    getattr(terminal, "stage", None) not in self._dispatched
+                                    for terminal in reason_terminals
+                                )
+                                if before_dispatch:
+                                    category_counts[_Phase10ReasonCategory.CANCELLATION_BEFORE_DISPATCH] = (
+                                        category_counts.get(
+                                            _Phase10ReasonCategory.CANCELLATION_BEFORE_DISPATCH,
+                                            0,
+                                        )
+                                        + before_dispatch
+                                    )
+                                count -= before_dispatch
+                            if count:
+                                category = _map_phase10_reason(reason)
+                                category_counts[category] = category_counts.get(category, 0) + count
+                    for category, count in category_counts.items():
+                        reason_impact = _phase10_count_bucket(count)
+                        if reason_impact is None:
+                            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                        diagnostics.append((mapped_stage, terminal_state, category, reason_impact))
+            if len(terminal_summaries) > 48 or len(diagnostics) > 64:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+            reconciliation = (
+                _Phase10ReconciliationState.INCONSISTENT
+                if any_inconsistent
+                else _Phase10ReconciliationState.PENDING
+                if any_dispatched and not self.is_closed
+                else _Phase10ReconciliationState.RECONCILED
+                if any_terminal
+                else _Phase10ReconciliationState.NOT_ENTERED
+            )
+            boundary = (
+                _Phase10CaptureBoundary.TERMINAL_EVIDENCE_ACCEPTED
+                if any_terminal
+                else _Phase10CaptureBoundary.POST_DISPATCH
+                if any_dispatched
+                else _Phase10CaptureBoundary.PRE_DISPATCH
+            )
+            lifecycle = (
+                _Phase10LifecycleState.TERMINAL
+                if self.is_closed
+                else _Phase10LifecycleState.POST_DISPATCH
+                if any_dispatched
+                else _Phase10LifecycleState.PRE_DISPATCH
+            )
+            diagnostic_values = tuple(
+                _Phase10Diagnostic(
+                    boundary,
+                    stage,
+                    terminal,
+                    category,
+                    impact,
+                    reconciliation,
+                    _Phase10CleanupState.NOT_ENTERED,
+                )
+                for stage, terminal, category, impact in diagnostics
+            )
+            return _Phase10OwnerCapture(
+                _Phase10SubjectKind.INVOCATION_SNAPSHOT,
+                _Phase10SemanticProfile.GROUPED_REWRITE_V1,
+                boundary,
+                lifecycle,
+                _Phase10Snapshot(
+                    tuple(stage_summaries),
+                    tuple(terminal_summaries),
+                    reconciliation,
+                    _Phase10CleanupState.NOT_ENTERED,
+                    _Phase10ReleaseState.NOT_ENTERED,
+                ),
+                diagnostic_values,
+            )
+
+    @_phase8_serialized
     def succeed(self, stage: _Phase8Stage) -> bool:
         if stage not in self.plan.stages or stage in self._terminals:
             return False
@@ -200,15 +406,19 @@ class _Phase8OperationLedger:
             return False
         return self._close(stage, _StageSucceeded(stage))
 
+    @_phase8_serialized
     def fail(self, stage: _Phase8Stage, code: _Phase8Reason) -> bool:
         return self._terminal_failure(stage, _StageFailed, code)
 
+    @_phase8_serialized
     def inconsistent(self, stage: _Phase8Stage, code: _Phase8Reason) -> bool:
         return self._terminal_failure(stage, _StageInconsistent, code)
 
+    @_phase8_serialized
     def lost(self, stage: _Phase8Stage, code: _Phase8Reason) -> bool:
         return self._terminal_failure(stage, _StageLost, code)
 
+    @_phase8_serialized
     def cancel(self, stage: _Phase8Stage, *, trusted_stop: bool, dispatched: bool) -> bool:
         if stage not in self.plan.stages or stage in self._terminals:
             return False
@@ -232,6 +442,7 @@ class _Phase8OperationLedger:
         self._block_descendants(stage, _Phase8Reason.PREREQUISITE)
         return True
 
+    @_phase8_serialized
     def block(self, stage: _Phase8Stage, code: _Phase8Reason) -> bool:
         if stage not in self.plan.stages or stage in self._terminals or stage in self._dispatched:
             return False
@@ -242,12 +453,15 @@ class _Phase8OperationLedger:
         self._block_descendants(stage, _Phase8Reason.PREREQUISITE)
         return True
 
+    @_phase8_serialized
     def close_zero_route(self) -> None:
         self._block_from(_Phase8Stage.rewrite(), _Phase8Reason.ROUTE_NOT_SELECTED)
 
+    @_phase8_serialized
     def close_pass(self, evaluation: _Phase8Stage) -> None:
         self._block_descendants(evaluation, _Phase8Reason.NO_REPAIR_NEEDED)
 
+    @_phase8_serialized
     def _terminal_failure(
         self,
         stage: _Phase8Stage,
@@ -270,11 +484,13 @@ class _Phase8OperationLedger:
             self._attempts[stage] = _Phase8AttemptReceipt(self.plan.group_id, stage, _terminal_name(terminal))
         return True
 
+    @_phase8_serialized
     def _block_from(self, stage: _Phase8Stage, code: _Phase8Reason) -> None:
         index = self.plan.stages.index(stage)
         for descendant in self.plan.stages[index:]:
             self._close(descendant, _StageBlocked(descendant, code))
 
+    @_phase8_serialized
     def _block_descendants(self, stage: _Phase8Stage, code: _Phase8Reason) -> None:
         index = self.plan.stages.index(stage)
         for descendant in self.plan.stages[index + 1 :]:
@@ -431,6 +647,169 @@ class _Phase8LifecycleExecution:
             and post.withheld_candidate_reference_count == 0
         )
 
+    def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Project the closed lifecycle receipt without copying released values."""
+        from anonymizer.engine.execution.phase10_inspection import (
+            _phase10_count_bucket,
+            _Phase10CaptureBoundary,
+            _Phase10CleanupState,
+            _Phase10CountBucket,
+            _Phase10Diagnostic,
+            _Phase10InspectionRejected,
+            _Phase10LifecycleState,
+            _Phase10OwnerCapture,
+            _Phase10ReasonCategory,
+            _Phase10ReconciliationState,
+            _Phase10RejectionCode,
+            _Phase10ReleaseState,
+            _Phase10SemanticProfile,
+            _Phase10Snapshot,
+            _Phase10Stage,
+            _Phase10StageSummary,
+            _Phase10SubjectKind,
+            _Phase10TerminalState,
+            _Phase10TerminalSummary,
+        )
+
+        terminal_by_value = {
+            "succeeded": _Phase10TerminalState.SUCCEEDED,
+            "failed": _Phase10TerminalState.FAILED,
+            "cancelled": _Phase10TerminalState.CANCELLED,
+            "lost": _Phase10TerminalState.LOST,
+            "blocked": _Phase10TerminalState.BLOCKED,
+            "inconsistent": _Phase10TerminalState.INCONSISTENT,
+        }
+        if type(self.terminal_group_states) is not tuple or any(
+            type(value) is not str or value not in terminal_by_value for value in self.terminal_group_states
+        ):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        counts = {
+            terminal: sum(value == terminal.value for value in self.terminal_group_states)
+            for terminal in _Phase10TerminalState
+        }
+        terminal_summaries = []
+        diagnostics = []
+        diagnostic_category = {
+            _Phase10TerminalState.INCONSISTENT: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
+            _Phase10TerminalState.LOST: _Phase10ReasonCategory.EXECUTION_LOST,
+            _Phase10TerminalState.CANCELLED: _Phase10ReasonCategory.STOP_ACKNOWLEDGED,
+            _Phase10TerminalState.FAILED: _Phase10ReasonCategory.UNEXPECTED_FAILURE,
+            _Phase10TerminalState.BLOCKED: _Phase10ReasonCategory.PREREQUISITE_BLOCKED,
+        }
+        reconciliation = (
+            _Phase10ReconciliationState.INCONSISTENT
+            if counts[_Phase10TerminalState.INCONSISTENT]
+            else _Phase10ReconciliationState.RECONCILED
+        )
+        cleanup = _phase10_lifecycle_cleanup_state(self)
+        release = (
+            _Phase10ReleaseState.WITHHELD
+            if self.global_embargo or any(value != "succeeded" for value in self.terminal_group_states)
+            else _Phase10ReleaseState.RELEASED
+        )
+        for terminal in _Phase10TerminalState:
+            count = counts[terminal]
+            if not count:
+                continue
+            bucket = _phase10_count_bucket(count)
+            if bucket is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            terminal_summaries.append(_Phase10TerminalSummary(_Phase10Stage.REWRITE, terminal, bucket))
+            category = diagnostic_category.get(terminal)
+            if category is not None:
+                diagnostics.append(
+                    _Phase10Diagnostic(
+                        _Phase10CaptureBoundary.INVOCATION_CLOSED,
+                        _Phase10Stage.REWRITE,
+                        terminal,
+                        category,
+                        bucket,
+                        reconciliation,
+                        cleanup,
+                    )
+                )
+        if cleanup in {_Phase10CleanupState.FAILED, _Phase10CleanupState.UNCONFIRMED}:
+            diagnostics.append(
+                _Phase10Diagnostic(
+                    _Phase10CaptureBoundary.INVOCATION_CLOSED,
+                    _Phase10Stage.CLEANUP,
+                    (
+                        _Phase10TerminalState.FAILED
+                        if cleanup is _Phase10CleanupState.FAILED
+                        else _Phase10TerminalState.INCONSISTENT
+                    ),
+                    (
+                        _Phase10ReasonCategory.CLEANUP_FAILED
+                        if cleanup is _Phase10CleanupState.FAILED
+                        else _Phase10ReasonCategory.CLEANUP_UNCONFIRMED
+                    ),
+                    _Phase10CountBucket.ONE,
+                    reconciliation,
+                    cleanup,
+                )
+            )
+        task_bucket = _phase10_count_bucket(len(self.terminal_group_states))
+        if task_bucket is None or len(diagnostics) > 64:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        stage_summaries = [
+            _Phase10StageSummary(
+                _Phase10Stage.REWRITE,
+                _Phase10LifecycleState.TERMINAL,
+                task_bucket,
+            )
+        ]
+        if cleanup is not _Phase10CleanupState.NOT_ENTERED:
+            cleanup_terminal = (
+                _Phase10TerminalState.SUCCEEDED
+                if cleanup is _Phase10CleanupState.VERIFIED
+                else _Phase10TerminalState.FAILED
+                if cleanup is _Phase10CleanupState.FAILED
+                else _Phase10TerminalState.INCONSISTENT
+            )
+            stage_summaries.append(
+                _Phase10StageSummary(
+                    _Phase10Stage.CLEANUP,
+                    _Phase10LifecycleState.CLEANUP_TERMINAL,
+                    _Phase10CountBucket.ONE,
+                )
+            )
+            terminal_summaries.append(
+                _Phase10TerminalSummary(
+                    _Phase10Stage.CLEANUP,
+                    cleanup_terminal,
+                    _Phase10CountBucket.ONE,
+                )
+            )
+        return _Phase10OwnerCapture(
+            _Phase10SubjectKind.TERMINAL_RECEIPT,
+            _Phase10SemanticProfile.GROUPED_REWRITE_V1,
+            _Phase10CaptureBoundary.INVOCATION_CLOSED,
+            _Phase10LifecycleState.CLOSED,
+            _Phase10Snapshot(
+                tuple(stage_summaries),
+                tuple(terminal_summaries),
+                reconciliation,
+                cleanup,
+                release,
+            ),
+            tuple(diagnostics),
+        )
+
+
+def _phase10_lifecycle_cleanup_state(value: _Phase8LifecycleExecution) -> _Phase10CleanupState:
+    from anonymizer.engine.execution.phase10_inspection import _Phase10CleanupState
+
+    receipts = tuple(
+        receipt for receipt in (value.pre_reduction_cleanup, value.post_reduction_cleanup) if receipt is not None
+    )
+    if not receipts:
+        return _Phase10CleanupState.NOT_ENTERED
+    if any(receipt.status is _Phase8CleanupStatus.FAILED for receipt in receipts):
+        return _Phase10CleanupState.FAILED
+    if any(receipt.status is _Phase8CleanupStatus.UNCONFIRMED for receipt in receipts) or not value.cleanup_verified:
+        return _Phase10CleanupState.UNCONFIRMED
+    return _Phase10CleanupState.VERIFIED
+
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _Phase8GroupOutcome:
@@ -529,7 +908,7 @@ def _run_group_operation(
             _Phase8OperationFault(_Phase8FaultKind.LOST, _Phase8Reason.TRANSPORT_LOST),
             0,
         )
-    ledger._close(analysis_stage, _StageSucceeded(analysis_stage))
+    ledger.succeed(analysis_stage)
     if zero_obligations and zero_route_guards:
         ledger.close_zero_route()
         return _Phase8GroupOutcome(_GroupSucceeded(), dict(baselines), 0, ledger)
@@ -552,7 +931,7 @@ def _run_group_operation(
         fault = _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.INCOMPLETE_GROUP)
         return _faulted(ledger, rewrite_stage, fault, 0)
     store.revisions = revisions
-    ledger._close(rewrite_stage, _StageSucceeded(rewrite_stage))
+    ledger.succeed(rewrite_stage)
     for round_number in range(max_repairs + 1):
         evaluation_stage = _Phase8Stage.evaluate(round_number)
         if not ledger.dispatch(evaluation_stage):
@@ -571,7 +950,7 @@ def _run_group_operation(
         if not isinstance(metric, _Phase8Metric):
             fault = _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.INVALID_EVALUATION)
             return _faulted(ledger, evaluation_stage, fault, round_number)
-        ledger._close(evaluation_stage, _StageSucceeded(evaluation_stage))
+        ledger.succeed(evaluation_stage)
         if not metric.needs_repair:
             ledger.close_pass(evaluation_stage)
             return _Phase8GroupOutcome(_GroupSucceeded(), dict(store.revisions), round_number, ledger)
@@ -595,5 +974,5 @@ def _run_group_operation(
             fault = _Phase8OperationFault(_Phase8FaultKind.INCONSISTENT, _Phase8Reason.INCOMPLETE_GROUP)
             return _faulted(ledger, repair_stage, fault, round_number + 1)
         store.revisions = revisions
-        ledger._close(repair_stage, _StageSucceeded(repair_stage))
+        ledger.succeed(repair_stage)
     return _failed(ledger, _Phase8Reason.REPAIR_EXHAUSTED, max_repairs)

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import reduce, wraps
 from threading import RLock
-from typing import Concatenate, Generic, ParamSpec, TypeAlias, TypeVar, assert_never, cast, final
+from typing import TYPE_CHECKING, Concatenate, Generic, ParamSpec, TypeAlias, TypeVar, assert_never, cast, final
 
 from anonymizer.engine.execution.accounting_evidence import (
     _AttemptId,
@@ -71,6 +71,16 @@ from anonymizer.engine.execution.accounting_plan import (
 )
 from anonymizer.engine.execution.accounting_release import _qualify_release
 from anonymizer.engine.execution.graph import _DatumId
+
+if TYPE_CHECKING:
+    from anonymizer.engine.execution.phase10_inspection import (
+        _Phase10InspectionRejected,
+        _Phase10OwnerCapture,
+        _Phase10ReasonCategory,
+        _Phase10SemanticProfile,
+        _Phase10Stage,
+        _Phase10TerminalState,
+    )
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -158,6 +168,161 @@ class _AccountingLedger(Generic[T]):
         self._invocation_lost = False
         self._cleanup_failed = False
         self._cleanup_unconfirmed = False
+        self._phase10_release_state = "not_entered"
+
+    @_serialized
+    def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Issue one detached bounded-inspection snapshot under the ledger lock."""
+        from anonymizer.engine.execution.phase10_inspection import (
+            _map_phase10_reason,
+            _phase10_count_bucket,
+            _phase10_stage,
+            _Phase10CaptureBoundary,
+            _Phase10CleanupState,
+            _Phase10Diagnostic,
+            _Phase10InspectionRejected,
+            _Phase10LifecycleState,
+            _Phase10OwnerCapture,
+            _Phase10ReconciliationState,
+            _Phase10RejectionCode,
+            _Phase10ReleaseState,
+            _Phase10Snapshot,
+            _Phase10StageSummary,
+            _Phase10SubjectKind,
+            _Phase10TerminalState,
+            _Phase10TerminalSummary,
+        )
+
+        if not self._opened:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
+        stage_groups: dict[_Phase10Stage, list[_StageId]] = {}
+        for declared_stage in self._plan.stages:
+            mapped_stage = _phase10_stage(declared_stage.value)
+            if mapped_stage is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            stage_groups.setdefault(mapped_stage, []).append(declared_stage)
+        if len(stage_groups) > 8:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+
+        stage_summaries: list[_Phase10StageSummary] = []
+        terminal_summaries: list[_Phase10TerminalSummary] = []
+        diagnostics: list[_Phase10Diagnostic] = []
+        any_dispatched = False
+        any_terminal = False
+        cleanup_state = (
+            _Phase10CleanupState.UNCONFIRMED
+            if self._cleanup_unconfirmed
+            else _Phase10CleanupState.FAILED
+            if self._cleanup_failed
+            else _Phase10CleanupState.NOT_ENTERED
+        )
+        reconciliation_state = _Phase10ReconciliationState.NOT_ENTERED
+        for mapped_stage, declared_stages in stage_groups.items():
+            states = tuple(self._states[task] for task in self._plan.tasks if task.stage in declared_stages)
+            any_dispatched = any_dispatched or any(isinstance(state, _Dispatched) for state in states)
+            terminal_states = tuple(state for state in states if _is_terminal(state))
+            any_terminal = any_terminal or bool(terminal_states)
+            lifecycle = (
+                _Phase10LifecycleState.TERMINAL
+                if len(terminal_states) == len(states)
+                else _Phase10LifecycleState.POST_DISPATCH
+                if any(isinstance(state, _Dispatched) for state in states)
+                else _Phase10LifecycleState.PRE_DISPATCH
+                if any(isinstance(state, _Ready) for state in states)
+                else _Phase10LifecycleState.OPENED
+            )
+            task_bucket = _phase10_count_bucket(len(states))
+            if mapped_stage is None or task_bucket is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            stage_summaries.append(_Phase10StageSummary(mapped_stage, lifecycle, task_bucket))
+            for terminal_state in _Phase10TerminalState:
+                matching = tuple(state for state in terminal_states if _phase10_task_terminal(state) is terminal_state)
+                if not matching:
+                    continue
+                impact = _phase10_count_bucket(len(matching))
+                if impact is None:
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                terminal_summaries.append(_Phase10TerminalSummary(mapped_stage, terminal_state, impact))
+                reason_counts: dict[_Phase10ReasonCategory, int] = {}
+                for state in matching:
+                    causes = tuple(getattr(state, "causes", ()))
+                    if len(causes) > 4:
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                    for cause in causes:
+                        category = _map_phase10_reason(getattr(cause, "code", None))
+                        reason_counts[category] = reason_counts.get(category, 0) + 1
+                for category, count in reason_counts.items():
+                    reason_impact = _phase10_count_bucket(count)
+                    if reason_impact is None:
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                    diagnostics.append(
+                        _Phase10Diagnostic(
+                            _Phase10CaptureBoundary.TERMINAL_EVIDENCE_ACCEPTED,
+                            mapped_stage,
+                            terminal_state,
+                            category,
+                            reason_impact,
+                            _Phase10ReconciliationState.RECONCILED,
+                            cleanup_state,
+                        )
+                    )
+        if len(terminal_summaries) > 48 or len(diagnostics) > 64:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        if self._global_inconsistent:
+            reconciliation_state = _Phase10ReconciliationState.INCONSISTENT
+        elif any_dispatched:
+            reconciliation_state = _Phase10ReconciliationState.PENDING
+        elif any_terminal:
+            reconciliation_state = _Phase10ReconciliationState.RECONCILED
+        boundary = (
+            _Phase10CaptureBoundary.INVOCATION_CLOSED
+            if self._closed
+            else _Phase10CaptureBoundary.TERMINAL_EVIDENCE_ACCEPTED
+            if any_terminal
+            else _Phase10CaptureBoundary.POST_DISPATCH
+            if any_dispatched
+            else _Phase10CaptureBoundary.PRE_DISPATCH
+            if any(isinstance(state, _Ready) for state in self._states.values())
+            else _Phase10CaptureBoundary.INVOCATION_OPENED
+        )
+        lifecycle = (
+            _Phase10LifecycleState.CLOSED
+            if self._closed
+            else _Phase10LifecycleState.TERMINAL
+            if any_terminal
+            else _Phase10LifecycleState.POST_DISPATCH
+            if any_dispatched
+            else _Phase10LifecycleState.PRE_DISPATCH
+            if boundary is _Phase10CaptureBoundary.PRE_DISPATCH
+            else _Phase10LifecycleState.OPENED
+        )
+        snapshot = _Phase10Snapshot(
+            tuple(stage_summaries),
+            tuple(terminal_summaries),
+            reconciliation_state,
+            cleanup_state,
+            _Phase10ReleaseState(self._phase10_release_state),
+        )
+        diagnostics = [
+            _Phase10Diagnostic(
+                boundary,
+                item.stage,
+                item.terminal_state,
+                item.reason_category,
+                item.impact_count_bucket,
+                reconciliation_state,
+                cleanup_state,
+            )
+            for item in diagnostics
+        ]
+        return _Phase10OwnerCapture(
+            _Phase10SubjectKind.INVOCATION_SNAPSHOT,
+            _phase10_accounting_profile(self._plan),
+            boundary,
+            lifecycle,
+            snapshot,
+            tuple(diagnostics),
+        )
 
     @_serialized
     def open(self) -> None:
@@ -442,6 +607,12 @@ class _AccountingLedger(Generic[T]):
             )
         except Exception:
             result = _construction_failed_result(self._plan, tasks)
+        self._phase10_release_state = (
+            "released"
+            if isinstance(result.invocation, _InvocationCompleted)
+            and all(isinstance(group, _GroupReleased) for group in result.groups)
+            else "withheld"
+        )
         self._closed = True
         return result
 
@@ -650,6 +821,37 @@ class _AccountingLedger(Generic[T]):
         self._require_opened()
         if self._closed or self._mutation_sealed:
             raise _LedgerClosedError
+
+
+def _phase10_task_terminal(state: object) -> _Phase10TerminalState | None:
+    from anonymizer.engine.execution.phase10_inspection import _Phase10TerminalState
+
+    if isinstance(state, _TaskInconsistent):
+        return _Phase10TerminalState.INCONSISTENT
+    if isinstance(state, _TaskLost):
+        return _Phase10TerminalState.LOST
+    if isinstance(state, _TaskCancelled):
+        return _Phase10TerminalState.CANCELLED
+    if isinstance(state, _TaskFailed):
+        return _Phase10TerminalState.FAILED
+    if isinstance(state, _TaskBlocked):
+        return _Phase10TerminalState.BLOCKED
+    if isinstance(state, _TaskSucceeded):
+        return _Phase10TerminalState.SUCCEEDED
+    return None
+
+
+def _phase10_accounting_profile(plan: _AccountingPlan) -> _Phase10SemanticProfile:
+    from anonymizer.engine.execution.phase10_inspection import _Phase10SemanticProfile
+
+    stages = tuple(stage.value for stage in plan.stages)
+    if any(stage.startswith("phase8-") for stage in stages):
+        return _Phase10SemanticProfile.GROUPED_REWRITE_V1
+    if any(stage.startswith("phase7-") for stage in stages):
+        return _Phase10SemanticProfile.SUBSTITUTE_V1
+    if "transform" in stages or "verify" in stages:
+        return _Phase10SemanticProfile.REDACT_V1
+    return _Phase10SemanticProfile.TARGET_CONTEXT_V1
 
 
 class _LedgerClosedError(_LedgerStateError):
