@@ -32,7 +32,7 @@ from anonymizer.config.rewrite import (
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.cli._output import write_result
-from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
+from anonymizer.interface.errors import AnonymizerError, InvalidConfigError
 from anonymizer.logging import LoggingConfig, configure_logging
 
 app = cyclopts.App(help="NeMo Anonymizer CLI")
@@ -158,7 +158,7 @@ def _cli_error_handler(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (ValidationError, ValueError, InvalidConfigError, AnonymizerIOError, OSError) as exc:
+        except (ValidationError, ValueError, AnonymizerError, OSError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1)
 

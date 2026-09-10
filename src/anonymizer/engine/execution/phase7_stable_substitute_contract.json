@@ -1,0 +1,319 @@
+{
+  "contract": {
+    "canonicalization": {
+      "algorithm": "unicode_alphanumeric_skeleton/v1",
+      "steps": [
+        "normalize_NFKC",
+        "strip_leading_and_trailing_unicode_whitespace",
+        "casefold",
+        "retain_only_codepoints_whose_unicode_general_category_starts_with_L_or_N"
+      ],
+      "empty_result": "reject",
+      "use": [
+        "candidate_vs_every_protected_original_in_scope",
+        "all_pairs_slot_distinctness",
+        "same_slot_original_distinctness",
+        "relation_predicates"
+      ]
+    },
+    "cleanup": {
+      "attestation": {
+        "artifact_class": "phase7_planner_cleanup",
+        "cardinality": "exactly_one_per_invocation_before_phase4_release",
+        "required_fields": {
+          "active_reservation_count": 0,
+          "backend_workframe_reference_count": 0,
+          "ledger_mutation_closed": true,
+          "provisional_bundle_reference_count": 0,
+          "provisional_values_observable": false,
+          "status": "verified"
+        },
+        "trusted_identity": [
+          "invocation_private_invocation_token",
+          "invocation_private_ledger_token"
+        ],
+        "version": "phase7-cleanup-attestation/v1"
+      },
+      "covered_terminal_paths": [
+        "planned",
+        "blocked",
+        "failed_validation",
+        "failed_backend",
+        "cancelled",
+        "lost",
+        "inconsistent",
+        "transformation_failed",
+        "publication_failed"
+      ],
+      "failure_effect": "invocation_inconsistent_and_global_release_embargo",
+      "host_teardown_after_accepted_result": "reported_by_host_and_cannot_rewrite_accepted_result",
+      "physical_zeroization_claim": false
+    },
+    "diagnostics": {
+      "allowed_count_dimensions": [
+        "scopes",
+        "clusters",
+        "slots",
+        "mentions",
+        "relations",
+        "attempts",
+        "failed_records"
+      ],
+      "allowed_reason_codes": [
+        "backend_failed",
+        "candidate_matches_original",
+        "canonical_collision",
+        "cleanup_contradictory",
+        "cleanup_unconfirmed",
+        "contract_invalid",
+        "cross_scope_relation",
+        "detector_universe_incomplete",
+        "digest_mismatch",
+        "evidence_unattributable",
+        "invalid_application",
+        "limit_exceeded",
+        "missing_capability",
+        "phase6_handoff_mismatch",
+        "prerequisite_blocked",
+        "relation_failed",
+        "relation_role_mismatch",
+        "selector_ambiguous",
+        "selector_missing",
+        "unsupported_constraint",
+        "unsupported_label",
+        "unsupported_mask",
+        "unsupported_role"
+      ],
+      "forbidden": [
+        "original_values",
+        "synthetic_values",
+        "prompts",
+        "candidate_bundles",
+        "content_derived_hashes",
+        "source_ids",
+        "public_graph_ids",
+        "backend_record_ids"
+      ],
+      "opaque_test_identity_allowed": true
+    },
+    "distinctness": {
+      "comparison": "canonicalization.algorithm",
+      "cross_scope_guarantee": "none",
+      "pair_compilation": "all_unordered_pairs_of_distinct_slots_in_each_scope",
+      "rule": "all_pairs_exact",
+      "shared_literal_assignment": "must_be_one_shared_slot_not_two_equal_slots"
+    },
+    "execution": {
+      "backend": {
+        "adapter_boundary": "NddAdapter.run_workflow",
+        "allowed_physical_rows_per_scope": 1,
+        "calls_for_empty_scope": 0,
+        "calls_per_nonempty_scope": 1,
+        "candidate_authority": "proposal_only",
+        "direct_DataDesigner_create_or_preview": "forbidden"
+      },
+      "capability": {
+        "context_retention": "retention_disabled",
+        "profile": "phase7-stable-substitute/v1",
+        "required_artifacts": [
+          "phase7_candidate_request",
+          "phase7_planner_cleanup"
+        ],
+        "schema_version": "phase7-workframe/v1"
+      },
+      "failure_attribution": {
+        "ambiguous_or_unattributable": "invocation_inconsistent_and_global_release_embargo",
+        "backend_record_id_authoritative": false,
+        "content_authoritative": false,
+        "single_task_failure_without_slot_attribution": "task_failed_and_complete_scope_invalid",
+        "trusted_exactly_one_of": [
+          "current_invocation_private_task_token",
+          "current_invocation_private_attempt_token",
+          "trusted_batch_or_call_token_mapping_to_exactly_one_task"
+        ]
+      },
+      "lifecycle": {
+        "automatic_regeneration": false,
+        "automatic_retry": false,
+        "durable_state": false,
+        "ledger_created": "after_pure_compilation",
+        "ledger_lifetime": "one_invocation",
+        "ledger_serializable": false,
+        "max_active_planners_per_scope": 1,
+        "max_attempts_per_scope": 1,
+        "max_concurrent_planners_per_invocation": 2,
+        "max_invocation_planner_wall_seconds": 240,
+        "max_scope_planner_wall_seconds": 120,
+        "planned_bundle_mutability": "immutable",
+        "publication_authority": "phase4_only"
+      }
+    },
+    "formats": {
+      "email_addr_spec_ascii/v1": {
+        "domain": "one_or_more_dot_separated_ASCII_labels_of_1_to_63_alnum_or_hyphen_codepoints_with_no_leading_or_trailing_hyphen_and_a_final_2_to_63_ASCII_letter_label",
+        "local": "1_to_64_ASCII_codepoints_from_ALNUM_or_.!#$%&'*+/=?^_`{|}~-_with_no_leading_trailing_or_consecutive_dot",
+        "total_utf8_bytes": [3, 254]
+      },
+      "telephone_ascii/v1": {
+        "allowed": "ASCII_digits_space_parentheses_plus_hyphen_dot",
+        "digit_count": [7, 15],
+        "plus": "zero_or_one_and_only_at_codepoint_zero"
+      },
+      "unicode_person_name/v1": {
+        "allowed": "unicode_general_categories_L_M_Zs_and_literals_apostrophe_hyphen_period",
+        "must_contain": "at_least_one_unicode_L_codepoint",
+        "normalized_form": "NFKC",
+        "utf8_bytes": [1, 128]
+      },
+      "username_ascii/v1": {
+        "allowed": "ASCII_alphanumeric_period_underscore_hyphen",
+        "boundary": "first_and_last_codepoint_must_be_ASCII_alphanumeric",
+        "utf8_bytes": [1, 64]
+      }
+    },
+    "limits": {
+      "bytes": {
+        "max_all_original_value_bytes": 1536,
+        "max_candidate_bundle_bytes_per_scope": 2048,
+        "max_candidate_value_bytes": 256,
+        "max_context_bytes_per_scope": 8192,
+        "max_context_fragment_bytes": 4096,
+        "max_detector_label_bytes": 64,
+        "max_ledger_bytes_per_invocation": 32768,
+        "max_original_value_bytes": 256,
+        "max_workframe_bytes_per_scope": 16384
+      },
+      "counts": {
+        "max_clusters_per_invocation": 3,
+        "max_clusters_per_scope": 3,
+        "max_context_fragments_per_scope": 4,
+        "max_datums_per_invocation": 4,
+        "max_distinct_pairs_per_scope": 6,
+        "max_mentions_per_invocation": 6,
+        "max_mentions_per_scope": 6,
+        "max_relations_per_scope": 4,
+        "max_scope_members": 4,
+        "max_scopes_per_invocation": 2,
+        "max_slots_per_invocation": 4,
+        "max_slots_per_scope": 4
+      },
+      "enforcement": "reject_exact_plus_one_before_ledger_workframe_telemetry_adapter_transform_or_publication_effect"
+    },
+    "masks": {
+      "digit_literal/v1": "NFKC_source_and_candidate_must_have_equal_codepoint_length; each_ASCII_digit_source_position_requires_an_ASCII_digit_candidate; every_non_digit_codepoint_must_match_exactly",
+      "none/v1": "no_source_shape_predicate",
+      "unknown": "reject"
+    },
+    "oracle_contract_corpus": {
+      "canonicalization": "UTF8_compact_sorted_key_JSON_of_the_complete_corpus_document_with_no_trailing_newline",
+      "case_count": 30,
+      "digest": "5ba1e69c7836a428b16e9d2ac7fc0cf3fbb445fd0ca72c1d0a8a049194115123",
+      "file": "anonymizer-phase-7-owner-contract-corpus-v1.json",
+      "version": "anonymizer-phase7-owner-contract-corpus/v1"
+    },
+    "phase6_handoff": {
+      "current_redact_policy_digest": "e11a29db1af26c9572e1b4dec9e0a91e80966c6de1d813a378b64210a3bdfc40",
+      "current_redact_policy_version": "phase6-role-result/v1",
+      "required_result_version": "phase6-role-result/v1",
+      "substitute_policy": {
+        "canonicalization": "UTF8_compact_sorted_key_JSON_of_the_complete_policy_payload_with_no_trailing_newline",
+        "detector_label_count": 65,
+        "digest": "c27580bd2cc4051bdd11b63a91391f8995bdef1ed2052534623cdd3160318ef8",
+        "file": "anonymizer-phase6-substitute-role-policy-v1.json",
+        "supported_detector_labels": [
+          "email",
+          "fax_number",
+          "first_name",
+          "last_name",
+          "phone_number",
+          "user_name"
+        ],
+        "unsupported_disposition": "explicit_null_for_every_other_built_in_detector_label_and_all_custom_labels",
+        "version": "phase6-substitute-role-policy/v1"
+      }
+    },
+    "reference_model": {
+      "canonical_trace_max_exogenous_observations": 16,
+      "generated_manifest": "P4_must_separately_freeze_exact_graph_count_trace_count_and_digest_before_P4_promotion",
+      "independence": "must_not_import_or_accept_verdicts_from_production_phase7_pandas_DataDesigner_or_ledger_code",
+      "version": "phase7-reference-model/v1"
+    },
+    "relations": {
+      "email_from_name/v1": {
+        "bundle_predicate": "the_canonicalized_candidate_value_of_at_least_one_upstream_name_slot_is_a_nonempty_substring_of_the_canonicalized_email_local_part",
+        "classification": [
+          "ValueInput",
+          "bundle_predicate"
+        ],
+        "downstream_role": "email_address",
+        "scope": "all_selectors_must_resolve_in_one_scope",
+        "task_or_release_edge": false,
+        "upstream_cardinality": [1, 2],
+        "upstream_roles": [
+          "person_family_name",
+          "person_given_name"
+        ]
+      },
+      "unknown": "reject",
+      "wildcard_constraints": "none_supported"
+    },
+    "roles": {
+      "email_address": {"format": "email_addr_spec_ascii/v1", "mask": "none/v1"},
+      "fax_number": {"format": "telephone_ascii/v1", "mask": "digit_literal/v1"},
+      "person_family_name": {"format": "unicode_person_name/v1", "mask": "none/v1"},
+      "person_given_name": {"format": "unicode_person_name/v1", "mask": "none/v1"},
+      "user_name": {"format": "username_ascii/v1", "mask": "none/v1"},
+      "voice_phone_number": {"format": "telephone_ascii/v1", "mask": "digit_literal/v1"}
+    },
+    "scope_and_slot_semantics": {
+      "cluster_cross_scope": "reject",
+      "coherence_scope": "flat_exact_partition_of_all_target_datums",
+      "cross_scope_assignment_sharing_or_uniqueness": "none",
+      "empty_scope_manifest": "planned_empty_bundle_verified_no_work_zero_dispatch",
+      "identity_sources_forbidden": [
+        "text",
+        "detector_label_alone",
+        "row_order",
+        "dataframe_index",
+        "source_id",
+        "backend_record_id",
+        "content_hash"
+      ],
+      "slot_derivation": "exactly_one_compiler_issued_opaque_slot_per_scope_cluster_role_tuple_with_at_least_one_supported_mention",
+      "slot_identity": "compiler_issued_opaque_nonserializable_capability",
+      "unsupported_scope_shapes": [
+        "coverage_gap",
+        "implicit_singleton_completion",
+        "nesting",
+        "partial_overlap",
+        "duplicate_member",
+        "duplicate_scope",
+        "empty_scope"
+      ]
+    },
+    "selectors": {
+      "cluster_role/v1": {
+        "cluster_ref": "compiler_issued_typed_cluster_capability_from_the_exact_phase6_handoff",
+        "resolution": "must_resolve_exactly_one_pre_slot_scope_cluster_role_tuple_before_slot_identity_is_issued",
+        "role": "one_closed_supported_role",
+        "serialized_or_authored_opaque_ids": "forbidden"
+      },
+      "unknown": "reject"
+    },
+    "status": "frozen_owner_contract",
+    "task_ownership": {
+      "scope_plan_stage": "exactly_one_scope_owned_task_per_declared_scope_including_an_empty_manifest_scope",
+      "scope_subject": "compiler_issued_opaque_scope_capability",
+      "scope_tasks_in_datum_dependency_or_release_reduction": false,
+      "subject_sum": [
+        "datum_owned",
+        "scope_owned"
+      ],
+      "representative_nullable_sentinel_or_encoded_datum": "forbidden"
+    },
+    "version": "anonymizer-phase7-stable-substitute/v1"
+  },
+  "digest": "3755832ecc64fe6e9dbeccc136c40020e5158446e5c74d6dca2392efdbb006bb",
+  "digest_algorithm": "sha256_of_UTF8_compact_sorted_key_JSON_of_contract_member_with_no_trailing_newline",
+  "schema_version": "anonymizer-phase7-owner-contract-envelope/v1"
+}

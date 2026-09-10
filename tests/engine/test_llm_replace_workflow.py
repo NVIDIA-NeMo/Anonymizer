@@ -167,6 +167,7 @@ def test_generate_map_only_preserves_original_anonymizer_row_order_with_mixed_ro
         input_df,
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
+        preview_num_records=3,
     )
 
     assert result.dataframe[COL_TEXT].tolist() == ["No entities here", "Alice works at Acme", "Still no entities"]
@@ -175,6 +176,7 @@ def test_generate_map_only_preserves_original_anonymizer_row_order_with_mixed_ro
         {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]},
         {"replacements": []},
     ]
+    assert adapter.run_workflow.call_args.kwargs["preview_num_records"] == 1
 
 
 def test_generate_map_only_strips_internal_prompt_columns(

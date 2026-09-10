@@ -87,6 +87,16 @@ def current_collector() -> MeasurementCollector | None:
     return _ACTIVE_COLLECTOR.get()
 
 
+@contextmanager
+def suppress_measurement() -> Iterator[None]:
+    """Temporarily detach any ambient collector in the current context."""
+    token = _ACTIVE_COLLECTOR.set(None)
+    try:
+        yield
+    finally:
+        _ACTIVE_COLLECTOR.reset(token)
+
+
 def _write_collector_safely(
     *,
     config: MeasurementConfig,

@@ -29,8 +29,11 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.engine.execution.context_observations import _private_context_observation_session
+from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
+from anonymizer.measurement.session import suppress_measurement
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -42,6 +45,7 @@ RECORD_ID_COLUMN = "_anonymizer_record_id"
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
 _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_purpose", default=None)
+_PRIVATE_EXECUTION: ContextVar[bool] = ContextVar("anonymizer_private_ndd_execution", default=False)
 
 
 @dataclass(frozen=True)
@@ -53,12 +57,54 @@ class FailedRecord:
     reason: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, repr=False)
+class _FailedRowEvidence:
+    """Private binding between one opaque row token and one public failure."""
+
+    row_token: str
+    record: FailedRecord
+
+    def __repr__(self) -> str:
+        return "<private failed row evidence>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private failed row evidence is not serializable")
+
+
+@dataclass(frozen=True, repr=False)
 class WorkflowRunResult:
     """Result of a single NDD workflow execution."""
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    failed_row_evidence: tuple[_FailedRowEvidence, ...] = ()
+
+    @property
+    def failed_row_tokens(self) -> tuple[str, ...]:
+        return tuple(evidence.row_token for evidence in self.failed_row_evidence)
+
+    def __repr__(self) -> str:
+        return "<private workflow run result>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private workflow results are not serializable")
+
+
+def _missing_private_row_tokens(input_df: pd.DataFrame, output_df: pd.DataFrame) -> tuple[str, ...]:
+    """Return missing opaque tokens without consulting public record identifiers."""
+    if PRIVATE_CORRELATION_COLUMN not in input_df.columns or PRIVATE_CORRELATION_COLUMN not in output_df.columns:
+        return ()
+    expected = tuple(input_df[PRIVATE_CORRELATION_COLUMN].tolist())
+    observed = tuple(output_df[PRIVATE_CORRELATION_COLUMN].tolist())
+    if (
+        not all(isinstance(token, str) and token for token in (*expected, *observed))
+        or len(set(expected)) != len(expected)
+        or len(set(observed)) != len(observed)
+        or not set(observed).issubset(expected)
+    ):
+        return ()
+    observed_set = set(observed)
+    return tuple(token for token in expected if token not in observed_set)
 
 
 @dataclass(frozen=True)
@@ -292,6 +338,16 @@ class NddAdapter:
             self._cumulative_input_tokens = 0
             return tokens
 
+    @contextmanager
+    def private_execution(self) -> Iterator[None]:
+        """Use invocation-ephemeral artifacts and suppress ambient collection."""
+        token = _PRIVATE_EXECUTION.set(True)
+        try:
+            with _private_context_observation_session(), suppress_measurement():
+                yield
+        finally:
+            _PRIVATE_EXECUTION.reset(token)
+
     def _add_input_tokens(self, model_usage: dict[str, Any] | None) -> None:
         input_tokens = 0
         for usage in (model_usage or {}).values():
@@ -349,7 +405,11 @@ class NddAdapter:
             else len(workflow_input_df)
         )
         started = time.perf_counter()
-        collector = current_collector()
+        private_execution = _PRIVATE_EXECUTION.get()
+        collector = None if private_execution else current_collector()
+        task_trace_enabled = (
+            False if private_execution else True if collector and collector.dd_task_trace_enabled else None
+        )
         trace_plan = _DDMessageTracePlan.from_columns(
             columns=columns,
             model_configs=model_configs,
@@ -358,7 +418,7 @@ class NddAdapter:
         columns = trace_plan.columns
         usage_probe = _DataDesignerUsageProbe(
             self._data_designer,
-            enabled=True,
+            enabled=not private_execution,
             collector=collector,
             workflow_name=workflow_name,
             private_trace_columns=trace_plan.private_columns,
@@ -375,13 +435,19 @@ class NddAdapter:
                 config_builder.add_column(column)
 
             task_traces: list[_TaskTrace] = []
+            workflow_error: AnonymizerWorkflowError | None = None
             try:
-                with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
+                with (
+                    self._run_lock,
+                    usage_probe,
+                    _temporary_dd_task_trace(self._data_designer, enabled=task_trace_enabled),
+                ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
                             num_records=len(workflow_input_df),
                             dataset_name=workflow_name,
+                            **({"artifact_path": tmp_dir} if private_execution else {}),
                         )
                         task_traces = _task_traces_from_result(run_results)
                         output_df = run_results.load_dataset()
@@ -396,17 +462,7 @@ class NddAdapter:
                         else:
                             output_df = preview_results.dataset
             except Exception as exc:
-                logger.warning(
-                    "Workflow failed for %d input record(s) on model(s) %s: %s",
-                    record_count,
-                    available_model_aliases,
-                    exc,
-                )
-                logger.debug(
-                    "Workflow '%s' failure context: columns=%s",
-                    workflow_name,
-                    col_names,
-                )
+                logger.warning("Workflow failed for %d input record(s).", record_count)
                 try:
                     usage_probe.flush_private_trace_records()
                 except Exception:
@@ -414,21 +470,26 @@ class NddAdapter:
                 _error_model_usage = usage_probe.model_usage()
                 with self._run_lock:
                     self._add_input_tokens(_error_model_usage)
-                record_ndd_workflow(
-                    workflow_name=workflow_name,
-                    model_aliases=model_aliases,
-                    input_row_count=record_count,
-                    seed_row_count=len(workflow_input_df),
-                    output_row_count=None,
-                    failed_record_count=None,
-                    elapsed_sec=time.perf_counter() - started,
-                    status="error",
-                    preview_num_records=preview_num_records,
-                    column_count=len(col_names),
-                    column_names=col_names,
-                    model_usage=_error_model_usage,
-                )
-                raise AnonymizerWorkflowError(f"Workflow failed: {exc}") from exc
+                if not private_execution:
+                    record_ndd_workflow(
+                        workflow_name=workflow_name,
+                        model_aliases=model_aliases,
+                        input_row_count=record_count,
+                        seed_row_count=len(workflow_input_df),
+                        output_row_count=None,
+                        failed_record_count=None,
+                        elapsed_sec=time.perf_counter() - started,
+                        status="error",
+                        preview_num_records=preview_num_records,
+                        column_count=len(col_names),
+                        column_names=col_names,
+                        model_usage=_error_model_usage,
+                    )
+                workflow_error = AnonymizerWorkflowError("Workflow failed")
+                del exc
+
+            if workflow_error is not None:
+                raise workflow_error from None
 
             output_df = trace_plan.record_and_strip_native_traces(
                 output_df=output_df,
@@ -443,32 +504,46 @@ class NddAdapter:
             usage_probe.flush_private_trace_records()
 
         logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
+        accounted_input_df = (
+            workflow_input_df.iloc[:preview_num_records].copy()
+            if preview_num_records is not None
+            else workflow_input_df
+        )
         failed_records = self._detect_missing_records(
             workflow_name=workflow_name,
-            input_df=(
-                workflow_input_df.iloc[:preview_num_records].copy()
-                if preview_num_records is not None
-                else workflow_input_df
-            ),
+            input_df=accounted_input_df,
             output_df=output_df,
         )
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
             self._add_input_tokens(_success_model_usage)
-        record_ndd_workflow(
-            workflow_name=workflow_name,
-            model_aliases=model_aliases,
-            input_row_count=record_count,
-            seed_row_count=len(workflow_input_df),
-            output_row_count=len(output_df),
-            failed_record_count=len(failed_records),
-            elapsed_sec=time.perf_counter() - started,
-            preview_num_records=preview_num_records,
-            column_count=len(col_names),
-            column_names=col_names,
-            model_usage=_success_model_usage,
+        if not private_execution:
+            record_ndd_workflow(
+                workflow_name=workflow_name,
+                model_aliases=model_aliases,
+                input_row_count=record_count,
+                seed_row_count=len(workflow_input_df),
+                output_row_count=len(output_df),
+                failed_record_count=len(failed_records),
+                elapsed_sec=time.perf_counter() - started,
+                preview_num_records=preview_num_records,
+                column_count=len(col_names),
+                column_names=col_names,
+                model_usage=_success_model_usage,
+            )
+        missing_tokens = _missing_private_row_tokens(accounted_input_df, output_df)
+        failed_row_evidence = (
+            tuple(
+                _FailedRowEvidence(token, record) for token, record in zip(missing_tokens, failed_records, strict=True)
+            )
+            if len(missing_tokens) == len(failed_records)
+            else ()
         )
-        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
+        return WorkflowRunResult(
+            dataframe=output_df,
+            failed_records=failed_records,
+            failed_row_evidence=failed_row_evidence,
+        )
 
     def build_config(
         self,
@@ -1023,8 +1098,8 @@ def _model_trace_usage(response: Any) -> Any:
 
 
 @contextmanager
-def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
-    if collector is None or not collector.dd_task_trace_enabled:
+def _temporary_dd_task_trace(data_designer: DataDesigner, *, enabled: bool | None) -> Iterator[None]:
+    if enabled is None:
         yield
         return
 
@@ -1034,7 +1109,7 @@ def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | No
         yield
         return
 
-    traced_run_config = _run_config_with_async_trace(original_run_config)
+    traced_run_config = _run_config_with_async_trace(original_run_config, enabled=enabled)
     set_run_config(traced_run_config)
     try:
         yield
@@ -1042,12 +1117,12 @@ def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | No
         set_run_config(original_run_config)
 
 
-def _run_config_with_async_trace(run_config: Any) -> Any:
+def _run_config_with_async_trace(run_config: Any, *, enabled: bool) -> Any:
     model_copy = getattr(run_config, "model_copy", None)
     if callable(model_copy):
-        return model_copy(update={"async_trace": True})
+        return model_copy(update={"async_trace": enabled})
     if isinstance(run_config, RunConfig):
-        return run_config.model_copy(update={"async_trace": True})
+        return run_config.model_copy(update={"async_trace": enabled})
     return run_config
 
 

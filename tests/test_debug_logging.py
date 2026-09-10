@@ -49,6 +49,7 @@ def _stub_anonymizer() -> Anonymizer:
         {
             COL_TEXT: ["Alice works at Acme", "Bob likes cats"],
             COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]", "[REDACTED] likes cats"],
+            COL_FINAL_ENTITIES: entities,
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
@@ -76,11 +77,17 @@ def debug_messages(
 @pytest.mark.parametrize(
     "expected_substring",
     [
-        "r1",
-        "r2",
         "input text lengths:",
         "detection config: threshold=",
     ],
 )
 def test_debug_log_contains(debug_messages: list[str], expected_substring: str) -> None:
     assert any(expected_substring in m for m in debug_messages)
+
+
+def test_debug_logs_exclude_failed_record_content(debug_messages: list[str]) -> None:
+    rendered = "\n".join(debug_messages)
+    assert "r1" not in rendered
+    assert "r2" not in rendered
+    assert "timeout" not in rendered
+    assert "parse error" not in rendered

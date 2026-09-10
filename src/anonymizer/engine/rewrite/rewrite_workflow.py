@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -32,7 +32,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, _FailedRowEvidence
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -231,6 +231,7 @@ def _apply_passthrough_defaults(
 class RewriteResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    failed_row_evidence: tuple[_FailedRowEvidence, ...] = field(default=(), repr=False)
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +274,7 @@ class RewriteWorkflow:
     ) -> RewriteResult:
         with stage_timer("RewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
             all_failed: list[FailedRecord] = []
+            all_failed_row_evidence: list[_FailedRowEvidence] = []
 
             entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
             measurement.update(
@@ -300,6 +302,7 @@ class RewriteWorkflow:
             )
             entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
             all_failed.extend(replace_result.failed_records)
+            all_failed_row_evidence.extend(replace_result.failed_row_evidence)
 
             # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
             pipeline_columns = [
@@ -329,9 +332,10 @@ class RewriteWorkflow:
             restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
             entity_rows = _join_new_columns(entity_rows, pipeline_result.dataframe)
             all_failed.extend(pipeline_result.failed_records)
+            all_failed_row_evidence.extend(pipeline_result.failed_row_evidence)
 
             # --- Step 5: evaluate-repair loop ---
-            entity_rows, eval_repair_failed = self._run_evaluate_repair_loop(
+            entity_rows, eval_repair_failed, eval_repair_failed_evidence = self._run_evaluate_repair_loop(
                 entity_rows,
                 model_configs=model_configs,
                 selected_models=selected_models,
@@ -340,11 +344,16 @@ class RewriteWorkflow:
                 preview_num_records=preview_num_records,
             )
             all_failed.extend(eval_repair_failed)
+            all_failed_row_evidence.extend(eval_repair_failed_evidence)
 
             # --- Merge and return ---
             _apply_passthrough_defaults(passthrough_rows)
             combined = merge_and_reorder(entity_rows, passthrough_rows)
-            result = RewriteResult(dataframe=combined, failed_records=all_failed)
+            result = RewriteResult(
+                dataframe=combined,
+                failed_records=all_failed,
+                failed_row_evidence=tuple(all_failed_row_evidence),
+            )
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
@@ -364,8 +373,9 @@ class RewriteWorkflow:
         privacy_goal: PrivacyGoal,
         evaluation: EvaluationCriteria,
         preview_num_records: int | None,
-    ) -> tuple[pd.DataFrame, list[FailedRecord]]:
+    ) -> tuple[pd.DataFrame, list[FailedRecord], tuple[_FailedRowEvidence, ...]]:
         all_failed: list[FailedRecord] = []
+        all_failed_row_evidence: list[_FailedRowEvidence] = []
 
         if COL_REPAIR_ITERATIONS not in df.columns:
             df[COL_REPAIR_ITERATIONS] = 0
@@ -388,6 +398,7 @@ class RewriteWorkflow:
         df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=eval_seed_cols)
         _normalize_evaluation_payloads(df)
         all_failed.extend(eval_result.failed_records)
+        all_failed_row_evidence.extend(eval_result.failed_row_evidence)
 
         replacement_unavailable = (
             ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
@@ -429,6 +440,7 @@ class RewriteWorkflow:
                 preview_num_records=preview_num_records,
             )
             all_failed.extend(repair_result.failed_records)
+            all_failed_row_evidence.extend(repair_result.failed_row_evidence)
 
             repaired = repair_result.dataframe
             failing_rows = _join_new_columns(failing_rows, repaired)
@@ -451,6 +463,7 @@ class RewriteWorkflow:
             )
             _normalize_evaluation_payloads(failing_rows)
             all_failed.extend(eval_result.failed_records)
+            all_failed_row_evidence.extend(eval_result.failed_row_evidence)
 
             df = pd.concat([passing_rows, failing_rows], ignore_index=True)
             replacement_unavailable = (
@@ -469,7 +482,7 @@ class RewriteWorkflow:
             needs_review = needs_review | (df[COL_LEAKAGE_MASS].apply(float) > evaluation.flag_leakage_above)
         df[COL_NEEDS_HUMAN_REVIEW] = needs_review
 
-        return df, all_failed
+        return df, all_failed, tuple(all_failed_row_evidence)
 
     def _run_final_judge(
         self,

@@ -11,6 +11,7 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from pydantic import BaseModel
 
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
+from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 
 
@@ -69,6 +70,20 @@ def test_derive_always_includes_record_id() -> None:
     df = pd.DataFrame({RECORD_ID_COLUMN: ["r1"]})
     seed = derive_seed_columns(columns, df)
     assert RECORD_ID_COLUMN in seed
+
+
+def test_derive_preserves_private_runtime_correlation() -> None:
+    columns = [
+        LLMStructuredColumnConfig(
+            name="_out",
+            prompt="No column refs",
+            model_alias="test",
+            output_format=_StubOutput,
+        ),
+    ]
+    df = pd.DataFrame({RECORD_ID_COLUMN: ["r1"], PRIVATE_CORRELATION_COLUMN: ["opaque"]})
+
+    assert derive_seed_columns(columns, df) == [RECORD_ID_COLUMN, PRIVATE_CORRELATION_COLUMN]
 
 
 def test_derive_ignores_columns_missing_from_df() -> None:

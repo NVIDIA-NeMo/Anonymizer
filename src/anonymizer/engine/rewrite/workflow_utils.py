@@ -10,6 +10,7 @@ import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
+from anonymizer.engine.private_row_verification import PRIVATE_CORRELATION_COLUMN
 
 
 def derive_seed_columns(
@@ -32,7 +33,7 @@ def derive_seed_columns(
     for col in columns:
         required.update(col.required_columns)
 
-    external = (required - produced) | {RECORD_ID_COLUMN}
+    external = (required - produced) | {RECORD_ID_COLUMN, PRIVATE_CORRELATION_COLUMN}
     return [c for c in df.columns if c in external]
 
 

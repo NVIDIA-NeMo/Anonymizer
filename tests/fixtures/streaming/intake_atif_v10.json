@@ -1,0 +1,53 @@
+{
+  "schema_version": "ATIF-v1.0",
+  "session_id": "atif-session-v10",
+  "trajectory_id": "trajectory-v10",
+  "agent": {
+    "name": "validation-agent",
+    "version": "1.0.0",
+    "model_name": "validation-model"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "timestamp": "2026-08-19T00:00:00Z",
+      "source": "user",
+      "message": "Contact Alice at alice@example.test"
+    },
+    {
+      "step_id": 2,
+      "timestamp": "2026-08-19T00:00:01Z",
+      "source": "agent",
+      "message": "I will look up Alice",
+      "model_name": "validation-model",
+      "tool_calls": [
+        {
+          "tool_call_id": "call-v10-1",
+          "function_name": "lookup_contact",
+          "arguments": {
+            "email": "alice@example.test"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "call-v10-1",
+            "content": "Alice works at Acme"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 12,
+        "completion_tokens": 8,
+        "cost_usd": 0.001
+      }
+    }
+  ],
+  "final_metrics": {
+    "total_prompt_tokens": 12,
+    "total_completion_tokens": 8,
+    "total_cost_usd": 0.001,
+    "total_steps": 2
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "actual_event_count": 549,
+  "canonical_serialization": "UTF8_compact_sorted_key_JSON_complete_corpus_no_trailing_newline",
+  "canonical_trace_count": 78,
+  "case_count": 83,
+  "digest": "ad8b1fb63414571c4b5f50ea3fdf94c8f8c8849d15ea529987d15e656b3149d6",
+  "event_alphabet": [
+    "dispatch_accepted",
+    "dispatch_rejected",
+    "candidate_rows",
+    "failed_record",
+    "backend_exception",
+    "cancellation",
+    "trusted_stop",
+    "loss",
+    "transform",
+    "verify",
+    "finalize",
+    "cleanup",
+    "immutable_accept",
+    "teardown",
+    "release"
+  ],
+  "generator_version": "phase7-finite-envelope/v1",
+  "graph_count": 54,
+  "independence_rules": [
+    "different_scopes",
+    "different_datums",
+    "different_groups",
+    "disjoint_scope_and_datum",
+    "disjoint_scope_and_group",
+    "disjoint_datum_and_group"
+  ],
+  "max_exogenous_observations": 16,
+  "owner_case_count": 30,
+  "owner_corpus_version": "anonymizer-phase7-owner-contract-corpus/v1",
+  "reference_model_version": "phase7-reference-model/v1",
+  "slot_count_case_counts": {
+    "0": 3,
+    "1": 27,
+    "2": 7,
+    "3": 4,
+    "4": 3
+  }
+}
