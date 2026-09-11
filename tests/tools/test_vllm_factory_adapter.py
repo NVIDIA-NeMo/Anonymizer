@@ -9,6 +9,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from starlette.datastructures import Headers
 
 from inference_service_compiler import vllm_factory_adapter as adapter
 
@@ -79,6 +80,85 @@ def test_parse_detection_request_accepts_chunk_budget_boundary() -> None:
     )
 
     assert request.text == "x" * 256
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [None, "Basic expected-secret", "Bearer wrong-secret"],
+)
+def test_chat_compatibility_rejects_invalid_configured_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    authorization: str | None,
+) -> None:
+    """The compatibility route preserves vLLM's configured authentication."""
+
+    async def exercise() -> None:
+        async def request_json() -> dict[str, object]:
+            return {
+                "model": "nvidia/gliner-pii",
+                "messages": [{"role": "user", "content": "Ada Lovelace"}],
+                "labels": [],
+            }
+
+        async def call_next(_: object) -> None:
+            raise AssertionError("the compatibility route must handle this request")
+
+        headers = Headers({} if authorization is None else {"authorization": authorization})
+        request = SimpleNamespace(
+            url=SimpleNamespace(path="/v1/chat/completions"),
+            headers=headers,
+            json=request_json,
+        )
+
+        response = await adapter.anonymizer_chat_compatibility(request, call_next)
+
+        assert response.status_code == 401
+        assert json.loads(response.body) == {"error": "Unauthorized"}
+
+    monkeypatch.setenv("VLLM_API_KEY", "expected-secret")
+    monkeypatch.setenv("ANONYMIZER_VLLM_FACTORY_PLUGIN", "deberta_gliner")
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("api_key", "authorization"),
+    [(None, None), ("expected-secret", "Bearer expected-secret")],
+)
+def test_chat_compatibility_accepts_valid_or_disabled_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    api_key: str | None,
+    authorization: str | None,
+) -> None:
+    """The compatibility route remains available without auth or with a valid key."""
+
+    async def exercise() -> None:
+        async def request_json() -> dict[str, object]:
+            return {
+                "model": "nvidia/gliner-pii",
+                "messages": [{"role": "user", "content": "Ada Lovelace"}],
+                "labels": [],
+            }
+
+        async def call_next(_: object) -> None:
+            raise AssertionError("the compatibility route must handle this request")
+
+        headers = Headers({} if authorization is None else {"authorization": authorization})
+        request = SimpleNamespace(
+            url=SimpleNamespace(path="/v1/chat/completions"),
+            headers=headers,
+            json=request_json,
+        )
+
+        response = await adapter.anonymizer_chat_compatibility(request, call_next)
+
+        assert response.status_code == 200
+
+    if api_key is None:
+        monkeypatch.delenv("VLLM_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("VLLM_API_KEY", api_key)
+    monkeypatch.setenv("ANONYMIZER_VLLM_FACTORY_PLUGIN", "deberta_gliner")
+    asyncio.run(exercise())
 
 
 def test_chat_compatibility_bounds_aggregate_pooling_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
