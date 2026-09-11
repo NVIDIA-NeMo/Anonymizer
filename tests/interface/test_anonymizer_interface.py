@@ -134,6 +134,26 @@ def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: Anony
     assert detection_wf.run.call_args.kwargs["entity_labels"] == ["server_name"]
 
 
+def test_run_propagates_excluded_entity_labels(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(detect={"excluded_entity_labels": ["email"]}, replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert detection_wf.run.call_args.kwargs["excluded_entity_labels"] == ["email"]
+    assert result.excluded_entity_labels == ["email"]
+
+
+def test_preview_propagates_excluded_entity_labels(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(detect={"excluded_entity_labels": ["email"]}, replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+
+    result = anonymizer.preview(config=config, data=stub_input, num_records=1)
+
+    assert detection_wf.run.call_args.kwargs["excluded_entity_labels"] == ["email"]
+    assert result.excluded_entity_labels == ["email"]
+
+
 def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
     yaml_path = tmp_path / "bad.yaml"
     yaml_path.write_text("not_providers: []")
@@ -1052,10 +1072,10 @@ def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> No
     assert preview.data_summary == "Customer support transcripts."
 
 
-def test_evaluate_passes_data_summary_to_coverage_judge(stub_input: AnonymizerInput) -> None:
-    """evaluate() must forward the input summary to EntityCoverageWorkflow."""
+def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: AnonymizerInput) -> None:
+    """evaluate() must forward persisted detection context to EntityCoverageWorkflow."""
     data = stub_input.model_copy(update={"data_summary": "Customer support transcripts."})
-    config = AnonymizerConfig(rewrite=Rewrite())
+    config = AnonymizerConfig(detect={"excluded_entity_labels": ["email"]}, rewrite=Rewrite())
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     run_result = anonymizer.run(config=config, data=data)
 
@@ -1079,4 +1099,6 @@ def test_evaluate_passes_data_summary_to_coverage_judge(stub_input: AnonymizerIn
         evaluated = anonymizer.evaluate(run_result)
 
     assert mock_coverage_wf.call_args.kwargs["data_summary"] == "Customer support transcripts."
+    assert mock_coverage_wf.call_args.kwargs["excluded_entity_labels"] == ["email"]
     assert evaluated.data_summary == "Customer support transcripts."
+    assert evaluated.excluded_entity_labels == ["email"]

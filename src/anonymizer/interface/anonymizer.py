@@ -306,6 +306,7 @@ class Anonymizer:
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=data.data_summary,
         )
 
@@ -338,6 +339,7 @@ class Anonymizer:
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
@@ -377,6 +379,7 @@ class Anonymizer:
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
                 entity_labels=config.detect.entity_labels,
+                excluded_entity_labels=config.detect.excluded_entity_labels,
                 data_summary=result.data_summary,
             )
         except KeyboardInterrupt:
@@ -459,6 +462,7 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
         entity_labels = getattr(output, "entity_labels", None)
+        excluded_entity_labels = getattr(output, "excluded_entity_labels", None)
         data_summary = getattr(output, "data_summary", None)
         num_records = len(output.trace_dataframe)
         mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
@@ -522,6 +526,7 @@ class Anonymizer:
             coverage_wf = EntityCoverageWorkflow(
                 adapter=self._adapter,
                 entity_labels=entity_labels,
+                excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
             )
             logger.info(LOG_INDENT + "🔎 Running entity coverage")
@@ -553,6 +558,7 @@ class Anonymizer:
                 failed_records=all_failed,
                 rewrite_config=rewrite_config,
                 entity_labels=entity_labels,
+                excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
             )
         else:
@@ -566,6 +572,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.evaluate,
                 entity_labels=entity_labels,
+                excluded_entity_labels=excluded_entity_labels,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
                 data_summary=data_summary,
             )
@@ -601,6 +608,7 @@ class Anonymizer:
                 failed_records=replace_result.failed_records,
                 replace_method=replace_method,
                 entity_labels=entity_labels,
+                excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
             )
 
@@ -715,6 +723,7 @@ class Anonymizer:
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
@@ -810,6 +819,7 @@ class Anonymizer:
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=data.data_summary,
         )
 

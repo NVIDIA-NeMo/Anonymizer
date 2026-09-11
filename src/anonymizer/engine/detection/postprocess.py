@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from typing import SupportsFloat, SupportsIndex, SupportsInt
@@ -37,6 +38,27 @@ class EntitySpan:
             "score": self.score,
             "source": self.source,
         }
+
+
+def normalize_label(label: str) -> str:
+    """Canonical normalization for entity label comparisons: strip + casefold."""
+    return label.strip().casefold()
+
+
+def normalize_labels(labels: Iterable[str] | None) -> set[str]:
+    """Normalize a collection of labels, dropping empty/whitespace-only entries."""
+    return {normalized for label in labels or [] if (normalized := normalize_label(label))}
+
+
+def filter_excluded_entity_spans(
+    entities: list[EntitySpan],
+    excluded_entity_labels: Iterable[str] | None,
+) -> list[EntitySpan]:
+    """Remove entity spans whose normalized labels are explicitly excluded."""
+    excluded = normalize_labels(excluded_entity_labels)
+    if not excluded:
+        return list(entities)
+    return [entity for entity in entities if normalize_label(entity.label) not in excluded]
 
 
 class TagNotation(str, Enum):
@@ -160,20 +182,22 @@ def apply_augmented_entities(
     text: str,
     entities: list[EntitySpan],
     augmented_output: dict | str,
+    excluded_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
-    """Add augmented entities, split full names, and resolve overlaps on merged set."""
+    """Add allowed augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
     augmented = payload.get("entities", []) if isinstance(payload, dict) else []
     if not isinstance(augmented, list):
         augmented = []
+    excluded = normalize_labels(excluded_entity_labels)
 
-    merged = list(entities)
+    merged = filter_excluded_entity_spans(entities, excluded)
     for idx, suggestion in enumerate(augmented):
         if not isinstance(suggestion, dict):
             continue
         value = str(suggestion.get("value", "")).strip()
         label = str(suggestion.get("label", "")).strip()
-        if not value or not label:
+        if not value or not label or normalize_label(label) in excluded:
             continue
         for start, end in _find_all_occurrences(text=text, needle=value):
             entity_id = _build_entity_id(label=label, start=start, end=end)

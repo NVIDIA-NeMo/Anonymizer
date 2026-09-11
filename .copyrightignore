@@ -12,3 +12,5 @@ CHANGELOG.md
 .cursor/
 .claude/
 .agent/
+skills/anonymizer/BENCHMARK.md
+skills/anonymizer/skill-card.md

@@ -53,6 +53,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         validation_max_entities_per_call=7,
         validation_excerpt_window_chars=321,
         entity_labels=["first_name", "email"],
+        excluded_entity_labels=["email"],
         data_summary="Customer support messages",
         job_index=1,
         num_jobs=3,
@@ -77,6 +78,25 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
 
     transforms = [column for column in columns if isinstance(column, DetectionTransformConfig)]
     assert {DetectionTransformOperation(column.operation) for column in transforms} == set(DetectionTransformOperation)
+    merge_transform = next(
+        column
+        for column in transforms
+        if DetectionTransformOperation(column.operation) == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES
+    )
+    seed_validation_transform = next(
+        column
+        for column in transforms
+        if DetectionTransformOperation(column.operation)
+        == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES
+    )
+    finalize_transform = next(
+        column
+        for column in transforms
+        if DetectionTransformOperation(column.operation) == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE
+    )
+    assert seed_validation_transform.excluded_entity_labels == ["email"]
+    assert merge_transform.excluded_entity_labels == ["email"]
+    assert finalize_transform.excluded_entity_labels == ["email"]
 
     validation = next(column for column in columns if column.name == COL_VALIDATION_DECISIONS)
     assert isinstance(validation, ChunkedValidationConfig)
@@ -91,6 +111,59 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert "anonymizer-chunked-validation" in serialized_text
     assert "generator_function" not in serialized_text
     assert "generator_params" not in serialized_text
+
+
+def _get_gliner_labels_from_builder(builder: DataDesignerConfigBuilder) -> list[str]:
+    payload = builder.get_builder_config().to_json()
+    assert payload is not None
+    serialized = json.loads(payload)
+    model_configs = serialized["data_designer"]["model_configs"]
+    gliner = next(m for m in model_configs if m.get("alias") == "gliner-pii-detector")
+    return gliner["inference_parameters"]["extra_body"]["labels"]
+
+
+def test_build_detection_builder_for_seed_respects_excluded_entity_labels(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    pd.DataFrame({COL_TEXT: ["Alice"]}).to_parquet(seed_path, index=False)
+
+    parsed_models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    builder = workflow.build_detection_builder_for_seed(
+        seed_path=seed_path,
+        model_configs=parsed_models.model_configs,
+        selected_models=parsed_models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=["first_name", "email", "city"],
+        excluded_entity_labels=["email"],
+    )
+
+    labels = _get_gliner_labels_from_builder(builder)
+    assert "email" not in labels
+    assert "first_name" in labels
+    assert "city" in labels
+
+
+def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    input_df = pd.DataFrame({COL_TEXT: ["Alice"]})
+    input_df.to_parquet(seed_path, index=False)
+
+    parsed_models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    builder = workflow.build_detection_config(
+        input_df,
+        seed_path=seed_path,
+        model_configs=parsed_models.model_configs,
+        selected_models=parsed_models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=["first_name", "email", "city"],
+        excluded_entity_labels=["email"],
+    )
+
+    labels = _get_gliner_labels_from_builder(builder)
+    assert "email" not in labels
+    assert "first_name" in labels
+    assert "city" in labels
 
 
 def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Path) -> None:

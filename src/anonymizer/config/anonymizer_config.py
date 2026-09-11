@@ -17,6 +17,7 @@ from anonymizer.config.rewrite import (
     PrivacyGoal,
     RiskTolerance,
 )
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,16 @@ class Detect(BaseModel):
             "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
         ),
     )
+    excluded_entity_labels: list[str] | None = Field(
+        default=None,
+        description=(
+            "Entity labels to never detect, even if present in entity_labels or the default set. "
+            "Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered "
+            "from the final entity output as a safety net. If this entirely overlaps the effective "
+            "allowlist (entity_labels if set, otherwise the default label set), leaving an empty "
+            "effective detection set, Detect raises a ValueError at config time."
+        ),
+    )
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )
@@ -113,6 +124,54 @@ class Detect(BaseModel):
         if len(deduped) != len(cleaned):
             logger.warning("entity_labels contained duplicates, removed automatically.")
         return deduped
+
+    @field_validator("excluded_entity_labels")
+    @classmethod
+    def validate_excluded_entity_labels(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        cleaned = [label.strip().lower() for label in value if label.strip()]
+        if not cleaned:
+            raise ValueError("excluded_entity_labels must not be empty. Use None to disable exclusions.")
+        deduped = sorted(set(cleaned))
+        if len(deduped) != len(cleaned):
+            logger.warning("excluded_entity_labels contained duplicates, removed automatically.")
+        return deduped
+
+    @model_validator(mode="after")
+    def validate_entity_label_overlap(self) -> "Detect":
+        if self.excluded_entity_labels is None:
+            return self
+        excluded_set = set(self.excluded_entity_labels)
+
+        if self.entity_labels is not None:
+            entity_labels_set = set(self.entity_labels)
+            overlap = sorted(entity_labels_set & excluded_set)
+            if not overlap:
+                return self
+            if entity_labels_set <= excluded_set:
+                raise ValueError(
+                    "excluded_entity_labels entirely overlaps entity_labels, leaving an empty "
+                    f"effective detection set. Overlapping labels: {overlap}. Remove these labels from "
+                    "excluded_entity_labels, add other labels to entity_labels, or unset entity_labels "
+                    "(use None) to fall back to the default detection set — note excluded_entity_labels "
+                    "still applies against it."
+                )
+            logger.warning(
+                "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
+                overlap,
+            )
+            return self
+
+        # entity_labels=None falls back to DEFAULT_ENTITY_LABELS; guard that path too.
+        if set(DEFAULT_ENTITY_LABELS) <= excluded_set:
+            raise ValueError(
+                "excluded_entity_labels entirely overlaps DEFAULT_ENTITY_LABELS, leaving an empty "
+                "effective detection set (entity_labels is unset, so the default label set applies). "
+                "Set entity_labels explicitly to a non-empty subset of labels you still want detected, "
+                "or remove some labels from excluded_entity_labels."
+            )
+        return self
 
 
 class Rewrite(BaseModel):

@@ -3,17 +3,24 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, infer_input_source_suffix
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    Rewrite,
+    infer_input_source_suffix,
+)
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
     Redact,
 )
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
 
 def test_hash_is_deterministic() -> None:
@@ -147,3 +154,126 @@ def test_detect_validation_max_entities_per_call_must_be_positive() -> None:
 def test_detect_validation_excerpt_window_chars_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         AnonymizerConfig(detect={"validation_excerpt_window_chars": 0}, replace=Redact())
+
+
+# ── excluded_entity_labels ────────────────────────────────────────────────────
+
+
+def test_excluded_entity_labels_defaults_to_none() -> None:
+    config = AnonymizerConfig(replace=Redact())
+    assert config.detect.excluded_entity_labels is None
+
+
+def test_excluded_entity_labels_accepts_list() -> None:
+    config = AnonymizerConfig(detect={"excluded_entity_labels": ["EMAIL", "city"]}, replace=Redact())
+    assert config.detect.excluded_entity_labels is not None
+    assert set(config.detect.excluded_entity_labels) == {"email", "city"}
+
+
+def test_excluded_entity_labels_strips_whitespace_and_lowercases() -> None:
+    config = AnonymizerConfig(detect={"excluded_entity_labels": ["  FIRST_NAME ", "Email"]}, replace=Redact())
+    assert config.detect.excluded_entity_labels is not None
+    assert "first_name" in config.detect.excluded_entity_labels
+    assert "email" in config.detect.excluded_entity_labels
+
+
+def test_excluded_entity_labels_deduplicates(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        config = AnonymizerConfig(detect={"excluded_entity_labels": ["email", "email"]}, replace=Redact())
+    assert config.detect.excluded_entity_labels == ["email"]
+    assert "duplicates" in caplog.text
+
+
+def test_excluded_entity_labels_empty_list_raises() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AnonymizerConfig(detect={"excluded_entity_labels": []}, replace=Redact())
+
+
+def test_excluded_entity_labels_whitespace_only_raises() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AnonymizerConfig(detect={"excluded_entity_labels": ["  ", ""]}, replace=Redact())
+
+
+def test_excluded_entity_labels_overlap_with_entity_labels_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["email"]},
+            replace=Redact(),
+        )
+    assert "email" in caplog.text
+    assert "will never be detected" in caplog.text
+
+
+def test_excluded_entity_labels_no_overlap_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["first_name"]},
+            replace=Redact(),
+        )
+    assert "will never be detected" not in caplog.text
+
+
+def test_excluded_entity_labels_overlap_warning_only_fires_when_allowlist_explicit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning when entity_labels=None (defaults) even if exclusions are set."""
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"excluded_entity_labels": ["email"]},
+            replace=Redact(),
+        )
+    assert "will never be detected" not in caplog.text
+
+
+def test_excluded_entity_labels_covering_all_defaults_raises() -> None:
+    """entity_labels=None falls back to DEFAULT_ENTITY_LABELS; excluding all of it must also raise."""
+    with pytest.raises(ValidationError, match="entirely overlaps DEFAULT_ENTITY_LABELS"):
+        AnonymizerConfig(
+            detect={"excluded_entity_labels": list(DEFAULT_ENTITY_LABELS)},
+            replace=Redact(),
+        )
+
+
+def test_excluded_entity_labels_partial_default_coverage_does_not_raise() -> None:
+    """Excluding some — but not all — default labels is the documented common case."""
+    config = AnonymizerConfig(
+        detect={"excluded_entity_labels": ["occupation", "gender"]},
+        replace=Redact(),
+    )
+    assert config.detect.excluded_entity_labels == ["gender", "occupation"]
+
+
+def test_excluded_entity_labels_fully_overlapping_entity_labels_raises() -> None:
+    with pytest.raises(ValidationError, match="entirely overlaps"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["email", "city"]},
+            replace=Redact(),
+        )
+
+
+def test_excluded_entity_labels_superset_of_entity_labels_raises() -> None:
+    """excluded_entity_labels covering entity_labels plus extra labels still empties the set."""
+    with pytest.raises(ValidationError, match="entirely overlaps"):
+        AnonymizerConfig(
+            detect={
+                "entity_labels": ["email", "city"],
+                "excluded_entity_labels": ["email", "city", "bank_account"],
+            },
+            replace=Redact(),
+        )
+
+
+def test_entity_labels_superset_of_excluded_entity_labels_only_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """entity_labels covering excluded_entity_labels plus extra labels still detects something."""
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        config = AnonymizerConfig(
+            detect={
+                "entity_labels": ["email", "city", "bank_account"],
+                "excluded_entity_labels": ["email", "city"],
+            },
+            replace=Redact(),
+        )
+    assert config.detect.entity_labels == ["bank_account", "city", "email"]
+    assert "will never be detected" in caplog.text

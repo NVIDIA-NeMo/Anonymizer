@@ -64,9 +64,16 @@ class AnonymizerResult(_DisplayMixin):
             mode was used. Set by ``run()`` / ``preview()``; consumed by
             ``evaluate()`` to dispatch the rewrite judges. Mutually exclusive
             with ``replace_method``.
+        entity_labels: Allowlist of entity labels that were in scope during
+            detection. Preserved for ``evaluate()`` so the coverage judge scopes
+            its evaluation to the same label set. ``None`` means all default
+            labels were in scope.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
+        excluded_entity_labels: Labels that were explicitly excluded from
+            detection. Preserved for ``evaluate()`` so the coverage judge does
+            not penalise the output for not anonymizing excluded labels.
     """
 
     dataframe: pd.DataFrame
@@ -77,6 +84,7 @@ class AnonymizerResult(_DisplayMixin):
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
     data_summary: str | None = None
+    excluded_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -110,9 +118,16 @@ class PreviewResult(_DisplayMixin):
         rewrite_config: The privacy goal that produced this preview when rewrite
             mode was used. Set by ``preview()``; consumed by ``evaluate()`` to
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
+        entity_labels: Allowlist of entity labels that were in scope during
+            detection. Preserved for ``evaluate()`` so the coverage judge scopes
+            its evaluation to the same label set. ``None`` means all default
+            labels were in scope.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
+        excluded_entity_labels: Labels that were explicitly excluded from
+            detection. Preserved for ``evaluate()`` so the coverage judge does
+            not penalise the output for not anonymizing excluded labels.
     """
 
     dataframe: pd.DataFrame
@@ -124,6 +139,7 @@ class PreviewResult(_DisplayMixin):
     rewrite_config: PrivacyGoal | None = None
     entity_labels: list[str] | None = None
     data_summary: str | None = None
+    excluded_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
