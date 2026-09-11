@@ -119,7 +119,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 ```
 
 !!! warning
-    `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A partial overlap just drops the shared labels and logs a warning. If the overlap is total, leaving an empty effective detection set, `Detect` raises a `ValueError` at config time instead of silently detecting nothing.
+    `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A total overlap raises a `ValueError` at config time instead of silently detecting nothing. A partial overlap logs a warning only when `entity_labels` is explicit; against the default label set, it's silent.
 
 ## Tuning the threshold
 
