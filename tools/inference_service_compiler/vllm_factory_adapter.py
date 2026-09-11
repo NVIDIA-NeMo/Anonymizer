@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import json
 import math
 import os
+import secrets
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -21,6 +23,7 @@ DEFAULT_OVERLAP = 128
 MAX_CHUNKS_PER_REQUEST = 256
 MAX_CONCURRENT_POOLING_CALLS = 8
 POOLING_LIMITER_STATE_ATTRIBUTE = "_anonymizer_pooling_limiter"
+VLLM_API_KEY_ENV = "VLLM_API_KEY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +76,8 @@ async def anonymizer_chat_compatibility(
         return await call_next(request)
 
     responses = importlib.import_module("starlette.responses")
+    if not _has_valid_api_key(request):
+        return responses.JSONResponse(content={"error": "Unauthorized"}, status_code=401)
     try:
         detection = parse_detection_request(await request.json())
         plugin = parse_factory_plugin(os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"])
@@ -116,6 +121,21 @@ async def anonymizer_chat_compatibility(
             ],
         }
     )
+
+
+def _has_valid_api_key(request: Any) -> bool:
+    api_key = os.environ.get(VLLM_API_KEY_ENV)
+    if not api_key or getattr(request, "method", None) == "OPTIONS":
+        return True
+    authorization = request.headers.get("Authorization")
+    if not authorization:
+        return False
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return False
+    expected_digest = hashlib.sha256(api_key.encode("utf-8")).digest()
+    actual_digest = hashlib.sha256(token.encode("utf-8")).digest()
+    return secrets.compare_digest(actual_digest, expected_digest)
 
 
 def parse_detection_request(value: object) -> DetectionRequest:
