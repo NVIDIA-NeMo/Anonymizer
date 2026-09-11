@@ -1,0 +1,24 @@
+schema_version = "inference-service.local-spec/v2"
+
+[task]
+kind = "generation"
+
+[model]
+model_id = "google/gemma-4-12B-it"
+revision = "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
+
+[vllm]
+python_executable = ".venv/bin/python"
+served_model_name = "gemma-4-12b-it-local"
+gpu_memory_utilization = 0.90
+max_model_len = 8192
+max_num_seqs = 16
+enable_prefix_caching = true
+async_scheduling = true
+
+[local]
+host = "127.0.0.1"
+port = 8000
+
+startup_timeout_seconds = 1800
+shutdown_timeout_seconds = 60

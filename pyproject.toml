@@ -53,6 +53,13 @@ notebooks = [
     "jupytext>=1.16.0,<2",
     "pillow>=12.0.0,<13",
 ]
+local-models = [
+    "vllm==0.27.1; sys_platform == 'linux' and python_version >= '3.12'",
+    "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux' and python_version >= '3.12'",
+    "nvidia-cuda-nvcc==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
+    "nvidia-cuda-crt==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
+    "nvidia-nvvm==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
+]
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
@@ -82,6 +89,7 @@ constraint-dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tools"]
 markers = [
     "e2e: end-to-end tests",
     "integration: integration tests",
@@ -92,7 +100,7 @@ include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools"]
 
 [tool.ty.environment]
 python-version = "3.11"
-root = ["src", ".", "tools/measurement"]
+root = ["src", ".", "tools", "tools/measurement"]
 
 [tool.coverage.run]
 omit = []

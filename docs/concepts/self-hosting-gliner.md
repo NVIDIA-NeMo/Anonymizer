@@ -5,9 +5,15 @@
 
 By default, Anonymizer's entity detection stage calls the hosted `nvidia/gliner-pii` model on `build.nvidia.com`. For PHI-sensitive workloads that cannot leave the host, or latency-critical setups, you can serve GLiNER locally instead.
 
-The model is small (~500 MB) and runs comfortably on CPU — making it a good fit to run alongside a local LLM without competing for GPU memory. It also runs on GPU if one is available, which cuts detection latency on long documents.
+The default NVIDIA GLiNER model is small enough to share a GPU with a local
+LLM. The optional GLiNER2 PII model is also fully local. The pinned reference
+profiles serve both models through vLLM 0.27.1 and the external
+[vLLM Factory](https://github.com/latenceainew/vllm-factory) project.
 
-The reference server script (`tools/serve_gliner.py`) is **not** installed with `pip install nemo-anonymizer` — get it from a source checkout of this repository (see **Running it** below).
+The characterized services live inside the source-tree
+[local-model deployment tool](inference-services.md). They are **not** installed
+with `pip install nemo-anonymizer`; compile and launch them from a source
+checkout.
 
 ---
 
@@ -52,81 +58,91 @@ Long inputs are split into overlapping chunks before inference. A self-hosted se
 
 ## Reference implementation
 
-A minimal FastAPI reference server at [`tools/serve_gliner.py`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/serve_gliner.py) in the Anonymizer GitHub repository implements the contract above. It loads `nvidia/gliner-pii`, exposes `POST /v1/chat/completions` (and `GET /v1/models`), and uses two levels of batching:
+The pinned profiles compile a vLLM Factory integration. The external project
+prepares each GLiNER checkpoint for vLLM, registers the model implementation,
+preprocesses requests through an IOProcessor, schedules pooling inference, and
+decodes the output. Its native endpoint is `POST /pooling`.
 
-1. **Chunk batching** — long text is split into overlapping windows; all chunks are passed to one `model.inference(...)` call.
-2. **Request coalescing** (optional, on by default) — concurrent HTTP requests from DataDesigner are grouped briefly, then all their chunks are inferred together.
+Anonymizer adds a thin middleware function inside the same vLLM process. It
+translates `POST /v1/chat/completions` into in-process pooling calls and restores
+the detector response shape. The adapter does not load model weights or run
+inference itself. It handles two wire-level responsibilities:
 
-```python title="tools/serve_gliner.py (excerpt)"
-@app.post("/v1/chat/completions")
-async def chat_completions(request: Request):
-    body = await request.json()
-    text = _extract_text(body.get("messages", []))
-    params = DetectParams(
-        labels=tuple(body.get("labels") or []),
-        threshold=float(body.get("threshold", 0.3)),
-        chunk_length=int(body.get("chunk_length", 384)),
-        overlap=int(body.get("overlap", 128)),
-        flat_ner=bool(body.get("flat_ner", False)),
-        inference_batch_size=int(body.get("batch_size", 8)),
-    )
-    entities = await detector.detect(text, params)
+1. **Chunk submission**: long text is split into overlapping character windows,
+   then each window enters vLLM's scheduler.
+2. **Response normalization**: GLiNER and GLiNER2 results become one list of
+   entities with document offsets and overlap deduplication.
+
+```python title="tools/inference_service_compiler/vllm_factory_adapter.py (excerpt)"
+results = await invoke_pooling_chunks(
+    handler=handler,
+    detection=detection,
+    chunks=chunks,
     ...
+)
+entities = merge_entities(plugin=plugin, chunks=chunks, results=results, ...)
 ```
 
-When `flat_ner` is `false` (Anonymizer's default), the server removes nested subset spans before score-based deduplication across chunk overlaps.
+The adapter rejects a labeled request that would produce more than 256 chunks
+before it materializes chunk text or calls vLLM. The service runs at most eight
+pooling calls concurrently across all accepted requests; the remaining
+admitted chunks wait for capacity.
 
-| Environment variable | Default | Purpose |
-|---|---|---|
-| `DEVICE` | `auto` | `auto`, `cuda`, `cpu`, or `mps` (Apple Silicon GPU) |
-| `GLINER_BATCH_MODE` | `true` | Coalesce concurrent HTTP requests before inference |
-| `GLINER_MAX_BATCH_REQUESTS` | `32` | Max requests per coalesced batch |
-| `GLINER_BATCH_WAIT_MS` | `10` | Max wait time to fill a batch (milliseconds) |
+When `flat_ner` is `false` (Anonymizer's default), the adapter removes nested
+subset spans before score-based deduplication across chunk overlaps. A request
+without `labels` returns an empty entity list so DataDesigner's generic model
+health check can validate the endpoint without running meaningless inference.
 
-Set `GLINER_BATCH_MODE=false` to disable request coalescing; chunk batching still runs per request.
+The pinned vLLM Factory profiles are the only supported local detector runtime.
+Native Transformers GLiNER fallback serving is intentionally not included.
 
 ---
 
-## Running it
+## Deploying it
 
 !!! note "Source checkout only"
 
-    `tools/serve_gliner.py` ships in the [Anonymizer GitHub repository](https://github.com/NVIDIA-NeMo/Anonymizer), not in the `nemo-anonymizer` wheel. Clone the repo or download the file, then run it from that tree:
-
-    ```bash
-    git clone https://github.com/NVIDIA-NeMo/Anonymizer.git
-    cd Anonymizer
-    pip install fastapi uvicorn gliner
-    python tools/serve_gliner.py
-    ```
+    `tools/inference_service.py` ships in the [Anonymizer GitHub repository](https://github.com/NVIDIA-NeMo/Anonymizer), not in the `nemo-anonymizer` wheel. Clone the repository and run the compiler from its root.
 
 ### Dependencies
 
+Install [uv](https://docs.astral.sh/uv/) and sync the local model group on a
+Linux GPU host:
+
 ```bash
-pip install fastapi uvicorn gliner
-# or with uv
-uv pip install fastapi uvicorn gliner
+uv sync --python 3.12 --group dev --group local-models
+python -m vllm_factory.compat.doctor
 ```
 
-On first launch the `gliner` package will download `nvidia/gliner-pii` from HuggingFace and cache it under `~/.cache/huggingface/`. No HuggingFace token is required (public model).
+The group pins `vllm==0.27.1` and vLLM Factory at the exact source revision
+recorded in `pyproject.toml` and `uv.lock`. The doctor must report the general
+plugins group, IOProcessor plugins group, and native IO mode. Local vLLM 0.27.1
+serving requires Python 3.12 or later.
+
+On first launch, the selected public checkpoint is downloaded from Hugging Face
+and cached under `~/.cache/huggingface/`. The integration supplies the TOML
+profile's immutable revision to vLLM Factory's preparation API and writes a
+provenance record beside the prepared model. Package and checkpoint setup use
+the network; inference stays local after setup.
 
 ### Start the server
 
-```bash
-python tools/serve_gliner.py
-# INFO     Uvicorn running on http://127.0.0.1:8001
+Compile the pinned vLLM Factory GLiNER TOML profile and launch the resulting
+plan as shown in [Deploy local models](inference-services.md). That guide has
+complete host and GPU container workflows. NVIDIA GLiNER uses
+`deberta_gliner`; GLiNER2 uses `deberta_gliner2`.
 
-# Optional: override port (default: 8001)
-python tools/serve_gliner.py --port 9000
+Launch writes a versioned receipt only after the new process proves launch
+ownership and the model-list and detection contract probes pass. Use that
+receipt with the compiler's `status` and `stop` commands instead of supervising
+the internal server module directly.
 
-# Optional: listen on all interfaces — no auth; use only on trusted networks
-python tools/serve_gliner.py --host 0.0.0.0
+The model families do not use identical label vocabularies. The request example below targets the default NVIDIA model and uses `user_name`; the default GLiNER2 PII checkpoint uses `username` for that category.
 
-# Optional: pick device explicitly (auto prefers mps, then cuda, then cpu)
-DEVICE=cuda python tools/serve_gliner.py
-```
-
-The reference server has **no authentication**. The default bind address is `127.0.0.1` so detection traffic stays on localhost. Use `--host 0.0.0.0` only when Anonymizer runs on another host in a trusted environment.
+The reference profiles have **no authentication**. The default bind address is
+`127.0.0.1` so detection traffic stays on localhost. Set `api_key_env` in the
+`[vllm]` section or place the endpoint behind authenticated TLS before exposing
+it to another host.
 
 Verify the server is reachable:
 
@@ -195,9 +211,8 @@ model_configs:
   - alias: gliner-pii-detector
     model: nvidia/gliner-pii
     provider: local-gliner
-    skip_health_check: true   # the default health check sends no `labels`, which GLiNER can't handle
     inference_parameters:
-      max_parallel_requests: 8   # send concurrent rows; the reference server batches them
+      max_parallel_requests: 8   # vLLM continuously batches concurrent detector calls
       timeout: 120
 
   - alias: gpt-oss-120b
@@ -230,15 +245,16 @@ anonymizer = Anonymizer(
 )
 ```
 
-Set `skip_health_check: true` on the detector alias: Anonymizer's default probe sends `prompt="Hello!"` with no `labels` field, which is not a valid GLiNER request.
-
 ---
 
 ## Performance notes
 
-- **Batch mode**: The reference server coalesces concurrent detector requests by default. Pair it with a higher `max_parallel_requests` on the `gliner-pii-detector` alias (see YAML above) so DataDesigner sends multiple rows at once and the server fills GPU batches efficiently.
-- On CPU, detection of a ~1000-character note with ~30 candidate labels takes **5–20 ms** per request on a modern x86 core. For typical Anonymizer workflows this is a rounding error compared to the LLM roles that follow, and keeping GLiNER on CPU frees GPU memory for the LLM.
-- On GPU the same request drops to roughly **1–3 ms** — worth it when you're processing tens of thousands of documents in a batch workflow, or when the host has spare GPU memory next to the LLM.
-- Choose device with the `DEVICE` environment variable (`auto`, `cuda`, `mps`, `cpu`). `auto` prefers Apple Silicon GPU (MPS), then NVIDIA CUDA, then CPU.
+- **Continuous batching**: Pair vLLM Factory with a higher
+  `max_parallel_requests` on the detector alias so DataDesigner supplies enough
+  concurrent work for vLLM's scheduler.
+- **GPU memory**: `gpu_memory_utilization` is a vLLM memory budget. Size it with
+  any colocated generation service in mind.
+- **Native fallback**: Use the native engine when CPU or MPS deployment matters
+  more than vLLM scheduling.
 - The default GLiNER threshold is `0.3`. Lower values detect more spans (higher recall, more false positives); higher values improve precision but miss edge cases. Tune via `Detect(gliner_threshold=...)`.
 - Each request loads the FULL list of candidate labels passed from `Detect.entity_labels`. If you only need a subset (e.g. a clinical-only deployment), narrowing that list materially speeds up detection.
