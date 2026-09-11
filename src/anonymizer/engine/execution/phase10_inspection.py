@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, TypeVar, cast, final
+from weakref import ReferenceType, finalize, ref
 
 from anonymizer.engine.execution.accounting_admission import (
     _AccountingAdmissionCode,
@@ -60,6 +61,11 @@ _MAX_REASON_CODES_PER_DIAGNOSTIC = 4
 _MAX_CANONICAL_JSON_BYTES = 16_384
 _MAX_BUILDER_WORKING_BYTES = 65_536
 _MAX_DECLARED_INTEGER = 65_536
+_BUILDER_BASE_BYTES = 4_096
+_BUILDER_ROW_BYTES = 512
+_MAX_EXPLAIN_BUILDER_ROWS = 8 + 12 + 9
+_MAX_INSPECT_BUILDER_ROWS = _MAX_STAGE_SUMMARIES + _MAX_TERMINAL_SUMMARIES
+_MAX_DIAGNOSE_BUILDER_ROWS = _MAX_DIAGNOSTICS
 _GRANT_SEAL = object()
 _ENCODING_SEAL = object()
 _GRANT_LOCK = Lock()
@@ -512,9 +518,32 @@ def _require_enum(value: object, expected: type[E]) -> None:
 
 @dataclass(slots=True, repr=False)
 class _Phase10GrantState(_PrivatePhase10InspectionValue):
-    owner: object | None
-    subject: object | None
+    owner_binding: _Phase10IdentityBinding | None
+    subject_binding: _Phase10IdentityBinding | None
     active: bool = True
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase10IdentityBinding(_PrivatePhase10InspectionValue):
+    weak_reference: ReferenceType[object] = field(compare=False)
+
+    def matches(self, value: object) -> bool:
+        return self.weak_reference() is value
+
+
+@dataclass(slots=True, repr=False)
+class _Phase10BuilderBudget(_PrivatePhase10InspectionValue):
+    used_bytes: int = 0
+
+    def __post_init__(self) -> None:
+        if type(self.used_bytes) is not int or not 0 <= self.used_bytes <= _MAX_BUILDER_WORKING_BYTES:
+            raise TypeError("invalid private Phase 10 builder budget")
+
+    def reserve(self, size: object) -> bool:
+        if type(size) is not int or size < 0 or size > _MAX_BUILDER_WORKING_BYTES - self.used_bytes:
+            return False
+        self.used_bytes += size
+        return True
 
 
 @final
@@ -718,12 +747,21 @@ def _issue_phase10_inspection_grant(
     subject: object,
     operation: _Phase10Operation,
 ) -> _Phase10InspectionGrant | _Phase10InspectionRejected:
-    if owner is None or subject is None or type(operation) is not _Phase10Operation:
-        return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
-    nonce = object()
-    with _GRANT_LOCK:
-        _GRANT_STATES[nonce] = _Phase10GrantState(owner, subject)
-    return _Phase10InspectionGrant(operation, nonce, _GRANT_SEAL)
+    try:
+        if owner is None or subject is None or type(operation) is not _Phase10Operation:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+        nonce = object()
+        owner_binding = _phase10_identity_binding(owner, nonce)
+        subject_binding = _phase10_identity_binding(subject, nonce)
+        if owner_binding is None or subject_binding is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+        grant = _Phase10InspectionGrant(operation, nonce, _GRANT_SEAL)
+        finalize(grant, _expire_phase10_grant_nonce, nonce)
+        with _GRANT_LOCK:
+            _GRANT_STATES[nonce] = _Phase10GrantState(owner_binding, subject_binding)
+        return grant
+    except Exception:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
 
 
 def _consume_phase10_inspection_grant(
@@ -732,23 +770,47 @@ def _consume_phase10_inspection_grant(
     subject: object,
     operation: _Phase10Operation,
 ) -> bool:
-    if type(grant) is not _Phase10InspectionGrant or grant._seal is not _GRANT_SEAL:
-        return False
-    with _GRANT_LOCK:
-        state = _GRANT_STATES.get(grant._nonce)
-        if not _grant_matches(grant, state, owner, subject, operation):
+    try:
+        if type(grant) is not _Phase10InspectionGrant or grant._seal is not _GRANT_SEAL:
             return False
-        del _GRANT_STATES[grant._nonce]
-        _expire_grant_state(cast(_Phase10GrantState, state))
-        return True
+        with _GRANT_LOCK:
+            state = _GRANT_STATES.get(grant._nonce)
+            if not _grant_matches(grant, state, owner, subject, operation):
+                return False
+            del _GRANT_STATES[grant._nonce]
+            _expire_grant_state(cast(_Phase10GrantState, state))
+            return True
+    except Exception:
+        return False
 
 
 def _revoke_phase10_inspection_grant(grant: object) -> None:
-    if type(grant) is _Phase10InspectionGrant and grant._seal is _GRANT_SEAL:
+    try:
+        if type(grant) is _Phase10InspectionGrant and grant._seal is _GRANT_SEAL:
+            with _GRANT_LOCK:
+                state = _GRANT_STATES.pop(grant._nonce, None)
+            if state is not None:
+                _expire_grant_state(state)
+    except Exception:
+        return
+
+
+def _phase10_identity_binding(value: object, nonce: object) -> _Phase10IdentityBinding | None:
+    try:
+        weak_reference = ref(value, lambda _reference: _expire_phase10_grant_nonce(nonce))
+    except TypeError:
+        return None
+    return _Phase10IdentityBinding(weak_reference)
+
+
+def _expire_phase10_grant_nonce(nonce: object) -> None:
+    try:
         with _GRANT_LOCK:
-            state = _GRANT_STATES.pop(grant._nonce, None)
+            state = _GRANT_STATES.pop(nonce, None)
         if state is not None:
             _expire_grant_state(state)
+    except Exception:
+        return
 
 
 def _explain_phase10(
@@ -758,27 +820,29 @@ def _explain_phase10(
 ) -> _Phase10ExplainView | _Phase10InspectionRejected:
     if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.EXPLAIN):
         return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
-    details = _phase10_explain_details(subject)
-    if isinstance(details, _Phase10InspectionRejected):
-        return details
-    subject_kind, profile, route, capabilities, aggregates, rejection = details
-    view = _Phase10ExplainView(
-        _phase10_provenance(
-            _Phase10ViewKind.EXPLAIN,
-            subject_kind,
-            profile,
-            _Phase10CaptureBoundary.ADMISSION_TERMINAL,
-            _Phase10LifecycleState.REJECTED if rejection is not None else _Phase10LifecycleState.TERMINAL,
-        ),
-        route,
-        capabilities,
-        _phase10_declared_limits(),
-        aggregates,
-        rejection,
-    )
-    if _phase10_builder_bytes(view) > _MAX_BUILDER_WORKING_BYTES:
-        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
-    return view
+    try:
+        if _phase10_builder_budget(_MAX_EXPLAIN_BUILDER_ROWS) is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        details = _phase10_explain_details(subject)
+        if isinstance(details, _Phase10InspectionRejected):
+            return details
+        subject_kind, profile, route, capabilities, aggregates, rejection = details
+        return _Phase10ExplainView(
+            _phase10_provenance(
+                _Phase10ViewKind.EXPLAIN,
+                subject_kind,
+                profile,
+                _Phase10CaptureBoundary.ADMISSION_TERMINAL,
+                _Phase10LifecycleState.REJECTED if rejection is not None else _Phase10LifecycleState.TERMINAL,
+            ),
+            route,
+            capabilities,
+            _phase10_declared_limits(),
+            aggregates,
+            rejection,
+        )
+    except Exception:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
 
 
 def _inspect_phase10(
@@ -788,22 +852,24 @@ def _inspect_phase10(
 ) -> _Phase10InspectView | _Phase10InspectionRejected:
     if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.INSPECT):
         return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
-    if not _valid_owner_capture(subject):
-        return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
-    capture = cast(_Phase10OwnerCapture, subject)
-    view = _Phase10InspectView(
-        _phase10_provenance(
-            _Phase10ViewKind.INSPECT,
-            capture.subject_kind,
-            capture.semantic_profile_version,
-            capture.capture_boundary,
-            capture.capture_lifecycle_state,
-        ),
-        capture.snapshot,
-    )
-    if _phase10_builder_bytes(view) > _MAX_BUILDER_WORKING_BYTES:
-        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
-    return view
+    try:
+        if _phase10_builder_budget(_MAX_INSPECT_BUILDER_ROWS) is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        if not _valid_owner_capture(subject):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+        capture = cast(_Phase10OwnerCapture, subject)
+        return _Phase10InspectView(
+            _phase10_provenance(
+                _Phase10ViewKind.INSPECT,
+                capture.subject_kind,
+                capture.semantic_profile_version,
+                capture.capture_boundary,
+                capture.capture_lifecycle_state,
+            ),
+            capture.snapshot,
+        )
+    except Exception:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
 
 
 def _diagnose_phase10(
@@ -813,38 +879,39 @@ def _diagnose_phase10(
 ) -> _Phase10DiagnoseView | _Phase10InspectionRejected:
     if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.DIAGNOSE):
         return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
-    admission = _phase10_admission_diagnostic(subject)
-    if admission is not None:
-        profile, diagnostic = admission
-        view = _Phase10DiagnoseView(
-            _phase10_provenance(
-                _Phase10ViewKind.DIAGNOSE,
-                _Phase10SubjectKind.ADMISSION_REJECTION,
-                profile,
-                _Phase10CaptureBoundary.ADMISSION_TERMINAL,
-                _Phase10LifecycleState.REJECTED,
-            ),
-            (diagnostic,),
-        )
-    elif _valid_owner_capture(subject):
-        capture = cast(_Phase10OwnerCapture, subject)
-        if not capture.diagnostics:
-            return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
-        view = _Phase10DiagnoseView(
-            _phase10_provenance(
-                _Phase10ViewKind.DIAGNOSE,
-                capture.subject_kind,
-                capture.semantic_profile_version,
-                capture.capture_boundary,
-                capture.capture_lifecycle_state,
-            ),
-            capture.diagnostics,
-        )
-    else:
+    try:
+        if _phase10_builder_budget(_MAX_DIAGNOSE_BUILDER_ROWS) is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        admission = _phase10_admission_diagnostic(subject)
+        if admission is not None:
+            profile, diagnostic = admission
+            return _Phase10DiagnoseView(
+                _phase10_provenance(
+                    _Phase10ViewKind.DIAGNOSE,
+                    _Phase10SubjectKind.ADMISSION_REJECTION,
+                    profile,
+                    _Phase10CaptureBoundary.ADMISSION_TERMINAL,
+                    _Phase10LifecycleState.REJECTED,
+                ),
+                (diagnostic,),
+            )
+        if _valid_owner_capture(subject):
+            capture = cast(_Phase10OwnerCapture, subject)
+            if not capture.diagnostics:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
+            return _Phase10DiagnoseView(
+                _phase10_provenance(
+                    _Phase10ViewKind.DIAGNOSE,
+                    capture.subject_kind,
+                    capture.semantic_profile_version,
+                    capture.capture_boundary,
+                    capture.capture_lifecycle_state,
+                ),
+                capture.diagnostics,
+            )
         return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
-    if _phase10_builder_bytes(view) > _MAX_BUILDER_WORKING_BYTES:
-        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
-    return view
+    except Exception:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
 
 
 def _phase10_provenance(
@@ -920,16 +987,27 @@ def _phase10_stage(value: object) -> _Phase10Stage | None:
     return direct.get(value, aliases.get(value))
 
 
-def _phase10_builder_bytes(value: object) -> int:
-    if isinstance(value, _Phase10ExplainView):
-        rows = len(value.required_capabilities) + len(value.declared_limits) + len(value.relationship_buckets)
-    elif isinstance(value, _Phase10InspectView):
-        rows = len(value.snapshot.stage_summaries) + len(value.snapshot.terminal_summaries)
-    elif isinstance(value, _Phase10DiagnoseView):
-        rows = len(value.diagnostics)
-    else:
-        return _MAX_BUILDER_WORKING_BYTES + 1
-    return 2_048 + 512 * rows
+def _phase10_builder_budget(rows: object) -> _Phase10BuilderBudget | None:
+    if type(rows) is not int or rows < 0:
+        return None
+    budget = _phase10_new_builder_budget()
+    if budget is None:
+        return None
+    for _ in range(rows):
+        if not _phase10_reserve_builder_row(budget):
+            return None
+    return budget
+
+
+def _phase10_new_builder_budget() -> _Phase10BuilderBudget | None:
+    budget = _Phase10BuilderBudget()
+    if not budget.reserve(_BUILDER_BASE_BYTES):
+        return None
+    return budget
+
+
+def _phase10_reserve_builder_row(budget: object) -> bool:
+    return type(budget) is _Phase10BuilderBudget and budget.reserve(_BUILDER_ROW_BYTES)
 
 
 def _phase10_explain_details(
@@ -1134,15 +1212,17 @@ def _grant_matches(
         and type(operation) is _Phase10Operation
         and grant.operation is operation
         and state.active
-        and state.owner is owner
-        and state.subject is subject
+        and state.owner_binding is not None
+        and state.owner_binding.matches(owner)
+        and state.subject_binding is not None
+        and state.subject_binding.matches(subject)
     )
 
 
 def _expire_grant_state(state: _Phase10GrantState) -> None:
     state.active = False
-    state.owner = None
-    state.subject = None
+    state.owner_binding = None
+    state.subject_binding = None
 
 
 def _valid_provenance(value: object) -> bool:
@@ -1184,15 +1264,33 @@ def _valid_view_subject(kind: _Phase10ViewKind, subject: _Phase10SubjectKind) ->
     return subject in allowed[kind]
 
 
+def _valid_stage_summary(value: object) -> bool:
+    return (
+        type(value) is _Phase10StageSummary
+        and type(value.stage) is _Phase10Stage
+        and type(value.lifecycle_state) is _Phase10LifecycleState
+        and type(value.task_count_bucket) is _Phase10CountBucket
+    )
+
+
+def _valid_terminal_summary(value: object) -> bool:
+    return (
+        type(value) is _Phase10TerminalSummary
+        and type(value.stage) is _Phase10Stage
+        and type(value.terminal_state) is _Phase10TerminalState
+        and type(value.impact_count_bucket) is _Phase10CountBucket
+    )
+
+
 def _valid_snapshot(value: object) -> bool:
     return (
         type(value) is _Phase10Snapshot
         and type(value.stage_summaries) is tuple
         and len(value.stage_summaries) <= _MAX_STAGE_SUMMARIES
-        and all(type(item) is _Phase10StageSummary for item in value.stage_summaries)
+        and all(_valid_stage_summary(item) for item in value.stage_summaries)
         and type(value.terminal_summaries) is tuple
         and len(value.terminal_summaries) <= _MAX_TERMINAL_SUMMARIES
-        and all(type(item) is _Phase10TerminalSummary for item in value.terminal_summaries)
+        and all(_valid_terminal_summary(item) for item in value.terminal_summaries)
         and type(value.reconciliation_state) is _Phase10ReconciliationState
         and type(value.cleanup_state) is _Phase10CleanupState
         and type(value.release_state) is _Phase10ReleaseState
@@ -1287,6 +1385,23 @@ def _unique_enum_fields(values: tuple[object, ...], field_name: str) -> bool:
     return None not in fields and len(fields) == len(set(fields))
 
 
+def _valid_declared_limit(value: object) -> bool:
+    return (
+        type(value) is _Phase10DeclaredLimit
+        and type(value.name) is _Phase10LimitName
+        and type(value.value) is int
+        and 0 <= value.value <= _MAX_DECLARED_INTEGER
+    )
+
+
+def _valid_aggregate(value: object) -> bool:
+    return (
+        type(value) is _Phase10Aggregate
+        and type(value.dimension) is _Phase10AggregateDimension
+        and type(value.count_bucket) is _Phase10CountBucket
+    )
+
+
 def _valid_explain_view(value: object) -> bool:
     return (
         type(value) is _Phase10ExplainView
@@ -1298,10 +1413,10 @@ def _valid_explain_view(value: object) -> bool:
         and all(type(item) is _Phase10Capability for item in value.required_capabilities)
         and len(value.required_capabilities) == len(set(value.required_capabilities))
         and type(value.declared_limits) is tuple
-        and all(type(item) is _Phase10DeclaredLimit for item in value.declared_limits)
+        and all(_valid_declared_limit(item) for item in value.declared_limits)
         and _unique_enum_fields(cast(tuple[object, ...], value.declared_limits), "name")
         and type(value.relationship_buckets) is tuple
-        and all(type(item) is _Phase10Aggregate for item in value.relationship_buckets)
+        and all(_valid_aggregate(item) for item in value.relationship_buckets)
         and _unique_enum_fields(cast(tuple[object, ...], value.relationship_buckets), "dimension")
         and (value.rejection_category is None or type(value.rejection_category) is _Phase10ReasonCategory)
     )
@@ -1411,7 +1526,10 @@ def _diagnose_payload(value: _Phase10DiagnoseView) -> dict[str, object]:
 def _encode_phase10_view(
     value: object,
 ) -> _Phase10CanonicalEncoding | _Phase10InspectionRejected:
-    payload = _view_payload(value)
+    try:
+        payload = _view_payload(value)
+    except Exception:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
     if payload is None:
         return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
     try:
@@ -1422,7 +1540,7 @@ def _encode_phase10_view(
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, UnicodeEncodeError, ValueError):
+    except Exception:
         return _Phase10InspectionRejected(_Phase10RejectionCode.ENCODING_FAILED)
     if len(encoded) > _MAX_CANONICAL_JSON_BYTES:
         return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)

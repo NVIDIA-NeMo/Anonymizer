@@ -62,13 +62,30 @@ class _Phase8CleanupReceipt:
     withheld_candidate_reference_count: int = 0
     _proof: _Phase8CleanupProof | None = field(default=None, compare=False)
 
+    def __repr__(self) -> str:
+        return "<private phase 8 cleanup receipt>"
+
     def __reduce__(self) -> str | tuple[object, ...]:
         raise TypeError("private Phase 8 cleanup receipts are not serializable")
 
     def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Fail closed when malformed cleanup state cannot be projected."""
+        try:
+            return self._phase10_snapshot_unchecked()
+        except Exception:
+            from anonymizer.engine.execution.phase10_inspection import (
+                _Phase10InspectionRejected,
+                _Phase10RejectionCode,
+            )
+
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+    def _phase10_snapshot_unchecked(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
         """Issue a detached bounded view of one sealed cleanup terminal."""
         from anonymizer.engine.execution.phase10_inspection import (
             _phase10_count_bucket,
+            _phase10_new_builder_budget,
+            _phase10_reserve_builder_row,
             _Phase10CaptureBoundary,
             _Phase10CleanupState,
             _Phase10CountBucket,
@@ -96,6 +113,9 @@ class _Phase8CleanupReceipt:
             component=self.component,
         ):
             return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        builder_budget = _phase10_new_builder_budget()
+        if builder_budget is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         count = sum(
             (
                 self.active_operation_count,
@@ -128,6 +148,8 @@ class _Phase8CleanupReceipt:
             _Phase8CleanupStatus.FAILED: _Phase10TerminalState.FAILED,
             _Phase8CleanupStatus.UNCONFIRMED: _Phase10TerminalState.INCONSISTENT,
         }[self.status]
+        if not _phase10_reserve_builder_row(builder_budget) or not _phase10_reserve_builder_row(builder_budget):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         snapshot = _Phase10Snapshot(
             (
                 _Phase10StageSummary(
@@ -146,6 +168,8 @@ class _Phase8CleanupReceipt:
             _Phase8CleanupStatus.FAILED: _Phase10ReasonCategory.CLEANUP_FAILED,
             _Phase8CleanupStatus.UNCONFIRMED: _Phase10ReasonCategory.CLEANUP_UNCONFIRMED,
         }[self.status]
+        if category is not None and not _phase10_reserve_builder_row(builder_budget):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         diagnostics = (
             ()
             if category is None
@@ -219,14 +243,31 @@ def _is_phase8_cleanup_receipt(
     phase: _Phase8CleanupPhase,
     component: _Phase8CleanupComponent,
 ) -> bool:
-    if not isinstance(value, _Phase8CleanupReceipt) or value._proof is None:
+    if type(value) is not _Phase8CleanupReceipt or type(value._proof) is not _Phase8CleanupProof:
         return False
+    snapshot = _cleanup_snapshot(value)
     return (
         value.identity is identity
+        and type(value.phase) is _Phase8CleanupPhase
         and value.phase is phase
+        and type(value.component) is _Phase8CleanupComponent
         and value.component is component
+        and type(value.status) is _Phase8CleanupStatus
         and value._proof.seal is _CLEANUP_SEAL
-        and value._proof.snapshot == _cleanup_snapshot(value)
+        and type(value._proof.snapshot) is tuple
+        and snapshot is not None
+        and _cleanup_proof_snapshot_matches(value._proof.snapshot, snapshot)
+    )
+
+
+def _cleanup_proof_snapshot_matches(value: tuple[object, ...], expected: tuple[object, ...]) -> bool:
+    if len(value) != len(expected):
+        return False
+    return all(
+        (type(actual) is int and actual == reference)
+        if type(reference) is int
+        else (type(actual) is type(reference) and actual is reference)
+        for actual, reference in zip(value, expected, strict=True)
     )
 
 
@@ -244,9 +285,9 @@ def _cleanup_snapshot(value: _Phase8CleanupReceipt) -> tuple[object, ...] | None
         value.withheld_candidate_reference_count,
     )
     if (
-        not isinstance(value.phase, _Phase8CleanupPhase)
-        or not isinstance(value.component, _Phase8CleanupComponent)
-        or not isinstance(value.status, _Phase8CleanupStatus)
+        type(value.phase) is not _Phase8CleanupPhase
+        or type(value.component) is not _Phase8CleanupComponent
+        or type(value.status) is not _Phase8CleanupStatus
         or value.identity is None
         or any(type(count) is not int or count < 0 for count in counts)
     ):

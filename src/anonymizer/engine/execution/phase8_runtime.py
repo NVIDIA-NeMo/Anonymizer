@@ -10,12 +10,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
 from threading import RLock
-from typing import TYPE_CHECKING, Concatenate, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Concatenate, ParamSpec, TypeVar, cast
 
 from anonymizer.engine.execution.phase8_admission import (
     _compile_group_operation_plan,
+    _Phase8GroupId,
     _Phase8GroupOperationPlan,
     _Phase8Stage,
+    _Phase8StageKind,
 )
 from anonymizer.engine.execution.phase8_cleanup import (
     _is_phase8_cleanup_receipt,
@@ -155,17 +157,147 @@ class _StageInconsistent(_Phase8CodedTerminal):
 
 
 def _terminal_name(terminal: _Phase8Terminal) -> _Phase8TerminalKind:
-    if isinstance(terminal, _StageSucceeded):
+    if type(terminal) is _StageSucceeded:
         return _Phase8TerminalKind.SUCCEEDED
-    if isinstance(terminal, _StageFailed):
+    if type(terminal) is _StageFailed:
         return _Phase8TerminalKind.FAILED
-    if isinstance(terminal, _StageCancelled):
+    if type(terminal) is _StageCancelled:
         return _Phase8TerminalKind.CANCELLED
-    if isinstance(terminal, _StageLost):
+    if type(terminal) is _StageLost:
         return _Phase8TerminalKind.LOST
-    if isinstance(terminal, _StageBlocked):
+    if type(terminal) is _StageBlocked:
         return _Phase8TerminalKind.BLOCKED
-    return _Phase8TerminalKind.INCONSISTENT
+    if type(terminal) is _StageInconsistent:
+        return _Phase8TerminalKind.INCONSISTENT
+    raise TypeError("unknown private Phase 8 terminal")
+
+
+def _valid_phase8_snapshot_terminal(stage: object, terminal: object) -> bool:
+    if type(stage) is not _Phase8Stage or type(terminal) not in {
+        _StageSucceeded,
+        _StageFailed,
+        _StageCancelled,
+        _StageLost,
+        _StageBlocked,
+        _StageInconsistent,
+    }:
+        return False
+    typed_terminal = cast(_Phase8Terminal, terminal)
+    if not _same_phase8_stage(getattr(typed_terminal, "stage", None), stage):
+        return False
+    if type(terminal) is _StageSucceeded:
+        return True
+    code = getattr(terminal, "code", None)
+    if type(code) is not _Phase8Reason:
+        return False
+    if type(terminal) is _StageCancelled:
+        return code is _Phase8Reason.CANCELLATION
+    if type(terminal) is _StageLost:
+        return code is _Phase8Reason.TRANSPORT_LOST
+    return code not in {_Phase8Reason.CANCELLATION, _Phase8Reason.TRANSPORT_LOST}
+
+
+def _valid_phase8_snapshot_correlations(ledger: _Phase8OperationLedger) -> bool:
+    if (
+        not _valid_phase8_operation_plan(ledger.plan)
+        or type(ledger._attempts) is not dict
+        or type(ledger._terminals) is not dict
+        or type(ledger._dispatched) is not set
+        or any(not _contains_phase8_stage(ledger.plan.stages, stage) for stage in ledger._attempts)
+        or any(not _contains_phase8_stage(ledger.plan.stages, stage) for stage in ledger._terminals)
+        or any(not _contains_phase8_stage(ledger.plan.stages, stage) for stage in ledger._dispatched)
+    ):
+        return False
+    attempted_terminals = {_StageSucceeded, _StageFailed, _StageLost, _StageInconsistent}
+    for stage, terminal in ledger._terminals.items():
+        was_dispatched = _contains_phase8_stage(ledger._dispatched, stage)
+        if type(terminal) in attempted_terminals and not was_dispatched:
+            return False
+        if type(terminal) is _StageBlocked and was_dispatched:
+            return False
+        if type(terminal) is _StageCancelled and was_dispatched != _contains_phase8_stage(ledger._attempts, stage):
+            return False
+    for stage in ledger.plan.stages:
+        expected_attempt = _contains_phase8_stage(ledger._dispatched, stage) and _contains_phase8_stage(
+            ledger._terminals, stage
+        )
+        if _contains_phase8_stage(ledger._attempts, stage) is not expected_attempt:
+            return False
+    for stage in ledger.plan.stages:
+        if not _contains_phase8_stage(ledger._attempts, stage):
+            continue
+        receipt = ledger._attempts[stage]
+        if (
+            type(receipt) is not _Phase8AttemptReceipt
+            or receipt.group_id is not ledger.plan.group_id
+            or not _same_phase8_stage(receipt.stage, stage)
+            or not _contains_phase8_stage(ledger._terminals, stage)
+            or receipt.terminal is not _terminal_name(ledger._terminals[stage])
+        ):
+            return False
+    for position, stage in enumerate(ledger.plan.stages):
+        if not _contains_phase8_stage(ledger._dispatched, stage):
+            continue
+        if any(
+            type(ledger._terminals.get(previous)) is not _StageSucceeded for previous in ledger.plan.stages[:position]
+        ):
+            return False
+    return True
+
+
+def _contains_phase8_stage(values: object, expected: object) -> bool:
+    if type(values) not in {tuple, set, dict}:
+        return False
+    typed_values = cast(tuple[object, ...] | set[object] | dict[object, object], values)
+    return any(_same_phase8_stage(value, expected) for value in typed_values)
+
+
+def _same_phase8_stage(left: object, right: object) -> bool:
+    if not _valid_phase8_stage_value(left) or not _valid_phase8_stage_value(right):
+        return False
+    typed_left = cast(_Phase8Stage, left)
+    typed_right = cast(_Phase8Stage, right)
+    return typed_left.kind is typed_right.kind and typed_left.round_number == typed_right.round_number
+
+
+def _valid_phase8_stage_value(value: object) -> bool:
+    if type(value) is not _Phase8Stage or type(value.kind) is not _Phase8StageKind:
+        return False
+    if value.kind in {
+        _Phase8StageKind.VALIDATE_BASELINES,
+        _Phase8StageKind.ANALYZE,
+        _Phase8StageKind.REWRITE,
+    }:
+        return value.round_number is None
+    minimum = 0 if value.kind is _Phase8StageKind.EVALUATE else 1
+    return type(value.round_number) is int and value.round_number >= minimum
+
+
+def _valid_phase8_operation_plan(value: object) -> bool:
+    if (
+        type(value) is not _Phase8GroupOperationPlan
+        or type(value.group_id) is not _Phase8GroupId
+        or type(value.max_repairs) is not int
+        or not 0 <= value.max_repairs <= 3
+        or type(value.stages) is not tuple
+        or len(value.stages) != 4 + 2 * value.max_repairs
+    ):
+        return False
+    expected = [
+        (_Phase8StageKind.VALIDATE_BASELINES, None),
+        (_Phase8StageKind.ANALYZE, None),
+        (_Phase8StageKind.REWRITE, None),
+        (_Phase8StageKind.EVALUATE, 0),
+    ]
+    for round_number in range(1, value.max_repairs + 1):
+        expected.extend(((_Phase8StageKind.REPAIR, round_number), (_Phase8StageKind.EVALUATE, round_number)))
+    return all(
+        _valid_phase8_stage_value(stage)
+        and stage.kind is kind
+        and (stage.round_number is None if round_number is None else type(stage.round_number) is int)
+        and stage.round_number == round_number
+        for stage, (kind, round_number) in zip(value.stages, expected, strict=True)
+    )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -175,6 +307,12 @@ class _Phase8AttemptReceipt:
     group_id: object
     stage: _Phase8Stage
     terminal: _Phase8TerminalKind
+
+    def __repr__(self) -> str:
+        return "<private phase 8 attempt receipt>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 attempt receipts are not serializable")
 
 
 @dataclass(slots=True, repr=False)
@@ -187,6 +325,12 @@ class _Phase8OperationLedger:
     _dispatched: set[_Phase8Stage] = field(default_factory=set)
     _retired: bool = False
     _lock: RLock = field(default_factory=RLock, repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return "<private phase 8 operation ledger>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 operation ledgers are not serializable")
 
     @property
     @_phase8_serialized
@@ -235,12 +379,30 @@ class _Phase8OperationLedger:
             self._dispatched.add(stage)
             return True
 
-    @_phase8_serialized
     def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Fail closed when malformed operation state cannot be projected."""
+        try:
+            with self._lock:
+                return self._phase10_snapshot_unchecked()
+        except Exception:
+            from anonymizer.engine.execution.phase10_inspection import (
+                _Phase10InspectionRejected,
+                _Phase10RejectionCode,
+            )
+
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+    def _phase10_snapshot_unchecked(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Validate and build one private operation capture."""
+        return self._phase10_build_capture()
+
+    def _phase10_build_capture(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
         """Issue one aggregate snapshot without retaining operation identities."""
         from anonymizer.engine.execution.phase10_inspection import (
             _map_phase10_reason,
             _phase10_count_bucket,
+            _phase10_new_builder_budget,
+            _phase10_reserve_builder_row,
             _phase10_stage,
             _Phase10CaptureBoundary,
             _Phase10CleanupState,
@@ -261,8 +423,17 @@ class _Phase8OperationLedger:
         )
 
         with self._lock:
+            if type(self._retired) is not bool:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
             if self._retired:
                 return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
+            if not _valid_phase8_snapshot_correlations(self) or any(
+                not _valid_phase8_snapshot_terminal(stage, terminal) for stage, terminal in self._terminals.items()
+            ):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            builder_budget = _phase10_new_builder_budget()
+            if builder_budget is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             grouped: dict[_Phase10Stage, list[_Phase8Stage]] = {}
             for stage in self.plan.stages:
                 mapped = _phase10_stage(stage.name)
@@ -299,6 +470,8 @@ class _Phase8OperationLedger:
                 task_bucket = _phase10_count_bucket(len(source_stages))
                 if task_bucket is None:
                     return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                if not _phase10_reserve_builder_row(builder_budget):
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                 stage_summaries.append(_Phase10StageSummary(mapped_stage, lifecycle, task_bucket))
                 for terminal_state in _Phase10TerminalState:
                     matches = tuple(
@@ -311,6 +484,8 @@ class _Phase8OperationLedger:
                     impact = _phase10_count_bucket(len(matches))
                     if impact is None:
                         return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                    if not _phase10_reserve_builder_row(builder_budget):
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                     terminal_summaries.append(_Phase10TerminalSummary(mapped_stage, terminal_state, impact))
                     category_counts: dict[_Phase10ReasonCategory, int] = {}
                     for reason in _Phase8Reason:
@@ -341,10 +516,15 @@ class _Phase8OperationLedger:
                             if count:
                                 category = _map_phase10_reason(reason)
                                 category_counts[category] = category_counts.get(category, 0) + count
-                    for category, count in category_counts.items():
+                    for category in _Phase10ReasonCategory:
+                        count = category_counts.get(category, 0)
+                        if not count:
+                            continue
                         reason_impact = _phase10_count_bucket(count)
                         if reason_impact is None:
                             return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                        if not _phase10_reserve_builder_row(builder_budget):
+                            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                         diagnostics.append((mapped_stage, terminal_state, category, reason_impact))
             if len(terminal_summaries) > 48 or len(diagnostics) > 64:
                 return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
@@ -366,7 +546,7 @@ class _Phase8OperationLedger:
             )
             lifecycle = (
                 _Phase10LifecycleState.TERMINAL
-                if self.is_closed
+                if any_terminal
                 else _Phase10LifecycleState.POST_DISPATCH
                 if any_dispatched
                 else _Phase10LifecycleState.PRE_DISPATCH
@@ -619,6 +799,14 @@ class _Phase8LifecycleExecution:
     global_embargo: bool
     pre_reduction_cleanup: _Phase8CleanupReceipt | None = None
     post_reduction_cleanup: _Phase8CleanupReceipt | None = None
+    terminal_group_reasons: tuple[_Phase8Reason | None, ...] = ()
+    terminal_invocation_reason: _Phase8Reason | None = None
+
+    def __repr__(self) -> str:
+        return "<private phase 8 lifecycle execution>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 lifecycle executions are not serializable")
 
     @property
     def cleanup_verified(self) -> bool:
@@ -648,9 +836,29 @@ class _Phase8LifecycleExecution:
         )
 
     def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Fail closed when malformed lifecycle state cannot be projected."""
+        try:
+            return self._phase10_snapshot_unchecked()
+        except Exception:
+            from anonymizer.engine.execution.phase10_inspection import (
+                _Phase10InspectionRejected,
+                _Phase10RejectionCode,
+            )
+
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+    def _phase10_snapshot_unchecked(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Validate and build one private lifecycle capture."""
+        return self._phase10_build_capture()
+
+    def _phase10_build_capture(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
         """Project the closed lifecycle receipt without copying released values."""
         from anonymizer.engine.execution.phase10_inspection import (
+            _MAX_REASON_CODES_PER_DIAGNOSTIC,
+            _map_phase10_reason,
             _phase10_count_bucket,
+            _phase10_new_builder_budget,
+            _phase10_reserve_builder_row,
             _Phase10CaptureBoundary,
             _Phase10CleanupState,
             _Phase10CountBucket,
@@ -679,17 +887,38 @@ class _Phase8LifecycleExecution:
             "blocked": _Phase10TerminalState.BLOCKED,
             "inconsistent": _Phase10TerminalState.INCONSISTENT,
         }
-        if type(self.terminal_group_states) is not tuple or any(
-            type(value) is not str or value not in terminal_by_value for value in self.terminal_group_states
+        states = self.terminal_group_states
+        source_reasons = self.terminal_group_reasons
+        invocation_reason = self.terminal_invocation_reason
+        if (
+            type(states) is not tuple
+            or any(type(value) is not str or value not in terminal_by_value for value in states)
+            or type(source_reasons) is not tuple
+            or type(self.global_embargo) is not bool
+            or type(self.released) is not tuple
+            or any(type(item) is not tuple or len(item) != 2 or type(item[1]) is not str for item in self.released)
+            or (invocation_reason is not None and type(invocation_reason) is not _Phase8Reason)
         ):
             return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        reasons = source_reasons or tuple(None for _ in states)
+        if len(reasons) != len(states) or any(
+            reason is not None and type(reason) is not _Phase8Reason for reason in reasons
+        ):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        if any(
+            not _valid_phase8_lifecycle_reason(state, reason) for state, reason in zip(states, reasons, strict=True)
+        ):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        builder_budget = _phase10_new_builder_budget()
+        if builder_budget is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         counts = {
             terminal: sum(value == terminal.value for value in self.terminal_group_states)
             for terminal in _Phase10TerminalState
         }
         terminal_summaries = []
         diagnostics = []
-        diagnostic_category = {
+        fallback_diagnostic_category = {
             _Phase10TerminalState.INCONSISTENT: _Phase10ReasonCategory.EVIDENCE_INCONSISTENT,
             _Phase10TerminalState.LOST: _Phase10ReasonCategory.EXECUTION_LOST,
             _Phase10TerminalState.CANCELLED: _Phase10ReasonCategory.STOP_ACKNOWLEDGED,
@@ -702,11 +931,62 @@ class _Phase8LifecycleExecution:
             else _Phase10ReconciliationState.RECONCILED
         )
         cleanup = _phase10_lifecycle_cleanup_state(self)
+        if cleanup is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        if (
+            any(state == "succeeded" and reason is not None for state, reason in zip(states, reasons, strict=True))
+            or (not states and not self.global_embargo)
+            or (not states and invocation_reason is None)
+            or (states and invocation_reason is not None)
+            or (self.released and (self.global_embargo or cleanup is not _Phase10CleanupState.VERIFIED))
+            or (
+                states
+                and all(state == "succeeded" for state in states)
+                and cleanup is not _Phase10CleanupState.VERIFIED
+            )
+        ):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
         release = (
             _Phase10ReleaseState.WITHHELD
-            if self.global_embargo or any(value != "succeeded" for value in self.terminal_group_states)
+            if self.global_embargo or any(value != "succeeded" for value in states)
             else _Phase10ReleaseState.RELEASED
         )
+        if invocation_reason is not None:
+            category = _map_phase10_reason(invocation_reason)
+            terminal = (
+                _Phase10TerminalState.INCONSISTENT
+                if category is _Phase10ReasonCategory.EVIDENCE_INCONSISTENT
+                else _Phase10TerminalState.FAILED
+                if category
+                in {
+                    _Phase10ReasonCategory.BACKEND_FAILED,
+                    _Phase10ReasonCategory.UNEXPECTED_FAILURE,
+                }
+                else _Phase10TerminalState.BLOCKED
+                if category
+                in {
+                    _Phase10ReasonCategory.CAPABILITY_MISMATCH,
+                    _Phase10ReasonCategory.PREREQUISITE_BLOCKED,
+                }
+                else _Phase10TerminalState.REJECTED
+            )
+            for _ in range(3):
+                if not _phase10_reserve_builder_row(builder_budget):
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+            terminal_summaries.append(
+                _Phase10TerminalSummary(_Phase10Stage.ADMISSION, terminal, _Phase10CountBucket.ONE)
+            )
+            diagnostics.append(
+                _Phase10Diagnostic(
+                    _Phase10CaptureBoundary.INVOCATION_CLOSED,
+                    _Phase10Stage.ADMISSION,
+                    terminal,
+                    category,
+                    _Phase10CountBucket.ONE,
+                    reconciliation,
+                    cleanup,
+                )
+            )
         for terminal in _Phase10TerminalState:
             count = counts[terminal]
             if not count:
@@ -714,21 +994,48 @@ class _Phase8LifecycleExecution:
             bucket = _phase10_count_bucket(count)
             if bucket is None:
                 return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            if not _phase10_reserve_builder_row(builder_budget):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             terminal_summaries.append(_Phase10TerminalSummary(_Phase10Stage.REWRITE, terminal, bucket))
-            category = diagnostic_category.get(terminal)
-            if category is not None:
+            category_counts: dict[_Phase10ReasonCategory, int] = {}
+            category_reasons: dict[_Phase10ReasonCategory, set[_Phase8Reason]] = {}
+            for state, reason in zip(self.terminal_group_states, reasons, strict=True):
+                if state != terminal.value:
+                    continue
+                category = (
+                    _map_phase10_reason(reason)
+                    if type(reason) is _Phase8Reason
+                    else fallback_diagnostic_category.get(terminal)
+                )
+                if category is not None:
+                    category_counts[category] = category_counts.get(category, 0) + 1
+                    if type(reason) is _Phase8Reason:
+                        category_reasons.setdefault(category, set()).add(reason)
+            for category in _Phase10ReasonCategory:
+                category_count = category_counts.get(category, 0)
+                if not category_count:
+                    continue
+                if len(category_reasons.get(category, set())) > _MAX_REASON_CODES_PER_DIAGNOSTIC:
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                category_bucket = _phase10_count_bucket(category_count)
+                if category_bucket is None:
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                if not _phase10_reserve_builder_row(builder_budget):
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                 diagnostics.append(
                     _Phase10Diagnostic(
                         _Phase10CaptureBoundary.INVOCATION_CLOSED,
                         _Phase10Stage.REWRITE,
                         terminal,
                         category,
-                        bucket,
+                        category_bucket,
                         reconciliation,
                         cleanup,
                     )
                 )
         if cleanup in {_Phase10CleanupState.FAILED, _Phase10CleanupState.UNCONFIRMED}:
+            if not _phase10_reserve_builder_row(builder_budget):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             diagnostics.append(
                 _Phase10Diagnostic(
                     _Phase10CaptureBoundary.INVOCATION_CLOSED,
@@ -751,13 +1058,24 @@ class _Phase8LifecycleExecution:
         task_bucket = _phase10_count_bucket(len(self.terminal_group_states))
         if task_bucket is None or len(diagnostics) > 64:
             return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
-        stage_summaries = [
-            _Phase10StageSummary(
-                _Phase10Stage.REWRITE,
-                _Phase10LifecycleState.TERMINAL,
-                task_bucket,
-            )
-        ]
+        if invocation_reason is not None:
+            stage_summaries = [
+                _Phase10StageSummary(
+                    _Phase10Stage.ADMISSION,
+                    _Phase10LifecycleState.TERMINAL,
+                    _Phase10CountBucket.ONE,
+                )
+            ]
+        else:
+            if not _phase10_reserve_builder_row(builder_budget):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+            stage_summaries = [
+                _Phase10StageSummary(
+                    _Phase10Stage.REWRITE,
+                    _Phase10LifecycleState.TERMINAL,
+                    task_bucket,
+                )
+            ]
         if cleanup is not _Phase10CleanupState.NOT_ENTERED:
             cleanup_terminal = (
                 _Phase10TerminalState.SUCCEEDED
@@ -766,6 +1084,8 @@ class _Phase8LifecycleExecution:
                 if cleanup is _Phase10CleanupState.FAILED
                 else _Phase10TerminalState.INCONSISTENT
             )
+            if not _phase10_reserve_builder_row(builder_budget):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             stage_summaries.append(
                 _Phase10StageSummary(
                     _Phase10Stage.CLEANUP,
@@ -773,6 +1093,8 @@ class _Phase8LifecycleExecution:
                     _Phase10CountBucket.ONE,
                 )
             )
+            if not _phase10_reserve_builder_row(builder_budget):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             terminal_summaries.append(
                 _Phase10TerminalSummary(
                     _Phase10Stage.CLEANUP,
@@ -796,19 +1118,45 @@ class _Phase8LifecycleExecution:
         )
 
 
-def _phase10_lifecycle_cleanup_state(value: _Phase8LifecycleExecution) -> _Phase10CleanupState:
+def _phase10_lifecycle_cleanup_state(value: _Phase8LifecycleExecution) -> _Phase10CleanupState | None:
     from anonymizer.engine.execution.phase10_inspection import _Phase10CleanupState
 
-    receipts = tuple(
-        receipt for receipt in (value.pre_reduction_cleanup, value.post_reduction_cleanup) if receipt is not None
-    )
+    pre = value.pre_reduction_cleanup
+    post = value.post_reduction_cleanup
+    receipts = tuple(receipt for receipt in (pre, post) if receipt is not None)
     if not receipts:
         return _Phase10CleanupState.NOT_ENTERED
+    if pre is not None and not _is_phase8_cleanup_receipt(
+        pre,
+        identity=pre.identity,
+        phase=_Phase8CleanupPhase.PRE_REDUCTION,
+        component=_Phase8CleanupComponent.RUNTIME,
+    ):
+        return None
+    if post is not None and not _is_phase8_cleanup_receipt(
+        post,
+        identity=post.identity,
+        phase=_Phase8CleanupPhase.POST_REDUCTION,
+        component=_Phase8CleanupComponent.RUNTIME,
+    ):
+        return None
+    if pre is not None and post is not None and pre.identity is not post.identity:
+        return None
     if any(receipt.status is _Phase8CleanupStatus.FAILED for receipt in receipts):
         return _Phase10CleanupState.FAILED
     if any(receipt.status is _Phase8CleanupStatus.UNCONFIRMED for receipt in receipts) or not value.cleanup_verified:
         return _Phase10CleanupState.UNCONFIRMED
     return _Phase10CleanupState.VERIFIED
+
+
+def _valid_phase8_lifecycle_reason(state: str, reason: _Phase8Reason | None) -> bool:
+    if state == "succeeded":
+        return reason is None
+    if state == "cancelled" or reason is _Phase8Reason.CANCELLATION:
+        return state == "cancelled" and reason is _Phase8Reason.CANCELLATION
+    if state == "lost" or reason is _Phase8Reason.TRANSPORT_LOST:
+        return state == "lost" and reason is _Phase8Reason.TRANSPORT_LOST
+    return True
 
 
 @dataclass(frozen=True, slots=True, repr=False)

@@ -177,11 +177,11 @@ class _Phase8GroupedRewriteProtectionService:
         if isinstance(early, _Phase8LifecycleExecution):
             return early
         baselines = early
-        candidates, states, invocation_inconsistent = _run_operations(groups, operations, baselines)
+        candidates, states, reasons, invocation_inconsistent = _run_operations(groups, operations, baselines)
         if invocation_inconsistent:
             candidates.clear()
             baselines.clear()
-            return _terminal((), tuple(states), True, False)
+            return _terminal((), tuple(states), True, False, tuple(reasons))
 
         qualified = _compatibility_phase4_released(groups, atomic_groups, dependencies, states)
         released = tuple((member, candidates[member]) for member, _baseline in phase7_released if member in qualified)
@@ -192,12 +192,12 @@ class _Phase8GroupedRewriteProtectionService:
         baselines.clear()
         cleanup_verified = not candidates and not baselines
         if not cleanup_verified:
-            return _terminal((), tuple(states), True, False)
+            return _terminal((), tuple(states), True, False, tuple(reasons))
         # Second attestation is represented by construction: ``released`` is
         # the only value copied past the reduction and every member is unique.
         if len({member for member, _ in released}) != len(released):
-            return _terminal((), tuple(states), True, False)
-        return _terminal(released, tuple(states), False, True)
+            return _terminal((), tuple(states), True, False, tuple(reasons))
+        return _terminal(released, tuple(states), False, True, tuple(reasons))
 
     def run_from_phase7_execution(
         self,
@@ -238,15 +238,15 @@ class _Phase8GroupedRewriteProtectionService:
         compiler-issued datum keys before any candidate reaches Phase 4.
         """
         if not isinstance(invocation, _CompiledInvocation):
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.OPERATION_CORRELATION_MISMATCH)
         capability = _compile_phase8_capability(invocation)
         if capability is None or _snapshot_phase8_capability(backend, invocation) != capability:
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.BACKEND_UNAVAILABLE)
         guarded_backend = _Phase8CapabilityGuard(backend, invocation, capability)
         max_repairs = _phase8_max_repairs(invocation)
         plan = _compile_phase8_plan(graph, max_repairs=max_repairs)
         if not _is_admitted_phase8_plan(plan):
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.INVALID_GROUP_INPUT)
         assert isinstance(plan, _Phase8Plan)
         groups = tuple(manifest.members for manifest in plan.groups)
         atomic_groups = tuple(getattr(group, "members", ()) for group in getattr(graph, "atomic_groups", ()))
@@ -291,29 +291,29 @@ class _Phase8GroupedRewriteProtectionService:
     ) -> _Phase8LifecycleExecution:
         """Consume only the sealed predecessor held by the Phase 7 owner."""
         if not _is_admitted_phase8_successor(predecessor):
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.PREREQUISITE)
         phase7 = predecessor.phase7_execution
         if not isinstance(invocation, _CompiledInvocation):
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.OPERATION_CORRELATION_MISMATCH)
         capability = _compile_phase8_capability(invocation)
         if capability is None or _snapshot_phase8_capability(backend, invocation) != capability:
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.BACKEND_UNAVAILABLE)
         guarded_backend = _Phase8CapabilityGuard(backend, invocation, capability)
         max_repairs = _phase8_max_repairs(invocation)
         plan = _compile_phase8_plan(graph, max_repairs=max_repairs)
         if not _is_admitted_phase8_plan(plan):
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.INVALID_GROUP_INPUT)
         assert isinstance(plan, _Phase8Plan)
         try:
             composition = _compile_phase8_accounting_plan(predecessor.phase7_plan.accounting, plan)
         except TypeError:
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.OPERATION_CORRELATION_MISMATCH)
         # Phase 7's exact terminal prefix is authenticated before any input
         # projection or provider operation is constructed.
         prefix = phase7.phase4.accounting.tasks
         phase7_tasks = predecessor.phase7_plan.accounting.tasks
         if len(prefix) != len(phase7_tasks) or tuple(outcome.task for outcome in prefix) != phase7_tasks:
-            return _terminal((), (), True, False)
+            return _terminal((), (), True, False, invocation_reason=_Phase8Reason.OPERATION_CORRELATION_MISMATCH)
         groups = tuple(manifest.members for manifest in plan.groups)
         registry = _Phase8WireRegistry()
         operations = tuple(
@@ -525,6 +525,7 @@ def _run_accounted_successor(
         return _terminal((), tuple("blocked" for _ in composition.groups), True, False)
     del phase7
     states: list[str] = []
+    reasons: list[_Phase8Reason | None] = []
     cells: dict[_DatumId, _SealedCandidateCell] = {}
     qualification_by_datum = {
         task.subject.datum_id: task for task in qualification_tasks if isinstance(task.subject, _DatumTaskSubject)
@@ -534,45 +535,53 @@ def _run_accounted_successor(
         group_baselines = {member: baselines[member] for member in members if member in baselines}
         if invocation_global:
             states.append("blocked")
+            reasons.append(_Phase8Reason.PREREQUISITE)
             continue
         try:
             outcome = operation(cast(tuple[object, ...], members), cast(dict[object, str], group_baselines))
         except _Phase8InvocationInconsistent:
             ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
             states.append("inconsistent")
+            reasons.append(_Phase8Reason.INVOCATION_INCONSISTENT)
             invocation_global = True
             continue
         except Exception:
             dispatch = ledger.dispatch(group_task)
             ledger.mark_transport_lost(dispatch)
             states.append("lost")
+            reasons.append(_Phase8Reason.TRANSPORT_LOST)
             invocation_global = True
             continue
         if not isinstance(outcome, _Phase8GroupOutcome):
             ledger.mark_inconsistent(_CauseCode.CONTRADICTORY)
             states.append("inconsistent")
+            reasons.append(_Phase8Reason.INVOCATION_INCONSISTENT)
             invocation_global = True
             continue
         terminal = outcome.terminal
         if isinstance(terminal, _GroupFailed):
             ledger.mark_task_failed(group_task)
             states.append("failed")
+            reasons.append(terminal.code)
             continue
         if isinstance(terminal, _GroupBlocked):
             ledger.mark_task_blocked(group_task)
             states.append("blocked")
+            reasons.append(terminal.code)
             continue
         if isinstance(terminal, _GroupCancelled):
             dispatch = ledger.dispatch(group_task)
             ledger.request_cancellation()
             ledger.acknowledge_stop(dispatch)
             states.append("cancelled")
+            reasons.append(terminal.code)
             invocation_global = True
             continue
         if isinstance(terminal, _GroupLost):
             dispatch = ledger.dispatch(group_task)
             ledger.mark_transport_lost(dispatch)
             states.append("lost")
+            reasons.append(terminal.code)
             invocation_global = True
             continue
         if isinstance(terminal, _GroupInconsistent):
@@ -582,10 +591,12 @@ def _run_accounted_successor(
             else:
                 ledger.mark_task_inconsistent(group_task, _CauseCode.CONTRADICTORY)
             states.append("inconsistent")
+            reasons.append(terminal.code)
             continue
         if not _validate_complete_revisions(members, outcome.revisions):
             ledger.mark_task_inconsistent(group_task, _CauseCode.CONTRADICTORY)
             states.append("inconsistent")
+            reasons.append(_Phase8Reason.CANDIDATE_RECONCILIATION)
             continue
         ledger.mark_task_succeeded(group_task, _Phase8GroupReceipt())
         assert outcome.revisions is not None
@@ -594,6 +605,7 @@ def _run_accounted_successor(
             cells[member] = cell
             ledger.mark_task_succeeded(qualification_by_datum[member], cell)
         states.append("succeeded")
+        reasons.append(None)
 
     operation_receipts = tuple(_discard_operation(operation, cleanup.identity) for _, _, operation in group_bindings)
     backend_receipt = _retire_backend(backend, cleanup.identity)
@@ -646,13 +658,13 @@ def _run_accounted_successor(
         )
     if post.status is not _Phase8CleanupStatus.VERIFIED:
         released_cells.clear()
-        return _terminal_with_cleanup((), tuple(states), True, pre, post)
+        return _terminal_with_cleanup((), tuple(states), True, pre, post, tuple(reasons))
     ordered = tuple(
         (datum_id, released_cells[datum_id]._value) for datum_id in presentation if datum_id in released_cells
     )
     released_cells.clear()
     embargo = phase4_embargo or pre.status is not _Phase8CleanupStatus.VERIFIED
-    return _terminal_with_cleanup(ordered if not embargo else (), tuple(states), embargo, pre, post)
+    return _terminal_with_cleanup(ordered if not embargo else (), tuple(states), embargo, pre, post, tuple(reasons))
 
 
 def _valid_pre_cleanup(receipt: object, identity: object, retained_candidate_cell_count: int) -> bool:
@@ -1546,10 +1558,23 @@ def _utility_answer(answer: object, obligations: dict[str, _Phase8Obligation]) -
 
 
 def _terminal(
-    released: tuple[tuple[object, str], ...], states: tuple[str, ...], global_embargo: bool, cleanup_verified: bool
+    released: tuple[tuple[object, str], ...],
+    states: tuple[str, ...],
+    global_embargo: bool,
+    cleanup_verified: bool,
+    reasons: tuple[_Phase8Reason | None, ...] = (),
+    invocation_reason: _Phase8Reason | None = None,
 ) -> _Phase8LifecycleExecution:
+    if not states and global_embargo and invocation_reason is None:
+        invocation_reason = _Phase8Reason.INVOCATION_INCONSISTENT
     if not cleanup_verified:
-        return _Phase8LifecycleExecution(released, states, global_embargo)
+        return _Phase8LifecycleExecution(
+            released,
+            states,
+            global_embargo,
+            terminal_group_reasons=reasons,
+            terminal_invocation_reason=invocation_reason,
+        )
     cleanup = _Phase8CleanupRuntime()
     pre = _issue_phase8_cleanup_receipt(
         _Phase8CleanupPhase.PRE_REDUCTION,
@@ -1563,7 +1588,7 @@ def _terminal(
         provisional_reference_count=0,
         withheld_reference_count=0,
     )
-    return _terminal_with_cleanup(released, states, global_embargo, pre, post)
+    return _terminal_with_cleanup(released, states, global_embargo, pre, post, reasons, invocation_reason)
 
 
 def _terminal_with_cleanup(
@@ -1572,8 +1597,10 @@ def _terminal_with_cleanup(
     global_embargo: bool,
     pre: _Phase8CleanupReceipt,
     post: _Phase8CleanupReceipt,
+    reasons: tuple[_Phase8Reason | None, ...] = (),
+    invocation_reason: _Phase8Reason | None = None,
 ) -> _Phase8LifecycleExecution:
-    return _Phase8LifecycleExecution(released, states, global_embargo, pre, post)
+    return _Phase8LifecycleExecution(released, states, global_embargo, pre, post, reasons, invocation_reason)
 
 
 def _lifecycle_preflight(
@@ -1586,7 +1613,7 @@ def _lifecycle_preflight(
     phase7_global_embargo: bool,
 ) -> dict[object, str] | _Phase8LifecycleExecution:
     if not _valid_declarations(groups, atomic_groups, dependencies, operations):
-        return _terminal((), (), True, False)
+        return _terminal((), (), True, False, invocation_reason=_Phase8Reason.INVALID_GROUP_INPUT)
     if not phase7_cleanup_verified or phase7_global_embargo:
         return _terminal((), tuple("blocked" for _ in groups), True, False)
     baselines = _exact_baseline_index(phase7_released)
@@ -1595,9 +1622,10 @@ def _lifecycle_preflight(
 
 def _run_operations(
     groups: tuple[tuple[object, ...], ...], operations: tuple[_GroupOperation, ...], baselines: dict[object, str]
-) -> tuple[dict[object, str], list[str], bool]:
+) -> tuple[dict[object, str], list[str], list[_Phase8Reason | None], bool]:
     candidates: dict[object, str] = {}
     states: list[str] = []
+    reasons: list[_Phase8Reason | None] = []
     invocation = _Phase8InvocationLedger()
     for members, operation in zip(groups, operations, strict=True):
         group_baselines = {member: baselines[member] for member in members if member in baselines}
@@ -1605,13 +1633,17 @@ def _run_operations(
             result = operation(members, group_baselines)
         except _Phase8InvocationInconsistent:
             states.append("inconsistent")
+            reasons.append(_Phase8Reason.INVOCATION_INCONSISTENT)
             invocation.admit(_GroupInconsistent(_Phase8Reason.INVOCATION_INCONSISTENT, True))
             states.extend("blocked" for _ in groups[len(states) :])
+            reasons.extend(_Phase8Reason.PREREQUISITE for _ in groups[len(reasons) :])
             break
         except Exception:
             states.append("lost")
+            reasons.append(_Phase8Reason.TRANSPORT_LOST)
             invocation.admit(_GroupLost(_Phase8Reason.TRANSPORT_LOST))
             states.extend("blocked" for _ in groups[len(states) :])
+            reasons.extend(_Phase8Reason.PREREQUISITE for _ in groups[len(reasons) :])
             break
         if isinstance(result, _Phase8GroupOutcome):
             terminal = result.terminal
@@ -1620,22 +1652,30 @@ def _run_operations(
             states.append(result.state)
             if terminal is not result.terminal:
                 states[-1] = "inconsistent"
+            reasons.append(
+                terminal.code
+                if isinstance(terminal, (_GroupFailed, _GroupCancelled, _GroupLost, _GroupBlocked, _GroupInconsistent))
+                else None
+            )
             can_continue = invocation.admit(terminal)
             if isinstance(terminal, _GroupSucceeded) and isinstance(result.revisions, dict):
                 candidates.update((member, result.revisions[member]) for member in members)
             if not can_continue:
                 candidates.clear()
                 states.extend("blocked" for _ in groups[len(states) :])
+                reasons.extend(_Phase8Reason.PREREQUISITE for _ in groups[len(reasons) :])
                 break
             continue
         if not _complete_candidate(members, result):
             states.append("failed")
+            reasons.append(_Phase8Reason.INCOMPLETE_GROUP)
             invocation.admit(_GroupFailed(_Phase8Reason.INCOMPLETE_GROUP))
             continue
         candidates.update(cast(tuple[tuple[object, str], ...], result))
         states.append("succeeded")
+        reasons.append(None)
         invocation.admit(_GroupSucceeded())
-    return candidates, states, invocation.global_embargo
+    return candidates, states, reasons, invocation.global_embargo
 
 
 def _valid_declarations(

@@ -59,12 +59,15 @@ class _AccountingAdmissionCode(str, Enum):
     UNSUPPORTED_TASK_CARDINALITY = "unsupported_task_cardinality"
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, weakref_slot=True, repr=False)
 class _AccountingRejected:
     code: _AccountingAdmissionCode
 
     def __repr__(self) -> str:
         return "<private accounting rejection>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private accounting rejections are not serializable")
 
 
 _AccountingAdmissionResult: TypeAlias = _AccountingPlan | _AccountingRejected
