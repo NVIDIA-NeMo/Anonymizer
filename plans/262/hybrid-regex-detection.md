@@ -366,18 +366,22 @@ Merge policy:
    candidates and retain their ordered origin chain.
 3. Preserve partial overlaps and identical boundaries with conflicting labels
    as separate validation candidates with stable IDs.
-4. Apply LLM keep, drop, and reclass decisions independently to those
+4. Keep the readable tagged-text representation non-overlapping. Carry every
+   candidate's value plus its original `context_before` and `context_after`
+   into the validation manifest so overlapping candidates remain independently
+   identifiable even when only one can be rendered as an inline tag.
+5. Apply LLM keep, drop, and reclass decisions independently to those
    candidates.
-5. After validation, prefer surviving identical-boundary conflicts using:
+6. After validation, prefer surviving identical-boundary conflicts using:
 
    ```text
    regex_user > regex_builtin > detector
    ```
 
-6. Resolve remaining partial overlaps with the existing longest-span, then
+7. Resolve remaining partial overlaps with the existing longest-span, then
    earliest-position behavior.
-7. Preserve the winning source and all coalesced origin identities for tracing.
-8. Merge deterministically accepted candidates through the same final overlap
+8. Preserve the winning source and all coalesced origin identities for tracing.
+9. Merge deterministically accepted candidates through the same final overlap
    policy.
 
 Explicit user regexes receive highest post-validation same-span precedence
