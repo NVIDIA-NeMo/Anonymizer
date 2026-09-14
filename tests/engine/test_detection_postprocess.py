@@ -10,10 +10,13 @@ import pytest
 
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
+    TagNotation,
     apply_augmented_entities,
     apply_validation_decisions,
     build_tagged_text,
     build_validation_candidates,
+    build_validation_overlap_groups,
+    build_validation_tagged_text,
     coalesce_exact_entity_candidates,
     expand_entity_occurrences,
     get_tag_notation,
@@ -597,6 +600,36 @@ def test_build_tagged_text_skips_overlapping_entity() -> None:
     tagged = build_tagged_text(text=text, entities=entities)
     assert "full_name" in tagged
     assert "last_name" not in tagged
+
+
+def test_validation_tagged_text_groups_crossing_spans_without_repeating_text() -> None:
+    text = "abcdefghij"
+    entities = [
+        EntitySpan("left", "abcdef", "account_number", 0, 6, 1.0, "detector"),
+        EntitySpan("right", "efghij", "unique_id", 4, 10, 1.0, "detector"),
+    ]
+    groups = build_validation_overlap_groups(entities, {"left", "right"})
+
+    tagged = build_validation_tagged_text(text, entities, groups)
+
+    assert tagged == '<candidate_group id="overlap_0_10">abcdefghij</candidate_group>'
+    assert tagged.count(text) == 1
+    assert groups[0].candidate_ids == ("left", "right")
+
+
+def test_validation_overlap_group_can_include_non_validation_span() -> None:
+    text = "token-42 is active"
+    entities = [
+        EntitySpan("accepted", "token-42", "unique_id", 0, 8, 1.0, "regex_builtin"),
+        EntitySpan("candidate", "42", "age", 6, 8, 0.8, "detector"),
+        EntitySpan("status", "active", "status", 12, 18, 0.8, "detector"),
+    ]
+    groups = build_validation_overlap_groups(entities, {"candidate", "status"})
+
+    tagged = build_validation_tagged_text(text, entities, groups, notation=TagNotation.bracket)
+
+    assert groups[0].candidate_ids == ("candidate",)
+    assert tagged == "[[token-42|CANDIDATE_GROUP:overlap_0_8]] is [[active|status]]"
 
 
 def test_build_tagged_text_uses_paren_notation_when_xml_and_bracket_conflict() -> None:

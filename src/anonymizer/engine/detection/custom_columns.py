@@ -43,6 +43,8 @@ from anonymizer.engine.detection.postprocess import (
     apply_validation_decisions,
     build_tagged_text,
     build_validation_candidates,
+    build_validation_overlap_groups,
+    build_validation_tagged_text,
     coalesce_exact_entity_candidates,
     entity_has_source_prefix,
     expand_entity_occurrences,
@@ -141,7 +143,15 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
         for entity in seed_spans
         if (entity.label, entity.start_position, entity.end_position) not in accepted_identities
     ]
-    row[COL_SEED_TAGGED_TEXT] = build_tagged_text(text=text, entities=seed_spans)
+    overlap_groups = build_validation_overlap_groups(
+        seed_spans,
+        {entity.entity_id for entity in validation_spans},
+    )
+    row[COL_SEED_TAGGED_TEXT] = build_validation_tagged_text(
+        text=text,
+        entities=seed_spans,
+        overlap_groups=overlap_groups,
+    )
     row[COL_SEED_VALIDATION_CANDIDATES] = ValidationCandidatesSchema(
         candidates=build_validation_candidates(text=text, entities=validation_spans)
     ).model_dump(mode="json")

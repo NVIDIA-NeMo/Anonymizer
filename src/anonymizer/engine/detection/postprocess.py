@@ -40,6 +40,16 @@ class EntitySpan:
         }
 
 
+@dataclass(frozen=True)
+class ValidationOverlapGroup:
+    """Connected overlapping region referenced by validation candidate IDs."""
+
+    group_id: str
+    start_position: int
+    end_position: int
+    candidate_ids: tuple[str, ...]
+
+
 class TagNotation(str, Enum):
     xml = "xml"
     bracket = "bracket"
@@ -387,6 +397,96 @@ def build_tagged_text(
     return "".join(parts)
 
 
+def build_validation_overlap_groups(
+    entities: list[EntitySpan],
+    candidate_ids: set[str],
+) -> list[ValidationOverlapGroup]:
+    """Group connected overlaps that contain at least one validation candidate."""
+    if not entities or not candidate_ids:
+        return []
+
+    ordered = sorted(entities, key=lambda item: (item.start_position, item.end_position, item.entity_id))
+    components: list[list[EntitySpan]] = []
+    component: list[EntitySpan] = []
+    component_end = -1
+    for entity in ordered:
+        if component and entity.start_position >= component_end:
+            components.append(component)
+            component = []
+            component_end = -1
+        component.append(entity)
+        component_end = max(component_end, entity.end_position)
+    if component:
+        components.append(component)
+
+    groups: list[ValidationOverlapGroup] = []
+    for members in components:
+        if len(members) < 2:
+            continue
+        member_candidate_ids = tuple(
+            sorted({member.entity_id for member in members if member.entity_id in candidate_ids})
+        )
+        if not member_candidate_ids:
+            continue
+        start = min(member.start_position for member in members)
+        end = max(member.end_position for member in members)
+        groups.append(
+            ValidationOverlapGroup(
+                group_id=f"overlap_{start}_{end}",
+                start_position=start,
+                end_position=end,
+                candidate_ids=member_candidate_ids,
+            )
+        )
+    return groups
+
+
+def build_validation_tagged_text(
+    text: str,
+    entities: list[EntitySpan],
+    overlap_groups: list[ValidationOverlapGroup],
+    *,
+    notation: TagNotation | str | None = None,
+) -> str:
+    """Render ordinary tags plus one neutral tag per overlapping region."""
+    if not overlap_groups:
+        return build_tagged_text(text=text, entities=entities, notation=notation)
+    if notation is None:
+        resolved_notation = _choose_tag_notation(text)
+    elif isinstance(notation, TagNotation):
+        resolved_notation = notation
+    else:
+        resolved_notation = TagNotation(notation)
+
+    visible_entities = [
+        entity
+        for entity in entities
+        if not any(
+            entity.start_position < group.end_position and group.start_position < entity.end_position
+            for group in overlap_groups
+        )
+    ]
+    render_items: list[tuple[int, int, EntitySpan | ValidationOverlapGroup]] = [
+        (entity.start_position, entity.end_position, entity) for entity in visible_entities
+    ]
+    render_items.extend((group.start_position, group.end_position, group) for group in overlap_groups)
+
+    cursor = 0
+    parts: list[str] = []
+    for start, end, item in sorted(render_items, key=lambda value: (value[0], value[1])):
+        if start < cursor:
+            continue
+        parts.append(text[cursor:start])
+        value = text[start:end]
+        if isinstance(item, ValidationOverlapGroup):
+            parts.append(_format_overlap_group_tag(value=value, group_id=item.group_id, notation=resolved_notation))
+        else:
+            parts.append(_format_entity_tag(value=value, label=item.label, notation=resolved_notation))
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def get_tag_notation(text: str) -> str:
     """Return the tag notation name chosen for *text* (xml, bracket, paren, sentinel)."""
     return _choose_tag_notation(text).value
@@ -522,3 +622,13 @@ def _format_entity_tag(*, value: str, label: str, notation: TagNotation) -> str:
     if notation == TagNotation.paren:
         return f"((SENSITIVE:{label}|{value}))"
     return f"<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
+
+
+def _format_overlap_group_tag(*, value: str, group_id: str, notation: TagNotation) -> str:
+    if notation == TagNotation.xml:
+        return f'<candidate_group id="{group_id}">{value}</candidate_group>'
+    if notation == TagNotation.bracket:
+        return f"[[{value}|CANDIDATE_GROUP:{group_id}]]"
+    if notation == TagNotation.paren:
+        return f"((CANDIDATE_GROUP:{group_id}|{value}))"
+    return f"<<CANDIDATE_GROUP:{group_id}>>{value}<</CANDIDATE_GROUP:{group_id}>>"
