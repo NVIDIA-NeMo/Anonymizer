@@ -276,13 +276,13 @@ COL_TEXT
   -> COL_REGEX_ACCEPTED_ENTITIES      # rules accepting local validation
 
 COL_GLINER_ENTITIES + COL_REGEX_ENTITIES
-  -> COL_SEED_ENTITIES                # deduplicate + resolve overlaps
+  -> COL_SEED_ENTITIES                # coalesce exact label/span duplicates
   -> COL_SEED_VALIDATION_CANDIDATES
   -> COL_VALIDATION_DECISIONS          # existing chunked LLM validation
   -> COL_VALIDATED_SEED_ENTITIES
 
 COL_VALIDATED_SEED_ENTITIES + COL_REGEX_ACCEPTED_ENTITIES
-  -> COL_ACCEPTED_SEED_ENTITIES        # source-aware deduplication
+  -> COL_ACCEPTED_SEED_ENTITIES        # source-aware final overlap resolution
   -> COL_AUGMENTED_ENTITIES            # existing LLM augmentation
   -> COL_MERGED_ENTITIES
   -> COL_DETECTED_ENTITIES
@@ -362,24 +362,31 @@ name splitting, and occurrence propagation.
 Merge policy:
 
 1. Reject malformed or out-of-bounds spans.
-2. Deduplicate identical `(label, start, end)` candidates.
-3. For identical boundaries with conflicting labels, prefer:
+2. Before contextual validation, coalesce only identical `(label, start, end)`
+   candidates and retain their ordered origin chain.
+3. Preserve partial overlaps and identical boundaries with conflicting labels
+   as separate validation candidates with stable IDs.
+4. Apply LLM keep, drop, and reclass decisions independently to those
+   candidates.
+5. After validation, prefer surviving identical-boundary conflicts using:
 
    ```text
    regex_user > regex_builtin > detector
    ```
 
-4. Resolve remaining partial overlaps with the existing longest-span, then
+6. Resolve remaining partial overlaps with the existing longest-span, then
    earliest-position behavior.
-5. Preserve the winning source and rule identity for tracing.
-6. Send candidates requiring contextual validation through the normal LLM
-   path and merge deterministically accepted candidates afterward.
+7. Preserve the winning source and all coalesced origin identities for tracing.
+8. Merge deterministically accepted candidates through the same final overlap
+   policy.
 
-Explicit user regexes receive highest same-span precedence because they encode
-direct user intent. Contextual validation can still drop or reclassify rules
-configured with `validate_with_llm=True`. When an exact same-label/span GLiNER
-candidate duplicates a rule configured with `False`, deterministic acceptance
-is preserved and provenance records both sources.
+Explicit user regexes receive highest post-validation same-span precedence
+because they encode direct user intent. Contextual validation can still drop or
+reclassify rules configured with `validate_with_llm=True`; when that happens,
+an overlapping candidate from another detector remains available as a fallback.
+When an exact same-label/span GLiNER candidate duplicates a rule configured with
+`False`, deterministic acceptance is preserved and provenance records both
+sources.
 
 ## Error Semantics
 
@@ -470,8 +477,10 @@ For each built-in rule:
 - Exact duplicate whose regex route bypasses LLM validation.
 - Exact-span conflict between model, built-in, and user rule.
 - Partial overlap, including an IP address inside a URL.
+- Longer overlapping candidate is kept when both candidates pass validation.
+- Shorter overlapping fallback survives when the longer candidate is dropped.
 - Stable ordering and IDs.
-- Source and rule provenance after deduplication.
+- Source and rule provenance after exact-candidate coalescing.
 
 ### Workflow Tests
 
