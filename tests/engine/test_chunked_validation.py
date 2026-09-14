@@ -41,7 +41,13 @@ from anonymizer.engine.detection.chunked_validation import (
     order_candidates_by_position,
     render_chunk_prompt,
 )
-from anonymizer.engine.detection.postprocess import EntitySpan, TagNotation, apply_validation_decisions
+from anonymizer.engine.detection.postprocess import (
+    EntitySpan,
+    TagNotation,
+    apply_validation_decisions,
+    build_tagged_text,
+    build_validation_candidates,
+)
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     RawValidationDecisionsSchema,
@@ -303,7 +309,18 @@ class TestBuildChunkExcerpt:
 
 class TestBuildChunkSkeleton:
     def test_skeleton_matches_chunk_only(self) -> None:
-        candidates = _candidates_schema(("a", "Alice", "first_name"), ("b", "Bob", "first_name"))
+        candidates = ValidationCandidatesSchema(
+            candidates=[
+                ValidationCandidateSchema(
+                    id="a",
+                    value="Alice",
+                    label="first_name",
+                    context_before="Dr. ",
+                    context_after=" met Bob",
+                ),
+                ValidationCandidateSchema(id="b", value="Bob", label="first_name"),
+            ]
+        )
         skeleton = build_chunk_skeleton([candidates.candidates[0]])
         assert skeleton == {
             "decisions": [
@@ -311,12 +328,33 @@ class TestBuildChunkSkeleton:
                     "id": "a",
                     "value": "Alice",
                     "label": "first_name",
+                    "context_before": "Dr. ",
+                    "context_after": " met Bob",
                     "decision": None,
                     "proposed_label": None,
                     "reason": None,
                 }
             ]
         }
+
+    def test_overlapping_candidates_retain_independent_context_without_extra_tags(self) -> None:
+        text = "John Doe went home."
+        spans = [
+            _entity_span("first_name_0_4", "John", "first_name", 0, 4),
+            _entity_span("last_name_0_8", "John Doe", "last_name", 0, 8),
+        ]
+        candidates = ValidationCandidatesSchema.model_validate(
+            {"candidates": build_validation_candidates(text=text, entities=spans)}
+        )
+
+        tagged_text = build_tagged_text(text=text, entities=spans)
+        skeleton = build_chunk_skeleton(candidates.candidates)
+
+        assert tagged_text == "<first_name>John</first_name> Doe went home."
+        assert [(item["id"], item["value"], item["context_after"]) for item in skeleton["decisions"]] == [
+            ("first_name_0_4", "John", " Doe went home."),
+            ("last_name_0_8", "John Doe", " went home."),
+        ]
 
 
 class TestRenderChunkPrompt:

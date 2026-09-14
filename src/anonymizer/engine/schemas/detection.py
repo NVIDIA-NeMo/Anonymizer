@@ -86,6 +86,8 @@ class ValidationSkeletonDecisionSchema(BaseModel):
     id: str = Field(default="")
     value: str = Field(default="")
     label: str = Field(default="")
+    context_before: str = Field(default="")
+    context_after: str = Field(default="")
     decision: ValidationChoice | None = None
     proposed_label: str | None = None
     reason: str | None = None
