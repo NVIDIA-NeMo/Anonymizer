@@ -366,10 +366,10 @@ Merge policy:
    candidates and retain their ordered origin chain.
 3. Preserve partial overlaps and identical boundaries with conflicting labels
    as separate validation candidates with stable IDs.
-4. Keep the readable tagged-text representation non-overlapping. Carry every
-   candidate's value plus its original `context_before` and `context_after`
-   into the validation manifest so overlapping candidates remain independently
-   identifiable even when only one can be rendered as an inline tag.
+4. Keep the readable tagged-text representation non-overlapping. Render each
+   connected overlap region once as a neutral conflict group and map its group
+   ID to the relevant candidate IDs in the validation manifest. Do not repeat
+   per-candidate context that is already present in the input text.
 5. Apply LLM keep, drop, and reclass decisions independently to those
    candidates.
 6. After validation, prefer surviving identical-boundary conflicts using:

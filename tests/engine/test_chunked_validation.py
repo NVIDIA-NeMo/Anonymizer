@@ -45,8 +45,8 @@ from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
     apply_validation_decisions,
-    build_tagged_text,
-    build_validation_candidates,
+    build_validation_overlap_groups,
+    build_validation_tagged_text,
 )
 from anonymizer.engine.schemas import (
     EntitiesSchema,
@@ -309,18 +309,7 @@ class TestBuildChunkExcerpt:
 
 class TestBuildChunkSkeleton:
     def test_skeleton_matches_chunk_only(self) -> None:
-        candidates = ValidationCandidatesSchema(
-            candidates=[
-                ValidationCandidateSchema(
-                    id="a",
-                    value="Alice",
-                    label="first_name",
-                    context_before="Dr. ",
-                    context_after=" met Bob",
-                ),
-                ValidationCandidateSchema(id="b", value="Bob", label="first_name"),
-            ]
-        )
+        candidates = _candidates_schema(("a", "Alice", "first_name"), ("b", "Bob", "first_name"))
         skeleton = build_chunk_skeleton([candidates.candidates[0]])
         assert skeleton == {
             "decisions": [
@@ -328,8 +317,6 @@ class TestBuildChunkSkeleton:
                     "id": "a",
                     "value": "Alice",
                     "label": "first_name",
-                    "context_before": "Dr. ",
-                    "context_after": " met Bob",
                     "decision": None,
                     "proposed_label": None,
                     "reason": None,
@@ -337,23 +324,27 @@ class TestBuildChunkSkeleton:
             ]
         }
 
-    def test_overlapping_candidates_retain_independent_context_without_extra_tags(self) -> None:
+    def test_overlapping_candidates_render_as_one_compact_conflict_group(self) -> None:
         text = "John Doe went home."
         spans = [
             _entity_span("first_name_0_4", "John", "first_name", 0, 4),
             _entity_span("last_name_0_8", "John Doe", "last_name", 0, 8),
         ]
-        candidates = ValidationCandidatesSchema.model_validate(
-            {"candidates": build_validation_candidates(text=text, entities=spans)}
+        candidates = _candidates_schema(
+            ("first_name_0_4", "John", "first_name"),
+            ("last_name_0_8", "John Doe", "last_name"),
         )
+        groups = build_validation_overlap_groups(spans, {candidate.id for candidate in candidates.candidates})
 
-        tagged_text = build_tagged_text(text=text, entities=spans)
-        skeleton = build_chunk_skeleton(candidates.candidates)
+        tagged_text = build_validation_tagged_text(text, spans, groups)
+        skeleton = build_chunk_skeleton(candidates.candidates, groups)
 
-        assert tagged_text == "<first_name>John</first_name> Doe went home."
-        assert [(item["id"], item["value"], item["context_after"]) for item in skeleton["decisions"]] == [
-            ("first_name_0_4", "John", " Doe went home."),
-            ("last_name_0_8", "John Doe", " went home."),
+        assert tagged_text == '<candidate_group id="overlap_0_8">John Doe</candidate_group> went home.'
+        assert skeleton["overlap_groups"] == [
+            {
+                "id": "overlap_0_8",
+                "candidate_ids": ["first_name_0_4", "last_name_0_8"],
+            }
         ]
 
 
@@ -496,6 +487,44 @@ class TestChunkedValidateRowPoolOfOne:
         assert len(facade.calls) == 1
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
         assert {d["id"]: d["decision"] for d in decisions} == {"a": "keep", "b": "drop"}
+
+    def test_overlapping_candidates_use_compact_group_in_each_chunk(self) -> None:
+        text = "John Doe went home."
+        spans = [
+            _entity_span("first_name_0_4", "John", "first_name", 0, 4),
+            _entity_span("last_name_0_8", "John Doe", "last_name", 0, 8),
+        ]
+        candidates = _candidates_schema(
+            ("first_name_0_4", "John", "first_name"),
+            ("last_name_0_8", "John Doe", "last_name"),
+        )
+        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+
+        def decide_visible_candidate(prompt: str) -> dict[str, Any]:
+            candidate_id = "first_name_0_4" if "'id': 'first_name_0_4'" in prompt else "last_name_0_8"
+            return {"decisions": [{"id": candidate_id, "decision": "keep"}]}
+
+        facade = FakeFacade("v0", response=decide_visible_candidate)
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=1,
+            excerpt_window_chars=4,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        out = chunked_validate_row(row, params, {"v0": facade})
+
+        assert len(facade.calls) == 2
+        for call in facade.calls:
+            prompt = call["prompt"]
+            assert '<candidate_group id="overlap_0_8">John Doe</candidate_group>' in prompt
+            assert "'overlap_groups':" in prompt
+            assert "context_before" not in prompt
+            assert "context_after" not in prompt
+        assert {decision["id"] for decision in out[COL_VALIDATION_DECISIONS]["decisions"]} == {
+            "first_name_0_4",
+            "last_name_0_8",
+        }
 
     def test_numeric_value_echo_does_not_fail_response_parsing(self) -> None:
         text = "Reference 42."
