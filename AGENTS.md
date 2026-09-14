@@ -49,14 +49,16 @@ input_df
   → EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
         GLiNER detection
         → parse + tag
-        → LLM augmentation  (add entities GLiNER missed)
         → LLM validation    (keep / drop candidates)
+        → LLM augmentation  (add entities GLiNER missed)
         → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
   → ReplacementWorkflow.run()                  # engine/replace/replace_runner.py
         Redact / Annotate / Hash  → applied locally, no LLM
         Substitute                → LlmReplaceWorkflow → NddAdapter
   → output: {text_col}_replaced, {text_col}_with_spans, final_entities
 ```
+
+Validation runs before augmentation, not after: GLiNER is high-recall/low-precision, so its candidates need an LLM validation pass; the augmenter is itself an LLM finding what GLiNER missed, so its output is already high-precision and is not re-validated. Augmented entities are appended straight onto the validated set in `apply_augmented_entities` — see `resolve_overlaps()` in `engine/detection/postprocess.py` for how conflicting spans between the two are resolved.
 
 ### Rewrite mode — `AnonymizerConfig(rewrite=...)`
 
