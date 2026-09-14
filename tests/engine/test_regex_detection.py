@@ -63,11 +63,17 @@ def test_ipv6_regex_consumes_an_embedded_ipv4_tail() -> None:
 
     result = detect_regex_entities(text, rules=rules)
 
-    assert [(entity.value, entity.start_position, entity.end_position) for entity in result.llm_entities] == [
-        (address, len("Mapped address "), len("Mapped address ") + len(address))
+    ipv6 = next(entity for entity in result.llm_entities if entity.label == "ipv6")
+    assert (ipv6.value, ipv6.start_position, ipv6.end_position) == (
+        address,
+        len("Mapped address "),
+        len("Mapped address ") + len(address),
+    )
+    assert text[ipv6.start_position : ipv6.end_position] == address
+    assert [(entity.value, entity.label) for entity in result.llm_entities] == [
+        (address, "ipv6"),
+        ("192.0.2.128", "ipv4"),
     ]
-    entity = result.llm_entities[0]
-    assert text[entity.start_position : entity.end_position] == address
 
 
 def test_url_validator_accepts_uppercase_www_prefix() -> None:
@@ -244,7 +250,7 @@ def test_custom_rule_ids_and_results_are_stable_when_rules_are_reordered() -> No
     ]
 
 
-def test_user_rule_wins_an_identical_span_conflict_with_builtin() -> None:
+def test_same_span_label_conflict_survives_until_contextual_validation() -> None:
     rules = resolve_regex_rules(
         labels=["email", "company_contact"],
         builtin_regexes=True,
@@ -254,7 +260,8 @@ def test_user_rule_wins_an_identical_span_conflict_with_builtin() -> None:
     result = detect_regex_entities("alice@example.com", rules=rules)
 
     assert [(entity.value, entity.label) for entity in result.llm_entities] == [
-        ("alice@example.com", "company_contact")
+        ("alice@example.com", "company_contact"),
+        ("alice@example.com", "email"),
     ]
 
 

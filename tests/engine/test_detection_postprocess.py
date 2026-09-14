@@ -14,6 +14,7 @@ from anonymizer.engine.detection.postprocess import (
     apply_validation_decisions,
     build_tagged_text,
     build_validation_candidates,
+    coalesce_exact_entity_candidates,
     expand_entity_occurrences,
     get_tag_notation,
     group_entities_by_value,
@@ -314,7 +315,7 @@ def test_parse_raw_entities_handles_non_numeric_score() -> None:
     assert result[0].score == 0.0
 
 
-def test_parse_raw_entities_resolves_overlapping_spans() -> None:
+def test_parse_raw_entities_preserves_overlapping_spans_for_validation() -> None:
     raw = json.dumps(
         {
             "entities": [
@@ -336,8 +337,10 @@ def test_parse_raw_entities_resolves_overlapping_spans() -> None:
         }
     )
     result = parse_raw_entities(raw_response=raw, text="John Doe went home")
-    assert len(result) == 1
-    assert result[0].value == "John Doe"
+    assert [(entity.value, entity.label) for entity in result] == [
+        ("John", "first_name"),
+        ("John Doe", "full_name"),
+    ]
 
 
 def test_resolve_overlaps_keeps_non_overlapping_spans() -> None:
@@ -386,8 +389,7 @@ def test_resolve_overlaps_default_uses_label_not_score() -> None:
     assert resolved[0].label == "aaa_label"
 
 
-def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
-    """Regression: relationship (0.941) should beat last_name (0.719) on same span."""
+def test_parse_raw_entities_preserves_same_span_label_alternatives() -> None:
     text = "She called Mum every day."
     raw = json.dumps(
         {
@@ -398,9 +400,54 @@ def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
         }
     )
     result = parse_raw_entities(raw_response=raw, text=text)
+    assert [(entity.label, entity.score) for entity in result] == [
+        ("last_name", 0.719),
+        ("relationship", 0.941),
+    ]
+
+
+def test_coalesce_exact_candidates_keeps_best_duplicate_and_all_origins() -> None:
+    regex_entity = EntitySpan(
+        "email_0_17",
+        "alice@example.com",
+        "email",
+        0,
+        17,
+        1.0,
+        "regex_builtin:nemo.email.v1",
+    )
+    detector_entity = EntitySpan("email_0_17", "alice@example.com", "email", 0, 17, 0.9, "detector")
+
+    result = coalesce_exact_entity_candidates([regex_entity], [detector_entity])
+
+    assert result == [
+        EntitySpan(
+            "email_0_17",
+            "alice@example.com",
+            "email",
+            0,
+            17,
+            1.0,
+            "regex_builtin:nemo.email.v1|detector",
+        )
+    ]
+
+
+def test_parse_raw_entities_keeps_highest_score_for_an_exact_duplicate() -> None:
+    text = "Alice"
+    raw = json.dumps(
+        {
+            "entities": [
+                {"text": text, "label": "first_name", "start": 0, "end": 5, "score": 0.7},
+                {"text": text, "label": "first_name", "start": 0, "end": 5, "score": 0.9},
+            ]
+        }
+    )
+
+    result = parse_raw_entities(raw_response=raw, text=text)
+
     assert len(result) == 1
-    assert result[0].label == "relationship"
-    assert result[0].score == 0.941
+    assert result[0].score == 0.9
 
 
 def test_augmented_entities_does_not_use_synthetic_score_precedence() -> None:

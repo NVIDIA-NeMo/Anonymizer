@@ -38,6 +38,7 @@ from anonymizer.engine.detection.custom_columns import (
     enrich_validation_decisions,
     merge_and_build_candidates,
     parse_detected_entities,
+    prepare_validation_inputs,
 )
 
 
@@ -81,6 +82,117 @@ def test_parse_produces_seed_entities_and_notation() -> None:
     assert len(result[COL_SEED_ENTITIES]["entities"]) == 1
     assert result[COL_SEED_ENTITIES]["entities"][0]["value"] == "(555) 123-4567"
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
+
+
+def test_overlapping_fallback_survives_when_longer_candidate_is_dropped() -> None:
+    text = "ABC-123"
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw(
+            [
+                {
+                    "text": "123",
+                    "label": "account_number",
+                    "start": 4,
+                    "end": 7,
+                    "score": 0.8,
+                }
+            ]
+        ),
+        COL_REGEX_ENTITIES: {
+            "entities": [
+                {
+                    "id": "secret_0_7",
+                    "value": text,
+                    "label": "secret",
+                    "start_position": 0,
+                    "end_position": 7,
+                    "score": 1.0,
+                    "source": "regex_user:user:secret:v1",
+                }
+            ]
+        },
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+
+    assert [(entity["value"], entity["label"]) for entity in row[COL_SEED_ENTITIES]["entities"]] == [
+        (text, "secret"),
+        ("123", "account_number"),
+    ]
+    assert {candidate["id"] for candidate in row[COL_SEED_VALIDATION_CANDIDATES]["candidates"]} == {
+        "secret_0_7",
+        "account_number_4_7",
+    }
+
+    row[COL_VALIDATED_ENTITIES] = {"decisions": []}
+    kept_result = apply_validation_to_seed_entities(row)
+    assert [(entity["value"], entity["label"]) for entity in kept_result[COL_VALIDATED_SEED_ENTITIES]["entities"]] == [
+        (text, "secret")
+    ]
+
+    row[COL_VALIDATED_ENTITIES] = {
+        "decisions": [
+            {
+                "id": "secret_0_7",
+                "value": text,
+                "label": "secret",
+                "decision": "drop",
+                "proposed_label": "",
+                "reason": "not sensitive in context",
+            }
+        ]
+    }
+    result = apply_validation_to_seed_entities(row)
+
+    assert [(entity["value"], entity["label"]) for entity in result[COL_VALIDATED_SEED_ENTITIES]["entities"]] == [
+        ("123", "account_number")
+    ]
+
+
+def test_exact_accepted_duplicate_skips_llm_validation_and_retains_origins() -> None:
+    text = "alice@example.com"
+    accepted = {
+        "id": "email_0_17",
+        "value": text,
+        "label": "email",
+        "start_position": 0,
+        "end_position": 17,
+        "score": 1.0,
+        "source": "regex_builtin:nemo.email.v1",
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw(
+            [
+                {
+                    "text": text,
+                    "label": "email",
+                    "start": 0,
+                    "end": 17,
+                    "score": 0.9,
+                }
+            ]
+        ),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+
+    assert row[COL_SEED_VALIDATION_CANDIDATES] == {"candidates": []}
+    row[COL_VALIDATED_ENTITIES] = {"decisions": []}
+    result = apply_validation_to_seed_entities(row)
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [
+        {
+            **accepted,
+            "source": "regex_builtin:nemo.email.v1|detector",
+        }
+    ]
 
 
 def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:

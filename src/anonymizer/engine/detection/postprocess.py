@@ -6,13 +6,14 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import SupportsFloat, SupportsIndex, SupportsInt
 
 logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
+_SOURCE_ORIGIN_SEPARATOR = "|"
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,54 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
                 source="detector",
             )
         )
-    return resolve_overlaps(parsed, prefer_highest_score=True)
+    return coalesce_exact_entity_candidates(parsed, prefer_highest_score=True)
+
+
+def coalesce_exact_entity_candidates(
+    *sources: list[EntitySpan],
+    prefer_highest_score: bool = False,
+) -> list[EntitySpan]:
+    """Coalesce exact label/span duplicates while preserving overlapping alternatives.
+
+    Source argument order defines provenance priority for an exact duplicate.
+    All distinct origins are retained in a deterministic source chain. Partial
+    overlaps and same-span candidates with different labels remain independent
+    so contextual validation can decide which candidates survive.
+    """
+    grouped: dict[tuple[str, int, int], list[tuple[int, EntitySpan]]] = {}
+    for priority, entities in enumerate(sources):
+        for entity in entities:
+            identity = (entity.label, entity.start_position, entity.end_position)
+            grouped.setdefault(identity, []).append((priority, entity))
+
+    coalesced: list[EntitySpan] = []
+    for candidates in grouped.values():
+        ranked = sorted(
+            candidates,
+            key=lambda item: (
+                item[0],
+                -item[1].score if prefer_highest_score else 0.0,
+                item[1].source,
+                item[1].entity_id,
+            ),
+        )
+        winner = ranked[0][1]
+        origins: list[str] = []
+        for _, candidate in ranked:
+            for origin in candidate.source.split(_SOURCE_ORIGIN_SEPARATOR):
+                if origin and origin not in origins:
+                    origins.append(origin)
+        coalesced.append(replace(winner, source=_SOURCE_ORIGIN_SEPARATOR.join(origins)))
+
+    return sorted(
+        coalesced,
+        key=lambda entity: (entity.start_position, entity.end_position, entity.label, entity.entity_id),
+    )
+
+
+def entity_has_source_prefix(entity: EntitySpan, prefix: str) -> bool:
+    """Return whether any origin in an entity's provenance chain has ``prefix``."""
+    return any(origin.startswith(prefix) for origin in entity.source.split(_SOURCE_ORIGIN_SEPARATOR))
 
 
 def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[dict[str, str]]:
@@ -352,7 +400,7 @@ def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[Ent
     expanded as before, and overlaps prefer longer spans.
     """
     entity_map: dict[str, str] = {}
-    propagatable_entities = [entity for entity in entities if not entity.source.startswith("regex_")]
+    propagatable_entities = [entity for entity in entities if not entity_has_source_prefix(entity, "regex_")]
     for entity in propagatable_entities:
         key = entity.value.lower()
         if key not in entity_map:

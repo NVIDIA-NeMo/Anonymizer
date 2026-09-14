@@ -23,7 +23,7 @@ from anonymizer.config.regex import (
     RegexValidationResult,
     RegexValidatorCallable,
 )
-from anonymizer.engine.detection.postprocess import EntitySpan, merge_entity_sources
+from anonymizer.engine.detection.postprocess import EntitySpan, coalesce_exact_entity_candidates
 
 DEFAULT_REGEX_TIMEOUT_SECONDS = 0.05
 DEFAULT_MAX_MATCHES_PER_RULE = 1000
@@ -169,8 +169,8 @@ def detect_regex_entities(
             raise RuntimeError(f"Regex rule {rule.rule_id!r} timed out after {timeout_seconds} seconds.") from exc
 
     return RegexDetectionResult(
-        llm_entities=_merge_regex_sources(llm_entities),
-        accepted_entities=_merge_regex_sources(accepted_entities),
+        llm_entities=_coalesce_regex_sources(llm_entities),
+        accepted_entities=_coalesce_regex_sources(accepted_entities),
     )
 
 
@@ -179,10 +179,10 @@ def _compile_pattern(pattern: str) -> Any:
     return regex.compile(pattern)
 
 
-def _merge_regex_sources(entities: list[EntitySpan]) -> list[EntitySpan]:
+def _coalesce_regex_sources(entities: list[EntitySpan]) -> list[EntitySpan]:
     users = [entity for entity in entities if entity.source.startswith("regex_user:")]
     builtins = [entity for entity in entities if entity.source.startswith("regex_builtin:")]
-    return merge_entity_sources(_deduplicate(users), _deduplicate(builtins))
+    return coalesce_exact_entity_candidates(users, builtins)
 
 
 def _trim_url_trailing_punctuation(value: str) -> str:
@@ -431,15 +431,3 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
         source="regex_builtin",
     ),
 )
-
-
-def _deduplicate(entities: list[EntitySpan]) -> list[EntitySpan]:
-    seen: set[tuple[str, int, int]] = set()
-    result: list[EntitySpan] = []
-    for entity in entities:
-        key = (entity.label, entity.start_position, entity.end_position)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(entity)
-    return result
