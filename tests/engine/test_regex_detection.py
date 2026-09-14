@@ -39,6 +39,48 @@ def test_builtin_regexes_detect_valid_values(label: str, text: str, expected: st
 
 
 @pytest.mark.parametrize(
+    "address",
+    [
+        "x@उदाहरण.भारत",
+        "x@e\u0301xample.com",
+    ],
+)
+def test_email_regex_supports_international_domains(address: str) -> None:
+    text = f"Email {address} now"
+    rules = resolve_regex_rules(labels=["email"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert [(entity.value, text[entity.start_position : entity.end_position]) for entity in result.llm_entities] == [
+        (address, address)
+    ]
+
+
+def test_ipv6_regex_consumes_an_embedded_ipv4_tail() -> None:
+    address = "::ffff:192.0.2.128"
+    text = f"Mapped address {address} is reserved"
+    rules = resolve_regex_rules(labels=["ipv6", "ipv4"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in result.llm_entities] == [
+        (address, len("Mapped address "), len("Mapped address ") + len(address))
+    ]
+    entity = result.llm_entities[0]
+    assert text[entity.start_position : entity.end_position] == address
+
+
+def test_url_validator_accepts_uppercase_www_prefix() -> None:
+    address = "WWW.example.com/path"
+    text = f"Visit {address} now"
+    rules = resolve_regex_rules(labels=["url"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert [entity.value for entity in result.llm_entities] == [address]
+
+
+@pytest.mark.parametrize(
     ("label", "text"),
     [
         ("credit_debit_card", "Card 4111 1111 1111 1112."),

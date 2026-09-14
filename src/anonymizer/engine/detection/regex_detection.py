@@ -10,6 +10,7 @@ from functools import lru_cache
 from hashlib import sha256
 from importlib.metadata import entry_points
 from typing import Any
+from unicodedata import normalize
 from urllib.parse import urlsplit
 
 import regex
@@ -298,6 +299,7 @@ def _validate_email(candidate: RegexCandidate) -> bool:
     if len(value) > 254 or value.count("@") != 1:
         return False
     local, domain = value.rsplit("@", 1)
+    domain = normalize("NFC", domain)
     if not local or len(local.encode("utf-8")) > 64:
         return False
     if local.startswith(".") or local.endswith(".") or ".." in local:
@@ -339,7 +341,7 @@ def _validate_mac(candidate: RegexCandidate) -> bool:
 
 
 def _validate_url(candidate: RegexCandidate) -> bool:
-    target = candidate.value if not candidate.value.startswith("www.") else f"https://{candidate.value}"
+    target = candidate.value if not candidate.value.lower().startswith("www.") else f"https://{candidate.value}"
     try:
         parsed = urlsplit(target)
         port = parsed.port
@@ -385,8 +387,8 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
         pattern=(
             r"(?<![A-Za-z0-9.!#$%&'*+/=?^_`{|}~-])"
             r"[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+(?:\.[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+)*@"
-            r"[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?"
-            r"(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?)+"
+            r"[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}-]{0,61}[\p{L}\p{N}\p{M}])?"
+            r"(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}-]{0,61}[\p{L}\p{N}\p{M}])?)+"
             r"(?![A-Za-z0-9_-])"
         ),
         validator_id="nemo.email.v1",
@@ -402,7 +404,12 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
     ResolvedRegexRule(
         rule_id="nemo.ipv6.v1",
         label="ipv6",
-        pattern=r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])",
+        pattern=(
+            r"(?<![0-9A-Fa-f:])(?:"
+            r"(?:[0-9A-Fa-f]{0,4}:){2,6}(?:[0-9]{1,3}\.){3}[0-9]{1,3}"
+            r"|(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}"
+            r")(?![0-9A-Fa-f:]|\.[0-9])"
+        ),
         validator_id="nemo.ipv6.v1",
         source="regex_builtin",
     ),
