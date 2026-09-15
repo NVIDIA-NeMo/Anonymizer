@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from inspect import Signature, signature
-from typing import Generic, Protocol, TypeGuard, TypeVar, assert_never
+from typing import TYPE_CHECKING, Generic, Protocol, TypeGuard, TypeVar, assert_never, cast
 
 import pandas as pd
 
@@ -22,8 +22,25 @@ from anonymizer.engine.execution.accounting_evidence import (
     _SuccessRecord,
     _TerminalRecord,
 )
-from anonymizer.engine.execution.accounting_ledger import _AccountingLedger
-from anonymizer.engine.execution.accounting_outcomes import _AccountingResult, _CauseCode
+from anonymizer.engine.execution.accounting_ledger import (
+    _AccountingLedger,
+    _phase10_accounting_profile,
+    _phase10_task_reason_entries,
+    _phase10_task_terminal,
+    _phase10_valid_cause_set,
+    _phase10_valid_task_outcome,
+)
+from anonymizer.engine.execution.accounting_outcomes import (
+    _AccountingResult,
+    _CauseCode,
+    _GroupReleased,
+    _GroupWithheld,
+    _InvocationCancelled,
+    _InvocationCompleted,
+    _InvocationFailed,
+    _InvocationInconsistent,
+    _InvocationLost,
+)
 from anonymizer.engine.execution.accounting_plan import (
     _AccountingPlan,
     _DatumTaskSubject,
@@ -60,6 +77,14 @@ from anonymizer.engine.private_row_verification import (
     _InvocationRowVerifier,
     _TerminalOutcome,
 )
+
+if TYPE_CHECKING:
+    from anonymizer.engine.execution.phase10_inspection import (
+        _Phase10InspectionRejected,
+        _Phase10OwnerCapture,
+        _Phase10ReasonCategory,
+        _Phase10Stage,
+    )
 
 T = TypeVar("T")
 
@@ -145,6 +170,56 @@ class _ContextGraphAdmissionError(TypeError):
         return "<private context graph error>"
 
 
+def _phase10_valid_accounting_result(plan: object, result: object) -> bool:
+    if not _is_admitted_accounting_plan(plan):
+        return False
+    typed_plan = cast(_AccountingPlan, plan)
+    if (
+        type(result) is not _AccountingResult
+        or type(result.tasks) is not tuple
+        or len(result.tasks) != len(typed_plan.tasks)
+        or any(
+            not _phase10_valid_task_outcome(task, outcome)
+            for task, outcome in zip(typed_plan.tasks, result.tasks, strict=True)
+        )
+        or type(result.groups) is not tuple
+        or len(result.groups) != len(typed_plan.atomic_groups)
+    ):
+        return False
+    for declared, outcome in zip(typed_plan.atomic_groups, result.groups, strict=True):
+        if type(outcome) is _GroupReleased:
+            if (
+                outcome.group is not declared.key
+                or type(outcome.outputs) is not tuple
+                or len(outcome.outputs) != len(declared.members)
+                or any(
+                    type(item) is not tuple or len(item) != 2 or item[0] is not member
+                    for item, member in zip(outcome.outputs, declared.members, strict=True)
+                )
+            ):
+                return False
+        elif type(outcome) is _GroupWithheld:
+            if outcome.group is not declared.key or not _phase10_valid_cause_set(outcome.causes):
+                return False
+        else:
+            return False
+    invocation = result.invocation
+    if type(invocation) is _InvocationCompleted:
+        return type(invocation.groups) is tuple and invocation.groups is result.groups
+    if type(invocation) not in {_InvocationFailed, _InvocationCancelled, _InvocationLost, _InvocationInconsistent}:
+        return False
+    if not _phase10_valid_cause_set(getattr(invocation, "causes", None)):
+        return False
+    codes = {cause.code for cause in invocation.causes}
+    if type(invocation) is _InvocationCancelled:
+        return _CauseCode.CANCELLATION in codes
+    if type(invocation) is _InvocationLost:
+        return _CauseCode.TRANSPORT_LOST in codes
+    if type(invocation) is _InvocationFailed:
+        return not codes.intersection({_CauseCode.CANCELLATION, _CauseCode.TRANSPORT_LOST})
+    return _CauseCode.CANCELLATION not in codes and _CauseCode.STOP_ACKNOWLEDGED not in codes
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _AccountingGraphExecution(Generic[T]):
     plan: _AccountingPlan
@@ -153,6 +228,282 @@ class _AccountingGraphExecution(Generic[T]):
 
     def __repr__(self) -> str:
         return "<private accounting graph execution>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private accounting graph executions are not serializable")
+
+    def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Fail closed when malformed private owner state cannot be projected."""
+        try:
+            return self._phase10_snapshot_unchecked()
+        except Exception:
+            from anonymizer.engine.execution.phase10_inspection import (
+                _Phase10InspectionRejected,
+                _Phase10RejectionCode,
+            )
+
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+    def _phase10_snapshot_unchecked(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Validate and build one private terminal accounting capture."""
+        return self._phase10_build_capture()
+
+    def _phase10_build_capture(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Issue one detached terminal snapshot without retaining candidates."""
+        from anonymizer.engine.execution.phase10_inspection import (
+            _map_phase10_reason,
+            _phase10_count_bucket,
+            _phase10_limit,
+            _phase10_new_builder_budget,
+            _phase10_reserve_builder_row,
+            _phase10_stage,
+            _Phase10CaptureBoundary,
+            _Phase10CleanupState,
+            _Phase10CountBucket,
+            _Phase10Diagnostic,
+            _Phase10InspectionRejected,
+            _Phase10LifecycleState,
+            _Phase10LimitName,
+            _Phase10OwnerCapture,
+            _Phase10ReasonCategory,
+            _Phase10ReconciliationState,
+            _Phase10RejectionCode,
+            _Phase10ReleaseState,
+            _Phase10Snapshot,
+            _Phase10Stage,
+            _Phase10StageSummary,
+            _Phase10SubjectKind,
+            _Phase10TerminalState,
+            _Phase10TerminalSummary,
+        )
+
+        if not _phase10_valid_accounting_result(self.plan, self.accounting):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        builder_budget = _phase10_new_builder_budget()
+        if builder_budget is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        stage_groups: dict[_Phase10Stage, list[object]] = {}
+        for declared_stage in self.plan.stages:
+            mapped_stage = _phase10_stage(declared_stage.value)
+            if mapped_stage is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            stage_groups.setdefault(mapped_stage, []).append(declared_stage)
+        if len(stage_groups) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        reconciliation = (
+            _Phase10ReconciliationState.INCONSISTENT
+            if isinstance(self.accounting.invocation, _InvocationInconsistent)
+            else _Phase10ReconciliationState.RECONCILED
+        )
+        invocation_causes = tuple(getattr(self.accounting.invocation, "causes", ()))
+        cleanup = (
+            _Phase10CleanupState.UNCONFIRMED
+            if any(getattr(cause, "code", None) is _CauseCode.CLEANUP_UNCONFIRMED for cause in invocation_causes)
+            else _Phase10CleanupState.FAILED
+            if any(getattr(cause, "code", None) is _CauseCode.CLEANUP_FAILED for cause in invocation_causes)
+            else _Phase10CleanupState.NOT_ENTERED
+        )
+        release = (
+            _Phase10ReleaseState.RELEASED
+            if isinstance(self.accounting.invocation, _InvocationCompleted)
+            and all(isinstance(group, _GroupReleased) for group in self.accounting.groups)
+            else _Phase10ReleaseState.WITHHELD
+        )
+        stage_summaries = []
+        terminal_summaries = []
+        diagnostics = []
+        for mapped_stage, declared_stages in stage_groups.items():
+            outcomes = tuple(
+                outcome
+                for task, outcome in zip(self.plan.tasks, self.accounting.tasks, strict=True)
+                if task.stage in declared_stages
+            )
+            bucket = _phase10_count_bucket(len(outcomes))
+            if bucket is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            if not _phase10_reserve_builder_row(builder_budget):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+            stage_summaries.append(_Phase10StageSummary(mapped_stage, _Phase10LifecycleState.TERMINAL, bucket))
+            for terminal_state in _Phase10TerminalState:
+                matches = tuple(outcome for outcome in outcomes if _phase10_task_terminal(outcome) is terminal_state)
+                if not matches:
+                    continue
+                impact = _phase10_count_bucket(len(matches))
+                if impact is None:
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                if not _phase10_reserve_builder_row(builder_budget):
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                terminal_summaries.append(_Phase10TerminalSummary(mapped_stage, terminal_state, impact))
+                category_counts: dict[_Phase10ReasonCategory, int] = {}
+                category_codes: dict[_Phase10ReasonCategory, set[_CauseCode]] = {}
+                for outcome in matches:
+                    for code, category in _phase10_task_reason_entries(outcome):
+                        category_counts[category] = category_counts.get(category, 0) + 1
+                        category_codes.setdefault(category, set()).add(code)
+                for category in _Phase10ReasonCategory:
+                    count = category_counts.get(category, 0)
+                    if not count:
+                        continue
+                    if len(category_codes.get(category, set())) > _phase10_limit(
+                        _Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY
+                    ):
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                    reason_impact = _phase10_count_bucket(count)
+                    if reason_impact is None:
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                    if not _phase10_reserve_builder_row(builder_budget):
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                    diagnostics.append(
+                        _Phase10Diagnostic(
+                            _Phase10CaptureBoundary.INVOCATION_CLOSED,
+                            mapped_stage,
+                            terminal_state,
+                            category,
+                            reason_impact,
+                            reconciliation,
+                            cleanup,
+                        )
+                    )
+        withheld_groups = tuple(group for group in self.accounting.groups if type(group) is _GroupWithheld)
+        if withheld_groups:
+            group_bucket = _phase10_count_bucket(len(self.accounting.groups))
+            withheld_bucket = _phase10_count_bucket(len(withheld_groups))
+            if group_bucket is None or withheld_bucket is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            if not _phase10_reserve_builder_row(builder_budget) or not _phase10_reserve_builder_row(builder_budget):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+            stage_summaries.append(
+                _Phase10StageSummary(
+                    _Phase10Stage.PUBLICATION,
+                    _Phase10LifecycleState.RELEASE_TERMINAL,
+                    group_bucket,
+                )
+            )
+            terminal_summaries.append(
+                _Phase10TerminalSummary(
+                    _Phase10Stage.PUBLICATION,
+                    _Phase10TerminalState.WITHHELD,
+                    withheld_bucket,
+                )
+            )
+            group_category_counts: dict[_Phase10ReasonCategory, int] = {}
+            group_category_codes: dict[_Phase10ReasonCategory, set[_CauseCode]] = {}
+            for group in withheld_groups:
+                for cause in group.causes:
+                    if cause.code is not _CauseCode.RELEASE_PREDICATE_FAILED:
+                        continue
+                    category = _map_phase10_reason(cause.code)
+                    group_category_counts[category] = group_category_counts.get(category, 0) + 1
+                    group_category_codes.setdefault(category, set()).add(cause.code)
+            for category in _Phase10ReasonCategory:
+                count = group_category_counts.get(category, 0)
+                if not count:
+                    continue
+                if len(group_category_codes.get(category, set())) > _phase10_limit(
+                    _Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY
+                ):
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                impact = _phase10_count_bucket(count)
+                if impact is None:
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+                if not _phase10_reserve_builder_row(builder_budget):
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                diagnostics.append(
+                    _Phase10Diagnostic(
+                        _Phase10CaptureBoundary.INVOCATION_CLOSED,
+                        _Phase10Stage.PUBLICATION,
+                        _Phase10TerminalState.WITHHELD,
+                        category,
+                        impact,
+                        reconciliation,
+                        cleanup,
+                    )
+                )
+        invocation = self.accounting.invocation
+        if type(invocation) is not _InvocationCompleted:
+            invocation_terminal = {
+                _InvocationFailed: _Phase10TerminalState.FAILED,
+                _InvocationCancelled: _Phase10TerminalState.CANCELLED,
+                _InvocationLost: _Phase10TerminalState.LOST,
+                _InvocationInconsistent: _Phase10TerminalState.INCONSISTENT,
+            }[type(invocation)]
+            cause_groups: dict[_Phase10Stage, list[_CauseCode]] = {}
+            invocation_codes = tuple(cause.code for cause in invocation.causes)
+            if _CauseCode.STOP_ACKNOWLEDGED in invocation_codes:
+                invocation_codes = (_CauseCode.STOP_ACKNOWLEDGED,)
+            elif _CauseCode.TRANSPORT_LOST in invocation_codes:
+                invocation_codes = (_CauseCode.TRANSPORT_LOST,)
+            elif _CauseCode.CANCELLATION in invocation_codes:
+                invocation_codes = (_CauseCode.CANCELLATION,)
+            for code in invocation_codes:
+                stage = (
+                    _Phase10Stage.CLEANUP
+                    if code in {_CauseCode.CLEANUP_FAILED, _CauseCode.CLEANUP_UNCONFIRMED}
+                    else _Phase10Stage.RELEASE
+                )
+                cause_groups.setdefault(stage, []).append(code)
+            for stage in (_Phase10Stage.CLEANUP, _Phase10Stage.RELEASE):
+                codes = cause_groups.get(stage)
+                if not codes:
+                    continue
+                if not _phase10_reserve_builder_row(builder_budget) or not _phase10_reserve_builder_row(builder_budget):
+                    return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                stage_summaries.append(
+                    _Phase10StageSummary(
+                        stage,
+                        (
+                            _Phase10LifecycleState.CLEANUP_TERMINAL
+                            if stage is _Phase10Stage.CLEANUP
+                            else _Phase10LifecycleState.RELEASE_TERMINAL
+                        ),
+                        _Phase10CountBucket.ONE,
+                    )
+                )
+                terminal_summaries.append(_Phase10TerminalSummary(stage, invocation_terminal, _Phase10CountBucket.ONE))
+                category_codes: dict[_Phase10ReasonCategory, set[_CauseCode]] = {}
+                for code in codes:
+                    category_codes.setdefault(_map_phase10_reason(code), set()).add(code)
+                for category in _Phase10ReasonCategory:
+                    owning_codes = category_codes.get(category)
+                    if not owning_codes:
+                        continue
+                    if any(item.reason_category is category for item in diagnostics):
+                        continue
+                    if len(owning_codes) > _phase10_limit(_Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY):
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                    if not _phase10_reserve_builder_row(builder_budget):
+                        return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+                    diagnostics.append(
+                        _Phase10Diagnostic(
+                            _Phase10CaptureBoundary.INVOCATION_CLOSED,
+                            stage,
+                            invocation_terminal,
+                            category,
+                            _Phase10CountBucket.ONE,
+                            reconciliation,
+                            cleanup,
+                        )
+                    )
+        if (
+            len(stage_summaries) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES)
+            or len(terminal_summaries) > _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS)
+            or len(diagnostics) > _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES)
+        ):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        return _Phase10OwnerCapture(
+            _Phase10SubjectKind.TERMINAL_RECEIPT,
+            _phase10_accounting_profile(self.plan),
+            _Phase10CaptureBoundary.INVOCATION_CLOSED,
+            _Phase10LifecycleState.CLOSED,
+            _Phase10Snapshot(
+                tuple(stage_summaries),
+                tuple(terminal_summaries),
+                reconciliation,
+                cleanup,
+                release,
+            ),
+            tuple(diagnostics),
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)

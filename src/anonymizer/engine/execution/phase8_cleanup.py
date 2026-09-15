@@ -7,6 +7,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from anonymizer.engine.execution.phase10_inspection import (
+        _Phase10InspectionRejected,
+        _Phase10OwnerCapture,
+    )
 
 
 class _Phase8CleanupPhase(str, Enum):
@@ -55,8 +62,137 @@ class _Phase8CleanupReceipt:
     withheld_candidate_reference_count: int = 0
     _proof: _Phase8CleanupProof | None = field(default=None, compare=False)
 
+    def __repr__(self) -> str:
+        return "<private phase 8 cleanup receipt>"
+
     def __reduce__(self) -> str | tuple[object, ...]:
         raise TypeError("private Phase 8 cleanup receipts are not serializable")
+
+    def _phase10_snapshot(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Fail closed when malformed cleanup state cannot be projected."""
+        try:
+            return self._phase10_snapshot_unchecked()
+        except Exception:
+            from anonymizer.engine.execution.phase10_inspection import (
+                _Phase10InspectionRejected,
+                _Phase10RejectionCode,
+            )
+
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+    def _phase10_snapshot_unchecked(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
+        """Issue a detached bounded view of one sealed cleanup terminal."""
+        from anonymizer.engine.execution.phase10_inspection import (
+            _phase10_count_bucket,
+            _phase10_new_builder_budget,
+            _phase10_reserve_builder_row,
+            _Phase10CaptureBoundary,
+            _Phase10CleanupState,
+            _Phase10CountBucket,
+            _Phase10Diagnostic,
+            _Phase10InspectionRejected,
+            _Phase10LifecycleState,
+            _Phase10OwnerCapture,
+            _Phase10ReasonCategory,
+            _Phase10ReconciliationState,
+            _Phase10RejectionCode,
+            _Phase10ReleaseState,
+            _Phase10SemanticProfile,
+            _Phase10Snapshot,
+            _Phase10Stage,
+            _Phase10StageSummary,
+            _Phase10SubjectKind,
+            _Phase10TerminalState,
+            _Phase10TerminalSummary,
+        )
+
+        if not _is_phase8_cleanup_receipt(
+            self,
+            identity=self.identity,
+            phase=self.phase,
+            component=self.component,
+        ):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        builder_budget = _phase10_new_builder_budget()
+        if builder_budget is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        count = sum(
+            (
+                self.active_operation_count,
+                self.active_workframe_reference_count,
+                self.token_reference_count,
+                self.source_projection_reference_count,
+                self.baseline_reference_count,
+                self.obligation_reference_count,
+                self.provisional_revision_reference_count,
+                self.evaluation_evidence_reference_count,
+                self.retained_candidate_cell_count,
+                self.withheld_candidate_reference_count,
+            )
+        )
+        bucket = _phase10_count_bucket(count)
+        if bucket is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        boundary = (
+            _Phase10CaptureBoundary.PRE_REDUCTION_CLEANUP_TERMINAL
+            if self.phase is _Phase8CleanupPhase.PRE_REDUCTION
+            else _Phase10CaptureBoundary.POST_REDUCTION_CLEANUP_TERMINAL
+        )
+        cleanup_state = {
+            _Phase8CleanupStatus.VERIFIED: _Phase10CleanupState.VERIFIED,
+            _Phase8CleanupStatus.FAILED: _Phase10CleanupState.FAILED,
+            _Phase8CleanupStatus.UNCONFIRMED: _Phase10CleanupState.UNCONFIRMED,
+        }[self.status]
+        terminal_state = {
+            _Phase8CleanupStatus.VERIFIED: _Phase10TerminalState.SUCCEEDED,
+            _Phase8CleanupStatus.FAILED: _Phase10TerminalState.FAILED,
+            _Phase8CleanupStatus.UNCONFIRMED: _Phase10TerminalState.INCONSISTENT,
+        }[self.status]
+        if not _phase10_reserve_builder_row(builder_budget) or not _phase10_reserve_builder_row(builder_budget):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        snapshot = _Phase10Snapshot(
+            (
+                _Phase10StageSummary(
+                    _Phase10Stage.CLEANUP,
+                    _Phase10LifecycleState.CLEANUP_TERMINAL,
+                    _Phase10CountBucket.ONE,
+                ),
+            ),
+            (_Phase10TerminalSummary(_Phase10Stage.CLEANUP, terminal_state, bucket),),
+            _Phase10ReconciliationState.RECONCILED,
+            cleanup_state,
+            _Phase10ReleaseState.NOT_ENTERED,
+        )
+        category = {
+            _Phase8CleanupStatus.VERIFIED: None,
+            _Phase8CleanupStatus.FAILED: _Phase10ReasonCategory.CLEANUP_FAILED,
+            _Phase8CleanupStatus.UNCONFIRMED: _Phase10ReasonCategory.CLEANUP_UNCONFIRMED,
+        }[self.status]
+        if category is not None and not _phase10_reserve_builder_row(builder_budget):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        diagnostics = (
+            ()
+            if category is None
+            else (
+                _Phase10Diagnostic(
+                    boundary,
+                    _Phase10Stage.CLEANUP,
+                    terminal_state,
+                    category,
+                    bucket,
+                    _Phase10ReconciliationState.RECONCILED,
+                    cleanup_state,
+                ),
+            )
+        )
+        return _Phase10OwnerCapture(
+            _Phase10SubjectKind.CLEANUP_RECEIPT,
+            _Phase10SemanticProfile.GROUPED_REWRITE_V1,
+            boundary,
+            _Phase10LifecycleState.CLEANUP_TERMINAL,
+            snapshot,
+            diagnostics,
+        )
 
 
 def _issue_phase8_cleanup_receipt(
@@ -107,14 +243,31 @@ def _is_phase8_cleanup_receipt(
     phase: _Phase8CleanupPhase,
     component: _Phase8CleanupComponent,
 ) -> bool:
-    if not isinstance(value, _Phase8CleanupReceipt) or value._proof is None:
+    if type(value) is not _Phase8CleanupReceipt or type(value._proof) is not _Phase8CleanupProof:
         return False
+    snapshot = _cleanup_snapshot(value)
     return (
         value.identity is identity
+        and type(value.phase) is _Phase8CleanupPhase
         and value.phase is phase
+        and type(value.component) is _Phase8CleanupComponent
         and value.component is component
+        and type(value.status) is _Phase8CleanupStatus
         and value._proof.seal is _CLEANUP_SEAL
-        and value._proof.snapshot == _cleanup_snapshot(value)
+        and type(value._proof.snapshot) is tuple
+        and snapshot is not None
+        and _cleanup_proof_snapshot_matches(value._proof.snapshot, snapshot)
+    )
+
+
+def _cleanup_proof_snapshot_matches(value: tuple[object, ...], expected: tuple[object, ...]) -> bool:
+    if len(value) != len(expected):
+        return False
+    return all(
+        (type(actual) is int and actual == reference)
+        if type(reference) is int
+        else (type(actual) is type(reference) and actual is reference)
+        for actual, reference in zip(value, expected, strict=True)
     )
 
 
@@ -132,9 +285,9 @@ def _cleanup_snapshot(value: _Phase8CleanupReceipt) -> tuple[object, ...] | None
         value.withheld_candidate_reference_count,
     )
     if (
-        not isinstance(value.phase, _Phase8CleanupPhase)
-        or not isinstance(value.component, _Phase8CleanupComponent)
-        or not isinstance(value.status, _Phase8CleanupStatus)
+        type(value.phase) is not _Phase8CleanupPhase
+        or type(value.component) is not _Phase8CleanupComponent
+        or type(value.status) is not _Phase8CleanupStatus
         or value.identity is None
         or any(type(count) is not int or count < 0 for count in counts)
     ):

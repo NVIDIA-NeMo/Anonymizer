@@ -1,0 +1,529 @@
+{
+  "schema_version": "anonymizer-phase10-bounded-inspection-owner-contract-envelope/v1",
+  "digest_algorithm": "sha256_of_UTF8_compact_sorted_key_JSON_of_contract_member_with_no_trailing_newline",
+  "digest": "0d6e189bf3d89472a6880a76367ed99b5462b6c5d460818282e403e4a285eb95",
+  "contract": {
+    "delivery_name": "p11-sdk-phase10-bounded-inspection",
+    "sdk_phase": 10,
+    "version": "anonymizer-phase10-bounded-inspection/v1",
+    "status": "candidate_owner_freeze_required",
+    "base": {
+      "p10_branch": "codex/anonymizer-result-compatibility-p10",
+      "p10_commit": "3cc4993a8026eede98f425f524f23861032f983d",
+      "p10_pr": 264,
+      "stacked_target": "codex/anonymizer-result-compatibility-p10",
+      "parent_pr": 260,
+      "parent_merge_dependency": "parent_pr_may_land_later"
+    },
+    "authority": {
+      "operator_is_approval_router": true,
+      "investigation_and_contract_plan_drafting": "authorized",
+      "implementation_before_exact_contract_and_plan_digest_approval": "forbidden",
+      "p11_worktree_or_branch_before_exact_digest_approval": "forbidden",
+      "public_graph_session_explain_inspect_or_diagnose_surface": "deferred_to_sdk_phase12_with_a_new_exact_contract_and_separate_explicit_public_api_authorization_after_phase11_evidence",
+      "retarget_p10_pr": "forbidden",
+      "rerun_nvskills_ci": "forbidden_while_nvskills_requires_main_based_prs",
+      "pr_ready_merge_or_parent_pr_actions": "require_separate_operator_approval"
+    },
+    "scope": {
+      "selection": "private_engine_bounded_inspection_only",
+      "purpose": "Produce authorization-gated, content-free, deterministic, bounded views of compiled decisions, lifecycle state, and non-success reasons without exposing graph or session values.",
+      "admitted_subjects": [
+        "an admitted immutable compiled private plan or a content-free admission rejection receipt",
+        "an owner-issued immutable invocation snapshot at an allowed lifecycle capture point",
+        "a content-free terminal accounting or cleanup receipt"
+      ],
+      "excluded_subjects": [
+        "public AnonymizerResult or PreviewResult",
+        "legacy pandas dataframe or trace dataframe",
+        "raw graph authoring input",
+        "live mutable ledger traversal",
+        "provider request or response",
+        "exception object or traceback",
+        "arbitrary user object"
+      ],
+      "public_exports": "unchanged",
+      "public_method_signatures": "unchanged",
+      "execution_routing": "unchanged",
+      "telemetry_schema": "unchanged",
+      "result_compatibility_contract_digest": "c91a410289c3549f608cc0b088da3ce9db56ac10aeabe430a8254b637ef4b12d",
+      "graph_or_session_record_publication": "not_authorized_in_phase10_or_phase11_and_deferred_to_sdk_phase12",
+      "portable_graph_or_session_artifact": "not_defined"
+    },
+    "view_semantics": {
+      "explain": {
+        "question_answered": "Which closed profile, route, requirements, bounds, and aggregate graph relationships did compilation select or reject, and which closed rule caused rejection?",
+        "subjects": [
+          "admitted compiled plan",
+          "content-free admission rejection receipt"
+        ],
+        "effects": "pure_snapshot_with_no_provider_or_graph_invocation_effects",
+        "forbidden": [
+          "raw authoring graph",
+          "datum or relationship enumeration",
+          "content-dependent rationale text",
+          "model-generated explanation"
+        ]
+      },
+      "inspect": {
+        "question_answered": "What aggregate bounded lifecycle, stage, terminal, reconciliation, cleanup, and release state has the owning runtime accepted at one capture point?",
+        "subjects": [
+          "owner-issued immutable invocation snapshot",
+          "content-free terminal receipt"
+        ],
+        "effects": "observational_only_and_cannot_cancel_retry_release_or_extend_subject_lifetime",
+        "consistency": "one_owner_linearized_capture_point_or_no_view",
+        "forbidden": [
+          "direct read of a live mutable ledger",
+          "polling handle",
+          "subscription",
+          "partial snapshot",
+          "content-bearing candidate inspection"
+        ]
+      },
+      "diagnose": {
+        "question_answered": "Which closed content-free reason categories explain an admission rejection or accepted non-success outcome, at which closed boundary and stage, with what bucketed impact?",
+        "subjects": [
+          "content-free admission rejection receipt",
+          "owner-issued immutable non-success snapshot",
+          "content-free terminal accounting or cleanup receipt"
+        ],
+        "effects": "classification_only_and_never_infers_retryability_or_product_remediation",
+        "forbidden": [
+          "exception message",
+          "exception type or module",
+          "traceback",
+          "log excerpt",
+          "provider error body",
+          "free-form cause text"
+        ]
+      },
+      "overlap_rule": "Each operation has one purpose and one schema variant; callers must not receive a union of all three views from one request.",
+      "no_success_claim": "A view reports accepted state only; it cannot establish exhaustive PII detection, provider behavior, secure erasure, product authorization, or release eligibility beyond the owning terminal record."
+    },
+    "authorization": {
+      "precondition": "The integrating product or execution host authorizes source access and field use before graph construction; Anonymizer does not accept or interpret product identity, credential, token, or field-authorization claims.",
+      "inspection_grant": "A separate process-local opaque capability attests only that its issuer permits one bounded private inspection operation over one already-owned subject.",
+      "grant_properties": [
+        "fresh and unforgeable by supported callers",
+        "bound by object identity to one owner and one subject",
+        "bound to exactly one operation from explain inspect diagnose",
+        "single-use",
+        "non-serializable",
+        "content-masking repr",
+        "expires when the owning capture operation returns or the subject closes, whichever occurs first"
+      ],
+      "validation_order": "Validate grant type, issuer seal, operation, subject binding, single-use state, and lifetime before subject lookup or traversal.",
+      "denial": {
+        "exception_kind": "private cause-free inspection denial",
+        "message": "Bounded inspection is not authorized.",
+        "reason_detail": "none",
+        "partial_view": false,
+        "telemetry_or_log": "none"
+      },
+      "same_process_security_limit": "This capability is a supported-call-path control, not a security boundary against arbitrary code executing in the same Python interpreter.",
+      "global_enable_flag_or_environment_variable": false,
+      "delegation_or_refresh": false,
+      "grant_issuer": "execution_host",
+      "authorization_policy_owner": "integrating_product_owner",
+      "disclosure_policy_owners": "Anonymizer privacy and measurement owners",
+      "issuance_condition": "The execution host may mint a grant only after the integrating product has authorized source and field access.",
+      "owner_resolution": "approved"
+    },
+    "privacy_and_redaction": {
+      "construction_rule": "Build every view from closed content-free receipts and allowlisted primitives; never build a rich view and redact it afterward.",
+      "forbidden_values": [
+        "original target or context text and any substring",
+        "detected entity text labels offsets mentions clusters roles obligations or dispositions",
+        "replacement values baselines revisions prompts and evaluation text",
+        "graph datum source row group scope task attempt member mention binding obligation slot bundle capability invocation session process thread trace or artifact identities",
+        "caller or source identifiers",
+        "private correlation or lineage tokens and token maps",
+        "credentials endpoints model names provider payloads and provider usage bodies",
+        "exception type module args message cause context traceback and stack",
+        "content-derived hash or digest",
+        "contract plan prompt graph payload or artifact digest",
+        "filesystem path hostname environment value and memory address",
+        "wall-clock timestamp"
+      ],
+      "allowed_scalar_types": [
+        "boolean",
+        "nonnegative bounded integer for schema-declared limits only",
+        "closed enum string",
+        "fixed count bucket string"
+      ],
+      "allowed_dimensions": [
+        "view kind",
+        "subject kind",
+        "schema and profile versions",
+        "closed route boundary stage lifecycle terminal reason reconciliation cleanup and release states",
+        "declared hard limits",
+        "bucketed counts for datums relationships stages tasks groups operations repairs outcomes and retained references"
+      ],
+      "count_buckets": [
+        "0",
+        "1",
+        "2-4",
+        "5-16",
+        "17-64",
+        "65+"
+      ],
+      "byte_buckets": [
+        "0",
+        "1-256",
+        "257-4096",
+        "4097-65536",
+        "65537+"
+      ],
+      "unknown_or_untrusted_value": "reject_complete_view_as_inspection_redaction_failed",
+      "truncation_masking_substitution_or_hashing": "forbidden",
+      "partial_view_on_redaction_failure": false,
+      "privacy_canaries_and_structural_allowlist_tests": true,
+      "physical_zeroization_claim": false
+    },
+    "limits": {
+      "subjects_per_call": 1,
+      "views_per_call": 1,
+      "max_stage_summaries": 8,
+      "max_terminal_summary_rows": 48,
+      "max_diagnostic_entries": 64,
+      "max_reason_codes_per_diagnostic_entry": 4,
+      "max_provenance_fields": 8,
+      "max_top_level_fields": 12,
+      "max_json_nesting_depth": 5,
+      "max_allowlisted_string_utf8_bytes": 96,
+      "max_canonical_json_utf8_bytes": 16384,
+      "max_builder_working_bytes": 65536,
+      "enforcement": [
+        "validate the grant before subject access",
+        "validate the subject kind and capture point before snapshot construction",
+        "enforce record counts and builder bytes while constructing",
+        "build only a schema-specific detached payload from validated private values",
+        "enforce exact built-in payload field depth and per-string UTF-8 ceilings before exact schema and closed-value admission",
+        "encode once into canonical JSON and enforce the exact encoded byte limit before return"
+      ],
+      "exceeded_limit": "return no constructed view for a construction-time record or builder ceiling violation; return no encoded bytes for a detached-payload or canonical-byte ceiling violation and do not revoke an existing immutable view; use the cause-free closed code inspection_limit_exceeded; malformed or unknown structures and values within measured ceilings return inspection_redaction_failed",
+      "truncation_pagination_sampling_or_best_effort_partial_output": false,
+      "inspection_does_not_relax_subject_profile_limits": true,
+      "wall_clock_deadline_claim": false,
+      "fixed_arity_enforcement": "The private explain inspect and diagnose functions accept exactly one scalar subject and return exactly one scalar view or rejection; no batch request or multi-view shape exists.",
+      "payload_limit_measurement": {
+        "domain": "detached payloads built only by schema-specific Phase 10 builders from validated private values",
+        "top_level_fields": "count exact string keys in the root exact built-in dictionary",
+        "provenance_fields": "count exact string keys in the exact built-in provenance dictionary",
+        "json_nesting_depth": "root dictionary has container depth 1; entering an exact built-in dictionary or list adds 1; scalar values do not add depth",
+        "allowlisted_string_utf8_bytes": "measure each exact string key and each exact string value separately as the length of its UTF-8 encoding; do not aggregate strings",
+        "static_schema_ceiling_evidence": "when the current closed schema cannot naturally reach a ceiling, require direct exact and one-over tests of the authoritative measurement primitive, full-encoder tests with the ceiling lowered to the actual value and one less, and a mutation proving every encoder variant invokes the validator"
+      },
+      "failure_precedence": [
+        "authorization denial before subject access",
+        "subject kind and owner-capture validation",
+        "exact built-in detached payload shell and measured payload ceilings",
+        "exact schema keys and closed allowlisted values",
+        "canonical JSON encoding",
+        "canonical JSON UTF-8 byte ceiling"
+      ]
+    },
+    "deterministic_ordering": {
+      "source": "admitted compiler order and closed enum declaration order only",
+      "stage_summaries": "compiled stage order",
+      "terminal_summary_rows": "compiled stage order then terminal precedence",
+      "diagnostic_entries": "boundary order then compiled stage order then terminal precedence then reason declaration order then impact bucket order",
+      "terminal_precedence": [
+        "inconsistent",
+        "lost",
+        "cancelled",
+        "failed",
+        "blocked",
+        "withheld",
+        "rejected",
+        "succeeded"
+      ],
+      "reason_codes": "closed reason declaration order with duplicates aggregated into one bucketed entry",
+      "json_objects": "lexicographically sorted keys",
+      "json_arrays": "retain the schema-defined semantic order",
+      "forbidden_sort_keys": [
+        "text",
+        "source or caller ID",
+        "private graph or runtime ID",
+        "hash or digest",
+        "memory address",
+        "provider response order",
+        "exception arrival order"
+      ],
+      "permutation_property": "Semantically equivalent declaration, row, mapping, and terminal-evidence permutations produce byte-identical canonical views unless declared order is itself part of the admitted semantic contract."
+    },
+    "lifecycle_and_cancellation": {
+      "allowed_capture_points": [
+        "admission_terminal",
+        "invocation_opened",
+        "pre_dispatch",
+        "post_dispatch",
+        "terminal_evidence_accepted",
+        "pre_reduction_cleanup_terminal",
+        "post_reduction_cleanup_terminal",
+        "release_terminal",
+        "invocation_closed"
+      ],
+      "capture_atomicity": "The owning runtime issues one immutable content-free snapshot under its lifecycle serialization rule; failure to prove a coherent capture returns no view.",
+      "mutable_subject_reference_retention": false,
+      "content_bearing_reference_retention": false,
+      "cleanup_interference": "Inspection must not delay cleanup, retain cleanup-owned objects, or weaken release embargoes.",
+      "protection_cancellation_semantics": {
+        "pre_dispatch": "cancelled_with_zero_provider_work",
+        "post_dispatch_with_trusted_stop": "cancelled",
+        "post_dispatch_without_trusted_stop": "lost",
+        "accepted_terminal_evidence": "absorbing_and_not_rewritten_by_later_cancellation_or_late_result"
+      },
+      "inspection_request_cancellation": {
+        "availability": "no cancellable asynchronous or multi-view inspection request exists in Phase 10 v1",
+        "effect_on_protection": "none",
+        "view_publication_linearization_point": "successful return from the synchronous private inspection function",
+        "view_construction_failure": "an internal denial limit redaction or state failure before operation return discards builder state and returns no view",
+        "byte_publication_linearization_point": "successful return from the private canonical encoder",
+        "encoding_failure": "a detached-payload limit redaction or encoding failure returns no encoded bytes and cannot revoke an existing immutable view",
+        "after_view_publication": "the returned immutable view cannot be rewritten or revoked",
+        "trusted_stop_claim": "none"
+      },
+      "inspection_failure_non_interference": "Inspection denial, limit, redaction, encoding, or cancellation failure cannot change task, datum, group, invocation, cleanup, release, result, exception, or telemetry behavior.",
+      "post_cleanup": "Only an owner-retained content-free terminal receipt may be inspected; no graph plan ledger workframe candidate or provider object may be revived.",
+      "async_handle_session_polling_or_subscription": "not_authorized"
+    },
+    "serialization": {
+      "private_inputs": "graph plan grant ledger runtime snapshot and receipt objects remain non-serializable and content-masking in repr",
+      "view_object": "immutable private value with content-masking repr and pickle disabled",
+      "supported_output": "one internal canonical JSON UTF-8 byte encoding of the allowlisted view",
+      "canonicalization": "ensure_ascii_false lexicographically_sorted_object_keys compact_separators arrays_in_schema_order no_trailing_newline",
+      "numeric_values": "nonnegative bounded integers only for declared hard limits; no float NaN Infinity duration timestamp or arbitrary counter",
+      "deserialization_as_execution_or_inspection_input": false,
+      "automatic_persistence_logging_telemetry_or_artifact_write": false,
+      "schema_compatibility": "exact schema version match only; no unknown fields and no silent upgrade downgrade or aliasing",
+      "oversize_or_encoding_failure": "no_partial_bytes_and_content_free_inspection_limit_or_encoding_failure",
+      "portable_wire_graph_or_session_claim": false
+    },
+    "provenance": {
+      "scope": "view-construction provenance only",
+      "required_fields": [
+        "inspection_schema_version",
+        "inspection_contract_version",
+        "view_kind",
+        "subject_kind",
+        "semantic_profile_version",
+        "implementation_profile_version",
+        "capture_boundary",
+        "capture_lifecycle_state"
+      ],
+      "lineage_across_views_invocations_processes_or_artifacts": "none",
+      "source_item_or_graph_identity": "none",
+      "opaque_private_work_identity": "none",
+      "digest_or_hash": "none",
+      "clock_or_host_identity": "none",
+      "claim": "The record identifies the closed schema and semantic capture class, not the underlying data, invocation, process, or artifact.",
+      "stable_cross_process_receipt_contract": "unresolved_and_not_satisfied_by_phase10_v1"
+    },
+    "phase12_public_surface": {
+      "name": "Public Surface Qualification and Publication",
+      "status": "proposed_future_phase",
+      "phase10_role": "prepare and verify private bounded inspection semantics without defining a publication-receipt subject or publishing a graph or session surface",
+      "phase11_role": "supply process-backed lifecycle evidence and materially different semantic runtime conformance evidence",
+      "phase12_role": "freeze review and implement an exact public graph session and inspection contract under separate public API authority",
+      "prerequisites": [
+        "accepted Phase 10 private implementation and council evidence",
+        "accepted Phase 11 lifecycle and materially different runtime evidence",
+        "approved privacy provenance lifecycle capability artifact governance and compatibility gates",
+        "new exact public owner contract and implementation plan digests",
+        "explicit public API owner authorization"
+      ],
+      "possible_delivery_if_sequence_continues": "P13",
+      "automatic_publication_from_phase10_or_phase11": false,
+      "experimental_publication_before_prerequisites": false
+    },
+    "failure_diagnostics": {
+      "reason_categories": [
+        "admission_rejected",
+        "capability_mismatch",
+        "limit_exceeded",
+        "verification_failed",
+        "backend_failed",
+        "cancellation_before_dispatch",
+        "stop_acknowledged",
+        "execution_lost",
+        "prerequisite_blocked",
+        "evidence_inconsistent",
+        "cleanup_failed",
+        "cleanup_unconfirmed",
+        "publication_failed",
+        "inspection_denied",
+        "inspection_subject_invalid",
+        "inspection_state_unavailable",
+        "inspection_limit_exceeded",
+        "inspection_redaction_failed",
+        "inspection_encoding_failed",
+        "unexpected_failure"
+      ],
+      "mapping": "Every admitted owning-domain reason maps explicitly to exactly one Phase 10 category; unmapped or newly added reasons map only to unexpected_failure and fail the contract-conformance gate.",
+      "entry_fields": [
+        "boundary",
+        "stage",
+        "terminal_state",
+        "reason_category",
+        "impact_count_bucket",
+        "reconciliation_state",
+        "cleanup_state"
+      ],
+      "free_form_text": false,
+      "retryable_flag_or_retry_instruction": false,
+      "exception_or_provider_detail": false,
+      "unknown_failure_behavior": "return only unexpected_failure with closed boundary and terminal state when available",
+      "partial_diagnostics": false
+    },
+    "compatibility": {
+      "legacy_run_preview_evaluate": "unchanged",
+      "public_result_types_fields_module_paths_repr_display_and_pickle": "unchanged",
+      "p9_result_materializer": "unchanged_and_does_not_admit_phase10_values",
+      "public_cli": "unchanged",
+      "bundled_anonymizer_skill": "unchanged",
+      "measurement_records": "unchanged_and_not_used_as_an_inspection_transport",
+      "DataDesigner_boundary": "all DataDesigner execution remains through NddAdapter.run_workflow",
+      "release_set": "inspection_cannot_enlarge_reorder_reinterpret_or_resurrect",
+      "exception_cause_privacy": "unchanged_or_stricter_without_public_exception_change"
+    },
+    "implementation_boundary": {
+      "allowed_new_surface": [
+        "private owner contract resource",
+        "private contract loader and version marker",
+        "private authorization capability",
+        "private content-free snapshot and view types",
+        "private explain inspect diagnose functions",
+        "private canonical view encoder",
+        "private reference model manifests fixtures and tests",
+        "development RFC status and evidence updates after implementation"
+      ],
+      "forbidden": [
+        "change to anonymizer.__all__ or anonymizer.interface exports",
+        "method added to public Anonymizer",
+        "public graph result target-outcome session or inspection module",
+        "public or CLI inspection command",
+        "new public exception",
+        "reuse of measurement collector as authorization or inspection state",
+        "runtime traversal via vars __dict__ dataclasses.asdict repr str pickle or generic recursive serializer",
+        "provider-backed or LLM-generated explanation",
+        "new execution route retry cancellation or release behavior"
+      ],
+      "module_placement": "exact private helper decomposition is deferred to implementation review; the graph/session publication boundary is not deferred"
+    },
+    "reference_model": {
+      "version": "phase10-bounded-inspection-reference-model/v1",
+      "kind": "pure_symbolic_content_free_view_reducer_not_independent_runtime",
+      "forbidden_imports": [
+        "production_phase10_modules",
+        "production_graph_or_runtime_types",
+        "pandas",
+        "DataDesigner",
+        "NddAdapter",
+        "measurement_collector"
+      ],
+      "symbolic_inputs": [
+        "operation and authorization state",
+        "subject kind and capture point",
+        "compiled stage order and aggregate count buckets",
+        "closed lifecycle terminal reconciliation cleanup and release states",
+        "closed owning reason codes",
+        "limit boundary witnesses"
+      ],
+      "symbolic_outputs": [
+        "admitted or rejected operation",
+        "ordered allowlisted view records",
+        "canonical JSON bytes or closed content-free failure",
+        "non-interference classification"
+      ],
+      "corpus": "finite pairwise core plus directed authorization redaction permutation lifecycle cleanup serialization provenance unknown-reason and limit witnesses; fixed-arity signature and mutation evidence replaces unrepresentable subject or view one-over requests; unreachable defense-in-depth payload ceilings require measurement-primitive exact and one-over witnesses, lowered-ceiling encoder integration, and encoder-invocation mutation evidence",
+      "manifest": "freeze model version generator version exact case and trace counts computed maxima and SHA-256 digest before executor comparison",
+      "reviewer_separation": "independent council members must not author production view reducers or reason mappings"
+    },
+    "review_council": {
+      "reference_reviewer": "oracle independence corpus manifest ordering and serialization",
+      "privacy_reviewer": "authorization allowlist redaction failures provenance and canaries",
+      "runtime_reviewer": "lifecycle cancellation cleanup reason mappings compatibility and mutations",
+      "synthesis_verifier": "reconcile findings and verify every material claim against artifacts",
+      "production_authorship_by_members": false,
+      "first_review_boundary": "before_Tier_3_execution",
+      "complete_diff_review_boundary": "after_Tier_4",
+      "acceptance_threshold": "zero_unresolved_Critical_or_Warning_findings"
+    },
+    "mutation_contract": [
+      "inspect subject before validating the grant",
+      "accept forged reused expired wrong-operation or wrong-subject grant",
+      "treat the supported-call-path grant as product authorization or a same-process security boundary",
+      "expose a public symbol method CLI command exception graph record or session record",
+      "read a dataframe provider payload arbitrary object exception string repr traceback or live mutable ledger",
+      "retain a graph plan ledger workframe candidate provider or private token reference in a snapshot or view",
+      "leak any forbidden value key type name digest hash path address timestamp or identity",
+      "redact truncate hash paginate sample or partially return an oversized or unsafe view",
+      "sort by text identity hash memory address response order or exception arrival order",
+      "permit declaration or evidence permutation to change canonical bytes when declared order is not semantic",
+      "cancel retry release or delay protection as a result of inspection",
+      "rewrite accepted terminal evidence after cancellation late result or cleanup",
+      "inspect content-bearing state after cleanup or revive a closed subject",
+      "serialize private inputs pickle a view accept deserialized input or write a view automatically",
+      "emit unknown schema fields floats NaN Infinity or a trailing newline",
+      "pass through an owning-domain reason without an explicit mapping",
+      "expose exception or provider detail for unexpected failure",
+      "change P9 result materialization public pickles CLI output telemetry or execution routing",
+      "call DataDesigner outside NddAdapter.run_workflow",
+      "omit the private owner contract resource or exact digest test from the wheel"
+    ],
+    "ownership": {
+      "semantic_and_public_compatibility_owner": "operator",
+      "execution_and_module_owner": "operator",
+      "privacy_and_redaction_review": "Anonymizer privacy and measurement owners",
+      "lifecycle_and_capture_review": "runtime owners",
+      "authorization_grant_issuer": "execution host",
+      "authorization_policy_owner": "integrating product owner",
+      "inspection_disclosure_policy_owner": "Anonymizer privacy and measurement owners",
+      "stable_cross_process_provenance_owner": "Anonymizer and adopter architecture review",
+      "independent_reference_reviewer": "approved independent four-role council with no production Phase 10 authorship",
+      "public_graph_or_session_owner": "public API owners under a separate exact SDK Phase 12 contract and explicit authorization",
+      "platform_or_product_integration_owner": "out_of_scope_no_authority_imported"
+    },
+    "gate_resolutions": {
+      "gate_1_authorization_ownership": "approved_execution_host_issuer_integrating_product_authorization_policy_Anonymizer_privacy_and_measurement_disclosure_policy",
+      "gate_2_inspection_model": "approved_owner_linearized_one_shot_snapshots_only_no_live_mutable_traversal_polling_subscription_or_async_handle",
+      "gate_3_privacy_reasons_and_limits": "approved_exact_allowlist_reason_categories_buckets_cardinality_byte_and_fail_closed_rules_in_this_contract",
+      "gate_4_serialization": "approved_private_output_only_canonical_JSON_with_no_decoder_pickle_persistence_telemetry_or_public_wire_claim",
+      "gate_5_lifecycle_and_cancellation": "approved_exact_capture_points_owner_atomicity_protection_semantics_and_inspection_non_interference",
+      "gate_6_provenance": "approved_eight_field_view_construction_provenance_with_stable_cross_process_provenance_explicitly_unsatisfied",
+      "gate_7_independent_review": "approved_four_role_council_before_Tier_3_and_after_Tier_4_with_zero_unresolved_Critical_or_Warning_findings",
+      "gate_8_publication": "approved_explicit_sdk_phase12_Public_Surface_Qualification_and_Publication_after_phase11_and_all_named_gates"
+    },
+    "open_gates": [],
+    "acceptance": {
+      "required_before_implementation": [
+        "semantic and public compatibility owner approval of the exact contract-member digest",
+        "execution owner approval of the exact contract-member digest and exact implementation-plan digest",
+        "privacy and measurement owner approval of the exact allowlist redaction failure and limit contract",
+        "runtime owner approval of exact capture cancellation and cleanup behavior",
+        "operator confirmation that all eight recorded gate resolutions are bound by the revised exact contract and plan digests",
+        "operator implementation checkpoint naming both approved digests and P10 base commit 3cc4993a8026eede98f425f524f23861032f983d"
+      ],
+      "required_before_package_acceptance": [
+        "independent reference-model review",
+        "independent complete-diff semantic authorization privacy lifecycle serialization provenance compatibility packaging and ownership review",
+        "frozen corpus conformance with every named mutation killed",
+        "exact-limit and one-over-limit tests for every representable cardinality byte and nesting bound; fixed-arity signature and mutation evidence for structurally unrepresentable subject or view overages; measurement-primitive boundaries, lowered-ceiling encoder integration, and encoder-invocation mutations for defense-in-depth payload ceilings not reached by the current schema",
+        "authorization abuse redaction canary deterministic permutation cancellation race cleanup and serialization tests",
+        "P9 contract digest pickle CLI telemetry and public export compatibility tests",
+        "targeted and full repository tests format typecheck coverage documentation wheel-content and clean-installed-wheel checks",
+        "signed exact commit and green stacked PR CI excluding NVSkills while it does not accept stacked non-main PRs"
+      ],
+      "does_not_authorize": [
+        "public graph session result target-outcome explain inspect or diagnose APIs before a separately authorized SDK Phase 12",
+        "portable graph or session serialization",
+        "production Intake OpenShell Relay or NeMo Platform integration",
+        "async operation handles streaming durable state retry persistence deduplication or delivery",
+        "PR readiness merge retarget or parent PR action",
+        "rerunning NVSkills CI under its current main-only restriction"
+      ]
+    }
+  }
+}

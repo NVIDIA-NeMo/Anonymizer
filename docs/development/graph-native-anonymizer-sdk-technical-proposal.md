@@ -107,8 +107,9 @@ The ordered migration is:
 7. **[Proposal — phase 9]** Move legacy result materialization behind compatibility adapters while retaining public behavior.
 8. **[Proposal — phase 10]** Add bounded explain, inspect, and diagnose views. Prepare bounded graph/session records for review after their semantics, diagnostics, cancellation, and cleanup are verified.
 9. **[Proposal — phase 11]** Validate lifecycle behavior through a process-backed host and validate the agreed conformance subset through a materially different semantic runtime. The process-backed Python host supplies lifecycle evidence only; it does not satisfy the second-runtime gate.
+10. **[Proposal — phase 12]** Qualify and publish an exact public graph, session, and inspection surface only after phases 10 and 11 and the named stable-promotion gates pass. Freeze a new owner contract and plan, obtain explicit public-API authorization, and then implement the approved surface. Neither phase 10 nor phase 11 grants experimental or stable publication authority.
 
-**[Unresolved gate]** Public exposure, including an experimental graph or session surface, requires separate authorization. Freeze and promote a stable portable contract only after that authority exists, phase 11 passes, and the privacy, provenance, lifecycle, and capability gates below pass.
+**[Unresolved gate]** Phase 12 public exposure, including an experimental graph, session, explain, inspect, or diagnose surface, requires separate authorization. Freeze and promote a stable portable contract only after that authority exists and phase 11 passes. The privacy, provenance, lifecycle, capability, artifact, governance, and compatibility gates below must also pass.
 
 ## Phase 5 and phase 6 design scope
 

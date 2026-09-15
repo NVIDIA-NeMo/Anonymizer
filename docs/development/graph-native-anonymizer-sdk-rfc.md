@@ -21,6 +21,8 @@ Implementation: https://github.com/NVIDIA-NeMo/Anonymizer/pull/253
 
 Implementation baseline: `codex/anonymizer-openshell-intake` at `29bddad51fdc879c5e5c677857c1d2561f4528ee`. The review candidate includes this RFC, the phase designs, and the private Phases 1–6 source and tests. Phase 7 implementation remains unauthorized. This tab is the review mirror.
 
+The implementation baseline and Phase 4–7 checkpoint entries below describe the earlier review snapshot. The later P11 checkpoint is recorded in the [Phase 10 closeout](phase-10-bounded-inspection-closeout.md); it does not change the requested RFC acceptance or public-API decision.
+
 ## Decision Requested
 
 Accept, request revisions to, or reject this RFC as one development and research plan for the graph-native Anonymizer SDK. The decision covers the proposed semantic architecture, the ordered branch-development phases, the strongly typed graph SDK direction, and the separate performance and experimentation program.
@@ -65,7 +67,7 @@ PR 253 is an active development and research PR. Its protected branch contains t
 | 5 | Implemented privately and hardened | Frozen Phase 5 reference-model evidence and focused context admission, execution, reconciliation, cleanup, privacy, and public-compatibility tests are present; 2026-08-31 PR checks pass | Preserve the qualified private boundary; publication and production use require separate gates |
 | 6 | Implemented privately and hardened | Frozen Phase 6 reference-model evidence and focused mention, resolution, role-policy, Redact, backend, lifecycle, privacy, and public-compatibility tests are present; 2026-08-31 PR checks pass | Preserve the qualified private Redact boundary; Phase 7 requires its own contract and authorization |
 | 7 | Designed and independently reviewed; implementation authorization pending | Test strategy reviewed, but implementation evidence does not yet exist | Freeze the Phase 7 semantic and execution contract and obtain separate authorization |
-| 8–11 | RFC plan only | No phase implementation evidence | Refine and authorize bounded branch checkpoints in order |
+| 8–12 | RFC plan only | No phase implementation evidence | Refine and authorize bounded branch checkpoints in order |
 
 For phases that remain proposals, “test strategy reviewed” means reviewers found the proposed evidence plan sufficient to begin the corresponding branch work when authorized. It does not mean that phase has been implemented or its tests have passed.
 
@@ -530,11 +532,17 @@ Status: proposed. Move legacy result materialization behind compatibility adapte
 
 ### Phase 10: Bounded Inspection
 
-Status: proposed. Add bounded explain, inspect, and diagnose views, then prepare graph/session records for separate review.
+Status: private branch implementation and conformance evidence complete on 2026-09-15 at `3ed8d02417737a6363d5363494c9e182762f8458` on `codex/anonymizer-bounded-inspection-p11`. Bounded explain, inspect, and diagnose views passed local validation and two independent council reviews, each with zero unresolved Critical or Warning findings. See the [Phase 10 closeout](phase-10-bounded-inspection-closeout.md) for the contract, corpus, commit pins, and validation scope.
+
+Graph/session records remain subject to separate review. Phase 11 lifecycle and independent-runtime evidence, branch integration, and Phase 12 public-surface qualification retain their separate gates.
 
 ### Phase 11: Lifecycle and Independent Runtime
 
 Status: proposed. Validate lifecycle behavior through a process-backed host and the agreed conformance subset through a materially different semantic runtime. The Python host supplies lifecycle evidence only.
+
+### Phase 12: Public Surface Qualification and Publication
+
+Status: proposed future phase. Phase 12 starts only after reviewers accept the Phase 10 private inspection evidence and Phase 11 lifecycle and independent-runtime evidence. At that point, freeze and review an exact public graph, session, and inspection contract. Implementation and publication require a new owner contract and plan, explicit public-API authorization, and acceptance of every named stable-promotion gate. Completing Phase 10 or Phase 11 does not grant experimental or stable publication authority.
 
 ## Related Proposals
 

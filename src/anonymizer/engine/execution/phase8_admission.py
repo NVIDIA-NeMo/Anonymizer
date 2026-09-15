@@ -141,10 +141,16 @@ class _Phase8GroupManifest:
     operations: _Phase8GroupOperationPlan
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, weakref_slot=True, repr=False)
 class _Phase8Plan:
     groups: tuple[_Phase8GroupManifest, ...]
     _proof: _Phase8PlanProof | None = field(default=None, compare=False)
+
+    def __repr__(self) -> str:
+        return "<private phase 8 plan>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 plans are not serializable")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -185,9 +191,15 @@ class _Phase8AccountingProof:
 _PHASE8_ACCOUNTING_SEAL = object()
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, weakref_slot=True, repr=False)
 class _Phase8Rejected:
     code: _Phase8AdmissionCode
+
+    def __repr__(self) -> str:
+        return "<private phase 8 rejection>"
+
+    def __reduce__(self) -> str | tuple[object, ...]:
+        raise TypeError("private Phase 8 rejections are not serializable")
 
 
 def _compile_phase8_plan(graph: object, *, max_repairs: int | None = None) -> _Phase8Plan | _Phase8Rejected:
