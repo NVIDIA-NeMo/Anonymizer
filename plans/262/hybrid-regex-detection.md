@@ -432,11 +432,10 @@ Preserve `COL_REGEX_ENTITIES` in the trace DataFrame and record:
 
 Avoid logging raw entity values in aggregate telemetry.
 
-The source presentation asks whether deterministic and model detection can run
-in parallel. Treat actual scheduler parallelism as a later optimization. The
-local regex pass should be small relative to a remote GLiNER call, and
-correctness plus distributed portability are more important in the first
-release.
+Data Designer schedules the regex and GLiNER columns concurrently because both
+depend only on `COL_TEXT`. `COL_SEED_ENTITIES` is their fan-in barrier: it waits
+for both producer columns and merges their results deterministically, regardless
+of which producer completes first.
 
 ## Testing Strategy
 

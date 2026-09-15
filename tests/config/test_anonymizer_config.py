@@ -179,7 +179,14 @@ def test_regex_rule_accepts_direct_validator_callable() -> None:
 def test_regex_rule_rejects_invalid_and_zero_width_patterns() -> None:
     with pytest.raises(ValidationError, match="Invalid regex pattern"):
         RegexRule(label="case_id", pattern="[")
-    for pattern in (".*", "(?=CASE)", "(?<=A)"):
+    for pattern in (
+        ".*",
+        "(?=CASE)",
+        "(?<=A)",
+        r"(?<=Z{20})",
+        r"CASE-[0-9]+|(?=Z{20})",
+        r"(?=Z{20})(?:CASE)?",
+    ):
         with pytest.raises(ValidationError, match="must not produce zero-width matches"):
             RegexRule(label="case_id", pattern=pattern)
 
@@ -190,6 +197,14 @@ def test_regex_rule_allows_consuming_lookarounds() -> None:
 
     assert lookahead.pattern == r"(?=CASE-[0-9]+)CASE-[0-9]+"
     assert lookbehind.pattern == r"(?<=CASE-)[0-9]+"
+
+
+def test_regex_rule_width_analysis_supports_regex_dialect_and_inline_flags() -> None:
+    unicode_rule = RegexRule(label="unicode_word", pattern=r"\p{L}+")
+    insensitive_rule = RegexRule(label="case_id", pattern=r"(?i)case-[0-9]+")
+
+    assert unicode_rule.pattern == r"\p{L}+"
+    assert insensitive_rule.pattern == r"(?i)case-[0-9]+"
 
 
 def test_detect_rejects_custom_rule_missing_from_explicit_labels() -> None:

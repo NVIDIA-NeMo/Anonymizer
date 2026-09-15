@@ -4,7 +4,9 @@
 ## Description: <br>
 Use when the user wants to anonymize a text dataset, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information. Produces a runnable Python script that calls the NeMo Anonymizer pipeline (detection → replace or rewrite). <br>
 
-This skill is ready for commercial/non-commercial use. <br>
+This skill package is prepared for NVSkills publication review. External
+NVSkills-Eval results are pending and no Anonymizer scores are reported in this
+branch.
 
 ## Owner
 NVIDIA <br>
