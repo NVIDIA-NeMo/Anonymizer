@@ -82,10 +82,12 @@ def create_anonymizer(
             model_providers=model_providers,
             endpoint=runtime.endpoint,
         )
-        return Anonymizer(
+        anonymizer = Anonymizer(
             model_configs=configuration.model_configs,
             model_providers=configuration.model_providers,
         )
+        anonymizer._record_local_detector_validation(endpoint=runtime.endpoint, model=MODEL_ID)
+        return anonymizer
 
 
 def stop_local_runtime() -> None:
@@ -94,14 +96,11 @@ def stop_local_runtime() -> None:
     with _runtime_lock:
         runtime = _runtime
         _runtime = None
-        if runtime is not None and runtime.process.poll() is None:
-            runtime.process.terminate()
-            try:
-                runtime.process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                runtime.process.kill()
-                runtime.process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-        _restore_token_environment()
+        try:
+            if runtime is not None:
+                _stop_process(runtime, timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+        finally:
+            _restore_token_environment()
 
 
 def _ensure_runtime(requested_device: str) -> _LocalRuntime:
@@ -126,8 +125,10 @@ def _ensure_runtime(requested_device: str) -> _LocalRuntime:
         try:
             _wait_until_ready(runtime)
         except (KeyboardInterrupt, SystemExit):
-            _stop_failed_runtime(runtime)
-            _restore_token_environment()
+            try:
+                _stop_failed_runtime(runtime)
+            finally:
+                _restore_token_environment()
             raise
         except Exception as exc:
             last_error = exc
@@ -322,16 +323,31 @@ def _reserve_listener() -> socket.socket:
 
 
 def _stop_failed_runtime(runtime: _LocalRuntime) -> None:
+    _stop_process(runtime, timeout=2.0)
+
+
+def _stop_process(runtime: _LocalRuntime, *, timeout: float) -> None:
+    """Stop a child without allowing a stuck wait to block cleanup."""
     if runtime.process.poll() is None:
         runtime.process.terminate()
         try:
-            runtime.process.wait(timeout=2.0)
+            runtime.process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             runtime.process.kill()
-            runtime.process.wait(timeout=2.0)
+            try:
+                runtime.process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                logger.warning("Local GLiNER2 did not exit within %.1f seconds after being killed.", timeout)
+    _join_log_thread(runtime)
+
+
+def _join_log_thread(runtime: _LocalRuntime) -> None:
+    if runtime.log_thread is not None and runtime.log_thread is not threading.current_thread():
+        runtime.log_thread.join(timeout=1.0)
 
 
 def _format_log_tail(runtime: _LocalRuntime) -> str:
+    _join_log_thread(runtime)
     return "\n".join(runtime.log_lines) or "No child-process output was captured."
 
 

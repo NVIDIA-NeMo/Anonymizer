@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import socket
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -69,9 +70,85 @@ def test_start_runtime_passes_reserved_listener_to_child(tmp_path: Path) -> None
     _runtime._restore_token_environment()
 
 
+def test_create_anonymizer_records_runtime_readiness() -> None:
+    runtime = _runtime._LocalRuntime(
+        process=Mock(),
+        endpoint="http://127.0.0.1:1234/v1",
+        requested_device="cpu",
+        selected_device="cpu",
+        token="generated-token",
+    )
+    configuration = Mock(model_configs="models", model_providers=[])
+    anonymizer = Mock()
+
+    with (
+        patch("anonymizer.notebooks._runtime.validate_notebook_model_inputs"),
+        patch("anonymizer.notebooks._runtime._ensure_runtime", return_value=runtime),
+        patch(
+            "anonymizer.notebooks._runtime.build_notebook_model_configuration",
+            return_value=configuration,
+        ),
+        patch("anonymizer.notebooks._runtime.Anonymizer", return_value=anonymizer),
+    ):
+        result = _runtime.create_anonymizer(gliner_device="cpu")
+
+    assert result is anonymizer
+    anonymizer._record_local_detector_validation.assert_called_once_with(
+        endpoint=runtime.endpoint,
+        model=_runtime.MODEL_ID,
+    )
+
+
 def test_stop_local_runtime_is_idempotent() -> None:
     _runtime.stop_local_runtime()
     _runtime.stop_local_runtime()
+
+
+def test_stop_restores_token_when_process_remains_after_kill(monkeypatch: pytest.MonkeyPatch) -> None:
+    _runtime.stop_local_runtime()
+    monkeypatch.delenv(_runtime.LOCAL_TOKEN_ENV, raising=False)
+    _runtime._set_token_environment("generated-token")
+    process = Mock()
+    process.poll.return_value = None
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired(cmd="gliner2", timeout=10.0),
+        subprocess.TimeoutExpired(cmd="gliner2", timeout=10.0),
+    ]
+    _runtime._runtime = _runtime._LocalRuntime(
+        process=process,
+        endpoint="http://127.0.0.1:1234/v1",
+        requested_device="auto",
+        selected_device="starting",
+        token="generated-token",
+    )
+
+    _runtime.stop_local_runtime()
+
+    process.terminate.assert_called_once_with()
+    process.kill.assert_called_once_with()
+    assert _runtime.LOCAL_TOKEN_ENV not in _runtime.os.environ
+    assert _runtime._runtime is None
+
+
+def test_failed_runtime_joins_log_reader_before_tail_is_read() -> None:
+    process = Mock()
+    process.poll.return_value = 0
+    log_thread = Mock()
+    runtime = _runtime._LocalRuntime(
+        process=process,
+        endpoint="http://127.0.0.1:1234/v1",
+        requested_device="auto",
+        selected_device="starting",
+        token="generated-token",
+        log_thread=log_thread,
+    )
+
+    _runtime._stop_failed_runtime(runtime)
+    tail = _runtime._format_log_tail(runtime)
+
+    assert log_thread.join.call_count == 2
+    log_thread.join.assert_called_with(timeout=1.0)
+    assert tail == "No child-process output was captured."
 
 
 def test_repeated_token_assignment_restores_original_absence(monkeypatch: pytest.MonkeyPatch) -> None:

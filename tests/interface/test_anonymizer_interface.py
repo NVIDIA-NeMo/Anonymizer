@@ -338,6 +338,7 @@ def test_anonymizer_preflights_gliner2_detector_with_custom_provider_name() -> N
 
     with patch("anonymizer.interface.anonymizer.httpx.get", return_value=response) as mock_get:
         anonymizer._validate_local_detector_endpoint()
+        anonymizer._validate_local_detector_endpoint()
 
     mock_get.assert_called_once_with(
         "http://gliner2.example.test/v1/models",

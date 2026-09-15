@@ -212,6 +212,7 @@ class Anonymizer:
         logger.info(LOG_INDENT + "🧩 augmenter: %s", det.entity_augmenter)
 
         self._manages_data_designer = data_designer is None
+        self._validated_local_detector: tuple[str, str] | None = None
         if data_designer is not None:
             self._data_designer = data_designer
         else:
@@ -858,6 +859,9 @@ class Anonymizer:
         )
         if provider is None:
             return
+        validation_key = (provider.endpoint.rstrip("/"), detector_config.model)
+        if self._validated_local_detector == validation_key:
+            return
         api_key = os.getenv(provider.api_key, provider.api_key) if provider.api_key else None
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
         try:
@@ -876,6 +880,11 @@ class Anonymizer:
                 "self-hosted GLiNER2 endpoint. Notebook users can install "
                 "nemo-anonymizer[notebooks] and call anonymizer.notebooks.create_anonymizer()."
             ) from exc
+        self._validated_local_detector = validation_key
+
+    def _record_local_detector_validation(self, *, endpoint: str, model: str) -> None:
+        """Record readiness already established by an owned notebook runtime."""
+        self._validated_local_detector = (endpoint.rstrip("/"), model)
 
     # ------------------------------------------------------------------ telemetry
 
