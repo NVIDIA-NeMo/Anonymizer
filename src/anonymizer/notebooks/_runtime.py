@@ -63,6 +63,7 @@ class _LocalRuntime:
 _runtime: _LocalRuntime | None = None
 _runtime_lock = threading.RLock()
 _previous_token: str | None = None
+_token_environment_captured = False
 
 
 def create_anonymizer(
@@ -140,13 +141,10 @@ def _ensure_runtime(requested_device: str) -> _LocalRuntime:
 
 
 def _start_runtime(requested_device: str) -> _LocalRuntime:
-    global _previous_token
     server_packages = _ensure_server_environment()
     port = _find_available_port()
     token = secrets.token_urlsafe(32)
-    if _previous_token is None:
-        _previous_token = os.environ.get(LOCAL_TOKEN_ENV)
-    os.environ[LOCAL_TOKEN_ENV] = token
+    _set_token_environment(token)
     child_environment = os.environ.copy()
     for name in list(child_environment):
         if name != LOCAL_TOKEN_ENV and _looks_sensitive(name):
@@ -322,12 +320,23 @@ def _format_log_tail(runtime: _LocalRuntime) -> str:
 
 
 def _restore_token_environment() -> None:
-    global _previous_token
+    global _previous_token, _token_environment_captured
+    if not _token_environment_captured:
+        return
     if _previous_token is None:
         os.environ.pop(LOCAL_TOKEN_ENV, None)
     else:
         os.environ[LOCAL_TOKEN_ENV] = _previous_token
     _previous_token = None
+    _token_environment_captured = False
+
+
+def _set_token_environment(token: str) -> None:
+    global _previous_token, _token_environment_captured
+    if not _token_environment_captured:
+        _previous_token = os.environ.get(LOCAL_TOKEN_ENV)
+        _token_environment_captured = True
+    os.environ[LOCAL_TOKEN_ENV] = token
 
 
 atexit.register(stop_local_runtime)

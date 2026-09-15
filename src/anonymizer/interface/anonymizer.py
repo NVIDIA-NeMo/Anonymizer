@@ -209,6 +209,7 @@ class Anonymizer:
         logger.info(LOG_INDENT + "✅ validator: %s", ", ".join(det.entity_validator))
         logger.info(LOG_INDENT + "🧩 augmenter: %s", det.entity_augmenter)
 
+        self._manages_data_designer = data_designer is None
         if data_designer is not None:
             self._data_designer = data_designer
         else:
@@ -840,7 +841,7 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
     def _validate_local_detector_endpoint(self) -> None:
-        if not self._uses_default_detection_workflow:
+        if not self._uses_default_detection_workflow or not self._manages_data_designer:
             return
         detector_alias = self._selected_models.detection.entity_detector
         detector_config = next(

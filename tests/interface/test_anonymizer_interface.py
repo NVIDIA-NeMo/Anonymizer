@@ -305,6 +305,17 @@ model_configs:
     assert {config.provider for config in anonymizer._model_configs} == {"my-own-provider"}
 
 
+def test_anonymizer_skips_local_detector_preflight_with_supplied_data_designer() -> None:
+    from data_designer.interface.data_designer import DataDesigner
+
+    anonymizer = Anonymizer(data_designer=Mock(spec=DataDesigner))
+
+    with patch("anonymizer.interface.anonymizer.httpx.get") as mock_get:
+        anonymizer._validate_local_detector_endpoint()
+
+    mock_get.assert_not_called()
+
+
 def test_run_exposes_trace_dataframe_and_filters_internal_columns(
     stub_anonymizer_config: AnonymizerConfig,
     stub_input: AnonymizerInput,

@@ -27,6 +27,17 @@ def test_stop_local_runtime_is_idempotent() -> None:
     _runtime.stop_local_runtime()
 
 
+def test_repeated_token_assignment_restores_original_absence(monkeypatch: pytest.MonkeyPatch) -> None:
+    _runtime.stop_local_runtime()
+    monkeypatch.delenv(_runtime.LOCAL_TOKEN_ENV, raising=False)
+
+    _runtime._set_token_environment("first-generated-token")
+    _runtime._set_token_environment("replacement-generated-token")
+    _runtime._restore_token_environment()
+
+    assert _runtime.LOCAL_TOKEN_ENV not in _runtime.os.environ
+
+
 def test_read_metadata_rejects_wrong_revision() -> None:
     runtime = _runtime._LocalRuntime(
         process=Mock(),
