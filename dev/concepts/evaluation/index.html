@@ -3032,6 +3032,7 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
 <p>The judge is scoped and contextualized by the same signals used during anonymization:</p>
 <ul>
 <li><strong><code>entity_labels</code></strong> — the detection taxonomy in scope; the judge only reports values whose type falls within it.</li>
+<li><strong><code>excluded_entity_labels</code></strong> — labels explicitly excluded from detection; the judge ignores entities of these types so excluded labels are never penalised in the coverage score.</li>
 <li><strong><code>data_summary</code></strong> — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.</li>
 </ul>
 <table>

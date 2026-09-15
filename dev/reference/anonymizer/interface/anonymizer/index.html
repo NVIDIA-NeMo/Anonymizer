@@ -3361,6 +3361,7 @@ its per-record output carries the finalized entity columns to score.</p>
         validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
         validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
         entity_labels=config.detect.entity_labels,
+        excluded_entity_labels=config.detect.excluded_entity_labels,
         data_summary=data.data_summary,
     )</code></pre>
             </details>
@@ -3421,6 +3422,7 @@ the config. Runtime model providers remain external to the serialized config.</p
         validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
         validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
         entity_labels=config.detect.entity_labels,
+        excluded_entity_labels=config.detect.excluded_entity_labels,
         data_summary=data_summary,
         job_index=job_index,
         num_jobs=num_jobs,
@@ -3555,6 +3557,7 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=result.data_summary,
         )
     except KeyboardInterrupt:
@@ -3623,11 +3626,11 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
                 <code>output</code>
             </td>
             <td>
-                  <code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None)
+                  <code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None)
 
   
       dataclass
-   (anonymizer.interface.results.AnonymizerResult)" href="../results/#anonymizer.interface.results.AnonymizerResult">AnonymizerResult</a> | <a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None)
+   (anonymizer.interface.results.AnonymizerResult)" href="../results/#anonymizer.interface.results.AnonymizerResult">AnonymizerResult</a> | <a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None)
 
   
       dataclass
@@ -3736,6 +3739,7 @@ per-judge model/prompt overrides, etc.).</p>
         raise InvalidConfigError(str(exc)) from exc
 
     entity_labels = getattr(output, "entity_labels", None)
+    excluded_entity_labels = getattr(output, "excluded_entity_labels", None)
     data_summary = getattr(output, "data_summary", None)
     num_records = len(output.trace_dataframe)
     mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
@@ -3799,6 +3803,7 @@ per-judge model/prompt overrides, etc.).</p>
         coverage_wf = EntityCoverageWorkflow(
             adapter=self._adapter,
             entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
         )
         logger.info(LOG_INDENT + "🔎 Running entity coverage")
@@ -3830,6 +3835,7 @@ per-judge model/prompt overrides, etc.).</p>
             failed_records=all_failed,
             rewrite_config=rewrite_config,
             entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
         )
     else:
@@ -3843,6 +3849,7 @@ per-judge model/prompt overrides, etc.).</p>
             model_configs=self._model_configs,
             selected_models=self._selected_models.evaluate,
             entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
             compute_detection_validity=evaluate_config.compute_detection_validity,
             data_summary=data_summary,
         )
@@ -3878,6 +3885,7 @@ per-judge model/prompt overrides, etc.).</p>
             failed_records=replace_result.failed_records,
             replace_method=replace_method,
             entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
         )
 

@@ -1169,6 +1169,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;excluded_entity_labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.anonymizer_config.Detect.gliner_threshold" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2853,6 +2864,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;excluded_entity_labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.anonymizer_config.Detect.gliner_threshold" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3573,6 +3595,14 @@
                 (<code><span title="list">list</span>[<span title="str">str</span>] | None</code>)
             </li>
             <li>
+              <code><a class="autorefs autorefs-internal" title="            excluded_entity_labels = None
+
+  
+      pydantic-field
+   (anonymizer.config.anonymizer_config.Detect.excluded_entity_labels)" href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels">excluded_entity_labels</a></code>
+                (<code><span title="list">list</span>[<span title="str">str</span>] | None</code>)
+            </li>
+            <li>
               <code><a class="autorefs autorefs-internal" title="            gliner_threshold = 0.3
 
   
@@ -3608,6 +3638,17 @@
   
       pydantic-field
    (anonymizer.config.anonymizer_config.Detect.entity_labels)" href="#anonymizer.config.anonymizer_config.Detect.entity_labels">entity_labels</a></code>            </li>
+            <li>
+              <code><span title="anonymizer.config.anonymizer_config.Detect.validate_excluded_entity_labels">validate_excluded_entity_labels</span></code>
+                &rarr;
+                  <code><a class="autorefs autorefs-internal" title="            excluded_entity_labels = None
+
+  
+      pydantic-field
+   (anonymizer.config.anonymizer_config.Detect.excluded_entity_labels)" href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels">excluded_entity_labels</a></code>            </li>
+            <li>
+              <code><span title="anonymizer.config.anonymizer_config.Detect.validate_entity_label_overlap">validate_entity_label_overlap</span></code>
+            </li>
         </ul>
 
 
@@ -3637,6 +3678,28 @@
     <div class="doc doc-contents ">
 
         <p>Labels to detect. None uses the built-in default detection label set. To inspect the default set, use <code>from anonymizer import DEFAULT_ENTITY_LABELS</code>.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="anonymizer.config.anonymizer_config.Detect.excluded_entity_labels" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">excluded_entity_labels = None</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-field"><code>pydantic-field</code></small>
+  </span>
+
+<a href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Entity labels to never detect, even if present in entity_labels or the default set. Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered from the final entity output as a safety net. If this entirely overlaps the effective allowlist (entity_labels if set, otherwise the default label set), leaving an empty effective detection set, Detect raises a ValueError at config time.</p>
 
     </div>
 

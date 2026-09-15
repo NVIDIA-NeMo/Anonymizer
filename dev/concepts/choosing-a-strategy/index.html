@@ -581,6 +581,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#excluded_entity_labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        excluded_entity_labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gliner_threshold" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2623,6 +2634,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#excluded_entity_labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        excluded_entity_labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gliner_threshold" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2847,11 +2869,12 @@ data = AnonymizerInput(
 <li>The domain (clinical, legal, financial, customer support, etc.)</li>
 <li>The genre (notes, transcripts, opinions, biographies)</li>
 <li>Anything about the source the engine couldn't infer from a single record (e.g. "transcribed phone calls — expect disfluencies")</li>
-<li><code>data_summary</code> is the only way to provide a soft do-not-tag list for the augmenter when <code>entity_labels=None</code> — the augmenter is free to invent labels beyond <code>DEFAULT_ENTITY_LABELS</code>, so use it to tell the LLM what <em>not</em> to tag (e.g. "do not tag generic anatomical terms, medication class names, or job titles as PII").</li>
+<li><code>data_summary</code> is a soft way to guide the augmenter when <code>entity_labels=None</code> — the augmenter is free to invent labels beyond <code>DEFAULT_ENTITY_LABELS</code>, so use it to tell the LLM what <em>not</em> to tag (e.g. "do not tag generic anatomical terms, medication class names, or job titles as PII"). For a hard exclusion of specific label types, use <code>Detect.excluded_entity_labels</code> instead.</li>
 </ul>
 <p>What to leave out:</p>
 <ul>
 <li>Lists of entity types <strong>you want detected</strong> (those go in <code>Detect.entity_labels</code>)</li>
+<li>Lists of entity types <strong>you never want detected</strong> (those go in <code>Detect.excluded_entity_labels</code>)</li>
 <li>Privacy/utility goals (those go in <code>Rewrite.privacy_goal</code>)</li>
 <li>Substitute behavior instructions (e.g. "names should remain Portuguese", "preserve numeric magnitude") — those go in <code>Substitute(instructions)</code></li>
 <li>Generic phrasing ("text data" adds no signal)</li>
@@ -2891,6 +2914,17 @@ data = AnonymizerInput(
 <pre class="highlight"><code class="language-python">from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
 detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])</code></pre>
+<h3 id="excluded_entity_labels"><code>excluded_entity_labels</code><a class="headerlink" href="#excluded_entity_labels" title="Permanent link">&para;</a></h3>
+<p>Use when you want to <strong>exclude</strong> specific label types from detection without enumerating the entire allowlist. Excluded labels are removed before GLiNER runs, so they are never detected, augmented, or surfaced in results. The evaluation judges also ignore excluded label types so they don't lower your coverage score.</p>
+<pre class="highlight"><code class="language-python"># Never detect occupation or gender, keep everything else
+Detect(excluded_entity_labels=["occupation", "gender"])
+
+# Combine with an explicit allowlist — exclusions always win
+Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])</code></pre>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><code>excluded_entity_labels</code> is always checked against the effective allowlist — <code>entity_labels</code> if set, otherwise <code>DEFAULT_ENTITY_LABELS</code>. A total overlap raises a <code>ValueError</code> at config time instead of silently detecting nothing. A partial overlap logs a warning only when <code>entity_labels</code> is explicit; against the default label set, it's silent.</p>
+</div>
 <h3 id="gliner_threshold"><code>gliner_threshold</code><a class="headerlink" href="#gliner_threshold" title="Permanent link">&para;</a></h3>
 <p>Default <code>0.3</code>. The validator catches false positives downstream, so erring low is safe.</p>
 <table>

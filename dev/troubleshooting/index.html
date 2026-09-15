@@ -3030,6 +3030,8 @@ detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"])</co
 <h3 id="too-many-false-positive-entities">Too many false-positive entities<a class="headerlink" href="#too-many-false-positive-entities" title="Permanent link">&para;</a></h3>
 <p>Symptoms: detected entities include obvious common words, dates that aren't dates, etc.</p>
 <ol>
+<li><strong>Use <code>Detect.excluded_entity_labels</code></strong> if a whole label type is systematically noisy for your data (e.g. <code>occupation</code> tagging generic job words, <code>age</code> tagging durations). This is the cleanest fix — excluded labels are removed before GLiNER runs and never appear in results.
+   <pre class="highlight"><code class="language-python">Detect(excluded_entity_labels=["occupation", "age"])</code></pre></li>
 <li><strong>Raise <code>gliner_threshold</code></strong> to <code>0.5</code>. The augmenter will pick up real misses, so this rarely costs recall.</li>
 <li><strong>Lower <code>validation_excerpt_window_chars</code></strong> (default <code>500</code>) if context-driven validation is being misled by far-away sentences. Smaller per-chunk prompts trade context for precision.</li>
 <li><strong>Sanity-check the validator with an <code>Annotate</code> preview.</strong> A flaky validator (or a misconfigured alias) returns "keep" on almost everything, which presents as recall going way up — easiest spotted by eyeballing the entity list on a handful of rows.</li>

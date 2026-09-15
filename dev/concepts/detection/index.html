@@ -575,6 +575,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#excluding-entity-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Excluding entity labels
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2680,6 +2691,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#excluding-entity-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Excluding entity labels
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2835,6 +2857,11 @@ config = AnonymizerConfig(
 <td>List of labels to detect. Leave unset (or pass <code>None</code>) to use the full default set.</td>
 </tr>
 <tr>
+<td><code>excluded_entity_labels</code></td>
+<td><code>None</code></td>
+<td>List of labels to <strong>never</strong> detect, even if present in <code>entity_labels</code> or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net.</td>
+</tr>
+<tr>
 <td><code>gliner_threshold</code></td>
 <td><code>0.3</code></td>
 <td>GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives.</td>
@@ -2887,6 +2914,17 @@ Detect(entity_labels=["first_name", "last_name", "email"])
 
 # Permissive: detect all defaults + LLM can infer new label types
 Detect()  # entity_labels=None</code></pre>
+<h3 id="excluding-entity-labels">Excluding entity labels<a class="headerlink" href="#excluding-entity-labels" title="Permanent link">&para;</a></h3>
+<p>Use <code>excluded_entity_labels</code> to omit specific labels from detection without having to enumerate the entire allowlist. Excluded labels are removed before GLiNER runs and before the LLM prompts are built, so they are never detected or augmented.</p>
+<pre class="highlight"><code class="language-python"># Detect all defaults except occupation and gender
+Detect(excluded_entity_labels=["occupation", "gender"])
+
+# Combine with an explicit allowlist — exclusions always win
+Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])</code></pre>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><code>excluded_entity_labels</code> is always checked against the effective allowlist — <code>entity_labels</code> if set, otherwise <code>DEFAULT_ENTITY_LABELS</code>. A total overlap raises a <code>ValueError</code> at config time instead of silently detecting nothing. A partial overlap logs a warning only when <code>entity_labels</code> is explicit; against the default label set, it's silent.</p>
+</div>
 <h2 id="tuning-the-threshold">Tuning the threshold<a class="headerlink" href="#tuning-the-threshold" title="Permanent link">&para;</a></h2>
 <p>For <code>gliner_threshold</code>, start with the default <code>0.3</code>. If you're seeing too many false positives, raise it to <code>0.5</code>. If entities are being missed, try lowering to <code>0.2</code>. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.</p>
 <hr />
