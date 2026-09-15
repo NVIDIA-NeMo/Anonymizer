@@ -1,5 +1,5 @@
 ## Description: <br>
-Use when the user wants to anonymize a text dataset, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information. Produces a runnable Python script that calls the NeMo Anonymizer pipeline (detection → replace or rewrite). <br>
+Produces a runnable Python script that detects and protects PII in text datasets through entity replacement or LLM-powered rewriting using the NeMo Anonymizer pipeline. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and data engineers who need to anonymize text datasets — redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information before sharing or analysis. <br>
+Developers and data engineers who need to anonymize, redact, or de-identify free-text datasets by detecting sensitive entities and applying replacement or rewrite strategies via the NeMo Anonymizer pipeline. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,18 +25,18 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [NeMo Anonymizer GitHub Repository](https://github.com/NVIDIA-NeMo/Anonymizer) <br>
+- [NeMo Anonymizer Documentation](https://nvidia-nemo.github.io/Anonymizer/) <br>
 - [Choosing a Strategy](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/) <br>
 - [Detection](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/detection/) <br>
 - [Evaluation](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/) <br>
-- [Models](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/) <br>
 - [Self-Hosting GLiNER](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/) <br>
 - [Troubleshooting](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/) <br>
+- [GitHub Repository](https://github.com/NVIDIA-NeMo/Anonymizer.git) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Code] <br>
-**Output Format:** [Python script] <br>
+**Output Format:** [Python script with argparse CLI] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -47,23 +47,23 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-6 evaluation tasks (4 positive, 2 negative), 3 attempts per task, each in an isolated sandbox pod. <br>
+6 evaluation tasks (4 positive, 2 negative) across 2 agents, each attempt in an isolated sandbox pod. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Whether the final answer is correct against the reference answer. <br>
-- Discoverability: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
-- Effectiveness: Whether the skill helped complete the user's goal (50% goal accuracy + 50% behavior check). <br>
-- Efficiency: Whether the skill avoided wasted tool calls and token usage (50% tool productivity + 50% token efficiency). <br>
+- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Verifies final-answer correctness against the reference answer. <br>
+- Discoverability: Checks whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- Effectiveness: Measures whether the user's goal was achieved and the expected workflow behavior was followed. <br>
+- Efficiency: Evaluates tool-call productivity and token usage efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
-- `skill_efficiency`: Tool-call productivity; routing is scored under Discoverability. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Tool-call productivity (routing scored under Discoverability). <br>
 - `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
 
 
@@ -71,15 +71,15 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 89.8% | 89.0% |
-| Security | 95.0% → 100.0% (+5.0 points) | 100.0% → 83.3% (-16.7 points) |
-| Correctness | 46.0% → 86.7% (+40.7 points) | 75.0% → 100.0% (+25.0 points) |
-| Discoverability | 97.5% | 93.8% |
-| Effectiveness | 37.6% → 80.3% (+42.7 points) | 51.3% → 87.8% (+36.5 points) |
-| Efficiency | 84.3% | 79.8% |
+| Overall | 94.7% | 89.0% |
+| Security | 81.8% → 100.0% (+18.2 points) | 87.5% → 83.3% (-4.2 points) |
+| Correctness | 49.1% → 100.0% (+50.9 points) | 77.5% → 90.0% (+12.5 points) |
+| Discoverability | 100.0% | 92.5% |
+| Effectiveness | 36.2% → 89.3% (+53.1 points) | 49.7% → 89.2% (+39.5 points) |
+| Efficiency | 84.4% | 90.2% |
 
 ## Skill Version(s): <br>
-bf1cfbf (source: git SHA, committed 2026-09-09) <br>
+fb8cbbd (source: git SHA, committed 2026-09-15) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
