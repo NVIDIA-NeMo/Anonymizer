@@ -270,6 +270,17 @@ def _process_identity_mismatch(handle: LocalProcessHandle, detail: str) -> Runti
     )
 
 
+def _is_process_group_running(process_group_id: int) -> bool:
+    """Return whether any process remains in the recorded process group."""
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _cleanup_handle(handle: LocalProcessHandle, timeout_seconds: float) -> bool:
     if not is_handle_running(handle):
         return True
@@ -287,7 +298,7 @@ def _stop_running_handle(
     deadline = time.monotonic() + timeout_seconds
     running = True
     while time.monotonic() < deadline:
-        running = is_handle_running(handle)
+        running = _is_process_group_running(handle.process_group_id)
         if not running:
             break
         time.sleep(0.1)
@@ -297,7 +308,7 @@ def _stop_running_handle(
             os.killpg(handle.process_group_id, signal.SIGKILL)
         except ProcessLookupError:
             return StopOutcome(outcome="forced", cleanup_complete=True)
-        running = is_handle_running(handle)
+        running = _is_process_group_running(handle.process_group_id)
         outcome = "forced"
     return StopOutcome(outcome=outcome, cleanup_complete=not running)
 
