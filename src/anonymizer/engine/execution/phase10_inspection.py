@@ -105,7 +105,6 @@ class _Phase10SubjectKind(str, Enum):
     INVOCATION_SNAPSHOT = "invocation_snapshot"
     TERMINAL_RECEIPT = "terminal_receipt"
     CLEANUP_RECEIPT = "cleanup_receipt"
-    PUBLICATION_RECEIPT = "publication_receipt"
 
 
 class _Phase10SemanticProfile(str, Enum):
@@ -1251,14 +1250,12 @@ def _valid_view_subject(kind: _Phase10ViewKind, subject: _Phase10SubjectKind) ->
             _Phase10SubjectKind.INVOCATION_SNAPSHOT,
             _Phase10SubjectKind.TERMINAL_RECEIPT,
             _Phase10SubjectKind.CLEANUP_RECEIPT,
-            _Phase10SubjectKind.PUBLICATION_RECEIPT,
         },
         _Phase10ViewKind.DIAGNOSE: {
             _Phase10SubjectKind.ADMISSION_REJECTION,
             _Phase10SubjectKind.INVOCATION_SNAPSHOT,
             _Phase10SubjectKind.TERMINAL_RECEIPT,
             _Phase10SubjectKind.CLEANUP_RECEIPT,
-            _Phase10SubjectKind.PUBLICATION_RECEIPT,
         },
     }
     return subject in allowed[kind]
@@ -1321,7 +1318,6 @@ def _valid_owner_capture(value: object) -> bool:
             _Phase10SubjectKind.INVOCATION_SNAPSHOT,
             _Phase10SubjectKind.TERMINAL_RECEIPT,
             _Phase10SubjectKind.CLEANUP_RECEIPT,
-            _Phase10SubjectKind.PUBLICATION_RECEIPT,
         }
         and type(value.semantic_profile_version) is _Phase10SemanticProfile
         and type(value.capture_boundary) is _Phase10CaptureBoundary
@@ -1352,10 +1348,6 @@ def _valid_owner_capture(value: object) -> bool:
         _Phase10SubjectKind.CLEANUP_RECEIPT: {
             _Phase10CaptureBoundary.PRE_REDUCTION_CLEANUP_TERMINAL,
             _Phase10CaptureBoundary.POST_REDUCTION_CLEANUP_TERMINAL,
-        },
-        _Phase10SubjectKind.PUBLICATION_RECEIPT: {
-            _Phase10CaptureBoundary.RELEASE_TERMINAL,
-            _Phase10CaptureBoundary.INVOCATION_CLOSED,
         },
     }
     stages = tuple(item.stage for item in value.snapshot.stage_summaries)

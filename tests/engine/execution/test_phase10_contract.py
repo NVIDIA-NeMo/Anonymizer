@@ -15,8 +15,8 @@ from typing import Any, Callable, cast
 
 import pytest
 
-_CONTRACT_DIGEST = "702bed80d6e493a2c220c3e94e4504d63e944bc0a35d5be347d4a4f9d921b5af"
-_CONTRACT_RAW_DIGEST = "a20a4825d245e59be57c955d2b965a54f4524afdc35bc69d6e30d18355e69129"
+_CONTRACT_DIGEST = "0d6e189bf3d89472a6880a76367ed99b5462b6c5d460818282e403e4a285eb95"
+_CONTRACT_RAW_DIGEST = "1b2bf397cfaed7d74b4ec2e0bb5db428d59a9ea24679faa7e2056705f00528bc"
 _P9_DIGEST = "c91a410289c3549f608cc0b088da3ce9db56ac10aeabe430a8254b637ef4b12d"
 
 
@@ -57,6 +57,66 @@ def test_phase10_contract_loader_admits_only_the_frozen_member() -> None:
     assert contract.count_buckets == ("0", "1", "2-4", "5-16", "17-64", "65+")
     assert contract.capture_boundaries[-1] == "invocation_closed"
     assert contract.reason_categories[-1] == "unexpected_failure"
+
+
+def test_phase10_contract_freezes_fixed_arity_payload_limits_and_distinct_publication_points() -> None:
+    body = cast(dict[str, object], _envelope()["contract"])
+    scope = cast(dict[str, object], body["scope"])
+    semantics = cast(dict[str, object], body["view_semantics"])
+    diagnose = cast(dict[str, object], semantics["diagnose"])
+    limits = cast(dict[str, object], body["limits"])
+    measurement = cast(dict[str, object], limits["payload_limit_measurement"])
+    lifecycle = cast(dict[str, object], body["lifecycle_and_cancellation"])
+    publication = cast(dict[str, object], lifecycle["inspection_request_cancellation"])
+
+    assert scope["admitted_subjects"] == [
+        "an admitted immutable compiled private plan or a content-free admission rejection receipt",
+        "an owner-issued immutable invocation snapshot at an allowed lifecycle capture point",
+        "a content-free terminal accounting or cleanup receipt",
+    ]
+    assert diagnose["subjects"] == [
+        "content-free admission rejection receipt",
+        "owner-issued immutable non-success snapshot",
+        "content-free terminal accounting or cleanup receipt",
+    ]
+    assert limits["fixed_arity_enforcement"] == (
+        "The private explain inspect and diagnose functions accept exactly one scalar subject and return exactly one "
+        "scalar view or rejection; no batch request or multi-view shape exists."
+    )
+    assert measurement == {
+        "domain": "detached payloads built only by schema-specific Phase 10 builders from validated private values",
+        "top_level_fields": "count exact string keys in the root exact built-in dictionary",
+        "provenance_fields": "count exact string keys in the exact built-in provenance dictionary",
+        "json_nesting_depth": (
+            "root dictionary has container depth 1; entering an exact built-in dictionary or list adds 1; scalar "
+            "values do not add depth"
+        ),
+        "allowlisted_string_utf8_bytes": (
+            "measure each exact string key and each exact string value separately as the length of its UTF-8 "
+            "encoding; do not aggregate strings"
+        ),
+        "static_schema_ceiling_evidence": (
+            "when the current closed schema cannot naturally reach a ceiling, require direct exact and one-over "
+            "tests of the authoritative measurement primitive, full-encoder tests with the ceiling lowered to the "
+            "actual value and one less, and a mutation proving every encoder variant invokes the validator"
+        ),
+    }
+    assert publication == {
+        "availability": "no cancellable asynchronous or multi-view inspection request exists in Phase 10 v1",
+        "effect_on_protection": "none",
+        "view_publication_linearization_point": "successful return from the synchronous private inspection function",
+        "view_construction_failure": (
+            "an internal denial limit redaction or state failure before operation return discards builder state and "
+            "returns no view"
+        ),
+        "byte_publication_linearization_point": "successful return from the private canonical encoder",
+        "encoding_failure": (
+            "a detached-payload limit redaction or encoding failure returns no encoded bytes and cannot revoke an "
+            "existing immutable view"
+        ),
+        "after_view_publication": "the returned immutable view cannot be rewritten or revoked",
+        "trusted_stop_claim": "none",
+    }
 
 
 @pytest.mark.parametrize(

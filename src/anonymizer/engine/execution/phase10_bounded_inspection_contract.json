@@ -1,7 +1,7 @@
 {
   "schema_version": "anonymizer-phase10-bounded-inspection-owner-contract-envelope/v1",
   "digest_algorithm": "sha256_of_UTF8_compact_sorted_key_JSON_of_contract_member_with_no_trailing_newline",
-  "digest": "702bed80d6e493a2c220c3e94e4504d63e944bc0a35d5be347d4a4f9d921b5af",
+  "digest": "0d6e189bf3d89472a6880a76367ed99b5462b6c5d460818282e403e4a285eb95",
   "contract": {
     "delivery_name": "p11-sdk-phase10-bounded-inspection",
     "sdk_phase": 10,
@@ -31,7 +31,7 @@
       "admitted_subjects": [
         "an admitted immutable compiled private plan or a content-free admission rejection receipt",
         "an owner-issued immutable invocation snapshot at an allowed lifecycle capture point",
-        "a content-free terminal accounting, cleanup, or publication receipt"
+        "a content-free terminal accounting or cleanup receipt"
       ],
       "excluded_subjects": [
         "public AnonymizerResult or PreviewResult",
@@ -86,7 +86,7 @@
         "subjects": [
           "content-free admission rejection receipt",
           "owner-issued immutable non-success snapshot",
-          "content-free cleanup or publication receipt"
+          "content-free terminal accounting or cleanup receipt"
         ],
         "effects": "classification_only_and_never_infers_retryability_or_product_remediation",
         "forbidden": [
@@ -195,15 +195,34 @@
       "max_canonical_json_utf8_bytes": 16384,
       "max_builder_working_bytes": 65536,
       "enforcement": [
-        "validate request and grant before subject access",
-        "validate subject kind and capture point before snapshot construction",
+        "validate the grant before subject access",
+        "validate the subject kind and capture point before snapshot construction",
         "enforce record counts and builder bytes while constructing",
+        "build only a schema-specific detached payload from validated private values",
+        "enforce exact built-in payload field depth and per-string UTF-8 ceilings before exact schema and closed-value admission",
         "encode once into canonical JSON and enforce the exact encoded byte limit before return"
       ],
-      "exceeded_limit": "return no view and raise a cause-free private inspection limit error with closed code inspection_limit_exceeded",
+      "exceeded_limit": "return no constructed view for a construction-time record or builder ceiling violation; return no encoded bytes for a detached-payload or canonical-byte ceiling violation and do not revoke an existing immutable view; use the cause-free closed code inspection_limit_exceeded; malformed or unknown structures and values within measured ceilings return inspection_redaction_failed",
       "truncation_pagination_sampling_or_best_effort_partial_output": false,
       "inspection_does_not_relax_subject_profile_limits": true,
-      "wall_clock_deadline_claim": false
+      "wall_clock_deadline_claim": false,
+      "fixed_arity_enforcement": "The private explain inspect and diagnose functions accept exactly one scalar subject and return exactly one scalar view or rejection; no batch request or multi-view shape exists.",
+      "payload_limit_measurement": {
+        "domain": "detached payloads built only by schema-specific Phase 10 builders from validated private values",
+        "top_level_fields": "count exact string keys in the root exact built-in dictionary",
+        "provenance_fields": "count exact string keys in the exact built-in provenance dictionary",
+        "json_nesting_depth": "root dictionary has container depth 1; entering an exact built-in dictionary or list adds 1; scalar values do not add depth",
+        "allowlisted_string_utf8_bytes": "measure each exact string key and each exact string value separately as the length of its UTF-8 encoding; do not aggregate strings",
+        "static_schema_ceiling_evidence": "when the current closed schema cannot naturally reach a ceiling, require direct exact and one-over tests of the authoritative measurement primitive, full-encoder tests with the ceiling lowered to the actual value and one less, and a mutation proving every encoder variant invokes the validator"
+      },
+      "failure_precedence": [
+        "authorization denial before subject access",
+        "subject kind and owner-capture validation",
+        "exact built-in detached payload shell and measured payload ceilings",
+        "exact schema keys and closed allowlisted values",
+        "canonical JSON encoding",
+        "canonical JSON UTF-8 byte ceiling"
+      ]
     },
     "deterministic_ordering": {
       "source": "admitted compiler order and closed enum declaration order only",
@@ -257,9 +276,13 @@
         "accepted_terminal_evidence": "absorbing_and_not_rewritten_by_later_cancellation_or_late_result"
       },
       "inspection_request_cancellation": {
+        "availability": "no cancellable asynchronous or multi-view inspection request exists in Phase 10 v1",
         "effect_on_protection": "none",
-        "before_view_publication": "discard_builder_state_and_return_no_view",
-        "after_view_publication": "cannot_rewrite_or_revoke_the_returned_immutable_view",
+        "view_publication_linearization_point": "successful return from the synchronous private inspection function",
+        "view_construction_failure": "an internal denial limit redaction or state failure before operation return discards builder state and returns no view",
+        "byte_publication_linearization_point": "successful return from the private canonical encoder",
+        "encoding_failure": "a detached-payload limit redaction or encoding failure returns no encoded bytes and cannot revoke an existing immutable view",
+        "after_view_publication": "the returned immutable view cannot be rewritten or revoked",
         "trusted_stop_claim": "none"
       },
       "inspection_failure_non_interference": "Inspection denial, limit, redaction, encoding, or cancellation failure cannot change task, datum, group, invocation, cleanup, release, result, exception, or telemetry behavior.",
@@ -301,7 +324,7 @@
     "phase12_public_surface": {
       "name": "Public Surface Qualification and Publication",
       "status": "proposed_future_phase",
-      "phase10_role": "prepare and verify private bounded inspection and candidate graph or session record semantics without publication",
+      "phase10_role": "prepare and verify private bounded inspection semantics without defining a publication-receipt subject or publishing a graph or session surface",
       "phase11_role": "supply process-backed lifecycle evidence and materially different semantic runtime conformance evidence",
       "phase12_role": "freeze review and implement an exact public graph session and inspection contract under separate public API authority",
       "prerequisites": [
@@ -414,7 +437,7 @@
         "canonical JSON bytes or closed content-free failure",
         "non-interference classification"
       ],
-      "corpus": "finite pairwise core plus directed exact-limit one-over-limit authorization redaction permutation cancellation cleanup serialization provenance and unknown-reason witnesses",
+      "corpus": "finite pairwise core plus directed authorization redaction permutation lifecycle cleanup serialization provenance unknown-reason and limit witnesses; fixed-arity signature and mutation evidence replaces unrepresentable subject or view one-over requests; unreachable defense-in-depth payload ceilings require measurement-primitive exact and one-over witnesses, lowered-ceiling encoder integration, and encoder-invocation mutation evidence",
       "manifest": "freeze model version generator version exact case and trace counts computed maxima and SHA-256 digest before executor comparison",
       "reviewer_separation": "independent council members must not author production view reducers or reason mappings"
     },
@@ -487,7 +510,7 @@
         "independent reference-model review",
         "independent complete-diff semantic authorization privacy lifecycle serialization provenance compatibility packaging and ownership review",
         "frozen corpus conformance with every named mutation killed",
-        "exact-limit and one-over-limit tests for every cardinality byte and nesting bound",
+        "exact-limit and one-over-limit tests for every representable cardinality byte and nesting bound; fixed-arity signature and mutation evidence for structurally unrepresentable subject or view overages; measurement-primitive boundaries, lowered-ceiling encoder integration, and encoder-invocation mutations for defense-in-depth payload ceilings not reached by the current schema",
         "authorization abuse redaction canary deterministic permutation cancellation race cleanup and serialization tests",
         "P9 contract digest pickle CLI telemetry and public export compatibility tests",
         "targeted and full repository tests format typecheck coverage documentation wheel-content and clean-installed-wheel checks",

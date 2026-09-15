@@ -24,7 +24,7 @@ _ContractValues: TypeAlias = tuple[
     _FrozenJson,
 ]
 
-_DIGEST = "702bed80d6e493a2c220c3e94e4504d63e944bc0a35d5be347d4a4f9d921b5af"
+_DIGEST = "0d6e189bf3d89472a6880a76367ed99b5462b6c5d460818282e403e4a285eb95"
 _RESOURCE = "phase10_bounded_inspection_contract.json"
 _ENVELOPE_KEYS = {"schema_version", "digest_algorithm", "digest", "contract"}
 _SCHEMA_VERSION = "anonymizer-phase10-bounded-inspection-owner-contract-envelope/v1"

@@ -299,6 +299,22 @@ def test_phase10_types_are_not_exposed_through_public_surfaces() -> None:
     )
 
 
+def test_phase10_subject_domain_defers_publication_receipt_but_keeps_publication_outcomes() -> None:
+    module = _module()
+
+    assert tuple(item.value for item in module._Phase10SubjectKind) == (
+        "admitted_plan",
+        "admission_rejection_receipt",
+        "invocation_snapshot",
+        "terminal_receipt",
+        "cleanup_receipt",
+    )
+    assert not hasattr(module._Phase10SubjectKind, "PUBLICATION_RECEIPT")
+    assert module._Phase10Stage.PUBLICATION.value == "publication"
+    assert module._Phase10ReasonCategory.PUBLICATION_FAILED.value == "publication_failed"
+    assert module._Phase10CaptureBoundary.RELEASE_TERMINAL.value == "release_terminal"
+
+
 def test_phase10_explain_projects_admitted_plan_and_rejection_without_content() -> None:
     module = _module()
     assert callable(getattr(module, "_explain_phase10", None)), "Tier 2 explain builder is missing"
