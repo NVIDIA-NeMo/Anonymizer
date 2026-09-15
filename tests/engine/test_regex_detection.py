@@ -8,10 +8,23 @@ import pytest
 from anonymizer import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
 from anonymizer.engine.detection.postprocess import expand_entity_occurrences
 from anonymizer.engine.detection.regex_detection import (
+    ResolvedRegexRule,
     detect_regex_entities,
     resolve_regex_rules,
     validate_exportable_regex_rules,
 )
+
+
+def test_runtime_rejects_zero_width_match_that_bypasses_config_validation() -> None:
+    rule = ResolvedRegexRule(
+        rule_id="test:zero-width",
+        label="case_id",
+        pattern=r"(?=Z{20})",
+        source="regex_user",
+    )
+
+    with pytest.raises(RuntimeError, match="produced a zero-width match"):
+        detect_regex_entities("Z" * 20, rules=[rule])
 
 
 @pytest.mark.parametrize(

@@ -344,8 +344,8 @@ Required safeguards:
    worker-side generator.
 2. Enforce a per-rule/per-record timeout.
 3. Enforce a maximum match count per rule and record.
-4. Reject empty-string matches during configuration and ignore them
-   defensively at runtime.
+4. Reject zero-width matches during configuration and fail the row
+   defensively if a context-dependent zero-width match reaches runtime.
 5. Bound pattern length and document the supported regex dialect.
 6. Avoid silently skipping a rule after timeout or match-limit exhaustion.
 7. Convert runtime failures into the normal failed-record path for detection.
