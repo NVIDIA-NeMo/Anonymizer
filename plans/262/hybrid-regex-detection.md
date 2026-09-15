@@ -6,10 +6,7 @@
 ## Status
 
 Implementation plan for
-[issue #262](https://github.com/NVIDIA-NeMo/Anonymizer/issues/262). This
-document scopes the deterministic regex and validator feature as a focused
-slice of the broader
-[Multi-Pole Detection](../detection-poles/multi-pole-detection.md) design.
+[issue #262](https://github.com/NVIDIA-NeMo/Anonymizer/issues/262).
 
 ## Summary
 
