@@ -13,6 +13,19 @@ in-kernel development server.
 
 ## Server contract
 
+Before sending detector work, Anonymizer calls `GET /v1/models` with a two-second timeout. A compatible
+service must return an OpenAI-style model list containing the exact configured detector model ID:
+
+```json
+{
+  "object": "list",
+  "data": [{"id": "fastino/gliner2-privacy-filter-PII-multi", "object": "model"}]
+}
+```
+
+This readiness and model-discovery check prevents a reachable server that ignores the requested
+model from silently running a different detector.
+
 The detection workflow calls `POST /v1/chat/completions` and passes detector-specific fields alongside
 the normal OpenAI-compatible request:
 
