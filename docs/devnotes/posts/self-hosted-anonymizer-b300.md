@@ -133,22 +133,25 @@ The `CUDA_ROOT` path above is specific to the Brev B300 SXM6 environment used fo
 
 `--gpu-memory-utilization 0.45` was a conservative co-location setting, not a compute throttle. In vLLM it controls the GPU memory budget for model weights and KV cache. Qwen could use more memory if the run needed a larger KV cache, but this setting left headroom for the GLiNER server on the same GPU and still completed the measured batches with zero failures.
 
-GLiNER ran on the same machine. This archived run used the legacy `nvidia/gliner-pii` server from Anonymizer commit `a2cc91847d2674649f1a30a518851e25773010fa`. Download that pinned implementation before reproducing the run; the current `tools/serve_gliner.py` serves GLiNER2 and intentionally has a different model and runtime contract.
+GLiNER ran on the same machine. This archived run used
+[`tools/serve_gliner.py` from Anonymizer commit `a2cc9184`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/a2cc91847d2674649f1a30a518851e25773010fa/tools/serve_gliner.py),
+which serves the legacy `nvidia/gliner-pii` model. Run the command below from a source checkout at
+that commit when reproducing these results. The server on current `main` uses GLiNER2 and is not a
+drop-in replacement for this benchmark.
 
 ```bash
 mkdir -p logs
-curl -L \
-  https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/a2cc91847d2674649f1a30a518851e25773010fa/tools/serve_gliner.py \
-  -o /tmp/serve_gliner_b300.py
 
 DEVICE=cuda \
 GLINER_MAX_BATCH_REQUESTS=64 \
 GLINER_BATCH_WAIT_MS=10 \
-nohup .venv/bin/python /tmp/serve_gliner_b300.py --port 9000 \
+nohup .venv/bin/python tools/serve_gliner.py --port 9000 \
   > logs/gliner.log 2>&1 &
 ```
 
-For archival reruns, pin the GLiNER model as well. The server default used here is `nvidia/gliner-pii`, which Hugging Face resolved as `nvidia/gliner-PII` revision `bd23e8ef4425fd04e34c5204ab49ffaa706eae79` as of this write-up; serving a newer detector snapshot can change entity counts.
+The source checkout does not by itself pin the model weights: that legacy server requests the model
+by repository name. To match the measured detector exactly, use the `nvidia/gliner-PII` snapshot at
+revision `bd23e8ef4425fd04e34c5204ab49ffaa706eae79`; a newer snapshot can change entity counts.
 
 **Blackwell serving note.** vLLM accepted `--attention-backend FLASH_ATTN`, then logged that FlashAttention 4 did not support this model's `head_size=256` path and used FlashAttention 2 for the main attention path. In this B300/vLLM 0.23.0/NVFP4 environment, the run also set `VLLM_DISABLED_KERNELS=FlashInferFP8ScaledMMLinearKernel` to avoid the FlashInfer FP8 scaled-MM path; the successful run selected `CutlassFP8ScaledMMLinearKernel` instead. Treat that as a vLLM environment workaround, not an Anonymizer requirement.
 
