@@ -47,7 +47,6 @@ DEFAULT_INFERENCE_BATCH_SIZE = 8
 TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("anonymizer-local-gliner2")
 
 model: Any | None = None
@@ -251,6 +250,7 @@ def _extract_text(messages: object) -> str:
 
 def main() -> None:
     """Run the lightweight notebook/development server."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Notebook/development GLiNER2 server for Anonymizer.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)

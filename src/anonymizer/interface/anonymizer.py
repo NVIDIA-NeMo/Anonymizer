@@ -98,6 +98,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer")
 
+# Keep synchronized with notebooks.local_inference.gliner2.backend.MODEL_ID. Importing
+# the notebook package here would create an interface -> notebooks -> interface cycle.
 _LOCAL_GLINER2_MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 
 

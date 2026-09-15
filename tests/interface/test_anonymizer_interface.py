@@ -33,8 +33,14 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
+from anonymizer.interface.anonymizer import _LOCAL_GLINER2_MODEL_ID, Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
+
+
+def test_local_gliner2_preflight_model_id_matches_notebook_backend() -> None:
+    from anonymizer.notebooks.local_inference.gliner2 import MODEL_ID
+
+    assert _LOCAL_GLINER2_MODEL_ID == MODEL_ID
 
 
 @pytest.fixture
