@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from weakref import WeakValueDictionary
 
 import regex
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from anonymizer.config.regex import (
     BuiltinRegex,
@@ -47,10 +47,13 @@ _URL_DELIMITER_PAIRS = {
 class ResolvedRegexRule(BaseModel):
     """Serializable rule consumed by the DataDesigner regex column."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     rule_id: str
     label: str
     pattern: str
     validator_id: str | None = None
+    local_validator: RegexValidatorCallable | None = Field(default=None, exclude=True, repr=False)
     validate_with_llm: bool = True
     source: str
 
@@ -88,6 +91,7 @@ def resolve_regex_rules(
                 label=rule.label,
                 pattern=rule.pattern,
                 validator_id=validator_id,
+                local_validator=rule.validator if callable(rule.validator) else None,
                 validate_with_llm=rule.validate_with_llm,
                 source="regex_user",
             )
@@ -213,7 +217,9 @@ def _passes_validator(
 ) -> bool:
     if rule.validator_id is None:
         return True
-    validator = _resolve_validator(rule.validator_id)
+    validator = rule.local_validator
+    if validator is None:
+        validator = _resolve_validator(rule.validator_id)
     before = max(0, start - _CONTEXT_WINDOW)
     after = min(len(text), end + _CONTEXT_WINDOW)
     candidate = RegexCandidate(
@@ -248,7 +254,12 @@ def _register_or_resolve_validator(
     module = getattr(validator, "__module__", "")
     qualified_name = getattr(validator, "__qualname__", "")
     validator_id = f"local:{module}:{qualified_name}:{id(validator):x}"
-    _LOCAL_VALIDATORS[validator_id] = validator
+    try:
+        _LOCAL_VALIDATORS[validator_id] = validator
+    except TypeError:
+        # Some callable instances do not support weak references. The resolved
+        # in-process rule still owns those validators for its full lifetime.
+        pass
     return validator_id
 
 
