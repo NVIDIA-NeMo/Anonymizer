@@ -401,6 +401,7 @@ class _Phase8OperationLedger:
         from anonymizer.engine.execution.phase10_inspection import (
             _map_phase10_reason,
             _phase10_count_bucket,
+            _phase10_limit,
             _phase10_new_builder_budget,
             _phase10_reserve_builder_row,
             _phase10_stage,
@@ -409,6 +410,7 @@ class _Phase8OperationLedger:
             _Phase10Diagnostic,
             _Phase10InspectionRejected,
             _Phase10LifecycleState,
+            _Phase10LimitName,
             _Phase10OwnerCapture,
             _Phase10ReasonCategory,
             _Phase10ReconciliationState,
@@ -440,7 +442,7 @@ class _Phase8OperationLedger:
                 if mapped is None:
                     return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
                 grouped.setdefault(mapped, []).append(stage)
-            if len(grouped) > 8:
+            if len(grouped) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES):
                 return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             stage_summaries = []
             terminal_summaries = []
@@ -526,7 +528,9 @@ class _Phase8OperationLedger:
                         if not _phase10_reserve_builder_row(builder_budget):
                             return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                         diagnostics.append((mapped_stage, terminal_state, category, reason_impact))
-            if len(terminal_summaries) > 48 or len(diagnostics) > 64:
+            if len(terminal_summaries) > _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS) or len(
+                diagnostics
+            ) > _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES):
                 return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             reconciliation = (
                 _Phase10ReconciliationState.INCONSISTENT
@@ -563,6 +567,12 @@ class _Phase8OperationLedger:
                 )
                 for stage, terminal, category, impact in diagnostics
             )
+            if (
+                len(stage_summaries) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES)
+                or len(terminal_summaries) > _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS)
+                or len(diagnostics) > _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES)
+            ):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             return _Phase10OwnerCapture(
                 _Phase10SubjectKind.INVOCATION_SNAPSHOT,
                 _Phase10SemanticProfile.GROUPED_REWRITE_V1,
@@ -854,9 +864,9 @@ class _Phase8LifecycleExecution:
     def _phase10_build_capture(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
         """Project the closed lifecycle receipt without copying released values."""
         from anonymizer.engine.execution.phase10_inspection import (
-            _MAX_REASON_CODES_PER_DIAGNOSTIC,
             _map_phase10_reason,
             _phase10_count_bucket,
+            _phase10_limit,
             _phase10_new_builder_budget,
             _phase10_reserve_builder_row,
             _Phase10CaptureBoundary,
@@ -865,6 +875,7 @@ class _Phase8LifecycleExecution:
             _Phase10Diagnostic,
             _Phase10InspectionRejected,
             _Phase10LifecycleState,
+            _Phase10LimitName,
             _Phase10OwnerCapture,
             _Phase10ReasonCategory,
             _Phase10ReconciliationState,
@@ -1015,7 +1026,9 @@ class _Phase8LifecycleExecution:
                 category_count = category_counts.get(category, 0)
                 if not category_count:
                     continue
-                if len(category_reasons.get(category, set())) > _MAX_REASON_CODES_PER_DIAGNOSTIC:
+                if len(category_reasons.get(category, set())) > _phase10_limit(
+                    _Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY
+                ):
                     return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                 category_bucket = _phase10_count_bucket(category_count)
                 if category_bucket is None:
@@ -1056,7 +1069,7 @@ class _Phase8LifecycleExecution:
                 )
             )
         task_bucket = _phase10_count_bucket(len(self.terminal_group_states))
-        if task_bucket is None or len(diagnostics) > 64:
+        if task_bucket is None or len(diagnostics) > _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES):
             return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         if invocation_reason is not None:
             stage_summaries = [
@@ -1102,6 +1115,12 @@ class _Phase8LifecycleExecution:
                     _Phase10CountBucket.ONE,
                 )
             )
+        if (
+            len(stage_summaries) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES)
+            or len(terminal_summaries) > _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS)
+            or len(diagnostics) > _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES)
+        ):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         return _Phase10OwnerCapture(
             _Phase10SubjectKind.TERMINAL_RECEIPT,
             _Phase10SemanticProfile.GROUPED_REWRITE_V1,

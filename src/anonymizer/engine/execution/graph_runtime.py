@@ -251,9 +251,9 @@ class _AccountingGraphExecution(Generic[T]):
     def _phase10_build_capture(self) -> _Phase10OwnerCapture | _Phase10InspectionRejected:
         """Issue one detached terminal snapshot without retaining candidates."""
         from anonymizer.engine.execution.phase10_inspection import (
-            _MAX_REASON_CODES_PER_DIAGNOSTIC,
             _map_phase10_reason,
             _phase10_count_bucket,
+            _phase10_limit,
             _phase10_new_builder_budget,
             _phase10_reserve_builder_row,
             _phase10_stage,
@@ -263,6 +263,7 @@ class _AccountingGraphExecution(Generic[T]):
             _Phase10Diagnostic,
             _Phase10InspectionRejected,
             _Phase10LifecycleState,
+            _Phase10LimitName,
             _Phase10OwnerCapture,
             _Phase10ReasonCategory,
             _Phase10ReconciliationState,
@@ -287,7 +288,7 @@ class _AccountingGraphExecution(Generic[T]):
             if mapped_stage is None:
                 return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
             stage_groups.setdefault(mapped_stage, []).append(declared_stage)
-        if len(stage_groups) > 8:
+        if len(stage_groups) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES):
             return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         reconciliation = (
             _Phase10ReconciliationState.INCONSISTENT
@@ -343,7 +344,9 @@ class _AccountingGraphExecution(Generic[T]):
                     count = category_counts.get(category, 0)
                     if not count:
                         continue
-                    if len(category_codes.get(category, set())) > _MAX_REASON_CODES_PER_DIAGNOSTIC:
+                    if len(category_codes.get(category, set())) > _phase10_limit(
+                        _Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY
+                    ):
                         return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                     reason_impact = _phase10_count_bucket(count)
                     if reason_impact is None:
@@ -396,7 +399,9 @@ class _AccountingGraphExecution(Generic[T]):
                 count = group_category_counts.get(category, 0)
                 if not count:
                     continue
-                if len(group_category_codes.get(category, set())) > _MAX_REASON_CODES_PER_DIAGNOSTIC:
+                if len(group_category_codes.get(category, set())) > _phase10_limit(
+                    _Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY
+                ):
                     return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                 impact = _phase10_count_bucket(count)
                 if impact is None:
@@ -464,7 +469,7 @@ class _AccountingGraphExecution(Generic[T]):
                         continue
                     if any(item.reason_category is category for item in diagnostics):
                         continue
-                    if len(owning_codes) > _MAX_REASON_CODES_PER_DIAGNOSTIC:
+                    if len(owning_codes) > _phase10_limit(_Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY):
                         return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
                     if not _phase10_reserve_builder_row(builder_budget):
                         return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
@@ -479,7 +484,11 @@ class _AccountingGraphExecution(Generic[T]):
                             cleanup,
                         )
                     )
-        if len(stage_summaries) > 8 or len(terminal_summaries) > 48 or len(diagnostics) > 64:
+        if (
+            len(stage_summaries) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES)
+            or len(terminal_summaries) > _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS)
+            or len(diagnostics) > _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES)
+        ):
             return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         return _Phase10OwnerCapture(
             _Phase10SubjectKind.TERMINAL_RECEIPT,

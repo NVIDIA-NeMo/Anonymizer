@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import gc
 import importlib
+import inspect
 import json
 import pickle
 import weakref
 from dataclasses import FrozenInstanceError, fields, replace
-from typing import Any, cast
+from typing import Any, Never, cast
 
 import pytest
 
@@ -60,6 +61,42 @@ def _diagnostic(module: Any) -> Any:
         module._Phase10ReconciliationState.RECONCILED,
         module._Phase10CleanupState.NOT_ENTERED,
     )
+
+
+def _encoder_views(module: Any) -> tuple[Any, Any, Any]:
+    explain_provenance = module._Phase10Provenance(
+        module._Phase10InspectionSchemaVersion.V1,
+        module._Phase10ContractVersion.V1,
+        module._Phase10ViewKind.EXPLAIN,
+        module._Phase10SubjectKind.ADMITTED_PLAN,
+        module._Phase10SemanticProfile.TARGET_CONTEXT_V1,
+        module._Phase10ImplementationProfile.PANDAS_RUNTIME_V1,
+        module._Phase10CaptureBoundary.ADMISSION_TERMINAL,
+        module._Phase10LifecycleState.TERMINAL,
+    )
+    explain = module._Phase10ExplainView(
+        explain_provenance,
+        module._Phase10Route.NDD,
+        (module._Phase10Capability.TERMINAL_ACCOUNTING,),
+        module._phase10_declared_limits(),
+        (),
+        None,
+    )
+    inspect_view = module._Phase10InspectView(
+        _provenance(module, module._Phase10ViewKind.INSPECT),
+        module._Phase10Snapshot(
+            (),
+            (),
+            module._Phase10ReconciliationState.RECONCILED,
+            module._Phase10CleanupState.NOT_ENTERED,
+            module._Phase10ReleaseState.WITHHELD,
+        ),
+    )
+    diagnose = module._Phase10DiagnoseView(
+        _provenance(module, module._Phase10ViewKind.DIAGNOSE),
+        (_diagnostic(module),),
+    )
+    return explain, inspect_view, diagnose
 
 
 def _accounting_plan(*texts: str, stages: tuple[str, ...] = ("protect",)) -> _AccountingPlan:
@@ -217,10 +254,7 @@ def test_phase10_encoder_emits_exact_canonical_json_and_preserves_semantic_array
         provenance,
         module._Phase10Route.MIXED,
         (module._Phase10Capability.GROUPED_REWRITE, module._Phase10Capability.TERMINAL_ACCOUNTING),
-        (
-            module._Phase10DeclaredLimit(module._Phase10LimitName.MAX_STAGE_SUMMARIES, 8),
-            module._Phase10DeclaredLimit(module._Phase10LimitName.SUBJECTS_PER_CALL, 1),
-        ),
+        module._phase10_declared_limits(),
         (
             module._Phase10Aggregate(
                 module._Phase10AggregateDimension.RELATIONSHIPS, module._Phase10CountBucket.TWO_TO_FOUR
@@ -241,9 +275,20 @@ def test_phase10_encoder_emits_exact_canonical_json_and_preserves_semantic_array
     ).encode("utf-8")
     payload = json.loads(result.value)
     assert [item["name"] for item in payload["declared_limits"]] == [
-        "max_stage_summaries",
         "subjects_per_call",
+        "views_per_call",
+        "max_stage_summaries",
+        "max_terminal_summary_rows",
+        "max_diagnostic_entries",
+        "max_reason_codes_per_diagnostic_entry",
+        "max_provenance_fields",
+        "max_top_level_fields",
+        "max_json_nesting_depth",
+        "max_allowlisted_string_utf8_bytes",
+        "max_canonical_json_utf8_bytes",
+        "max_builder_working_bytes",
     ]
+    assert payload["required_capabilities"] == ["grouped_rewrite", "terminal_accounting"]
     assert payload["provenance"] == {
         "capture_boundary": "admission_terminal",
         "capture_lifecycle_state": "terminal",
@@ -272,12 +317,241 @@ def test_phase10_encoder_rejects_unknown_values_and_encoding_overflow_without_pa
         _provenance(module, module._Phase10ViewKind.DIAGNOSE),
         (_diagnostic(module),),
     )
-    monkeypatch.setattr(module, "_MAX_CANONICAL_JSON_BYTES", 1)
+    monkeypatch.setitem(
+        module._PHASE10_LIMITS,
+        module._Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES,
+        1,
+    )
     oversized = module._encode_phase10_view(view)
 
     assert type(oversized) is module._Phase10InspectionRejected
     assert oversized.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
     assert "inspection_limit_exceeded" not in repr(oversized)
+
+
+def test_phase10_payload_measurement_enforces_exact_and_one_over_boundaries() -> None:
+    module = _module()
+
+    exact_root = {f"k{index}": None for index in range(12)}
+    exact_provenance = {"provenance": {f"k{index}": None for index in range(8)}}
+    exact_depth = {"a": {"b": {"c": {"d": {}}}}}
+    exact_list_depth = {"a": [[[[]]]]}
+    exact_ascii = {"a" * 96: "b" * 96}
+    exact_utf8 = {"value": "é" * 48}
+    for payload, expected in (
+        (exact_root, (12, 0, 1, 3)),
+        (exact_provenance, (1, 8, 2, 10)),
+        (exact_depth, (1, 0, 5, 1)),
+        (exact_list_depth, (1, 0, 5, 1)),
+        (exact_ascii, (1, 0, 1, 96)),
+        (exact_utf8, (1, 0, 1, 96)),
+    ):
+        measured = module._measure_phase10_payload(payload)
+        assert type(measured) is module._Phase10PayloadMeasurement
+        assert (
+            measured.top_level_fields,
+            measured.provenance_fields,
+            measured.json_nesting_depth,
+            measured.longest_string_utf8_bytes,
+        ) == expected
+
+    over_root = {f"k{index}": None for index in range(13)}
+    over_provenance = {"provenance": {f"k{index}": None for index in range(9)}}
+    over_depth = {"a": {"b": {"c": {"d": {"e": {}}}}}}
+    over_list_depth = {"a": [[[[[]]]]]}
+    for payload in (
+        over_root,
+        over_provenance,
+        over_depth,
+        over_list_depth,
+        {"value": "a" * 97},
+        {"value": "é" * 49},
+    ):
+        rejected = module._measure_phase10_payload(payload)
+        assert type(rejected) is module._Phase10InspectionRejected
+        assert rejected.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
+
+
+def test_phase10_payload_measurement_rejects_non_exact_builtins_without_traversal() -> None:
+    module = _module()
+
+    class DictSubclass(dict[str, object]):
+        def items(self) -> Never:
+            raise AssertionError("must not traverse a dictionary subclass")
+
+    class ListSubclass(list[object]):
+        def __iter__(self) -> Never:
+            raise AssertionError("must not traverse a list subclass")
+
+    class StringSubclass(str):
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            raise AssertionError("must not encode a string subclass")
+
+    class IntSubclass(int):
+        pass
+
+    class RichValue:
+        def __getattribute__(self, _name: str) -> object:
+            raise AssertionError("must not inspect a rich object")
+
+    payloads = (
+        DictSubclass(),
+        {"value": ListSubclass()},
+        {"value": StringSubclass("unsafe")},
+        {"value": IntSubclass(1)},
+        {"value": 1.0},
+        {"value": b"unsafe"},
+        {"value": ()},
+        {"value": RichValue()},
+        {StringSubclass("key"): None},
+        {"value": "\ud800"},
+    )
+    for payload in payloads:
+        rejected = module._measure_phase10_payload(payload)
+        assert type(rejected) is module._Phase10InspectionRejected
+        assert rejected.code is module._Phase10RejectionCode.REDACTION_FAILED
+
+    admitted = module._measure_phase10_payload({"values": [None, True, 1, "safe", [], {}]})
+    assert type(admitted) is module._Phase10PayloadMeasurement
+
+
+def test_phase10_encoder_applies_measurement_before_exact_schema_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    view = _encoder_views(module)[2]
+
+    monkeypatch.setattr(module, "_view_payload", lambda _value: {"unknown": None})
+    malformed = module._encode_phase10_view(view)
+    assert type(malformed) is module._Phase10InspectionRejected
+    assert malformed.code is module._Phase10RejectionCode.REDACTION_FAILED
+
+    monkeypatch.setattr(module, "_view_payload", lambda _value: {f"unknown-{index}": None for index in range(13)})
+    oversized = module._encode_phase10_view(view)
+    assert type(oversized) is module._Phase10InspectionRejected
+    assert oversized.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
+
+
+def test_phase10_payload_failure_precedence_stops_before_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    view = _encoder_views(module)[2]
+    original_payload = module._view_payload
+    encoder_calls = 0
+
+    def throwing_encoder(*_args: object, **_kwargs: object) -> str:
+        nonlocal encoder_calls
+        encoder_calls += 1
+        raise RuntimeError("PAYLOAD-PRECEDENCE-CANARY")
+
+    monkeypatch.setattr(module.json, "dumps", throwing_encoder)
+    monkeypatch.setattr(module, "_view_payload", lambda _value: {"value": object()})
+    unsafe = module._encode_phase10_view(view)
+    assert type(unsafe) is module._Phase10InspectionRejected
+    assert unsafe.code is module._Phase10RejectionCode.REDACTION_FAILED
+    assert not hasattr(unsafe, "value")
+    assert encoder_calls == 0
+
+    monkeypatch.setattr(module, "_view_payload", lambda _value: {f"field-{index}": None for index in range(13)})
+    oversized = module._encode_phase10_view(view)
+    assert type(oversized) is module._Phase10InspectionRejected
+    assert oversized.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
+    assert not hasattr(oversized, "value")
+    assert encoder_calls == 0
+
+    monkeypatch.setattr(module, "_view_payload", original_payload)
+    encoding_failed = module._encode_phase10_view(view)
+    assert type(encoding_failed) is module._Phase10InspectionRejected
+    assert encoding_failed.code is module._Phase10RejectionCode.ENCODING_FAILED
+    assert not hasattr(encoding_failed, "value")
+    assert "PAYLOAD-PRECEDENCE-CANARY" not in repr(encoding_failed)
+    assert encoder_calls == 1
+
+
+def test_phase10_every_encoder_variant_invokes_validator_and_enforces_actual_byte_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    views = _encoder_views(module)
+    original_validator = module._validate_phase10_payload
+    validated_kinds: list[str] = []
+
+    def recording_validator(payload: object) -> object:
+        if type(payload) is dict:
+            view_kind = cast(dict[str, object], payload).get("view_kind")
+            if type(view_kind) is str:
+                validated_kinds.append(view_kind)
+        return original_validator(payload)
+
+    monkeypatch.setattr(module, "_validate_phase10_payload", recording_validator)
+    limit_name = module._Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES
+    original_limit = module._PHASE10_LIMITS[limit_name]
+    for view in views:
+        monkeypatch.setitem(module._PHASE10_LIMITS, limit_name, original_limit)
+        baseline = module._encode_phase10_view(view)
+        assert type(baseline) is module._Phase10CanonicalEncoding
+
+        saved_bytes = baseline.value
+        saved_limits = view.declared_limits if type(view) is module._Phase10ExplainView else None
+        ceiling = len(saved_bytes)
+        for _ in range(5):
+            monkeypatch.setitem(module._PHASE10_LIMITS, limit_name, ceiling)
+            exact_view = (
+                replace(view, declared_limits=module._phase10_declared_limits())
+                if type(view) is module._Phase10ExplainView
+                else view
+            )
+            expected_bytes = json.dumps(
+                module._view_payload(exact_view), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            if len(expected_bytes) == ceiling:
+                break
+            ceiling = len(expected_bytes)
+        assert len(expected_bytes) == ceiling
+        exact = module._encode_phase10_view(exact_view)
+        assert type(exact) is module._Phase10CanonicalEncoding
+        assert exact.value == expected_bytes
+
+        monkeypatch.setitem(module._PHASE10_LIMITS, limit_name, ceiling - 1)
+        over_view = (
+            replace(view, declared_limits=module._phase10_declared_limits())
+            if type(view) is module._Phase10ExplainView
+            else view
+        )
+        over = module._encode_phase10_view(over_view)
+        assert type(over) is module._Phase10InspectionRejected
+        assert over.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
+        assert baseline.value == saved_bytes
+        assert exact.value == expected_bytes
+        if saved_limits is not None:
+            assert view.declared_limits == saved_limits
+
+    assert validated_kinds == [
+        "explain",
+        "explain",
+        "explain",
+        "inspect",
+        "inspect",
+        "inspect",
+        "diagnose",
+        "diagnose",
+        "diagnose",
+    ]
+
+
+def test_phase10_operations_remain_fixed_arity_scalar_calls() -> None:
+    module = _module()
+
+    for name in ("_explain_phase10", "_inspect_phase10", "_diagnose_phase10"):
+        operation = getattr(module, name)
+        signature = inspect.signature(operation)
+        assert tuple(signature.parameters) == ("owner", "subject", "grant")
+        assert all(
+            parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for parameter in signature.parameters.values()
+        )
+        with pytest.raises(TypeError):
+            operation(object(), object(), object(), object())
 
 
 def test_phase10_types_are_not_exposed_through_public_surfaces() -> None:
@@ -994,7 +1268,33 @@ def test_phase10_phase8_operation_rejects_undispatched_terminal_mutation() -> No
     assert capture.code is module._Phase10RejectionCode.REDACTION_FAILED
 
 
-def test_phase10_view_budget_precedes_explain_subject_traversal(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("operation_name", "operation"),
+    (
+        ("_explain_phase10", "EXPLAIN"),
+        ("_inspect_phase10", "INSPECT"),
+        ("_diagnose_phase10", "DIAGNOSE"),
+    ),
+)
+def test_phase10_subject_validation_precedes_builder_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    operation_name: str,
+    operation: str,
+) -> None:
+    module = _module()
+    owner = _InspectionIdentity()
+    subject = _InspectionIdentity()
+    grant = module._issue_phase10_inspection_grant(owner, subject, getattr(module._Phase10Operation, operation))
+    monkeypatch.setattr(module, "_BUILDER_BASE_BYTES", module._MAX_BUILDER_WORKING_BYTES)
+    monkeypatch.setattr(module, "_BUILDER_ROW_BYTES", 1)
+
+    result = getattr(module, operation_name)(owner, subject, grant)
+
+    assert type(result) is module._Phase10InspectionRejected
+    assert result.code is module._Phase10RejectionCode.SUBJECT_INVALID
+
+
+def test_phase10_builder_budget_precedes_view_construction_for_valid_subject(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _module()
     owner = _InspectionIdentity()
     subject = _accounting_plan("EXPLAIN-BUDGET-ORDER-CANARY")
@@ -1002,31 +1302,12 @@ def test_phase10_view_budget_precedes_explain_subject_traversal(monkeypatch: pyt
     monkeypatch.setattr(module, "_BUILDER_BASE_BYTES", module._MAX_BUILDER_WORKING_BYTES)
     monkeypatch.setattr(module, "_BUILDER_ROW_BYTES", 1)
 
-    def traverse_subject(_subject: object) -> object:
-        raise RuntimeError("EXPLAIN-TRAVERSAL-CANARY")
+    def build_details(_subject: object) -> object:
+        raise RuntimeError("VIEW-CONSTRUCTION-CANARY")
 
-    monkeypatch.setattr(module, "_phase10_explain_details", traverse_subject)
+    monkeypatch.setattr(module, "_phase10_explain_details", build_details)
 
     result = module._explain_phase10(owner, subject, grant)
-
-    assert type(result) is module._Phase10InspectionRejected
-    assert result.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
-
-
-def test_phase10_view_budget_precedes_diagnose_subject_traversal(monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _module()
-    owner = _InspectionIdentity()
-    subject = _AccountingRejected(_AccountingAdmissionCode.TOO_MANY_DATUMS)
-    grant = module._issue_phase10_inspection_grant(owner, subject, module._Phase10Operation.DIAGNOSE)
-    monkeypatch.setattr(module, "_BUILDER_BASE_BYTES", module._MAX_BUILDER_WORKING_BYTES)
-    monkeypatch.setattr(module, "_BUILDER_ROW_BYTES", 1)
-
-    def traverse_subject(_subject: object) -> object:
-        raise RuntimeError("DIAGNOSE-TRAVERSAL-CANARY")
-
-    monkeypatch.setattr(module, "_phase10_admission_diagnostic", traverse_subject)
-
-    result = module._diagnose_phase10(owner, subject, grant)
 
     assert type(result) is module._Phase10InspectionRejected
     assert result.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
@@ -1886,3 +2167,228 @@ def test_phase10_phase8_retired_flag_never_invokes_malformed_truthiness_canary(
 
     assert type(rejected) is module._Phase10InspectionRejected
     _assert_no_comparison_canary(capsys)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    (
+        "complete",
+        "empty",
+        "missing",
+        "extra",
+        "duplicate",
+        "reordered",
+        "wrong_value",
+        "boolean",
+        "unknown",
+        "malformed",
+    ),
+)
+def test_phase10_declared_table_payload_requires_exact_authoritative_sequence(
+    monkeypatch: pytest.MonkeyPatch, variant: str
+) -> None:
+    module = _module()
+    view = _encoder_views(module)[0]
+    payload = module._view_payload(view)
+    assert type(payload) is dict
+    rows = payload["declared_limits"]
+    if variant == "empty":
+        rows.clear()
+    elif variant == "missing":
+        rows.pop()
+    elif variant == "extra":
+        rows.append(dict(rows[-1]))
+    elif variant == "duplicate":
+        rows[1] = dict(rows[0])
+    elif variant == "reordered":
+        rows[0], rows[1] = rows[1], rows[0]
+    elif variant == "wrong_value":
+        rows[0]["value"] = 2
+    elif variant == "boolean":
+        rows[0]["value"] = True
+    elif variant == "unknown":
+        rows[0]["name"] = "unknown"
+    elif variant == "malformed":
+        rows[0]["extra"] = None
+    monkeypatch.setattr(module, "_view_payload", lambda _view: payload)
+
+    result = module._encode_phase10_view(view)
+
+    if variant == "complete":
+        assert type(result) is module._Phase10CanonicalEncoding
+    else:
+        assert type(result) is module._Phase10InspectionRejected
+        assert result.code is module._Phase10RejectionCode.REDACTION_FAILED
+        assert not hasattr(result, "value")
+        assert not hasattr(result, "__cause__")
+
+
+@pytest.mark.parametrize("variant", ("missing", "reordered", "wrong_value"))
+def test_phase10_declared_table_view_requires_exact_authoritative_sequence(variant: str) -> None:
+    module = _module()
+    view = _encoder_views(module)[0]
+    rows = view.declared_limits
+    if variant == "missing":
+        rows = rows[:-1]
+    elif variant == "reordered":
+        rows = rows[::-1]
+    else:
+        rows = (replace(rows[0], value=2), *rows[1:])
+    result = module._encode_phase10_view(replace(view, declared_limits=rows))
+    assert type(result) is module._Phase10InspectionRejected
+    assert result.code is module._Phase10RejectionCode.REDACTION_FAILED
+    assert not hasattr(result, "value")
+
+
+def test_phase10_declared_table_malformed_and_oversized_measures_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module()
+    view = _encoder_views(module)[0]
+    payload = module._view_payload(view)
+    payload["declared_limits"] = []
+    payload["oversized"] = "x" * 97
+    monkeypatch.setattr(module, "_view_payload", lambda _view: payload)
+    result = module._encode_phase10_view(view)
+    assert type(result) is module._Phase10InspectionRejected
+    assert result.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
+    assert not hasattr(result, "value")
+
+
+@pytest.mark.parametrize(
+    "variant", ("list_subclass", "dict_subclass", "str_subclass", "int_subclass", "tuple", "boolean")
+)
+def test_phase10_declared_table_validator_requires_exact_builtins(variant: str) -> None:
+    module = _module()
+
+    class ListSubclass(list[Any]):
+        pass
+
+    class DictSubclass(dict[str, Any]):
+        pass
+
+    class StrSubclass(str):
+        pass
+
+    class IntSubclass(int):
+        pass
+
+    rows = module._view_payload(_encoder_views(module)[0])["declared_limits"]
+    candidate: Any = rows
+    if variant == "list_subclass":
+        candidate = ListSubclass(rows)
+    elif variant == "tuple":
+        candidate = tuple(rows)
+    elif variant == "dict_subclass":
+        rows[0] = DictSubclass(rows[0])
+    elif variant == "str_subclass":
+        rows[0]["name"] = StrSubclass(rows[0]["name"])
+    elif variant == "int_subclass":
+        rows[0]["value"] = IntSubclass(rows[0]["value"])
+    else:
+        rows[0]["value"] = True
+    assert module._valid_declared_limits_payload(candidate) is False
+
+
+def _phase10_limit_test_owner(kind: str) -> Any:
+    phase8 = importlib.import_module("anonymizer.engine.execution.phase8_runtime")
+    if kind in {"accounting", "graph"}:
+        plan = _accounting_plan("OWNER-LIMIT-CANARY", stages=("detect", "protect"))
+        ledger: _AccountingLedger[str] = _AccountingLedger(plan)
+        ledger.open()
+        for task in plan.tasks:
+            ledger.mark_task_failed(task)
+        if kind == "accounting":
+            return ledger
+        graph = importlib.import_module("anonymizer.engine.execution.graph_runtime")
+        return graph._AccountingGraphExecution(plan, ledger.finish(), ())
+    if kind == "operation":
+        plan = phase8._compile_group_operation_plan(2, 3)
+        assert plan is not None
+        operations = phase8._Phase8OperationLedger(plan)
+        assert operations.succeed(phase8._Phase8Stage.validate_baselines())
+        assert operations.fail(phase8._Phase8Stage.analyze(), phase8._Phase8Reason.BACKEND_FAILURE)
+        return operations
+    return _phase8_lifecycle_with_reasons(
+        (phase8._Phase8Reason.BACKEND_FAILURE, phase8._Phase8Reason.ANALYSIS_RECONCILIATION)
+    )
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    (("accounting", (2, 2, 2)), ("graph", (3, 3, 2)), ("operation", (5, 5, 4)), ("lifecycle", (2, 2, 2))),
+)
+@pytest.mark.parametrize("category", ("stage", "terminal", "diagnostic"))
+def test_phase10_owner_capture_uses_authoritative_row_limits(
+    monkeypatch: pytest.MonkeyPatch, kind: str, expected: tuple[int, int, int], category: str
+) -> None:
+    module = _module()
+    owner = _phase10_limit_test_owner(kind)
+    baseline = owner._phase10_snapshot()
+    assert type(baseline) is module._Phase10OwnerCapture
+    assert (
+        len(baseline.snapshot.stage_summaries),
+        len(baseline.snapshot.terminal_summaries),
+        len(baseline.diagnostics),
+    ) == expected
+    position = ("stage", "terminal", "diagnostic").index(category)
+    name = (
+        module._Phase10LimitName.MAX_STAGE_SUMMARIES,
+        module._Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS,
+        module._Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES,
+    )[position]
+    original = module._PHASE10_LIMITS[name]
+    monkeypatch.setitem(module._PHASE10_LIMITS, name, expected[position])
+    exact = owner._phase10_snapshot()
+    assert type(exact) is module._Phase10OwnerCapture
+    assert exact.snapshot == baseline.snapshot
+    assert exact.diagnostics == baseline.diagnostics
+    monkeypatch.setitem(module._PHASE10_LIMITS, name, expected[position] - 1)
+    rejected = owner._phase10_snapshot()
+    assert type(rejected) is module._Phase10InspectionRejected
+    assert rejected.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
+    assert not hasattr(rejected, "snapshot")
+    assert not hasattr(rejected, "__cause__")
+    monkeypatch.setitem(module._PHASE10_LIMITS, name, original)
+    restored = owner._phase10_snapshot()
+    assert restored.snapshot == baseline.snapshot
+    assert restored.diagnostics == baseline.diagnostics
+
+
+@pytest.mark.parametrize("kind", ("accounting", "graph", "lifecycle"))
+@pytest.mark.parametrize("distinct", (True, False))
+def test_phase10_owner_capture_uses_authoritative_reason_limit(
+    monkeypatch: pytest.MonkeyPatch, kind: str, distinct: bool
+) -> None:
+    module = _module()
+    if kind == "lifecycle":
+        phase8 = importlib.import_module("anonymizer.engine.execution.phase8_runtime")
+        first = phase8._Phase8Reason.ANALYSIS_RECONCILIATION
+        second = phase8._Phase8Reason.CANDIDATE_RECONCILIATION if distinct else first
+        owner = _phase8_lifecycle_with_reasons((first, second))
+    else:
+        outcomes = importlib.import_module("anonymizer.engine.execution.accounting_outcomes")
+        plan = _accounting_plan("FIRST-CANARY", "SECOND-CANARY")
+        ledger: _AccountingLedger[str] = _AccountingLedger(plan)
+        ledger.open()
+        ledger.mark_task_inconsistent(plan.tasks[0], outcomes._CauseCode.MISSING)
+        ledger.mark_task_inconsistent(
+            plan.tasks[1], outcomes._CauseCode.DUPLICATE if distinct else outcomes._CauseCode.MISSING
+        )
+        owner = ledger
+        if kind == "graph":
+            graph = importlib.import_module("anonymizer.engine.execution.graph_runtime")
+            owner = graph._AccountingGraphExecution(plan, ledger.finish(), ())
+    baseline: Any = owner._phase10_snapshot()
+    assert type(baseline) is module._Phase10OwnerCapture
+    assert len(baseline.diagnostics) == 1
+    assert baseline.diagnostics[0].reason_category is module._Phase10ReasonCategory.EVIDENCE_INCONSISTENT
+    name = module._Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY
+    monkeypatch.setitem(module._PHASE10_LIMITS, name, 2 if distinct else 1)
+    exact: Any = owner._phase10_snapshot()
+    assert type(exact) is module._Phase10OwnerCapture
+    assert exact.diagnostics == baseline.diagnostics
+    monkeypatch.setitem(module._PHASE10_LIMITS, name, 1 if distinct else 0)
+    rejected: Any = owner._phase10_snapshot()
+    assert type(rejected) is module._Phase10InspectionRejected
+    assert rejected.code is module._Phase10RejectionCode.LIMIT_EXCEEDED
+    assert not hasattr(rejected, "snapshot")
+    assert not hasattr(rejected, "__cause__")

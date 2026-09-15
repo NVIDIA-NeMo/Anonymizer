@@ -54,18 +54,8 @@ from anonymizer.engine.execution.phase8_runtime import _Phase8Reason
 from anonymizer.engine.execution.redact_patches import _PatchRejectionCode
 from anonymizer.engine.execution.role_policy import _RolePolicyRejectionCode, _UnsupportedRoleReason
 
-_MAX_STAGE_SUMMARIES = 8
-_MAX_TERMINAL_SUMMARIES = 48
-_MAX_DIAGNOSTICS = 64
-_MAX_REASON_CODES_PER_DIAGNOSTIC = 4
-_MAX_CANONICAL_JSON_BYTES = 16_384
-_MAX_BUILDER_WORKING_BYTES = 65_536
-_MAX_DECLARED_INTEGER = 65_536
 _BUILDER_BASE_BYTES = 4_096
 _BUILDER_ROW_BYTES = 512
-_MAX_EXPLAIN_BUILDER_ROWS = 8 + 12 + 9
-_MAX_INSPECT_BUILDER_ROWS = _MAX_STAGE_SUMMARIES + _MAX_TERMINAL_SUMMARIES
-_MAX_DIAGNOSE_BUILDER_ROWS = _MAX_DIAGNOSTICS
 _GRANT_SEAL = object()
 _ENCODING_SEAL = object()
 _GRANT_LOCK = Lock()
@@ -266,6 +256,40 @@ class _Phase10LimitName(str, Enum):
     MAX_ALLOWLISTED_STRING_UTF8_BYTES = "max_allowlisted_string_utf8_bytes"
     MAX_CANONICAL_JSON_UTF8_BYTES = "max_canonical_json_utf8_bytes"
     MAX_BUILDER_WORKING_BYTES = "max_builder_working_bytes"
+
+
+_PHASE10_LIMITS: dict[_Phase10LimitName, int] = {
+    _Phase10LimitName.SUBJECTS_PER_CALL: 1,
+    _Phase10LimitName.VIEWS_PER_CALL: 1,
+    _Phase10LimitName.MAX_STAGE_SUMMARIES: 8,
+    _Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS: 48,
+    _Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES: 64,
+    _Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY: 4,
+    _Phase10LimitName.MAX_PROVENANCE_FIELDS: 8,
+    _Phase10LimitName.MAX_TOP_LEVEL_FIELDS: 12,
+    _Phase10LimitName.MAX_JSON_NESTING_DEPTH: 5,
+    _Phase10LimitName.MAX_ALLOWLISTED_STRING_UTF8_BYTES: 96,
+    _Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES: 16_384,
+    _Phase10LimitName.MAX_BUILDER_WORKING_BYTES: 65_536,
+}
+
+
+def _phase10_limit(name: _Phase10LimitName) -> int:
+    return _PHASE10_LIMITS[name]
+
+
+# Owner reducers import the reason ceiling from this module. These aliases keep
+# that private seam stable while the table above remains the sole source.
+_MAX_STAGE_SUMMARIES = _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES)
+_MAX_TERMINAL_SUMMARIES = _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS)
+_MAX_DIAGNOSTICS = _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES)
+_MAX_REASON_CODES_PER_DIAGNOSTIC = _phase10_limit(_Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY)
+_MAX_CANONICAL_JSON_BYTES = _phase10_limit(_Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES)
+_MAX_BUILDER_WORKING_BYTES = _phase10_limit(_Phase10LimitName.MAX_BUILDER_WORKING_BYTES)
+_MAX_DECLARED_INTEGER = max(_PHASE10_LIMITS.values())
+_MAX_EXPLAIN_BUILDER_ROWS = 8 + 12 + 9
+_MAX_INSPECT_BUILDER_ROWS = _MAX_STAGE_SUMMARIES + _MAX_TERMINAL_SUMMARIES
+_MAX_DIAGNOSE_BUILDER_ROWS = _MAX_DIAGNOSTICS
 
 
 class _Phase10AggregateDimension(str, Enum):
@@ -535,11 +559,13 @@ class _Phase10BuilderBudget(_PrivatePhase10InspectionValue):
     used_bytes: int = 0
 
     def __post_init__(self) -> None:
-        if type(self.used_bytes) is not int or not 0 <= self.used_bytes <= _MAX_BUILDER_WORKING_BYTES:
+        maximum = _phase10_limit(_Phase10LimitName.MAX_BUILDER_WORKING_BYTES)
+        if type(self.used_bytes) is not int or not 0 <= self.used_bytes <= maximum:
             raise TypeError("invalid private Phase 10 builder budget")
 
     def reserve(self, size: object) -> bool:
-        if type(size) is not int or size < 0 or size > _MAX_BUILDER_WORKING_BYTES - self.used_bytes:
+        maximum = _phase10_limit(_Phase10LimitName.MAX_BUILDER_WORKING_BYTES)
+        if type(size) is not int or size < 0 or size > maximum - self.used_bytes:
             return False
         self.used_bytes += size
         return True
@@ -560,6 +586,25 @@ class _Phase10InspectionRejected(_PrivatePhase10InspectionValue):
 
     def __post_init__(self) -> None:
         _require_enum(self.code, _Phase10RejectionCode)
+
+
+@final
+@dataclass(frozen=True, slots=True, repr=False)
+class _Phase10PayloadMeasurement(_PrivatePhase10InspectionValue):
+    top_level_fields: int
+    provenance_fields: int
+    json_nesting_depth: int
+    longest_string_utf8_bytes: int
+
+    def __post_init__(self) -> None:
+        values = (
+            self.top_level_fields,
+            self.provenance_fields,
+            self.json_nesting_depth,
+            self.longest_string_utf8_bytes,
+        )
+        if not all(type(value) is int and value >= 0 for value in values):
+            raise TypeError("invalid private Phase 10 payload measurement")
 
 
 @final
@@ -732,7 +777,7 @@ class _Phase10CanonicalEncoding(_PrivatePhase10InspectionValue):
         if (
             type(self.value) is not bytes
             or self._proof is not _ENCODING_SEAL
-            or len(self.value) > _MAX_CANONICAL_JSON_BYTES
+            or len(self.value) > _phase10_limit(_Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES)
             or self.value.endswith(b"\n")
         ):
             raise TypeError("invalid private Phase 10 canonical encoding")
@@ -820,6 +865,8 @@ def _explain_phase10(
     if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.EXPLAIN):
         return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
     try:
+        if not _valid_explain_subject(subject):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
         if _phase10_builder_budget(_MAX_EXPLAIN_BUILDER_ROWS) is None:
             return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         details = _phase10_explain_details(subject)
@@ -852,10 +899,10 @@ def _inspect_phase10(
     if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.INSPECT):
         return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
     try:
-        if _phase10_builder_budget(_MAX_INSPECT_BUILDER_ROWS) is None:
-            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         if not _valid_owner_capture(subject):
             return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+        if _phase10_builder_budget(_MAX_INSPECT_BUILDER_ROWS) is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         capture = cast(_Phase10OwnerCapture, subject)
         return _Phase10InspectView(
             _phase10_provenance(
@@ -879,10 +926,10 @@ def _diagnose_phase10(
     if not _consume_phase10_inspection_grant(grant, owner, subject, _Phase10Operation.DIAGNOSE):
         return _Phase10InspectionRejected(_Phase10RejectionCode.DENIED)
     try:
-        if _phase10_builder_budget(_MAX_DIAGNOSE_BUILDER_ROWS) is None:
-            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
         admission = _phase10_admission_diagnostic(subject)
         if admission is not None:
+            if _phase10_builder_budget(_MAX_DIAGNOSE_BUILDER_ROWS) is None:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
             profile, diagnostic = admission
             return _Phase10DiagnoseView(
                 _phase10_provenance(
@@ -894,21 +941,23 @@ def _diagnose_phase10(
                 ),
                 (diagnostic,),
             )
-        if _valid_owner_capture(subject):
-            capture = cast(_Phase10OwnerCapture, subject)
-            if not capture.diagnostics:
-                return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
-            return _Phase10DiagnoseView(
-                _phase10_provenance(
-                    _Phase10ViewKind.DIAGNOSE,
-                    capture.subject_kind,
-                    capture.semantic_profile_version,
-                    capture.capture_boundary,
-                    capture.capture_lifecycle_state,
-                ),
-                capture.diagnostics,
-            )
-        return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+        if not _valid_owner_capture(subject):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.SUBJECT_INVALID)
+        capture = cast(_Phase10OwnerCapture, subject)
+        if not capture.diagnostics:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.STATE_UNAVAILABLE)
+        if _phase10_builder_budget(_MAX_DIAGNOSE_BUILDER_ROWS) is None:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        return _Phase10DiagnoseView(
+            _phase10_provenance(
+                _Phase10ViewKind.DIAGNOSE,
+                capture.subject_kind,
+                capture.semantic_profile_version,
+                capture.capture_boundary,
+                capture.capture_lifecycle_state,
+            ),
+            capture.diagnostics,
+        )
     except Exception:
         return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
 
@@ -933,21 +982,7 @@ def _phase10_provenance(
 
 
 def _phase10_declared_limits() -> tuple[_Phase10DeclaredLimit, ...]:
-    values = (
-        (_Phase10LimitName.SUBJECTS_PER_CALL, 1),
-        (_Phase10LimitName.VIEWS_PER_CALL, 1),
-        (_Phase10LimitName.MAX_STAGE_SUMMARIES, _MAX_STAGE_SUMMARIES),
-        (_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS, _MAX_TERMINAL_SUMMARIES),
-        (_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES, _MAX_DIAGNOSTICS),
-        (_Phase10LimitName.MAX_REASON_CODES_PER_DIAGNOSTIC_ENTRY, _MAX_REASON_CODES_PER_DIAGNOSTIC),
-        (_Phase10LimitName.MAX_PROVENANCE_FIELDS, 8),
-        (_Phase10LimitName.MAX_TOP_LEVEL_FIELDS, 12),
-        (_Phase10LimitName.MAX_JSON_NESTING_DEPTH, 5),
-        (_Phase10LimitName.MAX_ALLOWLISTED_STRING_UTF8_BYTES, 96),
-        (_Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES, _MAX_CANONICAL_JSON_BYTES),
-        (_Phase10LimitName.MAX_BUILDER_WORKING_BYTES, _MAX_BUILDER_WORKING_BYTES),
-    )
-    return tuple(_Phase10DeclaredLimit(name, value) for name, value in values)
+    return tuple(_Phase10DeclaredLimit(name, value) for name, value in _PHASE10_LIMITS.items())
 
 
 def _phase10_count_bucket(value: object) -> _Phase10CountBucket | None:
@@ -1007,6 +1042,19 @@ def _phase10_new_builder_budget() -> _Phase10BuilderBudget | None:
 
 def _phase10_reserve_builder_row(budget: object) -> bool:
     return type(budget) is _Phase10BuilderBudget and budget.reserve(_BUILDER_ROW_BYTES)
+
+
+def _valid_explain_subject(subject: object) -> bool:
+    if _phase10_admission_reason(subject) is not None:
+        return True
+    validators = (
+        (_AccountingPlan, _is_admitted_accounting_plan),
+        (_ContextPlan, _is_admitted_context_plan),
+        (_Phase6Plan, _is_admitted_phase6_plan),
+        (_Phase7Plan, _is_admitted_phase7_plan),
+        (_Phase8Plan, _is_admitted_phase8_plan),
+    )
+    return any(type(subject) is subject_type and validator(subject) for subject_type, validator in validators)
 
 
 def _phase10_explain_details(
@@ -1283,10 +1331,10 @@ def _valid_snapshot(value: object) -> bool:
     return (
         type(value) is _Phase10Snapshot
         and type(value.stage_summaries) is tuple
-        and len(value.stage_summaries) <= _MAX_STAGE_SUMMARIES
+        and len(value.stage_summaries) <= _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES)
         and all(_valid_stage_summary(item) for item in value.stage_summaries)
         and type(value.terminal_summaries) is tuple
-        and len(value.terminal_summaries) <= _MAX_TERMINAL_SUMMARIES
+        and len(value.terminal_summaries) <= _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS)
         and all(_valid_terminal_summary(item) for item in value.terminal_summaries)
         and type(value.reconciliation_state) is _Phase10ReconciliationState
         and type(value.cleanup_state) is _Phase10CleanupState
@@ -1324,7 +1372,7 @@ def _valid_owner_capture(value: object) -> bool:
         and type(value.capture_lifecycle_state) is _Phase10LifecycleState
         and _valid_snapshot(value.snapshot)
         and type(value.diagnostics) is tuple
-        and len(value.diagnostics) <= _MAX_DIAGNOSTICS
+        and len(value.diagnostics) <= _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES)
         and all(_valid_diagnostic(item) for item in value.diagnostics)
     ):
         return False
@@ -1401,7 +1449,7 @@ def _valid_explain_view(value: object) -> bool:
         and value.provenance.view_kind is _Phase10ViewKind.EXPLAIN
         and type(value.route) is _Phase10Route
         and type(value.required_capabilities) is tuple
-        and len(value.required_capabilities) <= _MAX_STAGE_SUMMARIES
+        and len(value.required_capabilities) <= _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES)
         and all(type(item) is _Phase10Capability for item in value.required_capabilities)
         and len(value.required_capabilities) == len(set(value.required_capabilities))
         and type(value.declared_limits) is tuple
@@ -1429,7 +1477,7 @@ def _valid_diagnose_view(value: object) -> bool:
         and _valid_provenance(value.provenance)
         and value.provenance.view_kind is _Phase10ViewKind.DIAGNOSE
         and type(value.diagnostics) is tuple
-        and len(value.diagnostics) <= _MAX_DIAGNOSTICS
+        and len(value.diagnostics) <= _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES)
         and all(_valid_diagnostic(item) for item in value.diagnostics)
     )
 
@@ -1515,6 +1563,342 @@ def _diagnose_payload(value: _Phase10DiagnoseView) -> dict[str, object]:
     }
 
 
+def _payload_node_measurement(
+    value: object,
+    container_depth: int,
+) -> tuple[int, int] | _Phase10InspectionRejected:
+    if type(value) is dict:
+        if container_depth > _phase10_limit(_Phase10LimitName.MAX_JSON_NESTING_DEPTH):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        maximum_depth = container_depth
+        longest_string = 0
+        for key, item in cast(dict[object, object], value).items():
+            if type(key) is not str:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            try:
+                key_bytes = len(key.encode("utf-8"))
+            except Exception:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            if key_bytes > _phase10_limit(_Phase10LimitName.MAX_ALLOWLISTED_STRING_UTF8_BYTES):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+            longest_string = max(longest_string, key_bytes)
+            next_depth = container_depth + 1 if type(item) in {dict, list} else container_depth
+            measured = _payload_node_measurement(item, next_depth)
+            if type(measured) is _Phase10InspectionRejected:
+                return measured
+            item_depth, item_longest = measured
+            maximum_depth = max(maximum_depth, item_depth)
+            longest_string = max(longest_string, item_longest)
+        return maximum_depth, longest_string
+    if type(value) is list:
+        if container_depth > _phase10_limit(_Phase10LimitName.MAX_JSON_NESTING_DEPTH):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        maximum_depth = container_depth
+        longest_string = 0
+        for item in cast(list[object], value):
+            next_depth = container_depth + 1 if type(item) in {dict, list} else container_depth
+            measured = _payload_node_measurement(item, next_depth)
+            if type(measured) is _Phase10InspectionRejected:
+                return measured
+            item_depth, item_longest = measured
+            maximum_depth = max(maximum_depth, item_depth)
+            longest_string = max(longest_string, item_longest)
+        return maximum_depth, longest_string
+    if type(value) is str:
+        try:
+            string_bytes = len(value.encode("utf-8"))
+        except Exception:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        if string_bytes > _phase10_limit(_Phase10LimitName.MAX_ALLOWLISTED_STRING_UTF8_BYTES):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        return 0, string_bytes
+    if value is None or type(value) in {bool, int}:
+        return 0, 0
+    return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+
+def _measure_phase10_payload(
+    payload: object,
+) -> _Phase10PayloadMeasurement | _Phase10InspectionRejected:
+    try:
+        if type(payload) is not dict:
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        root = cast(dict[object, object], payload)
+        if any(type(key) is not str for key in root):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        top_level_fields = len(root)
+        if top_level_fields > _phase10_limit(_Phase10LimitName.MAX_TOP_LEVEL_FIELDS):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        provenance_fields = 0
+        if "provenance" in root:
+            provenance = root["provenance"]
+            if type(provenance) is not dict:
+                return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+            provenance_fields = len(provenance)
+            if provenance_fields > _phase10_limit(_Phase10LimitName.MAX_PROVENANCE_FIELDS):
+                return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
+        measured = _payload_node_measurement(payload, 1)
+        if type(measured) is _Phase10InspectionRejected:
+            return measured
+        nesting_depth, longest_string = measured
+        return _Phase10PayloadMeasurement(
+            top_level_fields,
+            provenance_fields,
+            nesting_depth,
+            longest_string,
+        )
+    except Exception:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+
+def _payload_has_exact_keys(value: object, keys: frozenset[str]) -> bool:
+    return type(value) is dict and frozenset(cast(dict[str, object], value)) == keys
+
+
+def _payload_enum_string(value: object, enum_type: type[Enum]) -> bool:
+    return type(value) is str and value in {item.value for item in enum_type}
+
+
+def _valid_provenance_payload(value: object) -> bool:
+    keys = frozenset(
+        {
+            "inspection_schema_version",
+            "inspection_contract_version",
+            "view_kind",
+            "subject_kind",
+            "semantic_profile_version",
+            "implementation_profile_version",
+            "capture_boundary",
+            "capture_lifecycle_state",
+        }
+    )
+    if not _payload_has_exact_keys(value, keys):
+        return False
+    payload = cast(dict[str, object], value)
+    if not (
+        payload["inspection_schema_version"] == _Phase10InspectionSchemaVersion.V1.value
+        and payload["inspection_contract_version"] == _Phase10ContractVersion.V1.value
+        and _payload_enum_string(payload["view_kind"], _Phase10ViewKind)
+        and _payload_enum_string(payload["subject_kind"], _Phase10SubjectKind)
+        and _payload_enum_string(payload["semantic_profile_version"], _Phase10SemanticProfile)
+        and payload["implementation_profile_version"] == _Phase10ImplementationProfile.PANDAS_RUNTIME_V1.value
+        and _payload_enum_string(payload["capture_boundary"], _Phase10CaptureBoundary)
+        and _payload_enum_string(payload["capture_lifecycle_state"], _Phase10LifecycleState)
+    ):
+        return False
+    return _valid_view_subject(
+        _Phase10ViewKind(cast(str, payload["view_kind"])),
+        _Phase10SubjectKind(cast(str, payload["subject_kind"])),
+    )
+
+
+def _valid_payload_provenance_copies(payload: dict[str, object]) -> bool:
+    provenance = payload.get("provenance")
+    if not _valid_provenance_payload(provenance):
+        return False
+    fields = cast(dict[str, object], provenance)
+    return (
+        payload.get("inspection_schema_version") == fields["inspection_schema_version"]
+        and payload.get("view_kind") == fields["view_kind"]
+        and payload.get("subject_kind") == fields["subject_kind"]
+    )
+
+
+def _valid_payload_enum_list(value: object, enum_type: type[Enum], maximum: int) -> bool:
+    if type(value) is not list or len(value) > maximum:
+        return False
+    items = cast(list[object], value)
+    return all(_payload_enum_string(item, enum_type) for item in items) and len(items) == len(set(items))
+
+
+def _valid_declared_limits_payload(value: object) -> bool:
+    if type(value) is not list:
+        return False
+    items = cast(list[object], value)
+    if len(items) != len(_PHASE10_LIMITS):
+        return False
+    for item, (expected_name, expected_limit) in zip(items, _PHASE10_LIMITS.items(), strict=True):
+        if not _payload_has_exact_keys(item, frozenset({"name", "value"})):
+            return False
+        record = cast(dict[str, object], item)
+        name = record["name"]
+        limit = record["value"]
+        if type(name) is not str or name != expected_name.value or type(limit) is not int or limit != expected_limit:
+            return False
+    return True
+
+
+def _valid_aggregate_payloads(value: object) -> bool:
+    if type(value) is not list:
+        return False
+    dimensions: list[str] = []
+    for item in cast(list[object], value):
+        if not _payload_has_exact_keys(item, frozenset({"dimension", "count_bucket"})):
+            return False
+        record = cast(dict[str, object], item)
+        if not (
+            _payload_enum_string(record["dimension"], _Phase10AggregateDimension)
+            and _payload_enum_string(record["count_bucket"], _Phase10CountBucket)
+        ):
+            return False
+        dimensions.append(cast(str, record["dimension"]))
+    return len(dimensions) == len(set(dimensions))
+
+
+def _valid_stage_payloads(value: object) -> bool:
+    if type(value) is not list or len(value) > _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES):
+        return False
+    stages: list[str] = []
+    for item in cast(list[object], value):
+        if not _payload_has_exact_keys(item, frozenset({"stage", "lifecycle_state", "task_count_bucket"})):
+            return False
+        record = cast(dict[str, object], item)
+        if not (
+            _payload_enum_string(record["stage"], _Phase10Stage)
+            and _payload_enum_string(record["lifecycle_state"], _Phase10LifecycleState)
+            and _payload_enum_string(record["task_count_bucket"], _Phase10CountBucket)
+        ):
+            return False
+        stages.append(cast(str, record["stage"]))
+    return len(stages) == len(set(stages))
+
+
+def _valid_terminal_payloads(value: object) -> bool:
+    if type(value) is not list or len(value) > _phase10_limit(_Phase10LimitName.MAX_TERMINAL_SUMMARY_ROWS):
+        return False
+    rows: list[tuple[str, str]] = []
+    for item in cast(list[object], value):
+        if not _payload_has_exact_keys(item, frozenset({"stage", "terminal_state", "impact_count_bucket"})):
+            return False
+        record = cast(dict[str, object], item)
+        if not (
+            _payload_enum_string(record["stage"], _Phase10Stage)
+            and _payload_enum_string(record["terminal_state"], _Phase10TerminalState)
+            and _payload_enum_string(record["impact_count_bucket"], _Phase10CountBucket)
+        ):
+            return False
+        rows.append((cast(str, record["stage"]), cast(str, record["terminal_state"])))
+    return len(rows) == len(set(rows))
+
+
+def _valid_diagnostic_payloads(value: object) -> bool:
+    if type(value) is not list or len(value) > _phase10_limit(_Phase10LimitName.MAX_DIAGNOSTIC_ENTRIES):
+        return False
+    keys = frozenset(
+        {
+            "boundary",
+            "stage",
+            "terminal_state",
+            "reason_category",
+            "impact_count_bucket",
+            "reconciliation_state",
+            "cleanup_state",
+        }
+    )
+    for item in cast(list[object], value):
+        if not _payload_has_exact_keys(item, keys):
+            return False
+        record = cast(dict[str, object], item)
+        if not (
+            _payload_enum_string(record["boundary"], _Phase10CaptureBoundary)
+            and _payload_enum_string(record["stage"], _Phase10Stage)
+            and _payload_enum_string(record["terminal_state"], _Phase10TerminalState)
+            and _payload_enum_string(record["reason_category"], _Phase10ReasonCategory)
+            and _payload_enum_string(record["impact_count_bucket"], _Phase10CountBucket)
+            and _payload_enum_string(record["reconciliation_state"], _Phase10ReconciliationState)
+            and _payload_enum_string(record["cleanup_state"], _Phase10CleanupState)
+        ):
+            return False
+    return True
+
+
+def _valid_explain_payload(value: object) -> bool:
+    keys = frozenset(
+        {
+            "inspection_schema_version",
+            "view_kind",
+            "subject_kind",
+            "provenance",
+            "route",
+            "required_capabilities",
+            "declared_limits",
+            "relationship_buckets",
+            "rejection_category",
+        }
+    )
+    if not _payload_has_exact_keys(value, keys):
+        return False
+    payload = cast(dict[str, object], value)
+    rejection = payload["rejection_category"]
+    return (
+        payload["view_kind"] == _Phase10ViewKind.EXPLAIN.value
+        and _valid_payload_provenance_copies(payload)
+        and _payload_enum_string(payload["route"], _Phase10Route)
+        and _valid_payload_enum_list(
+            payload["required_capabilities"],
+            _Phase10Capability,
+            _phase10_limit(_Phase10LimitName.MAX_STAGE_SUMMARIES),
+        )
+        and _valid_declared_limits_payload(payload["declared_limits"])
+        and _valid_aggregate_payloads(payload["relationship_buckets"])
+        and (rejection is None or _payload_enum_string(rejection, _Phase10ReasonCategory))
+    )
+
+
+def _valid_inspect_payload(value: object) -> bool:
+    keys = frozenset(
+        {
+            "inspection_schema_version",
+            "view_kind",
+            "subject_kind",
+            "provenance",
+            "stage_summaries",
+            "terminal_summaries",
+            "reconciliation_state",
+            "cleanup_state",
+            "release_state",
+        }
+    )
+    if not _payload_has_exact_keys(value, keys):
+        return False
+    payload = cast(dict[str, object], value)
+    return (
+        payload["view_kind"] == _Phase10ViewKind.INSPECT.value
+        and _valid_payload_provenance_copies(payload)
+        and _valid_stage_payloads(payload["stage_summaries"])
+        and _valid_terminal_payloads(payload["terminal_summaries"])
+        and _payload_enum_string(payload["reconciliation_state"], _Phase10ReconciliationState)
+        and _payload_enum_string(payload["cleanup_state"], _Phase10CleanupState)
+        and _payload_enum_string(payload["release_state"], _Phase10ReleaseState)
+    )
+
+
+def _valid_diagnose_payload(value: object) -> bool:
+    keys = frozenset({"inspection_schema_version", "view_kind", "subject_kind", "provenance", "diagnostics"})
+    if not _payload_has_exact_keys(value, keys):
+        return False
+    payload = cast(dict[str, object], value)
+    return (
+        payload["view_kind"] == _Phase10ViewKind.DIAGNOSE.value
+        and _valid_payload_provenance_copies(payload)
+        and _valid_diagnostic_payloads(payload["diagnostics"])
+    )
+
+
+def _validate_phase10_payload(
+    payload: object,
+) -> _Phase10PayloadMeasurement | _Phase10InspectionRejected:
+    measured = _measure_phase10_payload(payload)
+    if type(measured) is _Phase10InspectionRejected:
+        return measured
+    try:
+        if not (_valid_explain_payload(payload) or _valid_inspect_payload(payload) or _valid_diagnose_payload(payload)):
+            return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+        return measured
+    except Exception:
+        return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+
+
 def _encode_phase10_view(
     value: object,
 ) -> _Phase10CanonicalEncoding | _Phase10InspectionRejected:
@@ -1524,6 +1908,9 @@ def _encode_phase10_view(
         return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
     if payload is None:
         return _Phase10InspectionRejected(_Phase10RejectionCode.REDACTION_FAILED)
+    validation = _validate_phase10_payload(payload)
+    if type(validation) is _Phase10InspectionRejected:
+        return validation
     try:
         encoded = json.dumps(
             payload,
@@ -1534,7 +1921,7 @@ def _encode_phase10_view(
         ).encode("utf-8")
     except Exception:
         return _Phase10InspectionRejected(_Phase10RejectionCode.ENCODING_FAILED)
-    if len(encoded) > _MAX_CANONICAL_JSON_BYTES:
+    if len(encoded) > _phase10_limit(_Phase10LimitName.MAX_CANONICAL_JSON_UTF8_BYTES):
         return _Phase10InspectionRejected(_Phase10RejectionCode.LIMIT_EXCEEDED)
     return _Phase10CanonicalEncoding(encoded, _ENCODING_SEAL)
 
