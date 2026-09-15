@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from anonymizer import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
@@ -19,7 +21,7 @@ def test_runtime_rejects_zero_width_match_that_bypasses_config_validation() -> N
     rule = ResolvedRegexRule(
         rule_id="test:zero-width",
         label="case_id",
-        pattern=r"(?=Z{20})",
+        pattern=r"CASE-[0-9]+|(?=Z{20})",
         source="regex_user",
     )
 
@@ -221,6 +223,46 @@ def test_custom_rule_uses_callable_validator_and_defaults_to_llm_validation() ->
 
     assert [entity.value for entity in result.llm_entities] == ["CASE-42"]
     assert result.accepted_entities == []
+
+
+def test_distinct_validator_closures_from_same_factory_do_not_collide() -> None:
+    def validator_for(expected: str) -> Callable[[RegexCandidate], bool]:
+        def validate(candidate: RegexCandidate) -> bool:
+            return candidate.value == expected
+
+        return validate
+
+    rules = resolve_regex_rules(
+        labels=["case_id", "ticket_id"],
+        builtin_regexes=False,
+        rules=[
+            RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=validator_for("CASE-42")),
+            RegexRule(label="ticket_id", pattern=r"TKT-[0-9]+", validator=validator_for("TKT-7")),
+        ],
+    )
+
+    assert rules[0].validator_id != rules[1].validator_id
+    result = detect_regex_entities("CASE-41 CASE-42 TKT-7 TKT-8", rules=rules)
+    assert [(entity.value, entity.label) for entity in result.llm_entities] == [
+        ("CASE-42", "case_id"),
+        ("TKT-7", "ticket_id"),
+    ]
+
+
+def test_reusing_same_validator_callable_reuses_local_identity() -> None:
+    def validate(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    rules = resolve_regex_rules(
+        labels=["case_id", "ticket_id"],
+        builtin_regexes=False,
+        rules=[
+            RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=validate),
+            RegexRule(label="ticket_id", pattern=r"TKT-[0-9]+", validator=validate),
+        ],
+    )
+
+    assert rules[0].validator_id == rules[1].validator_id
 
 
 def test_custom_rule_can_bypass_llm_validation() -> None:

@@ -245,10 +245,7 @@ def _register_or_resolve_validator(
         return validator
     module = getattr(validator, "__module__", "")
     qualified_name = getattr(validator, "__qualname__", "")
-    validator_id = f"{module}:{qualified_name}"
-    existing = _LOCAL_VALIDATORS.get(validator_id)
-    if existing is not None and existing is not validator:
-        raise ValueError(f"Duplicate regex validator registration for {validator_id!r}.")
+    validator_id = f"local:{module}:{qualified_name}:{id(validator):x}"
     _LOCAL_VALIDATORS[validator_id] = validator
     return validator_id
 
