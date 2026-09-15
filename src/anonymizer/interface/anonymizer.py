@@ -98,6 +98,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer")
 
+_LOCAL_GLINER2_MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
+
 
 def _has_entities_for_evaluation(raw: object) -> bool:
     """Return whether a row should receive entity-dependent evaluation scores."""
@@ -848,7 +850,7 @@ class Anonymizer:
             (config for config in self._model_configs if config.alias == detector_alias),
             None,
         )
-        if detector_config is None or detector_config.provider not in {"local-gliner2", "notebook-local-gliner2"}:
+        if detector_config is None or detector_config.model != _LOCAL_GLINER2_MODEL_ID:
             return
         provider = next(
             (provider for provider in self._resolved_providers if provider.name == detector_config.provider),

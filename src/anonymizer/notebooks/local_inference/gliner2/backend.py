@@ -82,11 +82,12 @@ def _prepare_transformers_v4_snapshot(snapshot: Path, *, cache_root: Path | None
 
 def _link_or_copy(source: str, destination: str) -> str:
     """Hard-link cached model artifacts when possible, copying as a fallback."""
+    resolved_source = str(Path(source).resolve(strict=True))
     try:
-        os.link(source, destination)
+        os.link(resolved_source, destination)
         return destination
     except OSError:
-        return shutil.copy2(source, destination)
+        return shutil.copy2(resolved_source, destination)
 
 
 def overlap_policy(flat_ner: bool) -> str:
@@ -201,11 +202,11 @@ def _resolve_document_overlaps(
         ),
     )
     distinct: list[tuple[int, dict[str, Any]]] = []
-    seen_boundaries: set[tuple[int, int]] = set()
+    seen_entities: set[tuple[int, int, str]] = set()
     for row in ranked:
-        boundaries = (int(row[1]["start"]), int(row[1]["end"]))
-        if boundaries not in seen_boundaries:
-            seen_boundaries.add(boundaries)
+        entity_key = (int(row[1]["start"]), int(row[1]["end"]), str(row[1]["label"]))
+        if entity_key not in seen_entities:
+            seen_entities.add(entity_key)
             distinct.append(row)
 
     if policy == "longest":
@@ -220,7 +221,15 @@ def _resolve_document_overlaps(
             )
         ]
     elif policy == "disallow":
-        selected = _maximum_score_non_overlapping(distinct)
+        representatives: dict[tuple[int, int], tuple[int, dict[str, Any]]] = {}
+        for row in distinct:
+            boundaries = (int(row[1]["start"]), int(row[1]["end"]))
+            representatives.setdefault(boundaries, row)
+        selected_boundaries = {
+            (int(entity["start"]), int(entity["end"]))
+            for _, entity in _maximum_score_non_overlapping(list(representatives.values()))
+        }
+        selected = [row for row in distinct if (int(row[1]["start"]), int(row[1]["end"])) in selected_boundaries]
     else:  # pragma: no cover - overlap_policy() has a closed result set
         raise ValueError(f"Unsupported overlap policy: {policy!r}")
 
@@ -248,12 +257,32 @@ def _maximum_score_non_overlapping(
         bisect.bisect_right(ends, int(entity["start"]), 0, index) - 1 for index, (_, entity) in enumerate(by_end)
     ]
     best: list[tuple[float, tuple[int, ...]]] = [(0.0, ())]
+
+    def rank_selection(selection: tuple[int, ...]) -> tuple[tuple[float, int, int, int], ...]:
+        return tuple(
+            sorted(
+                (
+                    -float(by_end[index][1]["score"]),
+                    int(by_end[index][1]["start"]),
+                    int(by_end[index][1]["end"]),
+                    by_end[index][0],
+                )
+                for index in selection
+            )
+        )
+
     for index, (_, entity) in enumerate(by_end):
         previous_score, previous_selection = best[predecessors[index] + 1]
         with_entity = (previous_score + float(entity["score"]), previous_selection + (index,))
         without_entity = best[index]
-        if with_entity[0] > without_entity[0] or (
-            with_entity[0] == without_entity[0] and len(with_entity[1]) > len(without_entity[1])
+        if (
+            with_entity[0] > without_entity[0]
+            or (with_entity[0] == without_entity[0] and len(with_entity[1]) > len(without_entity[1]))
+            or (
+                with_entity[0] == without_entity[0]
+                and len(with_entity[1]) == len(without_entity[1])
+                and rank_selection(with_entity[1]) < rank_selection(without_entity[1])
+            )
         ):
             best.append(with_entity)
         else:

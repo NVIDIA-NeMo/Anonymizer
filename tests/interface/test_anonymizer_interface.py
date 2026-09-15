@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pandas as pd
 import pytest
-from data_designer.config.models import ModelConfig
+from data_designer.config.models import ModelConfig, ModelProvider
 
 from anonymizer import RunConfig
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
@@ -314,6 +314,36 @@ def test_anonymizer_skips_local_detector_preflight_with_supplied_data_designer()
         anonymizer._validate_local_detector_endpoint()
 
     mock_get.assert_not_called()
+
+
+def test_anonymizer_preflights_gliner2_detector_with_custom_provider_name() -> None:
+    anonymizer = Anonymizer()
+    detector_alias = anonymizer._selected_models.detection.entity_detector
+    anonymizer._model_configs = [
+        config.model_copy(update={"provider": "my-gliner2-service"}) if config.alias == detector_alias else config
+        for config in anonymizer._model_configs
+    ]
+    anonymizer._resolved_providers = [
+        ModelProvider(
+            name="my-gliner2-service",
+            endpoint="http://gliner2.example.test/v1",
+            provider_type="openai",
+            api_key="EMPTY",
+        )
+    ]
+    response = Mock()
+    response.json.return_value = {
+        "data": [{"id": "fastino/gliner2-privacy-filter-PII-multi"}],
+    }
+
+    with patch("anonymizer.interface.anonymizer.httpx.get", return_value=response) as mock_get:
+        anonymizer._validate_local_detector_endpoint()
+
+    mock_get.assert_called_once_with(
+        "http://gliner2.example.test/v1/models",
+        headers={"Authorization": "Bearer EMPTY"},
+        timeout=2.0,
+    )
 
 
 def test_run_exposes_trace_dataframe_and_filters_internal_columns(

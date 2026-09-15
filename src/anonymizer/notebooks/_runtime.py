@@ -124,6 +124,10 @@ def _ensure_runtime(requested_device: str) -> _LocalRuntime:
         runtime = _start_runtime(requested_device)
         try:
             _wait_until_ready(runtime)
+        except (KeyboardInterrupt, SystemExit):
+            _stop_failed_runtime(runtime)
+            _restore_token_environment()
+            raise
         except Exception as exc:
             last_error = exc
             _stop_failed_runtime(runtime)

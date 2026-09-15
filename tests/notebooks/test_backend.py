@@ -61,6 +61,23 @@ def test_pinned_snapshot_adapts_v5_tokenizer_field_without_changing_source(tmp_p
     assert json.loads((source / "tokenizer_config.json").read_text()) == original
 
 
+def test_pinned_snapshot_dereferences_hugging_face_cache_symlinks(tmp_path: Path) -> None:
+    blobs = tmp_path / "blobs"
+    blobs.mkdir()
+    (blobs / "tokenizer").write_text(json.dumps({"tokenizer_class": "DebertaV2Tokenizer"}))
+    (blobs / "weights").write_bytes(b"weights")
+    source = tmp_path / "snapshots" / "revision"
+    source.mkdir(parents=True)
+    (source / "tokenizer_config.json").symlink_to(Path("../../blobs/tokenizer"))
+    (source / "model.safetensors").symlink_to(Path("../../blobs/weights"))
+
+    prepared = _prepare_transformers_v4_snapshot(source, cache_root=tmp_path / "cache")
+
+    assert not (prepared / "tokenizer_config.json").is_symlink()
+    assert not (prepared / "model.safetensors").is_symlink()
+    assert (prepared / "model.safetensors").read_bytes() == b"weights"
+
+
 def test_overlap_policy_preserves_existing_flat_flag_contract() -> None:
     assert overlap_policy(True) == "disallow"
     assert overlap_policy(False) == "longest"
@@ -90,6 +107,21 @@ def test_disallow_overlap_contract_uses_maximum_total_score() -> None:
     left = _entity("left", 0, 5, 0.6)
     right = _entity("right", 5, 10, 0.6)
     assert _resolve_document_overlaps([outer, left, right], "disallow") == [left, right]
+
+
+@pytest.mark.parametrize("policy", ["longest", "disallow"])
+def test_overlap_contract_retains_different_labels_for_the_same_span(policy: str) -> None:
+    name = _entity("Alice", 0, 5, 0.9)
+    identifier = {**_entity("Alice", 0, 5, 0.8), "label": "identifier"}
+
+    assert _resolve_document_overlaps([name, identifier], policy) == [identifier, name]
+
+
+def test_disallow_equal_score_tie_uses_confidence_start_end_ranking() -> None:
+    outer = _entity("outer", 2, 10, 0.8)
+    inner = _entity("inner", 5, 8, 0.8)
+
+    assert _resolve_document_overlaps([inner, outer], "disallow") == [outer]
 
 
 def test_detect_entities_remaps_and_deduplicates_overlapping_character_chunks() -> None:

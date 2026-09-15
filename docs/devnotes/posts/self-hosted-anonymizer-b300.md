@@ -133,15 +133,18 @@ The `CUDA_ROOT` path above is specific to the Brev B300 SXM6 environment used fo
 
 `--gpu-memory-utilization 0.45` was a conservative co-location setting, not a compute throttle. In vLLM it controls the GPU memory budget for model weights and KV cache. Qwen could use more memory if the run needed a larger KV cache, but this setting left headroom for the GLiNER server on the same GPU and still completed the measured batches with zero failures.
 
-GLiNER ran on the same machine. The command uses `tools/serve_gliner.py`, the reference GLiNER server from an Anonymizer source checkout; see [Self-hosting GLiNER](../../concepts/self-hosting-gliner.md) for the server contract and setup details.
+GLiNER ran on the same machine. This archived run used the legacy `nvidia/gliner-pii` server from Anonymizer commit `a2cc91847d2674649f1a30a518851e25773010fa`. Download that pinned implementation before reproducing the run; the current `tools/serve_gliner.py` serves GLiNER2 and intentionally has a different model and runtime contract.
 
 ```bash
 mkdir -p logs
+curl -L \
+  https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/a2cc91847d2674649f1a30a518851e25773010fa/tools/serve_gliner.py \
+  -o /tmp/serve_gliner_b300.py
 
 DEVICE=cuda \
 GLINER_MAX_BATCH_REQUESTS=64 \
 GLINER_BATCH_WAIT_MS=10 \
-nohup .venv/bin/python tools/serve_gliner.py --port 9000 \
+nohup .venv/bin/python /tmp/serve_gliner_b300.py --port 9000 \
   > logs/gliner.log 2>&1 &
 ```
 
