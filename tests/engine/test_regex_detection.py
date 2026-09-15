@@ -270,11 +270,33 @@ def test_reusing_same_validator_callable_reuses_local_identity() -> None:
     assert rules[0].validator_id == rules[1].validator_id
 
 
-def test_discarded_validator_closure_is_removed_from_local_registry() -> None:
+def test_non_weak_referenceable_callable_is_owned_by_resolved_rule() -> None:
+    class Validator:
+        __slots__ = ()
+
+        def __call__(self, candidate: RegexCandidate) -> bool:
+            return candidate.value == "CASE-42"
+
+    rules = resolve_regex_rules(
+        labels=["case_id"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=Validator())],
+    )
+
+    result = detect_regex_entities("CASE-41 CASE-42", rules=rules)
+    assert [entity.value for entity in result.llm_entities] == ["CASE-42"]
+
+
+def test_resolved_rule_owns_validator_until_deferred_execution_finishes() -> None:
     class CapturedState:
         expected = "CASE-42"
 
-    def register_temporary_validator() -> tuple[ref[CapturedState], ref[Callable[..., bool]], str]:
+    def resolve_temporary_validator() -> tuple[
+        ref[CapturedState],
+        ref[Callable[..., bool]],
+        str,
+        list[ResolvedRegexRule],
+    ]:
         state = CapturedState()
 
         def validate(candidate: RegexCandidate) -> bool:
@@ -288,9 +310,19 @@ def test_discarded_validator_closure_is_removed_from_local_registry() -> None:
         validator_id = rules[0].validator_id
         assert validator_id is not None
         assert validator_id in regex_detection._LOCAL_VALIDATORS
-        return ref(state), ref(validate), validator_id
+        return ref(state), ref(validate), validator_id, rules
 
-    state_ref, validator_ref, validator_id = register_temporary_validator()
+    state_ref, validator_ref, validator_id, rules = resolve_temporary_validator()
+    gc.collect()
+
+    assert state_ref() is not None
+    assert validator_ref() is not None
+    assert validator_id in regex_detection._LOCAL_VALIDATORS
+    assert "local_validator" not in rules[0].model_dump(mode="json")
+    result = detect_regex_entities("CASE-42", rules=rules)
+    assert [entity.value for entity in result.llm_entities] == ["CASE-42"]
+
+    del rules
     gc.collect()
 
     assert state_ref() is None
