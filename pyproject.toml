@@ -17,6 +17,17 @@ dependencies = [
     "tiktoken>=0.9.0",
 ]
 
+[project.optional-dependencies]
+notebooks = [
+    "datasets>=4.0.0,<6",
+    "gliner2==2.0.0",
+    "ipykernel>=6.29.0,<8",
+    "jupyter>=1.0.0,<2",
+    "jupytext>=1.16.0,<2",
+    "pip>=25,<27",
+    "pillow>=12.0.0,<13",
+]
+
 [project.scripts]
 anonymizer = "anonymizer.interface.cli.main:main"
 
@@ -26,11 +37,13 @@ anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.pl
 
 [dependency-groups]
 dev = [
+    "fastapi>=0.115,<1",
     "pre-commit>=4.0.0,<5",
     "pytest>=9.0.3,<10",
     "pytest-cov>=7.0,<8",
     "ruff>=0.12.3,<1",
     "ty==0.0.69",
+    "uvicorn>=0.30,<1",
     {include-group = "measurement"},
 ]
 measurement = [
@@ -46,14 +59,6 @@ docs = [
     "mkdocs-jupyter",
     "jupytext",
 ]
-notebooks = [
-    "datasets>=4.0.0,<6",
-    "ipykernel>=6.29.0,<8",
-    "jupyter>=1.0.0,<2",
-    "jupytext>=1.16.0,<2",
-    "pillow>=12.0.0,<13",
-]
-
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"

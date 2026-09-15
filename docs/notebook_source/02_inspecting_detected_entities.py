@@ -44,33 +44,45 @@
 # %% [markdown]
 # ## ⚙️ Setup
 #
-# - Check if your `NVIDIA_API_KEY` from [build.nvidia.com](https://build.nvidia.com) is registered for model access.
-#   - The default `build.nvidia.com` (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
-#   - Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint for production data and usage.
-# - Import the core classes -- this notebook uses `Annotate` to keep original values visible.
-# - `Anonymizer()` initializes with the default model provider -- no extra config needed.
+# - Install the notebook extra, then provide credentials for the configured external LLM providers.
+# - `create_anonymizer()` starts pinned GLiNER2 locally and selects CUDA, MPS, or CPU automatically.
+# - The default external LLM models currently use [NVIDIA Build](https://build.nvidia.com); its terms and privacy practices apply.
+#
+# > **Data boundary:** GLiNER2 detection runs locally in this notebook environment. LLM-assisted validation,
+# > augmentation, replacement, rewriting, repair, and evaluation use configured external hosts and may send
+# > them original or tagged input text. Do not treat this configuration as an all-local privacy boundary.
 # - `configure_logging(LoggingConfig.default())` keeps logs at INFO. Switch to `LoggingConfig.debug()` when troubleshooting.
 
 # %%
 import getpass
 import os
+import subprocess
+import sys
 from collections import Counter
 
-import pandas as pd
-
-if not os.getenv("NVIDIA_API_KEY"):
-    key = getpass.getpass("Enter NVIDIA_API_KEY from build.nvidia.com: ").strip()
-    if not key:
-        raise RuntimeError("NVIDIA_API_KEY is required to run these notebooks.")
-    os.environ["NVIDIA_API_KEY"] = key
+package_spec = os.getenv("ANONYMIZER_NOTEBOOK_PACKAGE", "nemo-anonymizer[notebooks]")
+subprocess.check_call([sys.executable, "-m", "pip", "install", package_spec])
 
 # %%
-from anonymizer import Annotate, Anonymizer, AnonymizerConfig, AnonymizerInput, LoggingConfig, configure_logging
+import pandas as pd
+
+# %%
+from anonymizer.notebooks._model_config import required_api_key_environment_variables
+
+for variable in required_api_key_environment_variables():
+    key = getpass.getpass(f"Enter {variable}: ").strip()
+    if not key:
+        raise RuntimeError(f"{variable} is required by the configured external model providers.")
+    os.environ[variable] = key
+
+# %%
+from anonymizer import Annotate, AnonymizerConfig, AnonymizerInput, LoggingConfig, configure_logging
+from anonymizer.notebooks import create_anonymizer, stop_local_runtime
 
 configure_logging(LoggingConfig.default())
 
 # %%
-anonymizer = Anonymizer()
+anonymizer = create_anonymizer()
 
 # %% [markdown]
 # ## 👁️ Preview
@@ -214,3 +226,6 @@ evaluated.display_record(0)
 #   compare Redact, Annotate, Hash, and Substitute side-by-side.
 # - **[✏️ Rewriting Biographies](../04_rewriting_biographies/)** --
 #   generate privacy-safe paraphrases instead of token-level replacements.
+
+# %%
+stop_local_runtime()

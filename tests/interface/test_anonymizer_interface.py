@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import httpx
 import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
@@ -125,6 +126,20 @@ def test_run_disables_latent_detection_without_rewrite(
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is False
 
 
+def test_default_detector_reports_actionable_error_when_local_endpoint_is_unreachable(
+    stub_input: AnonymizerInput,
+) -> None:
+    anonymizer = Anonymizer()
+    with (
+        patch(
+            "anonymizer.interface.anonymizer.httpx.get",
+            side_effect=httpx.ConnectError("connection refused"),
+        ),
+        pytest.raises(InvalidConfigError, match="create_anonymizer"),
+    ):
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+
 def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(detect={"entity_labels": ["server_name"]}, replace=Redact())
     anonymizer, detection_wf, _, _ = _make_anonymizer()
@@ -178,8 +193,11 @@ def test_anonymizer_default_passes_bundled_providers_to_data_designer() -> None:
 def test_anonymizer_custom_model_providers_override_bundled_defaults() -> None:
     from anonymizer import ModelProvider
 
-    # Bundled model configs reference provider name "nvidia"; override the endpoint, not the name.
-    custom_providers = [ModelProvider(name="nvidia", endpoint="https://example.com/v1")]
+    # Custom providers replace the full list, so retain the local detector while overriding NVIDIA.
+    custom_providers = [
+        ModelProvider(name="local-gliner2", endpoint="http://127.0.0.1:8001/v1"),
+        ModelProvider(name="nvidia", endpoint="https://example.com/v1"),
+    ]
     with patch("anonymizer.interface.anonymizer.DataDesigner") as mock_data_designer:
         Anonymizer(
             model_providers=custom_providers,
