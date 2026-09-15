@@ -13,18 +13,11 @@ in-kernel development server.
 
 ## Server contract
 
-Before sending detector work, Anonymizer calls `GET /v1/models` with a two-second timeout. A compatible
-service must return an OpenAI-style model list containing the exact configured detector model ID:
-
-```json
-{
-  "object": "list",
-  "data": [{"id": "fastino/gliner2-privacy-filter-PII-multi", "object": "model"}]
-}
-```
-
-This readiness and model-discovery check prevents a reachable server that ignores the requested
-model from silently running a different detector.
+Anonymizer does not perform a separate model-discovery probe for externally managed providers. The
+configured service is responsible for serving the requested detector model; connection and response
+errors surface through the normal Data Designer model request. The notebook-managed runtime is
+different: its owner uses authenticated `GET /v1/models` readiness checks to verify the exact model
+ID and pinned revision before returning an `Anonymizer`.
 
 The detection workflow calls `POST /v1/chat/completions` and passes detector-specific fields alongside
 the normal OpenAI-compatible request:
@@ -56,10 +49,10 @@ The response must use the chat-completion shape. `message.content` is a JSON str
 }
 ```
 
-A production deployment should provide this contract through a separately managed, authenticated
-service and configure its provider endpoint in `providers.yaml`. The native PyTorch server bundled
-with Anonymizer is intended only for notebooks and development. A vLLM-based production serving path
-is planned separately; this release does not depend on it.
+A production deployment should provide the chat-completion contract through a separately managed,
+authenticated service and configure its provider endpoint in `providers.yaml`. The native PyTorch
+server bundled with Anonymizer is intended only for notebooks and development. A vLLM-based
+production serving path is planned separately; this release does not depend on it.
 
 ## Local notebook runtime
 

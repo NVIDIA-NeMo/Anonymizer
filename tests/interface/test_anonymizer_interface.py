@@ -7,10 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import httpx
 import pandas as pd
 import pytest
-from data_designer.config.models import ModelConfig, ModelProvider
+from data_designer.config.models import ModelConfig
 
 from anonymizer import RunConfig
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
@@ -33,14 +32,8 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import _LOCAL_GLINER2_MODEL_ID, Anonymizer, _resolve_model_providers
+from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
-
-
-def test_local_gliner2_preflight_model_id_matches_notebook_backend() -> None:
-    from anonymizer.notebooks.local_inference.gliner2 import MODEL_ID
-
-    assert _LOCAL_GLINER2_MODEL_ID == MODEL_ID
 
 
 @pytest.fixture
@@ -130,20 +123,6 @@ def test_run_disables_latent_detection_without_rewrite(
     anonymizer.run(config=stub_anonymizer_config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is False
-
-
-def test_default_detector_reports_actionable_error_when_local_endpoint_is_unreachable(
-    stub_input: AnonymizerInput,
-) -> None:
-    anonymizer = Anonymizer()
-    with (
-        patch(
-            "anonymizer.interface.anonymizer.httpx.get",
-            side_effect=httpx.ConnectError("connection refused"),
-        ),
-        pytest.raises(InvalidConfigError, match="create_anonymizer"),
-    ):
-        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
 
 def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: AnonymizerInput) -> None:
@@ -309,48 +288,6 @@ model_configs:
         rewrite_runner=Mock(),
     )
     assert {config.provider for config in anonymizer._model_configs} == {"my-own-provider"}
-
-
-def test_anonymizer_skips_local_detector_preflight_with_supplied_data_designer() -> None:
-    from data_designer.interface.data_designer import DataDesigner
-
-    anonymizer = Anonymizer(data_designer=Mock(spec=DataDesigner))
-
-    with patch("anonymizer.interface.anonymizer.httpx.get") as mock_get:
-        anonymizer._validate_local_detector_endpoint()
-
-    mock_get.assert_not_called()
-
-
-def test_anonymizer_preflights_gliner2_detector_with_custom_provider_name() -> None:
-    anonymizer = Anonymizer()
-    detector_alias = anonymizer._selected_models.detection.entity_detector
-    anonymizer._model_configs = [
-        config.model_copy(update={"provider": "my-gliner2-service"}) if config.alias == detector_alias else config
-        for config in anonymizer._model_configs
-    ]
-    anonymizer._resolved_providers = [
-        ModelProvider(
-            name="my-gliner2-service",
-            endpoint="http://gliner2.example.test/v1",
-            provider_type="openai",
-            api_key="EMPTY",
-        )
-    ]
-    response = Mock()
-    response.json.return_value = {
-        "data": [{"id": "fastino/gliner2-privacy-filter-PII-multi"}],
-    }
-
-    with patch("anonymizer.interface.anonymizer.httpx.get", return_value=response) as mock_get:
-        anonymizer._validate_local_detector_endpoint()
-        anonymizer._validate_local_detector_endpoint()
-
-    mock_get.assert_called_once_with(
-        "http://gliner2.example.test/v1/models",
-        headers={"Authorization": "Bearer EMPTY"},
-        timeout=2.0,
-    )
 
 
 def test_run_exposes_trace_dataframe_and_filters_internal_columns(

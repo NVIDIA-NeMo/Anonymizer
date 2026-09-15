@@ -82,12 +82,10 @@ def create_anonymizer(
             model_providers=model_providers,
             endpoint=runtime.endpoint,
         )
-        anonymizer = Anonymizer(
+        return Anonymizer(
             model_configs=configuration.model_configs,
             model_providers=configuration.model_providers,
         )
-        anonymizer._record_local_detector_validation(endpoint=runtime.endpoint, model=MODEL_ID)
-        return anonymizer
 
 
 def stop_local_runtime() -> None:

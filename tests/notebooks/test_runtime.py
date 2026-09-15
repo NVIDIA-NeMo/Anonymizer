@@ -70,7 +70,7 @@ def test_start_runtime_passes_reserved_listener_to_child(tmp_path: Path) -> None
     _runtime._restore_token_environment()
 
 
-def test_create_anonymizer_records_runtime_readiness() -> None:
+def test_create_anonymizer_uses_runtime_endpoint() -> None:
     runtime = _runtime._LocalRuntime(
         process=Mock(),
         endpoint="http://127.0.0.1:1234/v1",
@@ -87,15 +87,16 @@ def test_create_anonymizer_records_runtime_readiness() -> None:
         patch(
             "anonymizer.notebooks._runtime.build_notebook_model_configuration",
             return_value=configuration,
-        ),
+        ) as build_configuration,
         patch("anonymizer.notebooks._runtime.Anonymizer", return_value=anonymizer),
     ):
         result = _runtime.create_anonymizer(gliner_device="cpu")
 
     assert result is anonymizer
-    anonymizer._record_local_detector_validation.assert_called_once_with(
+    build_configuration.assert_called_once_with(
+        model_configs=None,
+        model_providers=None,
         endpoint=runtime.endpoint,
-        model=_runtime.MODEL_ID,
     )
 
 

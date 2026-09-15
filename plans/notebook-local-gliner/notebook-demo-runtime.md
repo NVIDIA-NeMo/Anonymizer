@@ -461,15 +461,14 @@ configure a reachable GLiNER2 provider; production and non-notebook users should
 be told to supply a compatible self-hosted endpoint. PR #212 is the planned vLLM
 Factory production path, but this PR must land and function without it.
 
-Define and test the ordinary-client failure behavior explicitly. If no reachable
-detector provider has been configured, fail before model execution with an
-actionable message that distinguishes the two supported paths: configure the
-endpoint of a compatible self-hosted GLiNER2 deployment, or install `[notebooks]`
-and use `create_anonymizer()` for a managed demo runtime. The accompanying
-documentation may identify PR #212 as the forthcoming recommended production
-deployment. This is preferable to retaining an invalid bundled NVIDIA Build
-provider/model pairing or surfacing an opaque connection failure later in the
-workflow.
+Do not add a model-specific network preflight to the core `Anonymizer` interface.
+Externally managed providers are responsible for serving their configured model,
+and connection or response errors surface through the normal Data Designer model
+request. The notebook helper owns its local process and therefore performs the
+stronger authenticated readiness check itself, including exact model ID and
+pinned revision validation. Documentation should distinguish the self-hosted and
+notebook paths and may identify PR #212 as the forthcoming recommended production
+deployment.
 
 Accept `model_configs` and `model_providers` using the existing `Anonymizer`
 types and replacement/selection semantics. Do not accept `external_model`,
@@ -594,10 +593,10 @@ the local server command line, process receipt, URL, or logs.
 - Change the bundled default detector model to
   `fastino/gliner2-privacy-filter-PII-multi` while retaining the compatibility
   alias `gliner-pii-detector`.
-- Remove the retired NVIDIA Build detector route. Define and test the actionable
-  ordinary-client failure when no reachable detector provider is configured, and
-  tell production users to supply a compatible self-hosted endpoint while
-  identifying PR #212 as the planned production path.
+- Remove the retired NVIDIA Build detector route and tell production users to
+  supply a compatible self-hosted endpoint while identifying PR #212 as the
+  planned production path. Leave externally managed endpoint errors to the normal
+  Data Designer request path rather than adding a model-specific core preflight.
 - Add the optional package extra.
 - Refactor native serving code into the nested package
   `src/anonymizer/notebooks/local_inference/gliner2/` and replace its inference
@@ -669,7 +668,7 @@ the local server command line, process receipt, URL, or logs.
 - no external-host key appears in serialized configs or log text;
 - `stop_local_runtime()` is idempotent;
 - startup timeout terminates the owned child;
-- readiness rejects the wrong model/server;
+- notebook-runtime readiness rejects the wrong model or revision;
 - repeated startup reuses or safely replaces the runtime;
 - incompatible repeated startup warns that earlier returned `Anonymizer`
   instances are no longer supported;
@@ -734,10 +733,10 @@ The work is complete only when all of the following are true:
 - The compatibility alias `gliner-pii-detector` remains valid for existing
   partial model configurations.
 - Ordinary `Anonymizer()` never routes GLiNER2 to the retired NVIDIA Build model
-  service. Without a configured reachable detector provider, it fails before
-  model execution with instructions for a compatible self-hosted endpoint and the
-  notebook helper; documentation identifies PR #212 as the planned production
-  implementation.
+  service. It remains a client for a separately managed endpoint and relies on
+  the normal Data Designer request path for endpoint errors; documentation points
+  notebook users to the managed helper and identifies PR #212 as the planned
+  production implementation.
 - This PR lands and passes independently before PR #212. Interim production and
   non-notebook guidance requires a compatible self-hosted GLiNER2 endpoint and
   identifies PR #212 as the planned vLLM Factory path; the native PyTorch server
@@ -760,7 +759,7 @@ The work is complete only when all of the following are true:
 
 | Risk | Mitigation |
 | --- | --- |
-| Changing the bundled detector model leaves ordinary `Anonymizer()` pointing at the retired NVIDIA Build route | Remove that route, keep bare `Anonymizer()` as a client, fail actionably when no reachable detector is configured, and require a compatible self-hosted endpoint outside notebooks. Identify PR #212 as the forthcoming recommended production path without depending on it. |
+| Changing the bundled detector model leaves ordinary `Anonymizer()` pointing at the retired NVIDIA Build route | Remove that route, keep bare `Anonymizer()` as a client for a compatible self-hosted endpoint, and identify PR #212 as the forthcoming recommended production path without depending on it. |
 | GLiNER2 is not API-compatible with the existing GLiNER backend | Isolate conversion in `gliner2/backend.py`; test label-keyed results, `confidence` to `score`, empty results, repeated values, exact spans, and malformed output. |
 | GLiNER2's 42 trained labels do not cover or exactly name Anonymizer's broader default vocabulary | Produce a label-coverage report, run representative notebook and benchmark data, preserve public Anonymizer labels, and document weak or unsupported labels rather than silently remapping them. |
 | The detector swap changes tutorial precision, recall, or threshold behavior | Compare the old and new detector on the tutorial datasets using the configured default threshold. Review missed sensitive values and false positives before accepting the new default. |
@@ -871,11 +870,12 @@ Change the repository's bundled default entity detector in
 existing `gliner-pii-detector` alias for partial-configuration compatibility.
 Remove the retired NVIDIA Build detector route. Bare `Anonymizer()` remains a
 client and must not start a model service or point the Fastino model ID at an
-incompatible host. When no reachable detector provider is configured, fail
-before model execution with guidance that tells production and non-notebook
-users to configure a compatible self-hosted GLiNER2 endpoint and notebook users
-to call `create_anonymizer()`. This PR must land and pass independently before
-PR #212; identify PR #212 only as the planned vLLM Factory production path.
+incompatible host. Do not add a model-specific endpoint preflight to core
+`Anonymizer`; externally managed endpoint errors should surface through the
+normal Data Designer request path. Tell production and non-notebook users to
+configure a compatible self-hosted GLiNER2 endpoint and notebook users to call
+`create_anonymizer()`. This PR must land and pass independently before PR #212;
+identify PR #212 only as the planned vLLM Factory production path.
 
 Follow the implementation phases and acceptance criteria in the plan. Validate
 with focused tests, clean-wheel installation, standard repository checks, and
