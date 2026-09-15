@@ -12,6 +12,7 @@ from importlib.metadata import entry_points
 from typing import Any
 from unicodedata import normalize
 from urllib.parse import urlsplit
+from weakref import WeakValueDictionary
 
 import regex
 from pydantic import BaseModel
@@ -62,7 +63,8 @@ class RegexDetectionResult:
     accepted_entities: list[EntitySpan]
 
 
-_LOCAL_VALIDATORS: dict[str, RegexValidatorCallable] = {}
+_LOCAL_VALIDATORS: WeakValueDictionary[str, RegexValidatorCallable] = WeakValueDictionary()
+_ENTRY_POINT_VALIDATORS: dict[str, RegexValidatorCallable] = {}
 
 
 def resolve_regex_rules(
@@ -251,7 +253,11 @@ def _register_or_resolve_validator(
 
 
 def _resolve_validator(validator_id: str) -> RegexValidatorCallable:
-    validator = _VALIDATORS.get(validator_id) or _LOCAL_VALIDATORS.get(validator_id)
+    validator = (
+        _VALIDATORS.get(validator_id)
+        or _LOCAL_VALIDATORS.get(validator_id)
+        or _ENTRY_POINT_VALIDATORS.get(validator_id)
+    )
     if validator is not None:
         return validator
     for entry_point in entry_points(group=REGEX_VALIDATOR_ENTRYPOINT_GROUP):
@@ -260,7 +266,7 @@ def _resolve_validator(validator_id: str) -> RegexValidatorCallable:
         loaded = entry_point.load()
         if not callable(loaded):
             raise TypeError(f"Regex validator entry point {validator_id!r} is not callable.")
-        _LOCAL_VALIDATORS[validator_id] = loaded
+        _ENTRY_POINT_VALIDATORS[validator_id] = loaded
         return loaded
     raise ValueError(f"Unknown regex validator {validator_id!r}.")
 

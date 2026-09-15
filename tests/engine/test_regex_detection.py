@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Callable
+from weakref import ref
 
 import pytest
 
 from anonymizer import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
+from anonymizer.engine.detection import regex_detection
 from anonymizer.engine.detection.postprocess import expand_entity_occurrences
 from anonymizer.engine.detection.regex_detection import (
     ResolvedRegexRule,
@@ -232,12 +235,14 @@ def test_distinct_validator_closures_from_same_factory_do_not_collide() -> None:
 
         return validate
 
+    case_validator = validator_for("CASE-42")
+    ticket_validator = validator_for("TKT-7")
     rules = resolve_regex_rules(
         labels=["case_id", "ticket_id"],
         builtin_regexes=False,
         rules=[
-            RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=validator_for("CASE-42")),
-            RegexRule(label="ticket_id", pattern=r"TKT-[0-9]+", validator=validator_for("TKT-7")),
+            RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=case_validator),
+            RegexRule(label="ticket_id", pattern=r"TKT-[0-9]+", validator=ticket_validator),
         ],
     )
 
@@ -263,6 +268,55 @@ def test_reusing_same_validator_callable_reuses_local_identity() -> None:
     )
 
     assert rules[0].validator_id == rules[1].validator_id
+
+
+def test_discarded_validator_closure_is_removed_from_local_registry() -> None:
+    class CapturedState:
+        expected = "CASE-42"
+
+    def register_temporary_validator() -> tuple[ref[CapturedState], ref[Callable[..., bool]], str]:
+        state = CapturedState()
+
+        def validate(candidate: RegexCandidate) -> bool:
+            return candidate.value == state.expected
+
+        rules = resolve_regex_rules(
+            labels=["case_id"],
+            builtin_regexes=False,
+            rules=[RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=validate)],
+        )
+        validator_id = rules[0].validator_id
+        assert validator_id is not None
+        assert validator_id in regex_detection._LOCAL_VALIDATORS
+        return ref(state), ref(validate), validator_id
+
+    state_ref, validator_ref, validator_id = register_temporary_validator()
+    gc.collect()
+
+    assert state_ref() is None
+    assert validator_ref() is None
+    assert validator_id not in regex_detection._LOCAL_VALIDATORS
+
+
+def test_repeated_temporary_validator_closures_do_not_grow_local_registry() -> None:
+    gc.collect()
+    initial_validator_ids = set(regex_detection._LOCAL_VALIDATORS)
+
+    for expected in range(50):
+
+        def validate(candidate: RegexCandidate, expected: int = expected) -> bool:
+            return candidate.value == str(expected)
+
+        resolve_regex_rules(
+            labels=["number"],
+            builtin_regexes=False,
+            rules=[RegexRule(label="number", pattern=r"[0-9]+", validator=validate)],
+        )
+
+    del validate
+    gc.collect()
+
+    assert set(regex_detection._LOCAL_VALIDATORS) == initial_validator_ids
 
 
 def test_custom_rule_can_bypass_llm_validation() -> None:
