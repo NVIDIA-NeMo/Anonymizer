@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -253,8 +254,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Notebook/development GLiNER2 server for Anonymizer.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--fd", type=int, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    uvicorn.run(app, host=args.host, port=args.port)
+    if args.fd is None:
+        uvicorn.run(app, host=args.host, port=args.port)
+        return
+    with socket.socket(fileno=args.fd) as inherited_listener:
+        config = uvicorn.Config(app)
+        uvicorn.Server(config).run(sockets=[inherited_listener])
 
 
 if __name__ == "__main__":

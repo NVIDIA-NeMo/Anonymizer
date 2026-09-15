@@ -39,6 +39,7 @@ _DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
 _STARTUP_TIMEOUT_SECONDS = 300.0
 _SHUTDOWN_TIMEOUT_SECONDS = 10.0
 _MAX_PORT_ATTEMPTS = 3
+_CHILD_SECRET_ALLOWLIST = {LOCAL_TOKEN_ENV, "HF_TOKEN"}
 _SERVER_REQUIREMENTS = (
     "gliner2[local]==2.0.0",
     "fastapi>=0.115,<1",
@@ -146,13 +147,11 @@ def _ensure_runtime(requested_device: str) -> _LocalRuntime:
 
 def _start_runtime(requested_device: str) -> _LocalRuntime:
     server_packages = _ensure_server_environment()
-    port = _find_available_port()
+    listener = _reserve_listener()
+    port = int(listener.getsockname()[1])
     token = secrets.token_urlsafe(32)
     _set_token_environment(token)
-    child_environment = os.environ.copy()
-    for name in list(child_environment):
-        if name != LOCAL_TOKEN_ENV and _looks_sensitive(name):
-            child_environment.pop(name)
+    child_environment = _child_environment()
     child_environment[LOCAL_TOKEN_ENV] = token
     child_environment[_DEVICE_ENV] = requested_device
     existing_python_path = child_environment.get("PYTHONPATH")
@@ -160,10 +159,8 @@ def _start_runtime(requested_device: str) -> _LocalRuntime:
     command = [
         sys.executable,
         str(_server_script()),
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(port),
+        "--fd",
+        str(listener.fileno()),
     ]
     try:
         process = subprocess.Popen(
@@ -173,10 +170,13 @@ def _start_runtime(requested_device: str) -> _LocalRuntime:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            pass_fds=(listener.fileno(),),
         )
     except Exception:
         _restore_token_environment()
         raise
+    finally:
+        listener.close()
     runtime = _LocalRuntime(
         process=process,
         endpoint=f"http://127.0.0.1:{port}/v1",
@@ -199,6 +199,15 @@ def _looks_sensitive(name: str) -> bool:
     return upper.endswith(("_API_KEY", "_ACCESS_TOKEN", "_AUTH_TOKEN", "_PASSWORD", "_SECRET")) or upper in {
         "HF_TOKEN",
     }
+
+
+def _child_environment() -> dict[str, str]:
+    """Return a scrubbed environment containing credentials required by the child."""
+    environment = os.environ.copy()
+    for name in list(environment):
+        if name not in _CHILD_SECRET_ALLOWLIST and _looks_sensitive(name):
+            environment.pop(name)
+    return environment
 
 
 def _server_script() -> Path:
@@ -248,10 +257,7 @@ def _ensure_server_environment() -> Path:
 def run_development_server() -> None:
     """Replace this process with the dependency-isolated development server."""
     server_packages = _ensure_server_environment()
-    environment = os.environ.copy()
-    for name in list(environment):
-        if name != LOCAL_TOKEN_ENV and _looks_sensitive(name):
-            environment.pop(name)
+    environment = _child_environment()
     environment["PYTHONPATH"] = os.pathsep.join(filter(None, (str(server_packages), environment.get("PYTHONPATH"))))
     command = [sys.executable, str(_server_script()), *sys.argv[1:]]
     os.execve(sys.executable, command, environment)
@@ -303,10 +309,16 @@ def _read_metadata(runtime: _LocalRuntime) -> dict[str, object]:
     return metadata
 
 
-def _find_available_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+def _reserve_listener() -> socket.socket:
+    """Bind and retain an ephemeral loopback socket until the child inherits it."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
         listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
+        listener.listen(socket.SOMAXCONN)
+    except Exception:
+        listener.close()
+        raise
+    return listener
 
 
 def _stop_failed_runtime(runtime: _LocalRuntime) -> None:

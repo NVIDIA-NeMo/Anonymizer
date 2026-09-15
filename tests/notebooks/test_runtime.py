@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import socket
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -20,6 +22,51 @@ def test_isolated_server_environment_requires_gliner2_local_extra() -> None:
 )
 def test_child_environment_secret_names_are_recognized(name: str) -> None:
     assert _runtime._looks_sensitive(name)
+
+
+def test_child_environment_preserves_hugging_face_token_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HF_TOKEN", "hugging-face-token")
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvidia-token")
+    monkeypatch.setenv("SERVICE_ACCESS_TOKEN", "service-token")
+
+    environment = _runtime._child_environment()
+
+    assert environment["HF_TOKEN"] == "hugging-face-token"
+    assert "NVIDIA_API_KEY" not in environment
+    assert "SERVICE_ACCESS_TOKEN" not in environment
+
+
+def test_reserved_listener_keeps_ephemeral_port_owned_until_closed() -> None:
+    listener = _runtime._reserve_listener()
+    challenger = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        with pytest.raises(OSError):
+            challenger.bind(listener.getsockname())
+    finally:
+        challenger.close()
+        listener.close()
+
+
+def test_start_runtime_passes_reserved_listener_to_child(tmp_path: Path) -> None:
+    _runtime.stop_local_runtime()
+    listener = _runtime._reserve_listener()
+    listener_fd = listener.fileno()
+    process = Mock(stdout=None)
+    process.poll.return_value = 0
+
+    with (
+        patch("anonymizer.notebooks._runtime._ensure_server_environment", return_value=tmp_path),
+        patch("anonymizer.notebooks._runtime._reserve_listener", return_value=listener),
+        patch("anonymizer.notebooks._runtime.subprocess.Popen", return_value=process) as popen,
+    ):
+        runtime = _runtime._start_runtime("cpu")
+
+    command = popen.call_args.args[0]
+    assert command[-2:] == ["--fd", str(listener_fd)]
+    assert popen.call_args.kwargs["pass_fds"] == (listener_fd,)
+    assert listener.fileno() == -1
+    assert runtime.endpoint.startswith("http://127.0.0.1:")
+    _runtime._restore_token_environment()
 
 
 def test_stop_local_runtime_is_idempotent() -> None:
