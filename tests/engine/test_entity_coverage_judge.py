@@ -22,6 +22,7 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
     _FINAL_ENTITIES_FOR_COVERAGE_COL,
     EntityCoverageWorkflow,
     _coverage_prompt,
+    _effective_entity_labels,
     _filter_out_of_scope_entities,
     _find_missed_candidates,
     _is_candidate_value_covered,
@@ -475,3 +476,84 @@ def test_filter_out_of_scope_entities_is_case_insensitive() -> None:
     entities = [{"value": "Alice", "label": "First_Name", "reasoning": "..."}]
     result = _filter_out_of_scope_entities(entities, entity_labels=["first_name"])
     assert result == entities
+
+
+# ── excluded_entity_labels ────────────────────────────────────────────────────
+
+
+def test_effective_entity_labels_no_exclusions_returns_entity_labels_unchanged() -> None:
+    assert _effective_entity_labels(["email", "city"], None) == ["email", "city"]
+
+
+def test_effective_entity_labels_none_labels_none_exclusions_returns_none() -> None:
+    assert _effective_entity_labels(None, None) is None
+
+
+def test_effective_entity_labels_subtracts_exclusions_from_explicit_labels() -> None:
+    result = _effective_entity_labels(["first_name", "email", "city"], ["email"])
+    assert result == ["first_name", "city"]
+
+
+def test_effective_entity_labels_preserves_permissive_scope_with_exclusions() -> None:
+    result = _effective_entity_labels(None, ["ssn", "first_name"])
+    assert result is None
+
+
+def test_effective_entity_labels_is_case_insensitive() -> None:
+    result = _effective_entity_labels(["first_name", "Email"], ["email"])
+    assert result == ["first_name"]
+
+
+def test_coverage_prompt_excludes_configured_labels_from_scope() -> None:
+    effective = _effective_entity_labels(["first_name", "email", "city"], ["email"])
+    prompt = _coverage_prompt(entity_labels=effective)
+    assert "email" not in prompt
+    assert "first_name" in prompt
+    assert "city" in prompt
+
+
+def test_coverage_prompt_keeps_permissive_scope_and_names_excluded_labels() -> None:
+    prompt = _coverage_prompt(entity_labels=None, excluded_entity_labels=["email"])
+    assert "Evaluate for all PII and sensitive entity types." in prompt
+    assert "explicitly excluded entity labels: email" in prompt
+    assert "This list is not exhaustive." in prompt
+    assert "other direct or quasi-identifier types" in prompt
+    assert "Use a concise snake_case label" in prompt
+    assert "Return labels exactly as they appear" not in prompt
+
+
+def test_filter_out_of_scope_entities_keeps_novel_non_excluded_labels() -> None:
+    entities = [
+        {"value": "Example Clinic", "label": "clinic_name", "reasoning": "clinic"},
+        {"value": "alice@example.com", "label": "Email", "reasoning": "email"},
+    ]
+    result = _filter_out_of_scope_entities(entities, entity_labels=None, excluded_entity_labels=["email"])
+    assert result == [entities[0]]
+
+
+def test_entity_coverage_workflow_excludes_configured_labels_from_postprocess() -> None:
+    """Permissive postprocessing keeps novel labels while applying exclusions."""
+    raw_judge_output = [
+        {"value": "Alice", "label": "first_name", "reasoning": "not replaced"},
+        {"value": "Example Clinic", "label": "clinic_name", "reasoning": "not replaced"},
+        {"value": "alice@example.com", "label": "email", "reasoning": "not replaced"},
+    ]
+    entities_by_value = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    input_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice visited Example Clinic and used alice@example.com"],
+            COL_ENTITIES_BY_VALUE: [entities_by_value],
+            COL_ENTITY_COVERAGE_JUDGE: [{"candidate_entities": raw_judge_output}],
+        }
+    )
+
+    workflow = EntityCoverageWorkflow(
+        adapter=Mock(),
+        entity_labels=None,
+        excluded_entity_labels=["email"],
+    )
+    result_df = workflow.postprocess(workflow.prepare(input_df))
+    missed = result_df[COL_MISSED_ENTITIES].iloc[0]
+    missed_labels = {e["label"] for e in missed}
+    assert "clinic_name" in missed_labels
+    assert "email" not in missed_labels

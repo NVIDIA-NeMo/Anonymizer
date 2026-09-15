@@ -17,9 +17,23 @@ from anonymizer.engine.detection.postprocess import (
     expand_entity_occurrences,
     get_tag_notation,
     group_entities_by_value,
+    normalize_label,
+    normalize_labels,
     parse_raw_entities,
     resolve_overlaps,
 )
+
+
+def test_normalize_label_strips_and_casefolds() -> None:
+    assert normalize_label(" Health_Condition ") == "health_condition"
+
+
+def test_normalize_labels_dedupes_and_drops_empty_entries() -> None:
+    assert normalize_labels([" Email ", "email", "  ", "City"]) == {"email", "city"}
+
+
+def test_normalize_labels_none_returns_empty_set() -> None:
+    assert normalize_labels(None) == set()
 
 
 def test_parse_raw_entities_parses_valid_spans() -> None:
@@ -115,6 +129,28 @@ def test_apply_augmented_entities_adds_occurrences() -> None:
     )
     assert len(merged) == 2
     assert all(entity.source == "augmenter" for entity in merged)
+
+
+def test_apply_augmented_entities_filters_exclusions_before_overlap_resolution() -> None:
+    text = "Alice Johnson"
+    allowed = EntitySpan("first_name_0_5", "Alice", "first_name", 0, 5, 0.95, "detector")
+
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[allowed],
+        augmented_output={
+            "entities": [
+                {
+                    "value": "Alice Johnson",
+                    "label": " Full_Name ",
+                    "reason": "longer overlapping span",
+                }
+            ]
+        },
+        excluded_entity_labels={"full_name"},
+    )
+
+    assert merged == [allowed]
 
 
 def test_apply_augmented_entities_avoids_substring_matches() -> None:

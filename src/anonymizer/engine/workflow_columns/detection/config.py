@@ -41,6 +41,7 @@ class DetectionTransformOperation(str, Enum):
 class DetectionTransformConfig(SingleColumnConfig):
     column_type: Literal["anonymizer-detection-transform"] = "anonymizer-detection-transform"
     operation: DetectionTransformOperation
+    excluded_entity_labels: list[str] = Field(default_factory=list)
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TEXT, COL_RAW_DETECTED],
