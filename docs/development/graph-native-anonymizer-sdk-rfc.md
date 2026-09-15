@@ -21,6 +21,8 @@ Implementation: https://github.com/NVIDIA-NeMo/Anonymizer/pull/253
 
 Implementation baseline: `codex/anonymizer-openshell-intake` at `29bddad51fdc879c5e5c677857c1d2561f4528ee`. The review candidate includes this RFC, the phase designs, and the private Phases 1–6 source and tests. Phase 7 implementation remains unauthorized. This tab is the review mirror.
 
+The implementation baseline and Phase 4–7 checkpoint entries below describe the earlier review snapshot. The later P11 checkpoint is recorded in the [Phase 10 closeout](phase-10-bounded-inspection-closeout.md); it does not change the requested RFC acceptance or public-API decision.
+
 ## Decision Requested
 
 Accept, request revisions to, or reject this RFC as one development and research plan for the graph-native Anonymizer SDK. The decision covers the proposed semantic architecture, the ordered branch-development phases, the strongly typed graph SDK direction, and the separate performance and experimentation program.
@@ -530,7 +532,9 @@ Status: proposed. Move legacy result materialization behind compatibility adapte
 
 ### Phase 10: Bounded Inspection
 
-Status: proposed. Add bounded explain, inspect, and diagnose views, then prepare graph/session records for separate review.
+Status: private branch implementation and conformance evidence complete on 2026-09-15 at `3ed8d02417737a6363d5363494c9e182762f8458` on `codex/anonymizer-bounded-inspection-p11`. Bounded explain, inspect, and diagnose views passed local validation and two independent council reviews, each with zero unresolved Critical or Warning findings. See the [Phase 10 closeout](phase-10-bounded-inspection-closeout.md) for the contract, corpus, commit pins, and validation scope.
+
+Graph/session records remain subject to separate review. Phase 11 lifecycle and independent-runtime evidence, branch integration, and Phase 12 public-surface qualification retain their separate gates.
 
 ### Phase 11: Lifecycle and Independent Runtime
 
