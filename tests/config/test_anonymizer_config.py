@@ -176,11 +176,20 @@ def test_regex_rule_accepts_direct_validator_callable() -> None:
     assert rule.validator is validate
 
 
-def test_regex_rule_rejects_invalid_and_empty_matching_patterns() -> None:
+def test_regex_rule_rejects_invalid_and_zero_width_patterns() -> None:
     with pytest.raises(ValidationError, match="Invalid regex pattern"):
         RegexRule(label="case_id", pattern="[")
-    with pytest.raises(ValidationError, match="must not match an empty string"):
-        RegexRule(label="case_id", pattern=".*")
+    for pattern in (".*", "(?=CASE)", "(?<=A)"):
+        with pytest.raises(ValidationError, match="must not produce zero-width matches"):
+            RegexRule(label="case_id", pattern=pattern)
+
+
+def test_regex_rule_allows_consuming_lookarounds() -> None:
+    lookahead = RegexRule(label="case_id", pattern=r"(?=CASE-[0-9]+)CASE-[0-9]+")
+    lookbehind = RegexRule(label="case_id", pattern=r"(?<=CASE-)[0-9]+")
+
+    assert lookahead.pattern == r"(?=CASE-[0-9]+)CASE-[0-9]+"
+    assert lookbehind.pattern == r"(?<=CASE-)[0-9]+"
 
 
 def test_detect_rejects_custom_rule_missing_from_explicit_labels() -> None:

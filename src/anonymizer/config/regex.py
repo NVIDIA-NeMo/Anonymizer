@@ -11,6 +11,12 @@ import regex
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
 MAX_REGEX_PATTERN_LENGTH = 4096
+_ZERO_WIDTH_PROBE_TIMEOUT_SECONDS = 0.01
+_ZERO_WIDTH_CONTEXT_PROBES: tuple[str, ...] = (
+    "A CASE AB",
+    "0123456789" * 4,
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+)
 BUILTIN_REGEX_LABELS: tuple[str, ...] = (
     "credit_debit_card",
     "email",
@@ -96,9 +102,8 @@ class RegexRule(BaseModel):
             compiled = regex.compile(value)
         except regex.error as exc:
             raise ValueError(f"Invalid regex pattern {value!r}: {exc}") from exc
-        match = compiled.search("")
-        if match is not None and match.start() == match.end():
-            raise ValueError(f"Regex pattern must not match an empty string: {value!r}")
+        if _produces_zero_width_match(compiled, value):
+            raise ValueError(f"Regex pattern must not produce zero-width matches: {value!r}")
         return value
 
     @field_validator("validator")
@@ -119,3 +124,21 @@ class RegexRule(BaseModel):
         if not module or not qualified_name or "<locals>" in qualified_name or qualified_name == "<lambda>":
             raise ValueError("Custom regex validator must be a top-level named function to serialize.")
         return f"{module}:{qualified_name}"
+
+
+def _produces_zero_width_match(compiled: Any, pattern: str) -> bool:
+    """Detect context-free and common contextual zero-width matches safely.
+
+    Including the pattern source itself supplies literal lookaround context
+    without trying to implement a second parser for the third-party regex
+    dialect. Runtime detection remains the authoritative backstop for a
+    context-dependent assertion not exercised by these bounded probes.
+    """
+    for probe in ("", pattern, *_ZERO_WIDTH_CONTEXT_PROBES):
+        try:
+            for match in compiled.finditer(probe, timeout=_ZERO_WIDTH_PROBE_TIMEOUT_SECONDS):
+                if match.start() == match.end():
+                    return True
+        except TimeoutError:
+            continue
+    return False

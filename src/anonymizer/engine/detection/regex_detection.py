@@ -130,7 +130,10 @@ def detect_regex_entities(
             for match in matches:
                 start, end = match.span()
                 if end <= start:
-                    continue
+                    raise RuntimeError(
+                        f"Regex rule {rule.rule_id!r} produced a zero-width match at offset {start}. "
+                        "Regex rules must consume at least one character."
+                    )
                 match_count += 1
                 if match_count > max_matches_per_rule:
                     raise RuntimeError(
