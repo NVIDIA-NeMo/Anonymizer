@@ -24,6 +24,26 @@ PROFILES = TOOLS / "inference_service_profiles"
 CLI = TOOLS / "inference_service.py"
 
 
+class SimulatedProcessGroup:
+    """Track group liveness and signals without touching real processes."""
+
+    def __init__(self, process_group_id: int, exit_signal: int) -> None:
+        self.process_group_id = process_group_id
+        self.exit_signal = exit_signal
+        self.running = True
+        self.signals: list[int] = []
+
+    def signal(self, process_group_id: int, sent_signal: int) -> None:
+        assert process_group_id == self.process_group_id
+        if sent_signal == 0:
+            if not self.running:
+                raise ProcessLookupError
+            return
+        self.signals.append(sent_signal)
+        if sent_signal == self.exit_signal:
+            self.running = False
+
+
 def generation(**vllm: object) -> models.LocalInferenceServiceSpec:
     return models.LocalInferenceServiceSpec(
         task=models.Generation(),
@@ -665,17 +685,45 @@ def test_status_stop_and_forced_cleanup_are_versioned(tmp_path: Path) -> None:
         stderr_path=str(tmp_path / "stderr.log"),
     )
     launch = launch_receipt(plan, handle)
+    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGKILL)
+
     with mock.patch.object(runtime, "is_handle_running", return_value=True):
         assert runtime.status_run(launch).state == "running"
     with (
-        mock.patch.object(runtime, "is_handle_running", side_effect=[True, True, False]),
+        mock.patch.object(runtime, "is_handle_running", return_value=True),
         mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 0.0, 1.0]),
-        mock.patch.object(runtime.os, "killpg") as killpg,
+        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
     ):
         stopped = runtime.stop_run(launch)
     assert stopped.outcome == "forced"
     assert stopped.cleanup_complete is True
-    assert [call.args[1] for call in killpg.call_args_list] == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
+    assert group.signals == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
+
+
+def test_stop_forces_a_process_group_after_its_leader_exits(tmp_path: Path) -> None:
+    plan = compiler.compile_profile(generation(), source_revision="test")
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path=str(tmp_path / "stdout.log"),
+        stderr_path=str(tmp_path / "stderr.log"),
+    )
+    launch = launch_receipt(plan, handle)
+    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGKILL)
+
+    with (
+        mock.patch.object(runtime, "is_handle_running", side_effect=[True, False]),
+        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
+        mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 0.0, 1.0]),
+        mock.patch.object(runtime.time, "sleep"),
+    ):
+        stopped = runtime.stop_run(launch)
+
+    assert stopped.outcome == "forced"
+    assert stopped.cleanup_complete is True
+    assert group.signals == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
 
 
 def test_process_stat_handles_spaces_and_zombies(tmp_path: Path) -> None:
@@ -702,18 +750,20 @@ def test_failed_readiness_cleans_up_the_known_process(tmp_path: Path) -> None:
     plan = compiler.compile_profile(generation(), source_revision="test")
     process = mock.Mock(pid=4242)
     failure = runtime.RuntimeEffectError(models.RuntimeDiagnostic(code="probe-failed", message="not ready"))
+    group = SimulatedProcessGroup(process_group_id=4242, exit_signal=runtime.signal.SIGTERM)
+
     with (
         mock.patch.object(runtime.subprocess, "Popen", return_value=process),
         mock.patch.object(runtime, "read_process_start_marker", return_value="100"),
         mock.patch.object(runtime, "wait_for_readiness", side_effect=failure),
-        mock.patch.object(runtime, "is_handle_running", side_effect=[True, False]),
-        mock.patch.object(runtime.os, "killpg") as killpg,
+        mock.patch.object(runtime, "is_handle_running", return_value=True),
+        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
     ):
         with pytest.raises(runtime.RuntimeEffectError) as exc_info:
             runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
     assert exc_info.value.diagnostic.known_effects == ("4242:100",)
     assert exc_info.value.diagnostic.cleanup_complete is True
-    killpg.assert_called_once_with(4242, runtime.signal.SIGTERM)
+    assert group.signals == [runtime.signal.SIGTERM]
 
 
 def test_readiness_stops_when_the_managed_process_exits(tmp_path: Path) -> None:

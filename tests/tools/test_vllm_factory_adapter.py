@@ -14,6 +14,72 @@ from starlette.datastructures import Headers
 from inference_service_compiler import vllm_factory_adapter as adapter
 
 
+class FailingPoolingCall:
+    """Keep sibling calls blocked until the failing call propagates."""
+
+    def __init__(self) -> None:
+        self.sibling_started = asyncio.Event()
+        self.sibling_cancelled = asyncio.Event()
+        self.never_complete = asyncio.Event()
+        self.active = 0
+
+    async def __call__(self, **kwargs: object) -> object:
+        self.active += 1
+        try:
+            if kwargs["text"] == "fail":
+                await self.sibling_started.wait()
+                raise RuntimeError("pooling failed")
+            self.sibling_started.set()
+            try:
+                await self.never_complete.wait()
+            except asyncio.CancelledError:
+                self.sibling_cancelled.set()
+                raise
+            return []
+        finally:
+            self.active -= 1
+
+
+class ConcurrentPoolingCall:
+    """Complete only after the expected number of calls run concurrently."""
+
+    def __init__(self, expected: int) -> None:
+        self.expected = expected
+        self.started = 0
+        self.all_started = asyncio.Event()
+
+    async def __call__(self, **_kwargs: object) -> object:
+        self.started += 1
+        if self.started == self.expected:
+            self.all_started.set()
+        await self.all_started.wait()
+        return []
+
+
+def pooling_detection_request() -> adapter.DetectionRequest:
+    """Build the common detector request for pooling lifecycle tests."""
+    return adapter.parse_detection_request(
+        {
+            "model": "nvidia/gliner-pii",
+            "messages": [{"role": "user", "content": "x"}],
+            "labels": ["token"],
+            "chunk_length": 1,
+            "overlap": 0,
+        }
+    )
+
+
+async def invoke_chunks(limiter: asyncio.Semaphore, texts: list[str]) -> list[object]:
+    """Invoke one adapter batch using the shared pooling test request."""
+    return await adapter.invoke_pooling_chunks(
+        handler=object(),
+        plugin="deberta_gliner",
+        detection=pooling_detection_request(),
+        chunks=[adapter.TextChunk(text, index) for index, text in enumerate(texts)],
+        limiter=limiter,
+    )
+
+
 def test_parse_detection_request_preserves_anonymizer_options() -> None:
     """The adapter accepts the detector extras emitted by DataDesigner."""
     request = adapter.parse_detection_request(
@@ -238,50 +304,26 @@ def test_chat_compatibility_bounds_aggregate_pooling_concurrency(monkeypatch: py
     asyncio.run(exercise())
 
 
-def test_pooling_budget_is_released_after_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failed pooling call cannot consume a service permit permanently."""
+def test_pooling_failure_cancels_sibling_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed request releases all workers before propagating its error."""
 
     async def exercise() -> None:
-        detection = adapter.parse_detection_request(
-            {
-                "model": "nvidia/gliner-pii",
-                "messages": [{"role": "user", "content": "x"}],
-                "labels": ["token"],
-                "chunk_length": 1,
-                "overlap": 0,
-            }
-        )
-        chunks = [adapter.TextChunk("x", 0)]
-        limiter = asyncio.Semaphore(1)
-
-        async def fail(**_kwargs: object) -> object:
-            raise RuntimeError("pooling failed")
-
-        monkeypatch.setattr(adapter, "invoke_pooling", fail)
+        limiter = asyncio.Semaphore(2)
+        failure = FailingPoolingCall()
+        monkeypatch.setattr(adapter, "invoke_pooling", failure)
         with pytest.raises(RuntimeError, match="pooling failed"):
-            await adapter.invoke_pooling_chunks(
-                handler=object(),
-                plugin="deberta_gliner",
-                detection=detection,
-                chunks=chunks,
-                limiter=limiter,
-            )
+            await invoke_chunks(limiter, ["fail", "blocked", "queued"])
 
-        async def succeed(**_kwargs: object) -> object:
-            return []
+        assert failure.sibling_cancelled.is_set()
+        assert failure.active == 0
 
-        monkeypatch.setattr(adapter, "invoke_pooling", succeed)
+        success = ConcurrentPoolingCall(expected=2)
+        monkeypatch.setattr(adapter, "invoke_pooling", success)
         result = await asyncio.wait_for(
-            adapter.invoke_pooling_chunks(
-                handler=object(),
-                plugin="deberta_gliner",
-                detection=detection,
-                chunks=chunks,
-                limiter=limiter,
-            ),
+            invoke_chunks(limiter, ["a", "b"]),
             timeout=0.1,
         )
-        assert result == [[]]
+        assert result == [[], []]
 
     asyncio.run(exercise())
 

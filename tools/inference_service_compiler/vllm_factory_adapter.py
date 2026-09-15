@@ -243,7 +243,13 @@ async def invoke_pooling_chunks(
                 )
 
     worker_count = min(len(chunks), MAX_CONCURRENT_POOLING_CALLS)
-    await asyncio.gather(*(worker() for _ in range(worker_count)))
+    workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
+    try:
+        await asyncio.gather(*workers)
+    finally:
+        for active_worker in workers:
+            active_worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
     return results
 
 
