@@ -122,6 +122,13 @@ def test_raw_validation_decisions_payload_from_raw_list() -> None:
     assert payload.decisions[0].decision.value == "keep"
 
 
+def test_raw_validation_decision_normalizes_explicit_null_proposed_label() -> None:
+    payload = RawValidationDecisionsSchema.model_validate(
+        {"decisions": [{"id": "city_3_10", "decision": "keep", "proposed_label": None}]}
+    )
+    assert payload.decisions[0].proposed_label == ""
+
+
 def test_raw_validation_decisions_payload_from_malformed_list_returns_empty() -> None:
     payload = RawValidationDecisionsSchema.from_raw({"decisions": ["bad-item"]})
     assert payload.decisions == []
