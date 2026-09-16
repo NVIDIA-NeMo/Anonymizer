@@ -105,6 +105,51 @@ def test_url_validator_accepts_uppercase_www_prefix() -> None:
 
 
 @pytest.mark.parametrize(
+    "address",
+    [
+        "http://-bad.com/path",
+        "http://bad-.com/path",
+        "http://bad_host.com/path",
+        "http://999.999.999.999/path",
+        "http://example..com/path",
+    ],
+)
+def test_url_validator_rejects_malformed_hosts_without_llm_validation(address: str) -> None:
+    rules = resolve_regex_rules(
+        labels=["url"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="url", validate_with_llm=False)],
+    )
+
+    result = detect_regex_entities(address, rules=rules)
+
+    assert result.llm_entities == []
+    assert result.accepted_entities == []
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "https://example.com/path",
+        "https://例子.公司/路径",
+        "http://192.0.2.1/path",
+        "http://[2001:db8::1]/docs",
+    ],
+)
+def test_url_validator_accepts_valid_hosts_without_llm_validation(address: str) -> None:
+    rules = resolve_regex_rules(
+        labels=["url"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="url", validate_with_llm=False)],
+    )
+
+    result = detect_regex_entities(address, rules=rules)
+
+    assert result.llm_entities == []
+    assert [entity.value for entity in result.accepted_entities] == [address]
+
+
+@pytest.mark.parametrize(
     ("label", "text"),
     [
         ("credit_debit_card", "Card 4111 1111 1111 1112."),
