@@ -153,6 +153,19 @@ Examples merge with the built-in examples for a label (if any) — they extend, 
 - When `entity_labels` is left at its default (`None`), an example for a label outside `DEFAULT_ENTITY_LABELS` is accepted but logs a warning: the example alone does not activate detection for that label. Add it to `entity_labels` explicitly to actually detect it.
 - Not every label in `entity_labels` needs an example — only the label names used as keys in `entity_label_examples` are constrained.
 
+**Adding a brand-new label to the default set:** `entity_labels=None` uses `DEFAULT_ENTITY_LABELS` as-is — it does not implicitly grow to include labels you only reference in `entity_label_examples`. To detect a new label *in addition to* the defaults, extend the list explicitly and pass it alongside its example:
+
+```python
+from anonymizer import DEFAULT_ENTITY_LABELS, Detect
+
+detect = Detect(
+    entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_token"],  # extend, don't replace
+    entity_label_examples={"vendor_token": ["vt_live_abc123"]},
+)
+```
+
+Because `entity_labels` is explicit here, this satisfies the subset rule above (`vendor_token` is in `entity_labels`), so detection is actually activated for it — unlike leaving `entity_labels=None` and only adding `vendor_token` to `entity_label_examples`, which would just log the inert-label warning.
+
 **When to use something else instead:**
 
 - `entity_label_examples` gives *positive* examples — patterns you want recognized. It is not a way to express guaranteed exclusions (e.g., "never flag `message_hash` values"). For that, use `excluded_entity_labels` to drop an entire label type, or narrow your examples and rely on the validator's context-based judgment — broad examples (generic hex strings, UUIDs, full file paths) can just as easily reinforce false positives as prevent them.
