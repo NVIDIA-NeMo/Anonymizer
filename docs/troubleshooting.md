@@ -107,6 +107,17 @@ Try in order:
    ```
 
    Domain-specific labels (`clinical_facility`, `case_number`, `internal_project_codename`) won't be detected reliably without being listed this way.
+
+   If the label's *format* is also non-obvious (a vendor-specific ID pattern, an internal identifier convention), pair it with `Detect.entity_label_examples`:
+
+   ```python
+   detect = Detect(
+       entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"],
+       entity_label_examples={"clinical_facility": ["St. Mary's Outpatient Clinic"]},
+   )
+   ```
+
+   An example alone never activates a label — it must also be in `entity_labels` (as above), otherwise the example is either rejected (`entity_labels` explicit but missing the key) or logged as inert (`entity_labels` left at its default). See [Per-label examples](concepts/detection.md#per-label-examples).
 3. **Set `AnonymizerInput.data_summary`** so the augmenter LLM has domain context. A line like `"De-identified pediatric oncology progress notes"` materially improves coverage.
 4. **For rewrite mode**, latent entities are detected separately. If a piece of inferable information (e.g. "during her third round of chemo" → cancer treatment) is being preserved verbatim, the latent detector likely missed it — refine `Rewrite.privacy_goal.protect` to call out the inference category explicitly.
 

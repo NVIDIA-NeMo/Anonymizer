@@ -79,6 +79,22 @@ from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])
 ```
 
+### `entity_label_examples`
+
+Use when a label's *format* isn't obvious from its name alone — a vendor-specific API key prefix, an internal account-handle convention, or an identifier style the built-in examples for that label don't resemble. Positive examples only; merges with the built-in examples for that label rather than replacing them.
+
+```python
+detect = Detect(
+    entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"],
+    entity_label_examples={
+        "api_key": ["sk-ant-api03-abc123def456xyz"],
+        "clinical_facility": ["St. Mary's Outpatient Clinic"],
+    },
+)
+```
+
+An example alone does not add a label to the active detection set — `entity_labels=None` does not implicitly grow to cover labels only referenced here. Pair a new label's example with adding that label to `entity_labels` (as `clinical_facility` is above), otherwise `Detect` either raises (`entity_labels` explicit but missing the key) or warns that the example is inert (`entity_labels` left at its default). See [Per-label examples](detection.md#per-label-examples) for the full scoping rules.
+
 ### `excluded_entity_labels`
 
 Use when you want to **exclude** specific label types from detection without enumerating the entire allowlist. Excluded labels are removed before GLiNER runs, so they are never detected, augmented, or surfaced in results. The evaluation judges also ignore excluded label types so they don't lower your coverage score.
