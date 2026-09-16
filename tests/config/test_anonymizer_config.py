@@ -186,6 +186,7 @@ def test_regex_rule_rejects_invalid_and_zero_width_patterns() -> None:
         r"(?<=Z{20})",
         r"CASE-[0-9]+|(?=Z{20})",
         r"(?=Z{20})(?:CASE)?",
+        r"CASE\K",
     ):
         with pytest.raises(ValidationError, match="must not produce zero-width matches"):
             RegexRule(label="case_id", pattern=pattern)
@@ -205,6 +206,27 @@ def test_regex_rule_width_analysis_supports_regex_dialect_and_inline_flags() -> 
 
     assert unicode_rule.pattern == r"\p{L}+"
     assert insensitive_rule.pattern == r"(?i)case-[0-9]+"
+
+
+def test_direct_callable_validator_cannot_be_serialized_to_json() -> None:
+    def validate(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    rule = RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=validate)
+
+    assert rule.model_dump()["validator"] is validate
+    with pytest.raises(ValueError, match="in-process only and cannot be serialized to JSON"):
+        rule.model_dump_json()
+
+
+def test_registered_validator_name_round_trips_through_json() -> None:
+    rule = RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator="acme.case-id.v1")
+    restored_rule = RegexRule.model_validate_json(rule.model_dump_json())
+    detect = Detect(entity_labels=["case_id"], regex_rules=[rule])
+    restored_detect = Detect.model_validate_json(detect.model_dump_json())
+
+    assert restored_rule == rule
+    assert restored_detect == detect
 
 
 def test_detect_rejects_custom_rule_missing_from_explicit_labels() -> None:

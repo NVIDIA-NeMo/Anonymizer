@@ -110,14 +110,20 @@ class RegexRule(BaseModel):
         raise ValueError("Regex rule validator must be a callable or non-empty registered name.")
 
     @field_serializer("validator")
-    def serialize_validator(self, value: RegexValidatorCallable | str | None) -> str | None:
+    def serialize_validator(
+        self,
+        value: RegexValidatorCallable | str | None,
+        info: Any,
+    ) -> RegexValidatorCallable | str | None:
         if value is None or isinstance(value, str):
             return value
-        module = getattr(value, "__module__", "")
-        qualified_name = getattr(value, "__qualname__", "")
-        if not module or not qualified_name or "<locals>" in qualified_name or qualified_name == "<lambda>":
-            raise ValueError("Custom regex validator must be a top-level named function to serialize.")
-        return f"{module}:{qualified_name}"
+        if info.mode == "json":
+            raise ValueError(
+                "Direct callable regex validators are in-process only and cannot be serialized to JSON. "
+                "Install the validator through the 'nemo_anonymizer.regex_validators' entry-point group "
+                "and pass its registered name instead."
+            )
+        return value
 
 
 def _minimum_match_width(pattern: str) -> int:
@@ -151,7 +157,13 @@ def _minimum_node_width(node: Any, core: Any) -> int:
     if isinstance(node, (core.ZeroWidthBase, core.LookAround)):
         return 0
     if isinstance(node, core.Sequence):
-        return sum(_minimum_node_width(item, core) for item in node.items)
+        width = 0
+        for item in node.items:
+            if isinstance(item, core.Keep):
+                width = 0
+            else:
+                width += _minimum_node_width(item, core)
+        return width
     if isinstance(node, core.Branch):
         return min((_minimum_node_width(branch, core) for branch in node.branches), default=0)
     if isinstance(node, core.GreedyRepeat):

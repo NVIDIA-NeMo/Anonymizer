@@ -351,6 +351,8 @@ _MAC_VALIDATION_RE = regex.compile(
     r"^(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}$"
     r"|^(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}$"
 )
+_DNS_LABEL_RE = regex.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+_IPV4_SHAPED_HOST_RE = regex.compile(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$")
 
 
 def _validate_mac(candidate: RegexCandidate) -> bool:
@@ -369,16 +371,21 @@ def _validate_url(candidate: RegexCandidate) -> bool:
     if port is not None and not 1 <= port <= 65535:
         return False
     try:
-        host = parsed.hostname.encode("idna").decode("ascii")
+        host = normalize("NFC", parsed.hostname).encode("idna").decode("ascii")
     except UnicodeError:
         return False
-    if "." in host:
-        return True
     try:
         ipaddress.ip_address(host)
     except ValueError:
+        pass
+    else:
+        return True
+
+    if ":" in host or _IPV4_SHAPED_HOST_RE.fullmatch(host) is not None:
         return False
-    return True
+    if len(host) > 253 or "." not in host:
+        return False
+    return all(_DNS_LABEL_RE.fullmatch(label) is not None for label in host.split("."))
 
 
 _VALIDATORS: dict[str, RegexValidatorCallable] = {
