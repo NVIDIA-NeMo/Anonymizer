@@ -90,6 +90,17 @@ class Detect(BaseModel):
             "effective detection set, Detect raises a ValueError at config time."
         ),
     )
+    entity_label_examples: dict[str, list[str]] | None = Field(
+        default=None,
+        description=(
+            "Positive example values per entity label, merged with the built-in examples for that "
+            "label (if any). Resolved independently for each run — never mutates the process-global "
+            "defaults. Keys are normalized like entity_labels. When entity_labels is set explicitly, "
+            "every key here must also appear in entity_labels. These are positive examples only, not "
+            "a mechanism for expressing guaranteed exclusions — use excluded_entity_labels to never "
+            "detect a label at all, or AnonymizerInput.data_summary for contextual guidance."
+        ),
+    )
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )
@@ -137,6 +148,62 @@ class Detect(BaseModel):
         if len(deduped) != len(cleaned):
             logger.warning("excluded_entity_labels contained duplicates, removed automatically.")
         return deduped
+
+    @field_validator("entity_label_examples")
+    @classmethod
+    def validate_entity_label_examples(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+        if value is None:
+            return value
+        if not value:
+            raise ValueError("entity_label_examples must not be empty. Use None to disable custom examples.")
+        normalized: dict[str, list[str]] = {}
+        for raw_label, raw_examples in value.items():
+            label = raw_label.strip().lower()
+            if not label:
+                raise ValueError(f"entity_label_examples has an empty label key: {raw_label!r}.")
+            examples = [example.strip() for example in raw_examples if example.strip()]
+            if not examples:
+                raise ValueError(f"entity_label_examples[{raw_label!r}] must contain at least one non-empty example.")
+            if label in normalized:
+                logger.warning(
+                    "entity_label_examples had a duplicate normalized label %r, merging example lists.", label
+                )
+                normalized[label] = list(dict.fromkeys([*normalized[label], *examples]))
+            else:
+                normalized[label] = list(dict.fromkeys(examples))
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_entity_label_examples_scope(self) -> "Detect":
+        if self.entity_label_examples is None:
+            return self
+        example_labels = set(self.entity_label_examples)
+
+        if self.entity_labels is not None:
+            entity_labels_set = set(self.entity_labels)
+            unmatched = sorted(example_labels - entity_labels_set)
+            if unmatched:
+                raise ValueError(
+                    f"entity_label_examples has labels not present in entity_labels: {unmatched}. "
+                    "Add these labels to entity_labels to activate detection for them, or remove "
+                    "them from entity_label_examples."
+                )
+            return self
+
+        # entity_labels=None falls back to DEFAULT_ENTITY_LABELS; examples for labels outside that
+        # default set would otherwise be silently inert (defined but never activated for detection).
+        # Warn rather than raise: unlike the explicit entity_labels case, there's no user-authored
+        # list to validate against, and users shouldn't have to introspect DEFAULT_ENTITY_LABELS
+        # just to add an example.
+        inert = sorted(example_labels - set(DEFAULT_ENTITY_LABELS))
+        if inert:
+            logger.warning(
+                "entity_label_examples defines labels not in the default detection set: %s. "
+                "These examples will have no effect on detection until you set entity_labels "
+                "explicitly to include them.",
+                inert,
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_entity_label_overlap(self) -> "Detect":

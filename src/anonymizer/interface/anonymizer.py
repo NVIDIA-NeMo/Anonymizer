@@ -307,6 +307,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            entity_label_examples=config.detect.entity_label_examples,
             data_summary=data.data_summary,
         )
 
@@ -340,6 +341,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            entity_label_examples=config.detect.entity_label_examples,
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
@@ -724,6 +726,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            entity_label_examples=config.detect.entity_label_examples,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,

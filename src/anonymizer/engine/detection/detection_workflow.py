@@ -101,6 +101,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
@@ -121,6 +122,7 @@ class EntityDetectionWorkflow:
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
             data_summary=data_summary,
         )
         detection_result = self._adapter.run_workflow(
@@ -144,6 +146,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
         """Build the (model_configs, columns) for the core detection workflow.
@@ -156,6 +159,7 @@ class EntityDetectionWorkflow:
             entity_labels,
             set(excluded_entity_labels) if excluded_entity_labels else None,
         )
+        label_examples = resolve_label_examples(labels, entity_label_examples)
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -209,7 +213,9 @@ class EntityDetectionWorkflow:
                     max_entities_per_call=validation_max_entities_per_call,
                     excerpt_window_chars=validation_excerpt_window_chars,
                     single_chunk_full_text=validation_single_chunk_full_text,
-                    prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
+                    prompt_template=_get_validation_prompt(
+                        data_summary=data_summary, labels=labels, label_examples=label_examples
+                    ),
                     drop=True,
                 ),
                 DetectionTransformConfig(
@@ -224,7 +230,10 @@ class EntityDetectionWorkflow:
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
                     prompt=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                        data_summary=data_summary,
+                        labels=labels,
+                        label_examples=label_examples,
+                        strict_labels=entity_labels is not None,
                     ),
                     model_alias=augmenter_alias,
                     output_format=AugmentedEntitiesSchema,
@@ -256,6 +265,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
@@ -272,6 +282,7 @@ class EntityDetectionWorkflow:
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
             data_summary=data_summary,
         )
         return self._adapter.build_config(
@@ -293,6 +304,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
@@ -314,6 +326,7 @@ class EntityDetectionWorkflow:
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
             data_summary=data_summary,
         )
         return self._adapter.build_config_for_seed(
@@ -390,6 +403,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -401,6 +415,10 @@ class EntityDetectionWorkflow:
         Calls ``detect_and_validate_entities`` first, then optionally
         ``identify_latent_entities`` if ``tag_latent_entities`` is True
         (rewrite mode). Merges failures from both stages.
+
+        ``entity_label_examples`` only affects ``detect_and_validate_entities``
+        (the validator and augmenter prompts) — it is intentionally not passed
+        to ``identify_latent_entities``, replacement, or evaluation workflows.
         """
         with stage_timer(
             "EntityDetectionWorkflow.run",
@@ -421,6 +439,7 @@ class EntityDetectionWorkflow:
                 validation_single_chunk_full_text=validation_single_chunk_full_text,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
+                entity_label_examples=entity_label_examples,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
             )
@@ -507,6 +526,27 @@ def _resolve_detection_labels(
     return labels
 
 
+def resolve_label_examples(
+    labels: list[str],
+    user_examples: dict[str, list[str]] | None,
+) -> dict[str, list[str]]:
+    """Merge user-supplied per-label examples with the built-in ``ENTITY_LABEL_EXAMPLES``, scoped to ``labels``.
+
+    Resolved per call — never mutates ``ENTITY_LABEL_EXAMPLES``. Built-in examples come first, followed
+    by user examples (deduplicated, order preserved), matching the "merge with built-in by default"
+    contract in ``Detect.entity_label_examples``. Only labels present in ``labels`` (the active detection
+    set) are included, since ``Detect`` already rejects examples for inactive labels at config time.
+    """
+    resolved: dict[str, list[str]] = {}
+    for label in labels:
+        built_in = ENTITY_LABEL_EXAMPLES.get(label, [])
+        user = (user_examples or {}).get(label, [])
+        merged = list(dict.fromkeys([*built_in, *user]))
+        if merged:
+            resolved[label] = merged
+    return resolved
+
+
 def _materialize_final_entities(
     raw: object,
     *,
@@ -584,15 +624,16 @@ def _build_entities_by_value(final_entities_raw: object) -> dict:
     return EntitiesByValueSchema(entities_by_value=group_entities_by_value(entities=spans)).model_dump(mode="json")
 
 
-def _format_label_examples(labels: list[str]) -> str:
+def _format_label_examples(labels: list[str], label_examples: dict[str, list[str]]) -> str:
     """Build a formatted list of entity classes with examples.
 
-    Labels present in ENTITY_LABEL_EXAMPLES get their examples; custom labels
-    added by the user appear without examples so the LLM still knows they're valid.
+    Labels present in ``label_examples`` (built-in and/or user-supplied, already
+    resolved by :func:`resolve_label_examples`) get their examples; other labels
+    appear without examples so the LLM still knows they're valid.
     """
     lines: list[str] = []
     for label in labels:
-        examples = ENTITY_LABEL_EXAMPLES.get(label)
+        examples = label_examples.get(label)
         if examples:
             lines.append(f"- {label}: {', '.join(examples)}")
         else:
@@ -600,7 +641,7 @@ def _format_label_examples(labels: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _get_validation_prompt(*, data_summary: str | None, labels: list[str]) -> str:
+def _get_validation_prompt(*, data_summary: str | None, labels: list[str], label_examples: dict[str, list[str]]) -> str:
     prompt = """Validate entity tags for privacy-sensitive information. For each entity in the template below, fill in the "decision" and "reason" fields. Fill in "proposed_label" only when decision is "reclass".
 <<DATA_SUMMARY>>
 
@@ -698,13 +739,19 @@ Template: <<VALIDATION_SKELETON>>
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(COL_SEED_TAGGED_TEXT),
             "<<VALIDATION_SKELETON>>": _jinja(COL_VALIDATION_SKELETON),
-            "<<LABEL_EXAMPLES>>": _format_label_examples(labels),
+            "<<LABEL_EXAMPLES>>": _format_label_examples(labels, label_examples),
             "<<DATA_SUMMARY>>": context_section,
         },
     )
 
 
-def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool = False) -> str:
+def _get_augment_prompt(
+    *,
+    data_summary: str | None,
+    labels: list[str],
+    label_examples: dict[str, list[str]],
+    strict_labels: bool = False,
+) -> str:
     if strict_labels:
         label_block = (
             "Here are the allowed entity classes. Use ONLY labels from this list:\n"
@@ -796,7 +843,7 @@ Already-detected entities: <<SEED_ENTITIES>>
 """
     # Pre-substitute nested placeholders inside the block strings before
     # passing them into the single-pass substitution of the main prompt.
-    label_block = label_block.replace("<<VALID_CLASSES>>", ", ".join(labels))
+    label_block = label_block.replace("<<VALID_CLASSES>>", _format_label_examples(labels, label_examples))
     example_block = example_block.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
     context_section = data_summary if data_summary else "Not provided"
     return substitute_placeholders(

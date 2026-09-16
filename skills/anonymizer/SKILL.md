@@ -44,6 +44,7 @@ regulatory and business context.
 
 - **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected. To add domain labels, *extend* the default, don't replace it: `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", ...]` (`DEFAULT_ENTITY_LABELS` is a tuple, so unpack it into a list). Match the snake_case convention of `DEFAULT_ENTITY_LABELS`.
 - **`Detect.excluded_entity_labels`** excludes specific label types from detection entirely — excluded labels are removed before GLiNER runs and are never detected, augmented, or penalised in evaluation scores. Use it when a label type is systematically noisy for your data or should never be anonymized (e.g. `Detect(excluded_entity_labels=["occupation", "gender"])`). Exclusions take precedence over `entity_labels` — a label in both is never detected. If `excluded_entity_labels` entirely overlaps the effective allowlist (`entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`), `Detect` raises a `ValueError` at config time instead of silently building a config that detects nothing.
+- **`Detect.entity_label_examples`** gives per-label positive examples to the detection validator and augmenter (e.g. narrow vendor-prefixed API key formats, or account-handle patterns), merged with the built-in examples for that label. Resolved per run — it never mutates process-global state. When `entity_labels` is set explicitly, every key in `entity_label_examples` must also be in `entity_labels`, or `Detect` raises a `ValueError`; if `entity_labels` is left at its default, an example for a label outside `DEFAULT_ENTITY_LABELS` only logs a warning (add the label to `entity_labels` to actually activate detection for it — an example alone never does). These are positive examples only, not a way to guarantee exclusions — use `excluded_entity_labels` for that. Not used by substitute or evaluation prompts today.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
@@ -124,6 +125,8 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
     detect = Detect(
         # Add domain labels by *extending* the default, not replacing it.
         # entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code"],
+        # Narrow a label's format with domain-specific positive examples (merges with built-ins).
+        # entity_label_examples={"clinical_facility": ["St. Mary's Outpatient Clinic"]},
         gliner_threshold=0.3,  # default; lower (0.2) for recall, raise (0.5) for cost savings
     )
 

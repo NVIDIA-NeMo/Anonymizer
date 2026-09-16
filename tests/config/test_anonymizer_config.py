@@ -277,3 +277,103 @@ def test_entity_labels_superset_of_excluded_entity_labels_only_warns(
         )
     assert config.detect.entity_labels == ["bank_account", "city", "email"]
     assert "will never be detected" in caplog.text
+
+
+# ── entity_label_examples ─────────────────────────────────────────────────────
+
+
+def test_entity_label_examples_defaults_to_none() -> None:
+    config = AnonymizerConfig(detect={}, replace=Redact())
+    assert config.detect.entity_label_examples is None
+
+
+def test_entity_label_examples_normalizes_keys_and_values() -> None:
+    config = AnonymizerConfig(
+        detect={
+            "entity_labels": ["api_key", "user_name"],
+            "entity_label_examples": {
+                " API_KEY ": ["sk-ant-api03-abc123", " OPENAI_API_KEY=sk-proj-abc "],
+                "User_Name": ["jsmith", "alice.chen"],
+            },
+        },
+        replace=Redact(),
+    )
+    assert config.detect.entity_label_examples == {
+        "api_key": ["sk-ant-api03-abc123", "OPENAI_API_KEY=sk-proj-abc"],
+        "user_name": ["jsmith", "alice.chen"],
+    }
+
+
+def test_entity_label_examples_empty_dict_raises() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AnonymizerConfig(detect={"entity_label_examples": {}}, replace=Redact())
+
+
+def test_entity_label_examples_empty_example_list_raises() -> None:
+    with pytest.raises(ValidationError, match="at least one non-empty example"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["api_key"], "entity_label_examples": {"api_key": []}},
+            replace=Redact(),
+        )
+
+
+def test_entity_label_examples_whitespace_only_examples_raises() -> None:
+    with pytest.raises(ValidationError, match="at least one non-empty example"):
+        AnonymizerConfig(
+            detect={"entity_labels": ["api_key"], "entity_label_examples": {"api_key": ["  ", ""]}},
+            replace=Redact(),
+        )
+
+
+def test_entity_label_examples_key_not_in_explicit_entity_labels_raises() -> None:
+    with pytest.raises(ValidationError, match="not present in entity_labels"):
+        AnonymizerConfig(
+            detect={
+                "entity_labels": ["api_key"],
+                "entity_label_examples": {"user_name": ["alice"]},
+            },
+            replace=Redact(),
+        )
+
+
+def test_entity_label_examples_subset_of_explicit_entity_labels_is_valid() -> None:
+    """Not every entity_labels entry needs an example — only example keys must be a subset."""
+    config = AnonymizerConfig(
+        detect={
+            "entity_labels": ["api_key", "user_name", "email"],
+            "entity_label_examples": {"api_key": ["sk-proj-abc"], "user_name": ["alice"]},
+        },
+        replace=Redact(),
+    )
+    assert config.detect.entity_label_examples is not None
+    assert set(config.detect.entity_label_examples) == {"api_key", "user_name"}
+
+
+def test_entity_label_examples_new_label_under_default_entity_labels_warns_not_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A label outside DEFAULT_ENTITY_LABELS is accepted with a warning, not a hard error —
+
+    the config is still valid, but the example has no effect on detection until entity_labels
+    is set explicitly to include that label.
+    """
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        config = AnonymizerConfig(
+            detect={"entity_label_examples": {"vendor_token": ["vt_live_abc123"]}},
+            replace=Redact(),
+        )
+    assert config.detect.entity_label_examples == {"vendor_token": ["vt_live_abc123"]}
+    assert "not in the default detection set" in caplog.text
+    assert "vendor_token" in caplog.text
+
+
+def test_entity_label_examples_label_in_default_entity_labels_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert "email" in DEFAULT_ENTITY_LABELS
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        AnonymizerConfig(
+            detect={"entity_label_examples": {"email": ["alice@example.com"]}},
+            replace=Redact(),
+        )
+    assert "not in the default detection set" not in caplog.text

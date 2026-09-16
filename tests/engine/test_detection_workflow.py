@@ -41,6 +41,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_validation_prompt,
     _materialize_final_entities,
     _resolve_detection_labels,
+    resolve_label_examples,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
@@ -430,7 +431,8 @@ def test_latent_prompt_uses_not_provided_defaults() -> None:
 
 
 def test_format_label_examples_includes_known_labels() -> None:
-    result = _format_label_examples(["first_name", "city", "ssn", "race_ethnicity"])
+    labels = ["first_name", "city", "ssn", "race_ethnicity"]
+    result = _format_label_examples(labels, resolve_label_examples(labels, None))
     assert "- first_name: Michael, Isabella, Carlos, Wei" in result
     assert "- city: Houston, San Diego, Doha, Lahore" in result
     assert "- ssn: 007-52-4910, 252-96-0016, 523-25-1554, 228-94-9430" in result
@@ -438,14 +440,39 @@ def test_format_label_examples_includes_known_labels() -> None:
 
 
 def test_format_label_examples_handles_custom_labels_without_examples() -> None:
-    result = _format_label_examples(["first_name", "custom_label"])
+    labels = ["first_name", "custom_label"]
+    result = _format_label_examples(labels, resolve_label_examples(labels, None))
     assert "- first_name: Michael, Isabella, Carlos, Wei" in result
     assert "- custom_label" in result
     assert "- custom_label:" not in result
 
 
+def test_format_label_examples_merges_user_examples_with_built_in() -> None:
+    labels = ["api_key"]
+    resolved = resolve_label_examples(labels, {"api_key": ["sk-proj-abc123def456"]})
+    result = _format_label_examples(labels, resolved)
+    assert "sk-abc123def456" in result  # built-in
+    assert "sk-proj-abc123def456" in result  # user-supplied
+
+
+def test_format_label_examples_supports_brand_new_label_not_in_built_in_constant() -> None:
+    labels = ["vendor_token"]
+    resolved = resolve_label_examples(labels, {"vendor_token": ["vt_live_abc123"]})
+    result = _format_label_examples(labels, resolved)
+    assert "- vendor_token: vt_live_abc123" in result
+
+
+def test_resolve_label_examples_only_includes_active_labels() -> None:
+    """User examples for a label outside the active detection set are ignored, not leaked into the prompt."""
+    resolved = resolve_label_examples(["first_name"], {"city": ["Chicago"]})
+    assert "city" not in resolved
+
+
 def test_validation_prompt_includes_label_examples() -> None:
-    prompt = _get_validation_prompt(data_summary=None, labels=["email", "city", "sexuality", "age", "first_name"])
+    labels = ["email", "city", "sexuality", "age", "first_name"]
+    prompt = _get_validation_prompt(
+        data_summary=None, labels=labels, label_examples=resolve_label_examples(labels, None)
+    )
     assert "Here are all the valid entity classes with examples" in prompt
     assert "- email: derez_lester94@icloud.com" in prompt
     assert "- city: Houston, San Diego, Doha, Lahore" in prompt
@@ -462,29 +489,49 @@ def test_validation_prompt_includes_label_examples() -> None:
 
 
 def test_validation_prompt_includes_data_summary() -> None:
-    prompt = _get_validation_prompt(data_summary="Medical records", labels=["first_name"])
+    prompt = _get_validation_prompt(
+        data_summary="Medical records",
+        labels=["first_name"],
+        label_examples=resolve_label_examples(["first_name"], None),
+    )
     assert "Data context: Medical records" in prompt
 
 
 def test_augment_prompt_permissive_when_using_defaults() -> None:
     """In practice strict_labels=False only fires with DEFAULT_ENTITY_LABELS (entity_labels=None).
     We pass a small list here to verify the permissive prompt text in isolation."""
-    prompt = _get_augment_prompt(data_summary=None, labels=["phone_number", "age"], strict_labels=False)
+    labels = ["phone_number", "age"]
+    prompt = _get_augment_prompt(
+        data_summary=None, labels=labels, label_examples=resolve_label_examples(labels, None), strict_labels=False
+    )
     assert "Strongly prefer labels from this list when they fit" in prompt
-    assert "phone_number, age" in prompt
+    assert "- phone_number: 949-307-5488" in prompt
+    assert "- age: 76, 51, 35, 41" in prompt
     assert "If no known label fits, create a concise snake_case label" in prompt
     assert "employment_status" in prompt
 
 
 def test_augment_prompt_strict_when_custom_labels_provided() -> None:
-    prompt = _get_augment_prompt(data_summary=None, labels=["hostname", "ipv4"], strict_labels=True)
+    labels = ["hostname", "ipv4"]
+    prompt = _get_augment_prompt(
+        data_summary=None, labels=labels, label_examples=resolve_label_examples(labels, None), strict_labels=True
+    )
     assert "Use ONLY labels from this list" in prompt
-    assert "hostname, ipv4" in prompt
+    assert "- hostname" in prompt
+    assert "- ipv4: 192.168.1.1" in prompt
     assert "Do not create new labels" in prompt
     assert "Strongly prefer" not in prompt
     assert "create a concise snake_case label" not in prompt
     assert "employment_status is NOT in the allowed list" in prompt
     assert "employment_status" not in prompt.split("Output:")[1]
+
+
+def test_augment_prompt_includes_user_supplied_label_examples() -> None:
+    labels = ["api_key"]
+    resolved = resolve_label_examples(labels, {"api_key": ["sk-proj-abc123def456"]})
+    prompt = _get_augment_prompt(data_summary=None, labels=labels, label_examples=resolved, strict_labels=True)
+    assert "sk-abc123def456" in prompt  # built-in
+    assert "sk-proj-abc123def456" in prompt  # user-supplied
 
 
 @pytest.mark.parametrize(
@@ -497,7 +544,9 @@ def test_augment_prompt_strict_when_custom_labels_provided() -> None:
 )
 def test_augment_prompt_always_includes_disguised_identifier_hints(labels: list[str], strict: bool) -> None:
     """Disguised-identifier hints and examples are included for all label sets."""
-    prompt = _get_augment_prompt(data_summary=None, labels=labels, strict_labels=strict)
+    prompt = _get_augment_prompt(
+        data_summary=None, labels=labels, label_examples=resolve_label_examples(labels, None), strict_labels=strict
+    )
     assert "digit words" in prompt
     assert "letter by letter" in prompt
     assert "nine o two" in prompt

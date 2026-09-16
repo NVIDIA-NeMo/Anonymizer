@@ -45,6 +45,7 @@ config = AnonymizerConfig(
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
 | `excluded_entity_labels` | `None` | List of labels to **never** detect, even if present in `entity_labels` or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net. |
+| `entity_label_examples` | `None` | Per-label positive example values passed to the detection validator and augmenter prompts. Merged with the built-in examples for that label. See [Per-label examples](#per-label-examples). |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
@@ -120,6 +121,42 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 
 !!! warning
     `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A total overlap raises a `ValueError` at config time instead of silently detecting nothing. A partial overlap logs a warning only when `entity_labels` is explicit; against the default label set, it's silent.
+
+### Per-label examples
+
+Some labels need domain-specific examples to detect reliably — a vendor's API key format, an internal account-handle convention, or an identifier style that doesn't resemble the built-in examples for that label. `entity_label_examples` lets you supply positive example values per label, without mutating any process-global state: each config resolves its own examples independently, so two different `AnonymizerConfig`s can run in the same process without cross-contaminating each other's prompts.
+
+```python
+config = AnonymizerConfig(
+    detect=Detect(
+        entity_labels=["api_key", "user_name", "email"],
+        entity_label_examples={
+            "api_key": [
+                "sk-ant-api03-abc123def456xyz",
+                "OPENAI_API_KEY=sk-proj-abc123def456",
+            ],
+            "user_name": ["jsmith", "alice.chen", "@trudy-spies"],
+        },
+    ),
+    replace=Redact(),
+)
+```
+
+Examples merge with the built-in examples for a label (if any) — they extend, not replace, what the validator and augmenter already know about that label. You can also define examples for a label that isn't in the built-in `ENTITY_LABEL_EXAMPLES` set at all; it works the same way, as long as the label is also in your active detection set (see below).
+
+!!! warning
+    `entity_label_examples` only affects the detection validator and augmenter prompts. It does not feed substitution or evaluation prompts today.
+
+**Scoping rules:**
+
+- When `entity_labels` is set explicitly, every key in `entity_label_examples` must also appear in `entity_labels` — `Detect` raises a `ValueError` otherwise. This catches the common mistake of adding examples for a label you forgot to also add to `entity_labels`.
+- When `entity_labels` is left at its default (`None`), an example for a label outside `DEFAULT_ENTITY_LABELS` is accepted but logs a warning: the example alone does not activate detection for that label. Add it to `entity_labels` explicitly to actually detect it.
+- Not every label in `entity_labels` needs an example — only the label names used as keys in `entity_label_examples` are constrained.
+
+**When to use something else instead:**
+
+- `entity_label_examples` gives *positive* examples — patterns you want recognized. It is not a way to express guaranteed exclusions (e.g., "never flag `message_hash` values"). For that, use `excluded_entity_labels` to drop an entire label type, or narrow your examples and rely on the validator's context-based judgment — broad examples (generic hex strings, UUIDs, full file paths) can just as easily reinforce false positives as prevent them.
+- `AnonymizerInput.data_summary` is for dataset-level context (what kind of data this is, what's normal vs. sensitive in it) — it's read by every detection and rewrite prompt, not scoped to one label. Use `entity_label_examples` when the lever you need is "this specific label looks like *this*," and `data_summary` when it's "this dataset, as a whole, works like *this*."
 
 ## Tuning the threshold
 
