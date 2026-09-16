@@ -911,6 +911,8 @@
       
         
       
+        
+      
     
     
     
@@ -2023,6 +2025,241 @@
   
   
   
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    notebooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    notebooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5_1" id="__nav_6_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    local_inference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_6_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    local_inference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5_1_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5_1_1" id="__nav_6_5_1_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gliner2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_6_5_1_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5_1_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    gliner2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../reference/anonymizer/telemetry/" class="md-nav__link">
         
@@ -2863,7 +3100,11 @@ nohup .venv/bin/vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 \
 <p>The <code>CUDA_ROOT</code> path above is specific to the Brev B300 SXM6 environment used for this run: a Python 3.12 virtualenv with NVIDIA cu13 wheels installed under <code>.venv</code>. If CUDA is installed differently, point <code>CUDA_ROOT</code> at that runtime instead, or drop the override if system CUDA is already visible.</p>
 <p><code>--max-model-len 8192</code> is also a real sizing knob. The Qwen role below allows up to <code>max_tokens: 4096</code> for augmentation and substitute generation, leaving the remaining context for prompt, schema, source text, and entity lists. That was enough for this compact TAB slice, but denser records may need a larger context window, smaller validation chunks, or shorter generation limits.</p>
 <p><code>--gpu-memory-utilization 0.45</code> was a conservative co-location setting, not a compute throttle. In vLLM it controls the GPU memory budget for model weights and KV cache. Qwen could use more memory if the run needed a larger KV cache, but this setting left headroom for the GLiNER server on the same GPU and still completed the measured batches with zero failures.</p>
-<p>GLiNER ran on the same machine. The command uses <code>tools/serve_gliner.py</code>, the reference GLiNER server from an Anonymizer source checkout; see <a href="../../concepts/self-hosting-gliner/">Self-hosting GLiNER</a> for the server contract and setup details.</p>
+<p>GLiNER ran on the same machine. This archived run used
+<a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/a2cc91847d2674649f1a30a518851e25773010fa/tools/serve_gliner.py"><code>tools/serve_gliner.py</code> from Anonymizer commit <code>a2cc9184</code></a>,
+which serves the legacy <code>nvidia/gliner-pii</code> model. Run the command below from a source checkout at
+that commit when reproducing these results. The server on current <code>main</code> uses GLiNER2 and is not a
+drop-in replacement for this benchmark.</p>
 <pre class="highlight"><code class="language-bash">mkdir -p logs
 
 DEVICE=cuda \
@@ -2871,7 +3112,9 @@ GLINER_MAX_BATCH_REQUESTS=64 \
 GLINER_BATCH_WAIT_MS=10 \
 nohup .venv/bin/python tools/serve_gliner.py --port 9000 \
   &gt; logs/gliner.log 2&gt;&amp;1 &amp;</code></pre>
-<p>For archival reruns, pin the GLiNER model as well. The server default used here is <code>nvidia/gliner-pii</code>, which Hugging Face resolved as <code>nvidia/gliner-PII</code> revision <code>bd23e8ef4425fd04e34c5204ab49ffaa706eae79</code> as of this write-up; serving a newer detector snapshot can change entity counts.</p>
+<p>The source checkout does not by itself pin the model weights: that legacy server requests the model
+by repository name. To match the measured detector exactly, use the <code>nvidia/gliner-PII</code> snapshot at
+revision <code>bd23e8ef4425fd04e34c5204ab49ffaa706eae79</code>; a newer snapshot can change entity counts.</p>
 <p><strong>Blackwell serving note.</strong> vLLM accepted <code>--attention-backend FLASH_ATTN</code>, then logged that FlashAttention 4 did not support this model's <code>head_size=256</code> path and used FlashAttention 2 for the main attention path. In this B300/vLLM 0.23.0/NVFP4 environment, the run also set <code>VLLM_DISABLED_KERNELS=FlashInferFP8ScaledMMLinearKernel</code> to avoid the FlashInfer FP8 scaled-MM path; the successful run selected <code>CutlassFP8ScaledMMLinearKernel</code> instead. Treat that as a vLLM environment workaround, not an Anonymizer requirement.</p>
 <h2 id="run-anonymizer-against-localhost">Run Anonymizer Against Localhost<a class="headerlink" href="#run-anonymizer-against-localhost" title="Permanent link">&para;</a></h2>
 <p>Once the local GLiNER and Qwen endpoints were live, Anonymizer was configured for <a href="../../concepts/replace/">Replace</a> mode. Self-hosting changes where the model requests go, not which Replace pipeline runs. The provider and model configuration below is complete: the only external services it references are the two localhost endpoints started above.</p>

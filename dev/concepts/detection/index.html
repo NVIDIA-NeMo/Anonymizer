@@ -1120,6 +1120,8 @@
       
         
       
+        
+      
     
     
     
@@ -2232,6 +2234,241 @@
   
   
   
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    notebooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    notebooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5_1" id="__nav_6_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    local_inference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_6_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    local_inference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5_1_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5_1_1" id="__nav_6_5_1_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gliner2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_6_5_1_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5_1_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    gliner2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../reference/anonymizer/telemetry/" class="md-nav__link">
         
@@ -2804,7 +3041,9 @@
 <p>Entity detection is the first stage of every Anonymizer pipeline. Both replace and rewrite modes depend on it.</p>
 <hr />
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p>Detection combines a lightweight NER model (GLiNER-PII) with LLM-based refinement. GLiNER PII produces an initial set of entity spans, then an LLM augments it with entities the NER missed and validates each detection -- keeping, reclassifying, or dropping entities based on context. </p>
+<p>Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an
+initial set of entity spans, then an LLM augments it with entities the NER missed and validates each
+detection—keeping, reclassifying, or dropping entities based on context.</p>
 <p>When rewrite is configured, an additional step identifies <strong>latent entities</strong> -- sensitive information inferable from context but not explicitly stated in the text.</p>
 <h3 id="example-standard-vs-latent-entities">Example: standard vs. latent entities<a class="headerlink" href="#example-standard-vs-latent-entities" title="Permanent link">&para;</a></h3>
 <p>Consider this short passage:</p>
@@ -2941,8 +3180,8 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 <tbody>
 <tr>
 <td><code>entity_detector</code></td>
-<td><a href="https://build.nvidia.com/nvidia/gliner-pii"><code>gliner-pii-detector</code></a></td>
-<td>GLiNER-PII NER model.</td>
+<td><a href="https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi"><code>gliner-pii-detector</code></a></td>
+<td>GLiNER2 PII model, served through a compatible local endpoint.</td>
 </tr>
 <tr>
 <td><code>entity_validator</code></td>

@@ -1047,6 +1047,8 @@
       
         
       
+        
+      
     
     
     
@@ -2159,6 +2161,241 @@
   
   
   
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    notebooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    notebooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5_1" id="__nav_6_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    local_inference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_6_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    local_inference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5_1_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5_1_1" id="__nav_6_5_1_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gliner2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_6_5_1_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5_1_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    gliner2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../reference/anonymizer/telemetry/" class="md-nav__link">
         
@@ -2659,7 +2896,10 @@
 <hr />
 <h2 id="defaults">Defaults<a class="headerlink" href="#defaults" title="Permanent link">&para;</a></h2>
 <p>Plain <code>Anonymizer()</code> uses Anonymizer's bundled provider and model configs — not DataDesigner's machine-local defaults from <code>~/.data-designer/model_providers.yaml</code>. Bundled providers live at <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/providers.yaml"><code>providers.yaml</code></a>; bundled models at <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/models.yaml"><code>models.yaml</code></a>.</p>
-<p>Set your API key for Anonymizer to use models hosted on <a href="https://build.nvidia.com">build.nvidia.com</a>:</p>
+<p>The bundled GLiNER2 detector points to a loopback endpoint. Start a compatible local server before
+calling <code>Anonymizer.run()</code>, or use the notebook helper described in
+<a href="../self-hosting-gliner/#local-notebook-runtime">Local notebook runtime</a>. Set your API key for the
+remaining models hosted on <a href="https://build.nvidia.com">build.nvidia.com</a>:</p>
 <pre class="highlight"><code class="language-bash">export NVIDIA_API_KEY="your-nvidia-api-key"</code></pre>
 <div class="admonition note">
 <p class="admonition-title">Provider data handling</p>
@@ -2676,8 +2916,8 @@
 <tbody>
 <tr>
 <td><code>gliner-pii-detector</code></td>
-<td><a href="https://build.nvidia.com/nvidia/gliner-pii"><code>nvidia/gliner-pii</code></a></td>
-<td>Entity detection (NER)</td>
+<td><a href="https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi"><code>fastino/gliner2-privacy-filter-PII-multi</code></a></td>
+<td>Entity detection (NER), via a compatible local endpoint</td>
 </tr>
 <tr>
 <td><code>gpt-oss-120b</code></td>
@@ -2699,7 +2939,10 @@
 <p>Each pipeline stage has a <strong>role</strong> mapped to one of these aliases. See the full role list in the default configs: <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml"><code>detection.yaml</code></a>, <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml"><code>replace.yaml</code></a>, <a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml"><code>rewrite.yaml</code></a>.</p>
 <hr />
 <h2 id="custom-providers">Custom providers<a class="headerlink" href="#custom-providers" title="Permanent link">&para;</a></h2>
-<p>Pass <code>model_providers</code> when you need a non-default endpoint — for example OpenAI, OpenRouter, a local GLiNER server, or an internal inference deployment. Plain <code>Anonymizer()</code> already uses bundled <a href="https://build.nvidia.com">build.nvidia.com</a> settings; override only when your models point at a different provider name or URL.</p>
+<p>Pass <code>model_providers</code> when you need non-default endpoints—for example OpenAI, OpenRouter, a managed
+GLiNER2 service, or an internal inference deployment. Plain <code>Anonymizer()</code> uses the bundled loopback
+detector and <a href="https://build.nvidia.com">build.nvidia.com</a> LLM settings; override when your models point
+at different provider names or URLs.</p>
 <p>Set your API keys first:</p>
 <pre class="highlight"><code class="language-bash">export NVIDIA_API_KEY="your-nvidia-api-key"  # Used by the nvidia provider (build.nvidia.com)
 export OPENAI_API_KEY="your-openai-api-key"
@@ -2763,8 +3006,8 @@ selected_models:
 
 model_configs:
   - alias: gliner-pii-detector
-    model: nvidia/gliner-pii
-    provider: nvidia
+    model: fastino/gliner2-privacy-filter-PII-multi
+    provider: local-gliner2
     inference_parameters:
       max_parallel_requests: 16
       timeout: 120
