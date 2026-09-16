@@ -61,7 +61,7 @@ import sys
 from collections import Counter
 
 package_spec = os.getenv("ANONYMIZER_NOTEBOOK_PACKAGE", "nemo-anonymizer[notebooks]")
-subprocess.check_call([sys.executable, "-m", "pip", "install", package_spec])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", package_spec])
 
 # %%
 import pandas as pd
