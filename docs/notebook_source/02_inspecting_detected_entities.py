@@ -67,7 +67,7 @@ subprocess.check_call([sys.executable, "-m", "pip", "install", package_spec])
 import pandas as pd
 
 # %%
-from anonymizer.notebooks._model_config import required_api_key_environment_variables
+from anonymizer.notebooks import required_api_key_environment_variables
 
 for variable in required_api_key_environment_variables():
     key = getpass.getpass(f"Enter {variable}: ").strip()

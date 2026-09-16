@@ -9,6 +9,7 @@ import pytest
 from data_designer.config.models import ModelProvider
 
 from anonymizer.engine.ndd.model_loader import parse_model_configs
+from anonymizer.notebooks import required_api_key_environment_variables as public_required_api_keys
 from anonymizer.notebooks._model_config import (
     LOCAL_ALIAS,
     LOCAL_PROVIDER,
@@ -16,6 +17,10 @@ from anonymizer.notebooks._model_config import (
     required_api_key_environment_variables,
 )
 from anonymizer.notebooks.local_inference.gliner2 import MODEL_ID
+
+
+def test_required_api_key_helper_is_publicly_exported() -> None:
+    assert public_required_api_keys is required_api_key_environment_variables
 
 
 def test_build_notebook_model_configuration_overrides_only_detector() -> None:
