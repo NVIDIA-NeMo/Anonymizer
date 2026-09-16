@@ -374,6 +374,11 @@ def test_quality_answers_use_integer_ids() -> None:
     assert answers.answers[0].id == 1
 
 
+def test_quality_answers_normalize_explicit_null_conservatively() -> None:
+    answers = QualityAnswersSchema.model_validate({"answers": [{"id": 1, "answer": None}]})
+    assert answers.answers[0].answer == "unknown"
+
+
 def test_privacy_answers_reject_unknown_and_use_integer_ids() -> None:
     with pytest.raises(ValidationError):
         PrivacyAnswersSchema.model_validate(
@@ -386,9 +391,98 @@ def test_privacy_answers_require_confidence_and_reason() -> None:
         PrivacyAnswersSchema.model_validate({"answers": [{"id": 1, "answer": "yes"}]})
 
 
+def test_privacy_answers_normalize_explicit_nulls_conservatively() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {
+            "answers": [
+                {
+                    "id": 1,
+                    "answer": None,
+                    "confidence": None,
+                    "reason": None,
+                    "evidence": None,
+                }
+            ]
+        }
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "yes"
+    assert answer.confidence == 1.0
+    assert answer.reason == "Model returned null answer; defaulted to highest-confidence leak."
+    assert answer.evidence == []
+
+
+def test_privacy_answers_normalize_null_answer_atomically() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {
+            "answers": [
+                {
+                    "id": 1,
+                    "answer": None,
+                    "confidence": 0.0,
+                    "reason": "No leak detected.",
+                    "evidence": ["unrelated evidence"],
+                }
+            ]
+        }
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "yes"
+    assert answer.confidence == 1.0
+    assert answer.reason == "Model returned null answer; defaulted to highest-confidence leak."
+    assert answer.evidence == ["unrelated evidence"]
+
+
+def test_privacy_answers_normalize_null_reason_without_changing_verdict() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": 0.4, "reason": None}]}
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "no"
+    assert answer.confidence == 0.4
+    assert answer.reason == "Model returned no reason."
+
+
+def test_privacy_answers_normalize_null_confidence_without_changing_verdict() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": None, "reason": "No supporting evidence."}]}
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "no"
+    assert answer.confidence == 1.0
+    assert answer.reason == "No supporting evidence."
+
+
+def test_privacy_answers_normalize_null_evidence_without_changing_verdict() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {
+            "answers": [
+                {
+                    "id": 1,
+                    "answer": "no",
+                    "confidence": 0.4,
+                    "reason": "No supporting evidence.",
+                    "evidence": None,
+                }
+            ]
+        }
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "no"
+    assert answer.confidence == 0.4
+    assert answer.reason == "No supporting evidence."
+    assert answer.evidence == []
+
+
 def test_qa_compare_results_use_integer_ids() -> None:
     results = QACompareResultsSchema.model_validate({"per_item": [{"id": 1, "score": 0.8, "reason": "close match"}]})
     assert results.per_item[0].id == 1
+
+
+def test_qa_compare_results_normalize_explicit_null_score_conservatively() -> None:
+    results = QACompareResultsSchema.model_validate({"per_item": [{"id": 1, "score": None, "reason": None}]})
+    assert results.per_item[0].score == 0.0
+    assert results.per_item[0].reason is None
 
 
 # Context-validated answer coverage
