@@ -301,6 +301,10 @@ class PrivacyAnswer(str, Enum):
     no = "no"
 
 
+_NULL_PRIVACY_ANSWER_REASON = "Model returned null answer; defaulted to highest-confidence leak."
+_NULL_PRIVACY_REASON = "Model returned no reason."
+
+
 class PrivacyQuestionSchema(BaseModel):
     id: int
     question: str
@@ -389,23 +393,27 @@ class PrivacyAnswerItemSchema(BaseModel):
     reason: str = Field(min_length=1, max_length=200)
     evidence: list[str] = Field(default_factory=list)
 
-    @field_validator("answer", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def normalize_null_answer(cls, value: object) -> object:
-        """Default an explicit JSON null to the conservative leak verdict."""
-        return PrivacyAnswer.yes if value is None else value
+    def normalize_null_privacy_fields(cls, value: object) -> object:
+        """Normalize a null answer atomically so privacy evaluation fails closed."""
+        if not isinstance(value, dict):
+            return value
+
+        normalized = value.copy()
+        if "answer" in normalized and normalized["answer"] is None:
+            normalized["answer"] = PrivacyAnswer.yes
+            normalized["confidence"] = 1.0
+            normalized["reason"] = _NULL_PRIVACY_ANSWER_REASON
+        elif "reason" in normalized and normalized["reason"] is None:
+            normalized["reason"] = _NULL_PRIVACY_REASON
+        return normalized
 
     @field_validator("confidence", mode="before")
     @classmethod
     def normalize_null_confidence(cls, value: object) -> object:
         """Default an explicit JSON null to highest-confidence leakage."""
         return 1.0 if value is None else value
-
-    @field_validator("reason", mode="before")
-    @classmethod
-    def normalize_null_reason(cls, value: object) -> object:
-        """Supply a reason when the model explicitly returns JSON null."""
-        return "Model returned null; defaulted to highest-confidence leak." if value is None else value
 
     @field_validator("evidence", mode="before")
     @classmethod

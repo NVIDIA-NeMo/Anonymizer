@@ -401,7 +401,69 @@ def test_privacy_answers_normalize_explicit_nulls_conservatively() -> None:
     answer = answers.answers[0]
     assert answer.answer == "yes"
     assert answer.confidence == 1.0
-    assert answer.reason == "Model returned null; defaulted to highest-confidence leak."
+    assert answer.reason == "Model returned null answer; defaulted to highest-confidence leak."
+    assert answer.evidence == []
+
+
+def test_privacy_answers_normalize_null_answer_atomically() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {
+            "answers": [
+                {
+                    "id": 1,
+                    "answer": None,
+                    "confidence": 0.0,
+                    "reason": "No leak detected.",
+                    "evidence": ["unrelated evidence"],
+                }
+            ]
+        }
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "yes"
+    assert answer.confidence == 1.0
+    assert answer.reason == "Model returned null answer; defaulted to highest-confidence leak."
+    assert answer.evidence == ["unrelated evidence"]
+
+
+def test_privacy_answers_normalize_null_reason_without_changing_verdict() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": 0.4, "reason": None}]}
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "no"
+    assert answer.confidence == 0.4
+    assert answer.reason == "Model returned no reason."
+
+
+def test_privacy_answers_normalize_null_confidence_without_changing_verdict() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {"answers": [{"id": 1, "answer": "no", "confidence": None, "reason": "No supporting evidence."}]}
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "no"
+    assert answer.confidence == 1.0
+    assert answer.reason == "No supporting evidence."
+
+
+def test_privacy_answers_normalize_null_evidence_without_changing_verdict() -> None:
+    answers = PrivacyAnswersSchema.model_validate(
+        {
+            "answers": [
+                {
+                    "id": 1,
+                    "answer": "no",
+                    "confidence": 0.4,
+                    "reason": "No supporting evidence.",
+                    "evidence": None,
+                }
+            ]
+        }
+    )
+    answer = answers.answers[0]
+    assert answer.answer == "no"
+    assert answer.confidence == 0.4
+    assert answer.reason == "No supporting evidence."
     assert answer.evidence == []
 
 
