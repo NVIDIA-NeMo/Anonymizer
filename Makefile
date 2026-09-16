@@ -1,3 +1,5 @@
+ANONYMIZER_NOTEBOOK_PACKAGE ?= .[notebooks]
+
 help:
 	@echo ""
 	@echo "Anonymizer Makefile"
@@ -49,7 +51,7 @@ install-dev:
 
 install-dev-notebooks:
 	@echo "Installing project with dev + notebook dependencies..."
-	uv sync --group dev --group notebooks
+	uv sync --group dev --extra notebooks
 	@echo "Done!"
 
 install-pre-commit:
@@ -128,8 +130,8 @@ docs-build:
 convert-notebooks:
 	@echo "Converting Python tutorials to notebooks and executing..."
 	@mkdir -p docs/notebooks
-	uv run --group notebooks python -m ipykernel install --user --name anonymizer-venv
-	uv run --group notebooks --group docs jupytext --to ipynb --set-kernel anonymizer-venv --execute docs/notebook_source/*.py
+	uv run --extra notebooks python -m ipykernel install --user --name anonymizer-venv
+	ANONYMIZER_NOTEBOOK_PACKAGE="$(ANONYMIZER_NOTEBOOK_PACKAGE)" uv run --extra notebooks --group docs jupytext --to ipynb --set-kernel anonymizer-venv --execute docs/notebook_source/*.py
 	mv docs/notebook_source/*.ipynb docs/notebooks/
 	@echo "Notebooks created in docs/notebooks/"
 

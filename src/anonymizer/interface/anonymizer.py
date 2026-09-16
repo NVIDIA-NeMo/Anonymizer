@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
 
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
-from data_designer.config.utils.io_helpers import load_config_file
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.anonymizer_config import (
@@ -60,8 +59,8 @@ from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelit
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import (
-    load_default_model_providers,
     parse_model_configs,
+    parse_model_providers,
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
@@ -192,7 +191,7 @@ class Anonymizer:
             parsed = parse_model_configs(model_configs)
             self._model_configs = parsed.model_configs
             self._selected_models = parsed.selected_models
-            self._resolved_providers = _resolve_model_providers(model_providers)
+            self._resolved_providers = parse_model_providers(model_providers)
             # When the caller supplies a preconfigured DataDesigner, provider
             # registration is owned by that instance — our resolved providers
             # (bundled defaults when model_providers is None) are never passed to it
@@ -1010,25 +1009,8 @@ def _count_entities(df: pd.DataFrame) -> int:
 def _resolve_model_providers(
     model_providers: list[ModelProvider] | str | Path | None,
 ) -> list[ModelProvider]:
-    if model_providers is None:
-        return load_default_model_providers()
-    if isinstance(model_providers, list):
-        if not model_providers:
-            raise ValueError("model_providers must contain at least one provider.")
-        return model_providers
-    if isinstance(model_providers, str) and "\n" not in model_providers:
-        candidate = Path(model_providers.strip()).expanduser()
-        if candidate.suffix in (".yaml", ".yml"):
-            if not candidate.is_file():
-                raise FileNotFoundError(f"Providers config file not found: {candidate}")
-            model_providers = candidate
-    config_dict = load_config_file(model_providers)  # ty: ignore[invalid-argument-type]
-    raw_providers = config_dict.get("providers")
-    if not isinstance(raw_providers, list):
-        raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
-    if not raw_providers:
-        raise ValueError("model_providers must contain at least one provider.")
-    return [ModelProvider.model_validate(provider) for provider in raw_providers]
+    """Backward-compatible private wrapper around the shared provider parser."""
+    return parse_model_providers(model_providers)
 
 
 def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
