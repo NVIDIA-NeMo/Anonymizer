@@ -48,6 +48,7 @@ from anonymizer.engine.detection.postprocess import (
     coalesce_exact_entity_candidates,
     entity_has_source_prefix,
     expand_entity_occurrences,
+    filter_excluded_entity_spans,
     get_tag_notation,
     merge_entity_sources,
     parse_raw_entities,
@@ -84,7 +85,11 @@ def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
     required_columns=[COL_TEXT, COL_VALIDATED_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
     side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
 )
-def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
+def merge_and_build_candidates(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
     """Merge validated seed + augmented entities, then build tagged text and validation candidates.
 
     Contract:
@@ -97,6 +102,7 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
         text=text,
         entities=seed_spans,
         augmented_output=row.get(COL_AUGMENTED_ENTITIES, {}),
+        excluded_entity_labels=set(excluded_entity_labels or []),
     )
     merged_entities = [entity.as_dict() for entity in merged]
     row[COL_MERGED_ENTITIES] = EntitiesSchema(entities=merged_entities).model_dump(mode="json")
@@ -111,7 +117,11 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
     required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
 )
-def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
+def apply_validation_to_seed_entities(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
     """Apply validation decisions to detector entities before augmentation."""
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
@@ -121,6 +131,7 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
     validated_seed = _merge_detection_routes(accepted_regex, llm_validated_seed)
+    validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
@@ -190,7 +201,11 @@ def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
     required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_TAGGED_TEXT],
 )
-def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
+def apply_validation_and_finalize(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
     """Apply keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
     text = str(row.get(COL_TEXT, ""))
     merged = _parse_entity_spans(row.get(COL_MERGED_ENTITIES, {}))
@@ -200,6 +215,7 @@ def apply_validation_and_finalize(row: dict[str, Any]) -> dict[str, Any]:
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
     protected = _merge_detection_routes(accepted_regex, validated)
+    protected = filter_excluded_entity_spans(protected, excluded_entity_labels)
     expanded = expand_entity_occurrences(text=text, entities=protected)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
         mode="json"

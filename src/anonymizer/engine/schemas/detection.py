@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from anonymizer.engine.schemas.shared import _parse_raw_wrapper
 
@@ -59,6 +59,12 @@ class RawValidationDecisionSchema(BaseModel):
     decision: ValidationChoice | None = None
     proposed_label: str = Field(default="")
     reason: str | None = None
+
+    @field_validator("proposed_label", mode="before")
+    @classmethod
+    def normalize_null_proposed_label(cls, value: object) -> object:
+        """Treat an explicit JSON null like an omitted optional response field."""
+        return "" if value is None else value
 
 
 class RawValidationDecisionsSchema(BaseModel):

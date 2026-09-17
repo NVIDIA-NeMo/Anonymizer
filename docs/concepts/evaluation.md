@@ -66,6 +66,7 @@ Note: the judge measures detection recall, not output leakage. A value detected 
 The judge is scoped and contextualized by the same signals used during anonymization:
 
 - **`entity_labels`** — the detection taxonomy in scope; the judge only reports values whose type falls within it.
+- **`excluded_entity_labels`** — labels explicitly excluded from detection; the judge ignores entities of these types so excluded labels are never penalised in the coverage score.
 - **`data_summary`** — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.
 
 | Output column | Type | Description |

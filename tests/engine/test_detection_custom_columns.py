@@ -18,13 +18,17 @@ import pytest
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
+    COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
     COL_REGEX_ACCEPTED_ENTITIES,
     COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
+    COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
+    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATED_SEED_ENTITIES,
@@ -318,6 +322,184 @@ def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:
     assert isinstance(result[COL_MERGED_ENTITIES]["entities"], list)
     assert "candidates" in result[COL_VALIDATION_CANDIDATES]
     assert isinstance(result[COL_VALIDATION_CANDIDATES]["candidates"], list)
+
+
+def test_merge_filters_denied_augmentation_before_overlap_resolution() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "Alice Johnson",
+        COL_VALIDATED_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 0.95,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_AUGMENTED_ENTITIES: {
+            "entities": [
+                {
+                    "value": "Alice Johnson",
+                    "label": " Full_Name ",
+                    "reason": "longer overlapping span",
+                }
+            ]
+        },
+    }
+
+    result = merge_and_build_candidates(row, excluded_entity_labels=["full_name"])
+
+    merged = result[COL_MERGED_ENTITIES]["entities"]
+    assert [(entity["value"], entity["label"]) for entity in merged] == [("Alice", "first_name")]
+
+
+def test_validation_reclassification_to_excluded_label_is_filtered_before_augmentation() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "San Diego",
+        COL_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "country_0_9",
+                    "value": "San Diego",
+                    "label": "country",
+                    "start_position": 0,
+                    "end_position": 9,
+                    "score": 0.95,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "country_0_9",
+                    "value": "San Diego",
+                    "label": "country",
+                    "decision": "reclass",
+                    "proposed_label": "city",
+                    "reason": "San Diego is a city",
+                }
+            ]
+        },
+    }
+
+    result = apply_validation_to_seed_entities(row, excluded_entity_labels=[" CITY "])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == []
+    assert json.loads(result[COL_SEED_ENTITIES_JSON]) == []
+    assert result[COL_INITIAL_TAGGED_TEXT] == "San Diego"
+
+
+def test_excluded_label_filters_locally_accepted_regex_before_augmentation() -> None:
+    accepted = {
+        "id": "email_0_17",
+        "value": "alice@example.com",
+        "label": "email",
+        "start_position": 0,
+        "end_position": 17,
+        "score": 1.0,
+        "source": "regex_builtin:nemo-anonymizer.email.v1",
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "alice@example.com",
+        COL_SEED_ENTITIES: {"entities": [accepted]},
+        COL_VALIDATED_ENTITIES: {"decisions": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+    }
+
+    result = apply_validation_to_seed_entities(row, excluded_entity_labels=["email"])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == []
+    assert result[COL_INITIAL_TAGGED_TEXT] == "alice@example.com"
+
+
+def test_merge_filters_excluded_validated_seed_entities() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "San Diego",
+        COL_VALIDATED_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "country_0_9",
+                    "value": "San Diego",
+                    "label": " City ",
+                    "start_position": 0,
+                    "end_position": 9,
+                    "score": 0.95,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    result = merge_and_build_candidates(row, excluded_entity_labels=["city"])
+
+    assert result[COL_MERGED_ENTITIES]["entities"] == []
+    assert result[COL_VALIDATION_CANDIDATES]["candidates"] == []
+    assert result[COL_MERGED_TAGGED_TEXT] == "San Diego"
+
+
+def test_finalize_filters_reclassification_to_excluded_label() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "San Diego",
+        COL_MERGED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "country_0_9",
+                    "value": "San Diego",
+                    "label": "country",
+                    "start_position": 0,
+                    "end_position": 9,
+                    "score": 0.95,
+                    "source": "augmenter",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "country_0_9",
+                    "value": "San Diego",
+                    "label": "country",
+                    "decision": "reclass",
+                    "proposed_label": "city",
+                    "reason": "San Diego is a city",
+                }
+            ]
+        },
+    }
+
+    result = apply_validation_and_finalize(row, excluded_entity_labels=["city"])
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == []
+    assert result[COL_TAGGED_TEXT] == "San Diego"
+
+
+def test_excluded_label_filters_locally_accepted_regex_during_finalization() -> None:
+    accepted = {
+        "id": "email_0_17",
+        "value": "alice@example.com",
+        "label": "email",
+        "start_position": 0,
+        "end_position": 17,
+        "score": 1.0,
+        "source": "regex_builtin:nemo-anonymizer.email.v1",
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "alice@example.com",
+        COL_MERGED_ENTITIES: {"entities": []},
+        COL_VALIDATED_ENTITIES: {"decisions": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+    }
+
+    result = apply_validation_and_finalize(row, excluded_entity_labels=["email"])
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == []
+    assert result[COL_TAGGED_TEXT] == "alice@example.com"
 
 
 def test_enrich_validation_decisions_adds_value_from_candidates() -> None:

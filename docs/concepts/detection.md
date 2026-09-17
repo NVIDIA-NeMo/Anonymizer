@@ -9,7 +9,7 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines built-in regex recognizers, a lightweight NER model (GLiNER-PII), and LLM-based refinement. Regex and GLiNER candidates are merged, then an LLM augments them with entities the other detectors missed and validates each candidate -- keeping, reclassifying, or dropping entities based on context.
+Detection combines built-in regex recognizers, a lightweight GLiNER2 PII model, and LLM-based refinement. Regex and GLiNER2 candidates are merged and validated by an LLM. A second LLM step adds entities the other detectors missed.
 
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
@@ -44,6 +44,7 @@ config = AnonymizerConfig(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
+| `excluded_entity_labels` | `None` | List of labels to **never** detect, even if present in `entity_labels` or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
@@ -192,6 +193,22 @@ Detect(entity_labels=["first_name", "last_name", "email"])
 # Permissive: detect all defaults + LLM can infer new label types
 Detect()  # entity_labels=None
 ```
+
+### Excluding entity labels
+
+Use `excluded_entity_labels` to omit specific labels from detection without having to enumerate the entire allowlist. Excluded labels are removed before GLiNER runs and before the LLM prompts are built, so they are never detected or augmented.
+
+```python
+# Detect all defaults except occupation and gender
+Detect(excluded_entity_labels=["occupation", "gender"])
+
+# Combine with an explicit allowlist — exclusions always win
+Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
+```
+
+!!! warning
+    `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A total overlap raises a `ValueError` at config time instead of silently detecting nothing. A partial overlap logs a warning only when `entity_labels` is explicit; against the default label set, it's silent.
+
 ## Tuning the threshold
 
 For `gliner_threshold`, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.
@@ -204,7 +221,7 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 
 | Role | Default alias | Purpose |
 |------|--------------|---------|
-| `entity_detector` | [`gliner-pii-detector`](https://build.nvidia.com/nvidia/gliner-pii) | GLiNER-PII NER model. |
+| `entity_detector` | [`gliner-pii-detector`](https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi) | GLiNER2 PII model, served through a compatible local endpoint. |
 | `entity_validator` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Validates and reclassifies detected entities. |
 | `entity_augmenter` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Finds entities the NER model missed. |
 | `latent_detector` | [`nemotron-30b-thinking`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |

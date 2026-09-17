@@ -11,7 +11,10 @@ Anonymizer uses LLMs for entity detection, replacement, and rewriting. Models ar
 
 Plain `Anonymizer()` uses Anonymizer's bundled provider and model configs — not DataDesigner's machine-local defaults from `~/.data-designer/model_providers.yaml`. Bundled providers live at [`providers.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/providers.yaml); bundled models at [`models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/models.yaml).
 
-Set your API key for Anonymizer to use models hosted on [build.nvidia.com](https://build.nvidia.com):
+The bundled GLiNER2 detector points to a loopback endpoint. Start a compatible local server before
+calling `Anonymizer.run()`, or use the notebook helper described in
+[Local notebook runtime](self-hosting-gliner.md#local-notebook-runtime). Set your API key for the
+remaining models hosted on [build.nvidia.com](https://build.nvidia.com):
 
 ```bash
 export NVIDIA_API_KEY="your-nvidia-api-key"
@@ -23,7 +26,7 @@ export NVIDIA_API_KEY="your-nvidia-api-key"
 
 | Alias | Model | Used by |
 |-------|-------|---------|
-| `gliner-pii-detector` | [`nvidia/gliner-pii`](https://build.nvidia.com/nvidia/gliner-pii) | Entity detection (NER) |
+| `gliner-pii-detector` | [`fastino/gliner2-privacy-filter-PII-multi`](https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi) | Entity detection (NER), via a compatible local endpoint |
 | `gpt-oss-120b` | [`openai/gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Detection validation & augmentation, replacement, replace evaluation, rewriting |
 | `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, rewrite evaluation, final judge |
 | `nemotron-super` | [`nvidia/nemotron-3-super-v3`](https://build.nvidia.com/nvidia/nemotron-3-super-v3) | Entity coverage evaluation |
@@ -34,7 +37,10 @@ Each pipeline stage has a **role** mapped to one of these aliases. See the full 
 
 ## Custom providers
 
-Pass `model_providers` when you need a non-default endpoint — for example OpenAI, OpenRouter, a local GLiNER server, or an internal inference deployment. Plain `Anonymizer()` already uses bundled [build.nvidia.com](https://build.nvidia.com) settings; override only when your models point at a different provider name or URL.
+Pass `model_providers` when you need non-default endpoints—for example OpenAI, OpenRouter, a managed
+GLiNER2 service, or an internal inference deployment. Plain `Anonymizer()` uses the bundled loopback
+detector and [build.nvidia.com](https://build.nvidia.com) LLM settings; override when your models point
+at different provider names or URLs.
 
 Set your API keys first:
 
@@ -115,8 +121,8 @@ selected_models:
 
 model_configs:
   - alias: gliner-pii-detector
-    model: nvidia/gliner-pii
-    provider: nvidia
+    model: fastino/gliner2-privacy-filter-PII-multi
+    provider: local-gliner2
     inference_parameters:
       max_parallel_requests: 16
       timeout: 120

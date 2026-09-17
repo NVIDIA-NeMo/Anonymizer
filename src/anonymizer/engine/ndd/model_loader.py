@@ -98,6 +98,29 @@ def load_default_model_providers(config_dir: Path | None = None) -> list[ModelPr
     return [ModelProvider.model_validate(provider) for provider in raw_providers]
 
 
+def parse_model_providers(raw: list[ModelProvider] | str | Path | None) -> list[ModelProvider]:
+    """Parse provider definitions using the public ``Anonymizer`` input shapes."""
+    if raw is None:
+        return load_default_model_providers()
+    if isinstance(raw, list):
+        if not raw:
+            raise ValueError("model_providers must contain at least one provider.")
+        return raw
+    if isinstance(raw, str) and "\n" not in raw:
+        candidate = Path(raw.strip()).expanduser()
+        if candidate.suffix in (".yaml", ".yml"):
+            if not candidate.is_file():
+                raise FileNotFoundError(f"Providers config file not found: {candidate}")
+            raw = candidate
+    config_dict = load_config_file(raw)  # ty: ignore[invalid-argument-type]
+    raw_providers = config_dict.get("providers")
+    if not isinstance(raw_providers, list):
+        raise ValueError("model_providers YAML must contain a top-level 'providers' list.")
+    if not raw_providers:
+        raise ValueError("model_providers must contain at least one provider.")
+    return [ModelProvider.model_validate(provider) for provider in raw_providers]
+
+
 def load_models_config(config_dir: Path | None = None) -> dict[str, Any]:
     """Load raw model definitions from models.yaml.
 

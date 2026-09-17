@@ -21,8 +21,21 @@ jobs:
           version: "0.9.5"
       - name: Set up Python
         run: uv python install 3.11
+      - name: Cache pinned GLiNER2 model
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub
+            ~/.cache/nemo-anonymizer
+          key: gliner2-59894c087cb2923b01f337d4ee72f6ff84d5bdd6-${{ hashFiles('uv.lock', 'src/anonymizer/notebooks/_runtime.py') }}
+      - name: Build notebook wheel
+        run: uv build --wheel
       - name: Convert and execute notebooks
-        run: make convert-notebooks
+        shell: bash
+        run: |
+          wheel=$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)
+          test -n "$wheel"
+          make convert-notebooks ANONYMIZER_NOTEBOOK_PACKAGE="${wheel}[notebooks]"
       - name: Upload notebooks as artifacts
         uses: actions/upload-artifact@v4
         with:
