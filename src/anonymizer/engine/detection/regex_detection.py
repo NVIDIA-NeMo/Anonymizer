@@ -389,24 +389,24 @@ def _validate_url(candidate: RegexCandidate) -> bool:
 
 
 _VALIDATORS: dict[str, RegexValidatorCallable] = {
-    "nemo.credit-card-luhn.v1": _validate_credit_card,
-    "nemo.email.v1": _validate_email,
-    "nemo.ipv4.v1": _validate_ipv4,
-    "nemo.ipv6.v1": _validate_ipv6,
-    "nemo.mac-address.v1": _validate_mac,
-    "nemo.url.v1": _validate_url,
+    "nemo-anonymizer.credit-card-luhn.v1": _validate_credit_card,
+    "nemo-anonymizer.email.v1": _validate_email,
+    "nemo-anonymizer.ipv4.v1": _validate_ipv4,
+    "nemo-anonymizer.ipv6.v1": _validate_ipv6,
+    "nemo-anonymizer.mac-address.v1": _validate_mac,
+    "nemo-anonymizer.url.v1": _validate_url,
 }
 
 _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
     ResolvedRegexRule(
-        rule_id="nemo.credit-debit-card.v1",
+        rule_id="nemo-anonymizer.credit-debit-card.v1",
         label="credit_debit_card",
         pattern=r"(?<![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])",
-        validator_id="nemo.credit-card-luhn.v1",
+        validator_id="nemo-anonymizer.credit-card-luhn.v1",
         source="regex_builtin",
     ),
     ResolvedRegexRule(
-        rule_id="nemo.email.v1",
+        rule_id="nemo-anonymizer.email.v1",
         label="email",
         pattern=(
             r"(?<![A-Za-z0-9.!#$%&'*+/=?^_`{|}~-])"
@@ -415,18 +415,18 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
             r"(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}-]{0,61}[\p{L}\p{N}\p{M}])?)+"
             r"(?![A-Za-z0-9_-])"
         ),
-        validator_id="nemo.email.v1",
+        validator_id="nemo-anonymizer.email.v1",
         source="regex_builtin",
     ),
     ResolvedRegexRule(
-        rule_id="nemo.ipv4.v1",
+        rule_id="nemo-anonymizer.ipv4.v1",
         label="ipv4",
         pattern=r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9]|\.[0-9])",
-        validator_id="nemo.ipv4.v1",
+        validator_id="nemo-anonymizer.ipv4.v1",
         source="regex_builtin",
     ),
     ResolvedRegexRule(
-        rule_id="nemo.ipv6.v1",
+        rule_id="nemo-anonymizer.ipv6.v1",
         label="ipv6",
         pattern=(
             r"(?<![0-9A-Fa-f:])(?:"
@@ -434,24 +434,24 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
             r"|(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}"
             r")(?![0-9A-Fa-f:]|\.[0-9])"
         ),
-        validator_id="nemo.ipv6.v1",
+        validator_id="nemo-anonymizer.ipv6.v1",
         source="regex_builtin",
     ),
     ResolvedRegexRule(
-        rule_id="nemo.mac-address.v1",
+        rule_id="nemo-anonymizer.mac-address.v1",
         label="mac_address",
         pattern=(
             r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])"
             r"|(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![0-9A-Fa-f])"
         ),
-        validator_id="nemo.mac-address.v1",
+        validator_id="nemo-anonymizer.mac-address.v1",
         source="regex_builtin",
     ),
     ResolvedRegexRule(
-        rule_id="nemo.url.v1",
+        rule_id="nemo-anonymizer.url.v1",
         label="url",
         pattern=r"(?i)(?<![A-Za-z0-9_])(?:https?://|www\.)[^\s<>\"']+",
-        validator_id="nemo.url.v1",
+        validator_id="nemo-anonymizer.url.v1",
         source="regex_builtin",
     ),
 )
