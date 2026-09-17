@@ -52,35 +52,29 @@ config = AnonymizerConfig(
 
 ## Regex recognition
 
-Built-in regex recognition is enabled by default. Users normally do not write `builtin_regexes=True`; selecting a supported label is enough:
-
-```python
-Detect(entity_labels=["email", "url"])
-```
-
-The initial built-in labels are `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url`. These are jurisdiction-neutral technical and payment formats rather than country-issued identifiers. Email and URL matching supports Unicode domains, including IDNA-compatible and CJK domains. Each recognizer combines a regex candidate pattern with structural validation, such as Luhn for payment cards and address parsing for IP values.
+Built-in regex recognition for `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url` is enabled by default. These are jurisdiction-neutral technical and payment formats rather than country-issued identifiers. Each recognizer combines a regex candidate pattern with structural validation.
 
 ### Built-in deterministic validators
 
-Each built-in recognizer applies two local steps before a match can become an entity candidate:
+Each built-in recognizer performs two local steps:
 
-1. Its regex finds text with the expected shape.
-2. Its deterministic validator rejects structurally invalid matches.
+1. A regex finds text with the expected shape.
+2. A deterministic validator rejects invalid matches.
 
-These checks do not decide whether a valid-looking value is sensitive in its surrounding context. By default, candidates that pass them continue to the contextual LLM validator. Set `validate_with_llm=False` for a built-in only when local format validation is sufficient for your application.
+Matches that pass these checks go to the contextual LLM validator by default. The LLM uses the surrounding text to decide whether the match is sensitive. Set `validate_with_llm=False` to accept locally validated matches without this step.
 
-| Entity label | Deterministic validation | Accepted forms | Rejected forms |
+| Entity label | Checks | Accepted forms | Rejected forms |
 | --- | --- | --- | --- |
-| `credit_debit_card` | Removes spaces and hyphens, requires 13--19 digits, rejects a value made from one repeated digit, and verifies the Luhn checksum. | Contiguous digits and digits separated by spaces or hyphens. A particular card issuer prefix is not required. | Incorrect length, repeated identical digits, or an invalid Luhn checksum. |
+| `credit_debit_card` | Removes spaces and hyphens, requires 13--19 digits, and verifies the Luhn checksum. | Contiguous digits and digits separated by spaces or hyphens. A card issuer prefix is not required. | Incorrect length, repeated identical digits, or an invalid Luhn checksum. |
 | `email` | Requires one `@`, a non-empty local part of at most 64 UTF-8 bytes, and a total value of at most 254 characters. The domain is NFC-normalized, converted through IDNA, and checked for total and per-label length. | Common unquoted local parts and multi-label Unicode domains, including CJK, Devanagari, and decomposed Latin input. | Local parts with leading, trailing, or consecutive dots; quoted local parts; domain literals such as `user@[192.0.2.1]`; single-label domains; and domain labels with leading or trailing hyphens. |
 | `ipv4` | Parses the complete candidate as an IPv4 address. | Four decimal octets in the range 0--255. | Extra octets, out-of-range octets, and ambiguous leading-zero forms. |
 | `ipv6` | Parses the complete candidate as an IPv6 address. | Full and compressed IPv6, plus dotted IPv4 tails such as `::ffff:192.0.2.128`. | Malformed compression, invalid hexadecimal groups, and invalid IPv4 tails. |
 | `mac_address` | Requires either six two-digit hexadecimal groups using one consistent `:` or `-` separator, or three four-digit groups separated by dots. | Forms such as `00:1A:2B:3C:4D:5E`, `00-1A-2B-3C-4D-5E`, and `001A.2B3C.4D5E`. | Mixed separators, missing groups, and non-hexadecimal digits. |
 | `url` | Parses only HTTP(S) and `www.` candidates, requires a host, validates ports in the range 1--65535, and validates the host as either an IP address or an NFC-normalized IDNA domain. DNS names require multiple labels with valid lengths and characters. | HTTP(S) URLs, case-insensitive `www.` prefixes, Unicode domains, IPv4 hosts, bracketed IPv6 hosts, paths, and query strings. Balanced closing delimiters in paths are retained while surrounding sentence punctuation is trimmed. | Malformed hosts, IPv4-shaped invalid hosts, single-label hosts such as `localhost`, and invalid ports. |
 
-The versioned built-in rule and validator identifiers use the `nemo-anonymizer.*.v1` namespace. The rule identifier appears in entity provenance so a detection result can be traced to the built-in recognizer that produced it; these identifiers are not configuration values users need to supply.
+Entity provenance includes the built-in rule ID, for example `regex_builtin:nemo-anonymizer.email.v1`. Users do not set these IDs.
 
-Built-in matches receive the same contextual LLM validation as GLiNER matches by default. Disable it for a specific built-in when its deterministic checks are sufficient for your application:
+To skip LLM validation for one built-in:
 
 ```python
 from anonymizer import BuiltinRegex, Detect
@@ -91,10 +85,9 @@ detect = Detect(
 )
 ```
 
-Set `builtin_regexes=False` on `Detect` to disable all built-in recognizers while retaining GLiNER and LLM detection.
+Set `builtin_regexes=False` to disable all built-in regex recognizers. GLiNER and LLM detection remain enabled.
 
-To replace one built-in while keeping the others, disable that label and add a
-custom rule with the same label:
+To replace one built-in while keeping the others, disable it and add a custom rule with the same label:
 
 ```python
 from anonymizer import BuiltinRegex, Detect, RegexRule
@@ -106,22 +99,22 @@ detect = Detect(
             label="email",
             pattern=MY_EMAIL_PATTERN,
             validator=my_email_validator,
-        )
+        ),
     ],
 )
 ```
 
 ### Custom regex rules and validators
 
-`regex_rules` is the single collection for built-in settings and custom recognizers. Use `BuiltinRegex` to configure one curated recognizer and `RegexRule` for domain identifiers. `validate_with_llm` defaults to `True` on both types, so a regex match still receives contextual review unless explicitly disabled.
+`regex_rules` accepts both built-in settings and custom rules. Use `BuiltinRegex` to configure a built-in recognizer. Use `RegexRule` to add a regex for any entity label. `validate_with_llm` defaults to `True` for both.
 
 ```python
-from anonymizer import Detect, RegexCandidate, RegexRule, RegexValidationResult
+from anonymizer import Detect, RegexCandidate, RegexRule
 
 
-def validate_support_case(candidate: RegexCandidate) -> RegexValidationResult:
+def validate_support_case(candidate: RegexCandidate) -> bool:
     number = candidate.groups["number"]
-    return RegexValidationResult(valid=not number.startswith("000"))
+    return not number.startswith("000")
 
 
 detect = Detect(
@@ -137,9 +130,11 @@ detect = Detect(
 )
 ```
 
-A validator receives the matched value, character offsets, named capture groups, nearby context, and the rule ID. It returns `bool` or `RegexValidationResult`. Direct callables work for in-process `run()` and `preview()` calls. Exported detection configurations require a validator package registered under the `nemo_anonymizer.regex_validators` Python entry-point group; pass that entry-point name as `validator` so every worker resolves the same code.
+A custom validator receives a `RegexCandidate` with the matched value, character offsets, named capture groups, nearby context, and rule ID. It returns `bool` or `RegexValidationResult`. The validator is optional; without one, every regex match passes local validation.
 
-When `entity_labels` is explicit, it must include every custom rule label. With `entity_labels=None`, custom rule labels are added to the default detection scope automatically.
+Pass a callable directly when using `run()` or `preview()`. For exported configurations, package the validator under the `nemo_anonymizer.regex_validators` Python entry-point group and pass its registered name instead.
+
+If you provide `entity_labels`, include the label of every custom regex rule. If you leave `entity_labels` unset, Anonymizer enables custom rule labels automatically.
 
 ---
 
