@@ -56,6 +56,17 @@ def test_builtin_regexes_detect_valid_values(label: str, text: str, expected: st
     assert result.accepted_entities == []
 
 
+def test_builtin_rule_and_validator_ids_use_product_namespace() -> None:
+    rules = resolve_regex_rules(
+        labels=["credit_debit_card", "email", "ipv4", "ipv6", "mac_address", "url"],
+        builtin_regexes=True,
+        rules=[],
+    )
+
+    assert all(rule.rule_id.startswith("nemo-anonymizer.") for rule in rules)
+    assert all(rule.validator_id is not None and rule.validator_id.startswith("nemo-anonymizer.") for rule in rules)
+
+
 @pytest.mark.parametrize(
     "address",
     [

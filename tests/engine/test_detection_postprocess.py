@@ -417,7 +417,7 @@ def test_coalesce_exact_candidates_keeps_best_duplicate_and_all_origins() -> Non
         0,
         17,
         1.0,
-        "regex_builtin:nemo.email.v1",
+        "regex_builtin:nemo-anonymizer.email.v1",
     )
     detector_entity = EntitySpan("email_0_17", "alice@example.com", "email", 0, 17, 0.9, "detector")
 
@@ -431,7 +431,7 @@ def test_coalesce_exact_candidates_keeps_best_duplicate_and_all_origins() -> Non
             0,
             17,
             1.0,
-            "regex_builtin:nemo.email.v1|detector",
+            "regex_builtin:nemo-anonymizer.email.v1|detector",
         )
     ]
 

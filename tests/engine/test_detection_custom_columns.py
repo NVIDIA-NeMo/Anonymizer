@@ -161,7 +161,7 @@ def test_exact_accepted_duplicate_skips_llm_validation_and_retains_origins() -> 
         "start_position": 0,
         "end_position": 17,
         "score": 1.0,
-        "source": "regex_builtin:nemo.email.v1",
+        "source": "regex_builtin:nemo-anonymizer.email.v1",
     }
     row: dict[str, Any] = {
         COL_TEXT: text,
@@ -190,7 +190,7 @@ def test_exact_accepted_duplicate_skips_llm_validation_and_retains_origins() -> 
     assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [
         {
             **accepted,
-            "source": "regex_builtin:nemo.email.v1|detector",
+            "source": "regex_builtin:nemo-anonymizer.email.v1|detector",
         }
     ]
 
@@ -203,7 +203,7 @@ def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:
         "start_position": 6,
         "end_position": 23,
         "score": 1.0,
-        "source": "regex_builtin:nemo.email.v1",
+        "source": "regex_builtin:nemo-anonymizer.email.v1",
     }
     row: dict[str, Any] = {
         COL_TEXT: "Email alice@example.com",
@@ -231,8 +231,8 @@ def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:
 @pytest.mark.parametrize(
     ("accepted_source", "validated_source"),
     [
-        ("regex_builtin:nemo.email.v1", "regex_user:user:contact:v1"),
-        ("regex_user:user:contact:v1", "regex_builtin:nemo.email.v1"),
+        ("regex_builtin:nemo-anonymizer.email.v1", "regex_user:user:contact:v1"),
+        ("regex_user:user:contact:v1", "regex_builtin:nemo-anonymizer.email.v1"),
     ],
 )
 def test_user_regex_wins_same_span_across_validation_routes(
@@ -280,7 +280,7 @@ def test_user_regex_wins_same_span_during_finalization() -> None:
         **user_entity,
         "id": "email_0_17",
         "label": "email",
-        "source": "regex_builtin:nemo.email.v1",
+        "source": "regex_builtin:nemo-anonymizer.email.v1",
     }
     row: dict[str, Any] = {
         COL_TEXT: "alice@example.com",
