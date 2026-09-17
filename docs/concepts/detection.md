@@ -60,6 +60,26 @@ Detect(entity_labels=["email", "url"])
 
 The initial built-in labels are `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url`. These are jurisdiction-neutral technical and payment formats rather than country-issued identifiers. Email and URL matching supports Unicode domains, including IDNA-compatible and CJK domains. Each recognizer combines a regex candidate pattern with structural validation, such as Luhn for payment cards and address parsing for IP values.
 
+### Built-in deterministic validators
+
+Each built-in recognizer applies two local steps before a match can become an entity candidate:
+
+1. Its regex finds text with the expected shape.
+2. Its deterministic validator rejects structurally invalid matches.
+
+These checks do not decide whether a valid-looking value is sensitive in its surrounding context. By default, candidates that pass them continue to the contextual LLM validator. Set `validate_with_llm=False` for a built-in only when local format validation is sufficient for your application.
+
+| Entity label | Deterministic validation | Accepted forms and protected edge cases |
+| --- | --- | --- |
+| `credit_debit_card` | Removes spaces and hyphens, requires 13--19 digits, rejects a value made from one repeated digit, and verifies the Luhn checksum. | Contiguous digits and digits separated by spaces or hyphens. A correctly shaped number with an invalid checksum is rejected. Validation does not require a particular card issuer prefix. |
+| `email` | Requires one `@`, a non-empty local part of at most 64 UTF-8 bytes, and a total value of at most 254 characters. The local part cannot begin or end with a dot or contain consecutive dots. The domain is NFC-normalized, converted through IDNA, and checked for total and per-label length as well as leading or trailing hyphens. | Common unquoted local parts and multi-label Unicode domains, including CJK, Devanagari, and decomposed Latin input. Quoted local parts, domain literals such as `user@[192.0.2.1]`, and single-label domains are not matched. |
+| `ipv4` | Parses the complete candidate as an IPv4 address. | Four decimal octets in the range 0--255. Extra octets, out-of-range octets, and ambiguous leading-zero forms are rejected. |
+| `ipv6` | Parses the complete candidate as an IPv6 address. | Full and compressed IPv6, plus dotted IPv4 tails such as `::ffff:192.0.2.128`. Malformed compression, invalid hexadecimal groups, and invalid IPv4 tails are rejected. |
+| `mac_address` | Requires either six two-digit hexadecimal groups using one consistent `:` or `-` separator, or three four-digit groups separated by dots. | Forms such as `00:1A:2B:3C:4D:5E`, `00-1A-2B-3C-4D-5E`, and `001A.2B3C.4D5E`. Mixed separators, missing groups, and non-hexadecimal digits are rejected. |
+| `url` | Parses only HTTP(S) and `www.` candidates, requires a host, validates ports in the range 1--65535, and validates the host as either an IP address or an NFC-normalized IDNA domain. DNS names require multiple labels with valid lengths and characters. | HTTP(S) URLs, case-insensitive `www.` prefixes, Unicode domains, IPv4 hosts, bracketed IPv6 hosts, paths, and query strings. Malformed hosts, IPv4-shaped invalid hosts, single-label hosts such as `localhost`, and invalid ports are rejected. Balanced closing delimiters in paths are retained while surrounding sentence punctuation is trimmed. |
+
+The versioned built-in rule and validator identifiers use the `nemo-anonymizer.*.v1` namespace. The rule identifier appears in entity provenance so a detection result can be traced to the built-in recognizer that produced it; these identifiers are not configuration values users need to supply.
+
 Built-in matches receive the same contextual LLM validation as GLiNER matches by default. Disable it for a specific built-in when its deterministic checks are sufficient for your application:
 
 ```python
