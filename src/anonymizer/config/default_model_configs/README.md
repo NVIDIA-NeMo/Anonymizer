@@ -35,7 +35,7 @@ selected_models:          # optional — omitted roles use defaults
 model_configs:
   - alias: my-custom-detector
     model: some/model
-    provider: nvidia
+    provider: openrouter
   # ...
 ```
 

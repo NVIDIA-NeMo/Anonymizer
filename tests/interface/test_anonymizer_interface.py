@@ -178,10 +178,10 @@ def test_anonymizer_default_passes_bundled_providers_to_data_designer() -> None:
 def test_anonymizer_custom_model_providers_override_bundled_defaults() -> None:
     from anonymizer import ModelProvider
 
-    # Custom providers replace the full list, so retain the local detector while overriding NVIDIA.
+    # Custom providers replace the full list, so retain the local detector while overriding OpenRouter.
     custom_providers = [
         ModelProvider(name="local-gliner2", endpoint="http://127.0.0.1:8001/v1"),
-        ModelProvider(name="nvidia", endpoint="https://example.com/v1"),
+        ModelProvider(name="openrouter", endpoint="https://example.com/v1"),
     ]
     with patch("anonymizer.interface.anonymizer.DataDesigner") as mock_data_designer:
         Anonymizer(

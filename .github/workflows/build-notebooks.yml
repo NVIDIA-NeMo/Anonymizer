@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: write
     env:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2

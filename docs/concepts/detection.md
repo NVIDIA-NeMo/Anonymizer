@@ -136,8 +136,8 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 | Role | Default alias | Purpose |
 |------|--------------|---------|
 | `entity_detector` | [`gliner-pii-detector`](https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi) | GLiNER2 PII model, served through a compatible local endpoint. |
-| `entity_validator` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Validates and reclassifies detected entities. |
-| `entity_augmenter` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Finds entities the NER model missed. |
-| `latent_detector` | [`nemotron-30b-thinking`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
+| `entity_validator` | [`gpt-oss-120b`](https://openrouter.ai/openai/gpt-oss-120b) | Validates and reclassifies detected entities. |
+| `entity_augmenter` | [`gpt-oss-120b`](https://openrouter.ai/openai/gpt-oss-120b) | Finds entities the NER model missed. |
+| `latent_detector` | [`nemotron-30b-thinking`](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
 
 See [Models](models.md) for how to override these.
