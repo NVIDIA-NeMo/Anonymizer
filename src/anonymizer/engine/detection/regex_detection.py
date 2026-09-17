@@ -82,7 +82,7 @@ def resolve_regex_rules(
     custom_rules = [rule for rule in rules if isinstance(rule, RegexRule)]
     builtin_settings = {rule.label: rule for rule in rules if isinstance(rule, BuiltinRegex)}
     for rule in custom_rules:
-        if not rule.enabled:
+        if not rule.enabled or rule.label not in active_labels:
             continue
         validator_id = _register_or_resolve_validator(rule.validator)
         resolved.append(
