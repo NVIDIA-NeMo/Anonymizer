@@ -49,10 +49,11 @@ The response must use the chat-completion shape. `message.content` is a JSON str
 }
 ```
 
-A production deployment should provide the chat-completion contract through a separately managed,
-authenticated service and configure its provider endpoint in `providers.yaml`. The native PyTorch
-server bundled with Anonymizer is intended only for notebooks and development. A vLLM-based
-production serving path is planned separately; this release does not depend on it.
+For Linux/NVIDIA GPU production deployments, use the managed vLLM Factory path described in
+[Run local inference services](inference-services.md). Other production deployments should provide
+the chat-completion contract through a separately managed, authenticated service and configure its
+provider endpoint in `providers.yaml`. The native PyTorch server bundled with Anonymizer is intended
+only for notebooks and development.
 
 ## Local notebook runtime
 
