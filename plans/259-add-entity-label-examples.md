@@ -125,35 +125,39 @@ Detect(
   - Augmenter receives every effective label name as it does today, plus examples only for labels explicitly present in `entity_label_examples`.
 
 ```mermaid
-flowchart TD
-    Config["Detect.entity_label_examples"] --> Normalize["Normalize and validate"]
-    Normalize --> KeyType{"Built-in label?"}
-    KeyType -->|"Yes"| BuiltInResolve["Copy defaults and append examples"]
-    KeyType -->|"No"| CustomResolve["Auto-activate with defaults or validate explicit list"]
-    BuiltInResolve --> ExclusionCheck{"Example label excluded?"}
-    CustomResolve --> ExclusionCheck
-    ExclusionCheck -->|"Yes"| IgnoreExcluded["Warn, remove label, and omit its examples"]
-    IgnoreExcluded --> RemainingLabels{"Any effective labels remain?"}
-    RemainingLabels -->|"No"| ConfigError["Raise empty detection-set error"]
-    RemainingLabels -->|"Yes"| Effective
-    ExclusionCheck -->|"No"| Effective["Run-local effective labels and examples"]
-    Effective --> Gliner["GLiNER: label names only"]
-    Effective --> Validator["Validator: labels plus examples"]
+flowchart TB
+    Config["Example config"] --> Normalize["Normalize and validate"]
+    Normalize --> KeyType{"Built-in?"}
+    KeyType -->|"Yes"| BuiltIn["Merge defaults"]
+    KeyType -->|"No"| Custom["Activate custom"]
+    BuiltIn --> Excluded{"Excluded?"}
+    Custom --> Excluded
+    Excluded -->|"Yes"| Ignore["Warn and omit"]
+    Ignore --> Remaining{"Labels remain?"}
+    Remaining -->|"No"| Error["Empty-set error"]
+    Remaining -->|"Yes"| Effective["Effective ontology"]
+    Excluded -->|"No"| Effective
+    Effective --> Gliner["GLiNER labels"]
     Gliner --> Candidates["Seed candidates"]
+    Effective --> Validator["Validator full examples"]
     Candidates --> Validator
-    Validator --> Decisions["Keep, drop, or reclass"]
-    Effective --> Augmenter["Augmenter: all active labels plus configured examples only"]
+    Validator --> Decisions["Keep drop reclass"]
+    Effective --> Augmenter["Augmenter configured examples"]
     Decisions --> Augmenter
-    Augmenter --> FinalDetection["Recover misses, merge, and finalize"]
-    FinalDetection --> ExistingBoundary["Existing substitution and evaluation behavior"]
+    Augmenter --> FinalDetection["Finalize detection"]
 ```
 
 
 
-- **Built-in example**: GLiNER receives `api_key`; validator receives built-in plus configured `api_key` examples; augmenter receives only the configured `api_key` additions.
-- **Custom example**: GLiNER receives `vendor_api_key`; validator and augmenter receive its configured examples.
-  - Apply the same GLiNER → validator → augmenter sequence to custom and built-in labels. The validator receives the full resolved ontology, while the augmenter receives only user-configured examples as additional guidance on top of its existing label names, context, and general rules. Augmented findings are not independently revalidated, but candidates found by GLiNER receive keep/drop/reclass validation before augmentation.
-  - If repeatedly including the active labels and examples in validator chunks becomes materially expensive, consider augmenter-only custom labels as a separate, explicit feature with its own quality tradeoffs. In this phase, document that users should keep the custom-label set narrow and provide only a few representative synthetic examples.
+- **Normalize and validate:** clean label keys and values, merge normalized duplicates, and enforce explicit-label-list rules before building prompts.
+- **Built-in branch:** copy the module defaults, append user additions, and stable-deduplicate. For `api_key`, the validator sees built-in plus configured examples; the augmenter sees only configured additions.
+- **Custom branch:** with `entity_labels=None`, activate the custom key beside defaults; with an explicit list, require the key to already be present. For `vendor_api_key`, GLiNER receives the label name while validator and augmenter receive its configured examples.
+- **Exclusions:** excluded labels take precedence. Warn and omit their examples when other labels remain; raise only when exclusions leave an empty effective set.
+- **GLiNER:** receive every effective label name, including custom labels, but no example values. Its output is the seed-candidate set.
+- **Validator:** receive all effective labels with the full resolved ontology and return keep/drop/reclass decisions for GLiNER candidates.
+- **Augmenter:** receive all effective label names, tagged validated text, existing seed entities, and only user-configured examples. It uses these examples as additional guidance to recover misses; augmented findings are not independently revalidated.
+- **Finalization:** merge validated seeds and augmented findings, resolve overlaps, and enforce the effective scope. Substitution and evaluation retain their existing behavior and receive no configured examples.
+- **Future cost option:** if repeating the validator ontology becomes materially expensive, consider augmenter-only custom labels as a separate explicit feature. For this phase, document that users should keep custom labels narrow and provide only a few representative synthetic examples.
 
 ## Prompt construction and growth
 
