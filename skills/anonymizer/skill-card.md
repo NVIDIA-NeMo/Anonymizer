@@ -1,5 +1,5 @@
 ## Description: <br>
-Produces a runnable Python script that detects and protects PII in text datasets through entity replacement or LLM-powered rewriting using the NeMo Anonymizer pipeline. <br>
+Produces a runnable Python script that calls the NeMo Anonymizer pipeline (detection → replace or rewrite) to anonymize text datasets, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and data engineers who need to anonymize, redact, or de-identify free-text datasets by detecting sensitive entities and applying replacement or rewrite strategies via the NeMo Anonymizer pipeline. <br>
+Developers and data engineers who need to anonymize text datasets containing PII, using entity detection with replacement or LLM-powered rewriting to produce privacy-safe data for downstream use. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,18 +25,17 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [NeMo Anonymizer Documentation](https://nvidia-nemo.github.io/Anonymizer/) <br>
-- [Choosing a Strategy](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/) <br>
-- [Detection](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/detection/) <br>
-- [Evaluation](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/) <br>
-- [Self-Hosting GLiNER](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/) <br>
-- [Troubleshooting](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/) <br>
-- [GitHub Repository](https://github.com/NVIDIA-NeMo/Anonymizer.git) <br>
+- [Interactive workflow guide](references/interactive.md) <br>
+- [NeMo Anonymizer documentation](https://nvidia-nemo.github.io/Anonymizer/) <br>
+- [GitHub repository](https://github.com/NVIDIA-NeMo/Anonymizer) <br>
+- [Choosing a strategy](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/) <br>
+- [Evaluation concepts](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/) <br>
+- [Self-hosting GLiNER2](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Code] <br>
-**Output Format:** [Python script with argparse CLI] <br>
+**Output Format:** [Python script] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -47,20 +46,20 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-6 evaluation tasks (4 positive, 2 negative) across 2 agents, each attempt in an isolated sandbox pod. <br>
+6 evaluation tasks (4 positive, 2 negative) with 3 attempts each, run in isolated sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Verifies final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
-- Effectiveness: Measures whether the user's goal was achieved and the expected workflow behavior was followed. <br>
-- Efficiency: Evaluates tool-call productivity and token usage efficiency. <br>
+- Security: Checks whether the skill is safe to use, including unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Checks whether the final answer is correct against the reference answer. <br>
+- Discoverability: Checks whether the right skill was loaded when needed, including skill selection, decoy avoidance, and workflow execution. <br>
+- Effectiveness: Checks whether the skill helped complete the user's goal, combining goal completion and expected workflow adherence. <br>
+- Efficiency: Checks whether the skill avoided wasted tool calls and token usage, combining tool-call productivity and token efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- `accuracy`: Final-answer correctness against the reference answer. <br>
 - `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
 - `skill_efficiency`: Tool-call productivity (routing scored under Discoverability). <br>
@@ -71,15 +70,15 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.7% | 89.0% |
-| Security | 81.8% → 100.0% (+18.2 points) | 87.5% → 83.3% (-4.2 points) |
-| Correctness | 49.1% → 100.0% (+50.9 points) | 77.5% → 90.0% (+12.5 points) |
-| Discoverability | 100.0% | 92.5% |
-| Effectiveness | 36.2% → 89.3% (+53.1 points) | 49.7% → 89.2% (+39.5 points) |
-| Efficiency | 84.4% | 90.2% |
+| Overall | 89.1% — uplift unavailable | 88.8% — uplift unavailable |
+| Security | 100.0% → 91.7% (-8.3 pts) | 100.0% → 83.3% (-16.7 pts) |
+| Correctness | 57.8% → 86.7% (+28.9 pts) | 70.0% → 100.0% (+30.0 pts) |
+| Discoverability | 97.5% — uplift unavailable | 92.5% — uplift unavailable |
+| Effectiveness | 39.8% → 89.3% (+49.5 pts) | 51.6% → 93.0% (+41.4 pts) |
+| Efficiency | 80.4% — uplift unavailable | 75.2% — uplift unavailable |
 
 ## Skill Version(s): <br>
-fb8cbbd (source: git SHA, committed 2026-09-15) <br>
+f7d89e7 (source: git SHA, committed 2026-09-16) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
