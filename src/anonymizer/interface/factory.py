@@ -7,9 +7,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from data_designer.config.models import ModelProvider
+from pydantic import BaseModel, ConfigDict, Field
 
 from anonymizer.engine.ndd.model_loader import parse_model_configs, parse_model_providers
 
@@ -22,20 +23,22 @@ GLINER_MODEL_ALIAS = "anonymizer-gliner-detector"
 GLINER_PROVIDER_NAME = "anonymizer-gliner-endpoint"
 
 
-@dataclass(frozen=True, slots=True)
-class NativeGliner:
+class NativeGliner(BaseModel):
     """Request the library-managed native GLiNER2 runtime."""
 
-    device: str = "auto"
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
 
 
-@dataclass(frozen=True, slots=True)
-class GlinerEndpoint:
+class GlinerEndpoint(BaseModel):
     """Connect to an already-managed GLiNER-compatible HTTP endpoint."""
 
-    url: str
-    model: str
-    api_key_env: str | None
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    url: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    api_key_env: str | None = Field(min_length=1)
 
 
 @dataclass(frozen=True, slots=True)
