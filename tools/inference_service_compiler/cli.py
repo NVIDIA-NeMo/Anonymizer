@@ -17,7 +17,7 @@ import cyclopts
 from pydantic import BaseModel, ValidationError
 
 from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_profile, load_plan
-from inference_service_compiler.models import LaunchReceipt
+from inference_service_compiler.models import ConnectionInfo, LaunchReceipt
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
     RuntimeEffectError,
@@ -70,6 +70,21 @@ def compile_plan(
     parsed = load_profile(profile)
     plan = compile_profile(parsed, source_revision=source_revision)
     write_json(plan, output)
+
+
+@app.command
+@command_errors
+def connection(*, plan: Path, output: Path | None = None) -> None:
+    """Emit non-secret client connection inputs from a compiled plan."""
+    parsed = load_plan(plan.read_text(encoding="utf-8"))
+    write_json(
+        ConnectionInfo(
+            url=parsed.endpoint.url,
+            model=parsed.served_model_name,
+            api_key_env=parsed.readiness.bearer_token_environment_variable,
+        ),
+        output,
+    )
 
 
 @app.command

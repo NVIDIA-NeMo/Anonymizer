@@ -178,6 +178,22 @@ def test_compile_command_writes_a_digest_verified_plan(tmp_path: Path) -> None:
     assert plan.served_model_name == "anonymizer-local"
 
 
+def test_connection_command_emits_only_non_secret_client_inputs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
+
+    cli.connection(plan=plan_path)
+
+    assert json.loads(capsys.readouterr().out) == {
+        "api_key_env": "LOCAL_KEY",
+        "model": plan.served_model_name,
+        "url": plan.endpoint.url,
+    }
+
+
 def test_compile_command_translates_non_directory_profile_paths(tmp_path: Path) -> None:
     """Filesystem path-shape errors retain the documented bad-input exit."""
     not_a_directory = tmp_path / "profile-file"

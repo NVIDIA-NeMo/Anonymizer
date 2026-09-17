@@ -4,12 +4,10 @@
 # Self-hosting GLiNER2
 
 Anonymizer uses [`fastino/gliner2-privacy-filter-PII-multi`](https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi)
-for first-pass entity detection. The bundled model configuration sends detector requests to an
-OpenAI-compatible endpoint at `http://127.0.0.1:8001/v1`; it does not start a server automatically.
-
-This keeps plain `Anonymizer()` suitable for applications that manage their own services. Start a
-compatible GLiNER2 endpoint before calling `run()`, or use the notebook helper below for an ephemeral
-in-kernel development server.
+for first-pass entity detection. The public `create_anonymizer()` factory supports two lifecycle
+models. `NativeGliner` starts and reuses the library-managed GLiNER2 runtime. `GlinerEndpoint`
+connects to a service that you already manage. Plain `Anonymizer()` remains unchanged and uses the
+bundled model and provider files.
 
 ## Server contract
 
@@ -34,6 +32,10 @@ the normal OpenAI-compatible request:
 }
 ```
 
+The native server and vLLM Factory adapter implement this HTTP contract, including `overlap` and
+`flat_ner`. The contract does not promise identical predictions across runtimes. Model versions,
+inference engines, and overlap resolution can produce different entity lists.
+
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
 
@@ -55,13 +57,24 @@ the chat-completion contract through a separately managed, authenticated service
 provider endpoint in `providers.yaml`. The native PyTorch server bundled with Anonymizer is intended
 only for notebooks and development.
 
-## Local notebook runtime
+## Native Runtime
 
-Install the notebook extra and create the client through `create_anonymizer()`:
+Install the notebook extra, then request the library-managed runtime:
 
 ```bash
 pip install "nemo-anonymizer[notebooks]"
 ```
+
+```python
+from anonymizer import NativeGliner, create_anonymizer
+
+anonymizer = create_anonymizer(gliner=NativeGliner(device="auto"))
+```
+
+`device="auto"` selects CUDA, MPS, or CPU. You can also pass `"cuda"`, `"mps"`, or `"cpu"`.
+The native runtime is a process-global singleton and stops at interpreter exit.
+
+## Notebook Compatibility Wrapper
 
 ```python
 from anonymizer.notebooks import create_anonymizer, stop_local_runtime
@@ -73,7 +86,8 @@ anonymizer = create_anonymizer()
 stop_local_runtime()
 ```
 
-The helper:
+The notebook helper wraps `create_anonymizer(gliner=NativeGliner(...))` and preserves its original
+`gliner_device` argument. It:
 
 - creates a cached, dependency-isolated server environment containing `gliner2[local]` on first use;
 - downloads the exact Hugging Face revision
@@ -120,50 +134,35 @@ The wrapper prepares the same isolated dependency set used by the notebook helpe
 packaged server. It uses the pinned model but does not add production hardening. Keep it bound to
 loopback unless you provide an authenticated network boundary.
 
-## Configuring a managed endpoint
+## Connect to a Managed Endpoint
 
-Custom provider and model files replace the bundled lists, so include the detector plus every LLM
-provider and model alias your selected workflow uses.
+Start the service through its own deployment system, then pass its connection values to
+`GlinerEndpoint`:
 
-```yaml title="providers.yaml"
-providers:
-  - name: my-gliner2-service
-    endpoint: https://gliner2.internal.example/v1
-    provider_type: openai
-    api_key: GLINER2_API_KEY
-
-  - name: nvidia
-    endpoint: https://integrate.api.nvidia.com/v1
-    provider_type: openai
-    api_key: NVIDIA_API_KEY
-```
-
-```yaml title="models.yaml"
-model_configs:
-  - alias: gliner-pii-detector
-    model: fastino/gliner2-privacy-filter-PII-multi
-    provider: my-gliner2-service
-    skip_health_check: true
-    inference_parameters:
-      max_parallel_requests: 8
-      timeout: 120
-
-  # Include the LLM aliases used by your selected detection, replacement,
-  # rewrite, and evaluation roles here too.
+```bash
+export GLINER2_API_KEY="your-service-key"
 ```
 
 ```python
-from anonymizer import Anonymizer
+from anonymizer import GlinerEndpoint, create_anonymizer
 
-anonymizer = Anonymizer(
-    model_providers="providers.yaml",
-    model_configs="models.yaml",
+anonymizer = create_anonymizer(
+    gliner=GlinerEndpoint(
+        url="https://gliner2.internal.example/v1",
+        model="fastino/gliner2-privacy-filter-PII-multi",
+        api_key_env="GLINER2_API_KEY",
+    )
 )
 ```
 
-Set `skip_health_check: true` for the detector alias because a generic text-generation health probe
-does not contain the required GLiNER2 `labels` field. Anonymizer performs a detector-specific endpoint
-check immediately before the default detection workflow runs.
+The factory adds one detector model and provider, selects that detector, and preserves all other
+model configs, providers, and selected roles. It sets the detector's `skip_health_check` flag because
+a generic text-generation probe lacks the required `labels` field. Reserved factory alias and
+provider names cause a configuration error instead of replacing caller entries.
+
+`GlinerEndpoint` only creates the Anonymizer client. It does not launch, stop, probe, or otherwise own
+the service. Keep service shutdown in the deployment system that started it. The installed-library
+path does not import vLLM, GLiNER2, Torch, FastAPI, or source-tree tools.
 
 Tune recall and precision with `Detect(gliner_threshold=...)`. The default threshold is `0.3`; lower
 values increase recall, while higher values generally increase precision.

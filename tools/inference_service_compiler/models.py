@@ -262,6 +262,14 @@ class RunPlan(FrozenModel):
     source_revision: str = Field(min_length=1)
 
 
+class ConnectionInfo(FrozenModel):
+    """Non-secret client inputs derived from a compiled run plan."""
+
+    url: str
+    model: str
+    api_key_env: str | None = None
+
+
 class CapabilityProbeReceipt(FrozenModel):
     """Runtime evidence for the endpoint capabilities required by a plan."""
 
