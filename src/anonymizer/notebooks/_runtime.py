@@ -20,7 +20,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 
 import httpx
 from data_designer.config.models import ModelProvider
@@ -75,7 +75,7 @@ def create_anonymizer(
     *,
     model_configs: str | Path | None = None,
     model_providers: list[ModelProvider] | str | Path | None = None,
-    gliner_device: str = "auto",
+    gliner_device: Literal["auto", "cpu", "cuda", "mps"] = "auto",
 ) -> Anonymizer:
     """Compatibility wrapper for the public native GLiNER factory path."""
     from anonymizer.interface.factory import create_anonymizer as create_public_anonymizer
