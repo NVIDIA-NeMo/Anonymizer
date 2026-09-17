@@ -212,6 +212,22 @@ def test_builtin_rules_only_activate_for_requested_labels() -> None:
     assert [rule.label for rule in rules] == ["email"]
 
 
+def test_custom_rules_only_activate_for_requested_labels() -> None:
+    rules = resolve_regex_rules(
+        labels=["email"],
+        builtin_regexes=False,
+        rules=[
+            RegexRule(
+                label="support_case",
+                pattern=r"CASE-[0-9]+",
+                validator="not-installed",
+            )
+        ],
+    )
+
+    assert rules == []
+
+
 def test_builtin_regexes_can_be_disabled() -> None:
     rules = resolve_regex_rules(
         labels=["email"],
