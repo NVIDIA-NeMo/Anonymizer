@@ -127,6 +127,31 @@ If publication still fails, it makes a bounded attempt to stop the launched
 process. Later status and stop operations re-check the exact PID, Linux start
 marker, and process group.
 
+Read the non-secret client values from the compiled plan, then connect through the public factory:
+
+```bash
+uv run --python 3.12 python tools/inference_service.py connection \
+  --plan gliner-plan.json
+```
+
+```python
+from anonymizer import GlinerEndpoint, create_anonymizer
+
+anonymizer = create_anonymizer(
+    gliner=GlinerEndpoint(
+        url="http://127.0.0.1:8001/v1",
+        model="nvidia/gliner-pii",
+        api_key_env=None,
+    )
+)
+```
+
+Use the URL, model, and credential environment-variable name printed by `connection`; profile values
+can differ from this unauthenticated loopback example. The command never prints a credential value or
+a process handle. Pass `api_key_env=None` when `connection` prints `null`.
+`create_anonymizer()` connects to the endpoint but does not own its process. Use the receipt commands
+below for status and shutdown.
+
 ### Operate the service
 
 ```bash

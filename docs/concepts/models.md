@@ -12,8 +12,8 @@ Anonymizer uses LLMs for entity detection, replacement, and rewriting. Models ar
 Plain `Anonymizer()` uses Anonymizer's bundled provider and model configs — not DataDesigner's machine-local defaults from `~/.data-designer/model_providers.yaml`. Bundled providers live at [`providers.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/providers.yaml); bundled models at [`models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/models.yaml).
 
 The bundled GLiNER2 detector points to a loopback endpoint. Start a compatible local server before
-calling `Anonymizer.run()`, or use the notebook helper described in
-[Local notebook runtime](self-hosting-gliner.md#local-notebook-runtime). Set your API key for the
+calling `Anonymizer.run()`, or construct a client with `create_anonymizer()` and either `NativeGliner`
+or `GlinerEndpoint`. See [Self-hosting GLiNER2](self-hosting-gliner.md). Set your API key for the
 remaining models hosted on [OpenRouter](https://openrouter.ai):
 
 ```bash
