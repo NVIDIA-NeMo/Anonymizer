@@ -133,7 +133,7 @@ The result isn't a competition between NER detection and an LLM. It's a collabor
 
 **One problem. Three specialized reasoning tasks.**
 
-As the next section shows, each stage contributes measurable improvements, and together they consistently outperform any individual stage operating alone.
+As the next section shows, each stage contributes measurable improvements, and together they achieve the highest recall while maintaining strong precision.
 
 ## Results
 
