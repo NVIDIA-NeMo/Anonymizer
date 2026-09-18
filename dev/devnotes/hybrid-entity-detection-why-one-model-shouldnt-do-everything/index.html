@@ -10,31 +10,29 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/archive/2026/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/devnotes/hybrid-entity-detection-why-one-model-shouldnt-do-everything/">
       
       
-        <link rel="prev" href="../../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/">
+        <link rel="prev" href="../after-anonymization--part-ii-evaluating-rewrite-mode/">
       
-      
-        <link rel="next" href="../../running-nemo-anonymizer-fully-self-hosted-on-one-b300/">
       
       
         
       
       
-      <link rel="icon" href="../../../assets/favicon.svg">
+      <link rel="icon" href="../../assets/favicon.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
     
     
       
-        <title>2026 - NeMo Anonymizer</title>
+        <title>Hybrid Entity Detection: Why One Model Shouldn't Do Everything - NeMo Anonymizer</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,13 +51,13 @@
       
     
     
-      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../css/style.css">
+      <link rel="stylesheet" href="../../css/style.css">
     
-      <link rel="stylesheet" href="../../../css/mkdocstrings.css">
+      <link rel="stylesheet" href="../../css/mkdocstrings.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#2026" class="md-skip">
+        <a href="#hybrid-entity-detection-why-one-model-shouldnt-do-everything" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +102,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -124,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2026
+              Hybrid Entity Detection: Why One Model Shouldn't Do Everything
             
           </span>
         </div>
@@ -233,7 +231,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -242,7 +242,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -272,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -362,7 +362,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../concepts/models/" class="md-nav__link">
+      <a href="../../concepts/models/" class="md-nav__link">
         
   
   
@@ -390,7 +390,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../concepts/detection/" class="md-nav__link">
+      <a href="../../concepts/detection/" class="md-nav__link">
         
   
   
@@ -418,7 +418,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../concepts/replace/" class="md-nav__link">
+      <a href="../../concepts/replace/" class="md-nav__link">
         
   
   
@@ -446,7 +446,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../concepts/rewrite/" class="md-nav__link">
+      <a href="../../concepts/rewrite/" class="md-nav__link">
         
   
   
@@ -474,7 +474,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../concepts/choosing-a-strategy/" class="md-nav__link">
+      <a href="../../concepts/choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -502,7 +502,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../concepts/evaluation/" class="md-nav__link">
+      <a href="../../concepts/evaluation/" class="md-nav__link">
         
   
   
@@ -530,7 +530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../concepts/self-hosting-gliner/" class="md-nav__link">
+      <a href="../../concepts/self-hosting-gliner/" class="md-nav__link">
         
   
   
@@ -565,7 +565,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../troubleshooting/" class="md-nav__link">
+      <a href="../../troubleshooting/" class="md-nav__link">
         
   
   
@@ -620,7 +620,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../tutorials/" class="md-nav__link ">
+            <a href="../../tutorials/" class="md-nav__link ">
               
   
   
@@ -664,7 +664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../notebooks/01_your_first_anonymization/" class="md-nav__link">
+      <a href="../../notebooks/01_your_first_anonymization/" class="md-nav__link">
         
   
   
@@ -692,7 +692,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
+      <a href="../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
         
   
   
@@ -720,7 +720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
+      <a href="../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
         
   
   
@@ -748,7 +748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../notebooks/04_rewriting_biographies/" class="md-nav__link">
+      <a href="../../notebooks/04_rewriting_biographies/" class="md-nav__link">
         
   
   
@@ -776,7 +776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
+      <a href="../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
         
   
   
@@ -862,7 +862,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../development/observability/" class="md-nav__link">
+      <a href="../../development/observability/" class="md-nav__link">
         
   
   
@@ -1015,7 +1015,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/config/anonymizer_config/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/anonymizer_config/" class="md-nav__link">
         
   
   
@@ -1043,7 +1043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/config/models/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/models/" class="md-nav__link">
         
   
   
@@ -1071,7 +1071,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/config/replace_strategies/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/replace_strategies/" class="md-nav__link">
         
   
   
@@ -1099,7 +1099,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/config/rewrite/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/rewrite/" class="md-nav__link">
         
   
   
@@ -1194,7 +1194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/interface/anonymizer/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/anonymizer/" class="md-nav__link">
         
   
   
@@ -1273,7 +1273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/interface/cli/main/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/cli/main/" class="md-nav__link">
         
   
   
@@ -1309,7 +1309,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/interface/display/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/display/" class="md-nav__link">
         
   
   
@@ -1337,7 +1337,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/interface/errors/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/errors/" class="md-nav__link">
         
   
   
@@ -1365,7 +1365,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/interface/results/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/results/" class="md-nav__link">
         
   
   
@@ -1401,7 +1401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/logging/" class="md-nav__link">
+      <a href="../../reference/anonymizer/logging/" class="md-nav__link">
         
   
   
@@ -1496,7 +1496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/collector/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/collector/" class="md-nav__link">
         
   
   
@@ -1524,7 +1524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/config/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/config/" class="md-nav__link">
         
   
   
@@ -1552,7 +1552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/constants/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/constants/" class="md-nav__link">
         
   
   
@@ -1580,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/fields/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/fields/" class="md-nav__link">
         
   
   
@@ -1665,7 +1665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/metrics/entities/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/entities/" class="md-nav__link">
         
   
   
@@ -1693,7 +1693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/metrics/llm_calls/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/llm_calls/" class="md-nav__link">
         
   
   
@@ -1721,7 +1721,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/metrics/replacements/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/replacements/" class="md-nav__link">
         
   
   
@@ -1749,7 +1749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/metrics/rewrite/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/rewrite/" class="md-nav__link">
         
   
   
@@ -1785,7 +1785,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/recorders/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/recorders/" class="md-nav__link">
         
   
   
@@ -1868,7 +1868,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/records/model/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/records/model/" class="md-nav__link">
         
   
   
@@ -1896,7 +1896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/records/row/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/records/row/" class="md-nav__link">
         
   
   
@@ -1924,7 +1924,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/records/run/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/records/run/" class="md-nav__link">
         
   
   
@@ -1960,7 +1960,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/session/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/session/" class="md-nav__link">
         
   
   
@@ -1988,7 +1988,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/measurement/sinks/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/sinks/" class="md-nav__link">
         
   
   
@@ -2179,7 +2179,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/notebooks/local_inference/gliner2/backend/" class="md-nav__link">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/backend/" class="md-nav__link">
         
   
   
@@ -2207,7 +2207,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/notebooks/local_inference/gliner2/server/" class="md-nav__link">
+      <a href="../../reference/anonymizer/notebooks/local_inference/gliner2/server/" class="md-nav__link">
         
   
   
@@ -2259,7 +2259,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/anonymizer/telemetry/" class="md-nav__link">
+      <a href="../../reference/anonymizer/telemetry/" class="md-nav__link">
         
   
   
@@ -2324,7 +2324,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2368,7 +2368,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-nav__link">
+      <a href="../after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-nav__link">
         
   
   
@@ -2396,7 +2396,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
+      <a href="../after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
         
   
   
@@ -2424,7 +2424,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
+      <a href="../running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
         
   
   
@@ -2452,7 +2452,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
         
   
   
@@ -2477,8 +2477,6 @@
                 
   
   
-    
-  
   
   
     
@@ -2490,11 +2488,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_6" >
         
           
           <label class="md-nav__link" for="__nav_7_6" id="__nav_7_6_label" tabindex="0">
@@ -2515,7 +2513,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_7_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2530,41 +2528,12 @@
                 
   
   
-    
-  
   
     
-      
-    
   
   
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2026
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../archive/2026/" class="md-nav__link">
         
   
   
@@ -2580,81 +2549,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#hybrid-entity-detection-why-one-model-shouldnt-do-everything" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hybrid Entity Detection: Why One Model Shouldn't Do Everything
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#after-anonymization-part-ii-evaluating-rewrite-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        After Anonymization — Part II: Evaluating Rewrite Mode
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#after-anonymization-part-i-evaluating-replace-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        After Anonymization — Part I: Evaluating Replace Mode
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#running-nemo-anonymizer-fully-self-hosted-on-one-b300" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running NeMo Anonymizer Fully Self-Hosted on One B300
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2683,6 +2577,8 @@
             
             
               
+                
+              
               <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
@@ -2702,10 +2598,121 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#hybrid-entity-detection-why-one-model-shouldnt-do-everything" class="md-nav__link">
+  <a href="#one-problem-three-specialized-tasks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Hybrid Entity Detection: Why One Model Shouldn't Do Everything
+        One Problem. Three Specialized Tasks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="One Problem. Three Specialized Tasks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#candidate-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Candidate Detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#augmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Augmentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#design-rationale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Rationale
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#overall-benchmark-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overall Benchmark Performance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interpreting-the-results-fairly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interpreting the Results Fairly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-the-gains-come-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where the Gains Come From
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#discussion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discussion
       
     </span>
   </a>
@@ -2713,43 +2720,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#after-anonymization-part-ii-evaluating-rewrite-mode" class="md-nav__link">
+  <a href="#references" class="md-nav__link">
     <span class="md-ellipsis">
       
-        After Anonymization — Part II: Evaluating Rewrite Mode
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#after-anonymization-part-i-evaluating-replace-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        After Anonymization — Part I: Evaluating Replace Mode
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#running-nemo-anonymizer-fully-self-hosted-on-one-b300" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running NeMo Anonymizer Fully Self-Hosted on One B300
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+        References
       
     </span>
   </a>
@@ -2765,43 +2739,93 @@
             
           
           
-  <div class="md-content" data-md-component="content">
-    <div class="md-content__inner">
-      <header class="md-typeset">
-        <h1 id="2026">2026<a class="headerlink" href="#2026" title="Permanent link">&para;</a></h1>
-      </header>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://avatars.githubusercontent.com/u/256168822?v=4" alt="Amy Steier">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-09-01 00:00:00+00:00">September 1, 2026</time></li>
-        
-        
+  <div class="md-content md-content--post" data-md-component="content">
+    <div class="md-sidebar md-sidebar--post" data-md-component="sidebar" data-md-type="navigation">
+      <div class="md-sidebar__scrollwrap">
+        <div class="md-sidebar__inner md-post">
+          <nav class="md-nav md-nav--primary">
+            <div class="md-post__back">
+              <div class="md-nav__title md-nav__container">
+                <a href="../" class="md-nav__link">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+                  <span class="md-ellipsis">
+                    Back to index
+                  </span>
+                </a>
+              </div>
+            </div>
+            
+              <div class="md-post__authors md-typeset">
+                
+                  <div class="md-profile md-post__profile">
+                    <span class="md-author md-author--long">
+                      <img src="https://avatars.githubusercontent.com/u/256168822?v=4" alt="Amy Steier">
+                    </span>
+                    <span class="md-profile__description">
+                      <strong>
+                        
+                          <a href="https://github.com/asteier2026">Amy Steier</a>
+                        
+                      </strong>
+                      <br>
+                      Researcher at NVIDIA
+                    </span>
+                  </div>
+                
+              </div>
+            
+            <ul class="md-post__meta md-nav__list">
+              <li class="md-nav__item md-nav__item--section">
+                <div class="md-post__title">
+                  <span class="md-ellipsis">
+                    Metadata
+                  </span>
+                </div>
+                <nav class="md-nav">
+                  <ul class="md-nav__list">
+                    <li class="md-nav__item">
+                      <div class="md-nav__link">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 19H5V8h14m-3-7v2H8V1H6v2H5c-1.11 0-2 .89-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-1V1m-1 11h-5v5h5z"/></svg>
+                        <time datetime="2026-09-01 00:00:00+00:00" class="md-ellipsis">September 1, 2026</time>
+                      </div>
+                    </li>
+                    
+                    
+                    
+                      
+                      <li class="md-nav__item">
+                        <div class="md-nav__link">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 20a8 8 0 0 0 8-8 8 8 0 0 0-8-8 8 8 0 0 0-8 8 8 8 0 0 0 8 8m0-18a10 10 0 0 1 10 10 10 10 0 0 1-10 10C6.47 22 2 17.5 2 12A10 10 0 0 1 12 2m.5 5v5.25l4.5 2.67-.75 1.23L11 13V7z"/></svg>
+                          <span class="md-ellipsis">
+                            
+                              9 min read
+                            
+                          </span>
+                        </div>
+                      </li>
+                    
+                  </ul>
+                </nav>
+              </li>
+            </ul>
+            
+          </nav>
           
-          <li class="md-meta__item">
-            
-              9 min read
-            
-          </li>
-        
-        
-      </ul>
-      
+        </div>
+      </div>
     </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="hybrid-entity-detection-why-one-model-shouldnt-do-everything"><a class="toclink" href="../../hybrid-entity-detection-why-one-model-shouldnt-do-everything/"><strong>Hybrid Entity Detection: Why One Model Shouldn't Do Everything</strong></a></h2>
+    <article class="md-content__inner md-typeset">
+      
+        
+  
+
+
+
+  
+  
+
+
+<h1 id="hybrid-entity-detection-why-one-model-shouldnt-do-everything"><strong>Hybrid Entity Detection: Why One Model Shouldn't Do Everything</strong><a class="headerlink" href="#hybrid-entity-detection-why-one-model-shouldnt-do-everything" title="Permanent link">&para;</a></h1>
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
@@ -2815,233 +2839,255 @@
 <p>Everything is working exactly as designed.</p>
 <p><strong>The detector didn't miss the entity.</strong></p>
 <p><strong>It never knew that kind of entity existed.</strong></p>
+<!-- more -->
 
-    
-      <nav class="md-post__action">
-        <a href="../../hybrid-entity-detection-why-one-model-shouldnt-do-everything/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://avatars.githubusercontent.com/u/259195479?v=4" alt="Marjan Emadi">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-08-07 00:00:00+00:00">August 7, 2026</time></li>
-        
-        
-          
-          <li class="md-meta__item">
-            
-              10 min read
-            
-          </li>
-        
-        
-      </ul>
-      
-    </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="after-anonymization-part-ii-evaluating-rewrite-mode"><a class="toclink" href="../../after-anonymization--part-ii-evaluating-rewrite-mode/"><strong>After Anonymization — Part II: Evaluating Rewrite Mode</strong></a></h2>
-<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-<p>Replace mode can hide a name and change an address, yet leave the person recognizable. Imagine a biography describing the only pediatric cardiologist in a small desert city who trained overseas, survived a rare cancer, and later founded a clinic after a major wildfire. None of those details is a direct identifier. Together, they form a fingerprint that may point to one person.</p>
-<p>Rewrite mode tackles that harder problem by transforming the entire record. But rewriting introduces a new risk: protect too little and identity clues remain; protect too much and the data loses its value.</p>
-<p>NeMo Anonymizer evaluates that tradeoff twice. During anonymization, it measures how much identifying information remains (leakage) and how much useful meaning is preserved (utility), then repairs failing rewrites. Afterward, optional LLM judges assess literal entity coverage and the rewrite's overall privacy, quality, and style.</p>
-<p>This is Part 2 of a two-part series on evaluation in Anonymizer. <a href="../../after-anonymization--part-i-evaluating-replace-mode/">Part 1</a> covers Replace mode, while this devnote covers Rewrite mode.</p>
-
-    
-      <nav class="md-post__action">
-        <a href="../../after-anonymization--part-ii-evaluating-rewrite-mode/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://avatars.githubusercontent.com/u/259195479?v=4" alt="Marjan Emadi">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-07-28 00:00:00+00:00">July 28, 2026</time></li>
-        
-        
-          
-          <li class="md-meta__item">
-            
-              10 min read
-            
-          </li>
-        
-        
-      </ul>
-      
-    </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="after-anonymization-part-i-evaluating-replace-mode"><a class="toclink" href="../../after-anonymization--part-i-evaluating-replace-mode/"><strong>After Anonymization — Part I: Evaluating Replace Mode</strong></a></h2>
-<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-<p>You need to share a dataset of customer biographies for model development without exposing personal information, so you run it through NeMo Anonymizer's Replace mode. At first glance, the result looks right: the obvious identifiers have changed, the text reads naturally, and nothing appears broken.</p>
-<p>Look closer, though. One sensitive value was never detected. The synthetic name no longer matches the email address. The city and postal code belong to different regions. An age of 38 became 8, quietly turning an adult into a child. The record looks anonymized, but it may still expose private information or distort the original meaning.</p>
-<p><code>Anonymizer.evaluate()</code> provides a second pass over these results. It checks whether detection covered the sensitive values in the original text and, for Substitute mode, whether the generated replacements preserve their types, important attributes, and relationships.</p>
-<p>This is Part 1 of a two-part series on evaluation in Anonymizer. It explores how Replace-mode evaluation surfaces problems that a quick review can miss, what each score means, and how to interpret the results. Part 2 will cover Rewrite mode, where the evaluation questions are different.</p>
-
-    
-      <nav class="md-post__action">
-        <a href="../../after-anonymization--part-i-evaluating-replace-mode/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://avatars.githubusercontent.com/u/31832945?v=4" alt="Lipika Ramaswamy">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-07-07 00:00:00+00:00">July 7, 2026</time></li>
-        
-        
-          
-          <li class="md-meta__item">
-            
-              11 min read
-            
-          </li>
-        
-        
-      </ul>
-      
-    </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="running-nemo-anonymizer-fully-self-hosted-on-one-b300"><a class="toclink" href="../../running-nemo-anonymizer-fully-self-hosted-on-one-b300/"><strong>Running NeMo Anonymizer Fully Self-Hosted on One B300</strong></a></h2>
-<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-<p>Can Anonymizer run fully self-hosted and still process a real batch in minutes? The question comes up whenever sensitive data can't leave your infrastructure — think of an internal legal dataset that still needs realistic anonymized text for testing, review, or downstream model work. In that setting, self-hosting isn't just a deployment preference; it's what decides where the privacy boundary sits.</p>
-<p>This devnote takes on that problem with a single <a href="https://www.nvidia.com/en-us/data-center/dgx-b300/">B300</a> instance on <a href="https://brev.nvidia.com/">Brev</a>. Every model the pipeline touches runs on that one GPU: Qwen behind vLLM and GLiNER behind Anonymizer's reference OpenAI-compatible server, with Anonymizer pointed at localhost. Nothing leaves the box.</p>
+<p>Traditional named entity recognition models are built around fixed ontologies — a predefined vocabulary of entity types they can recognize. If an identifier isn't in that vocabulary, it simply isn't part of the task.</p>
+<p>Modern configurable detectors such as GLiNER<sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup> changed that. Instead of relying on a fixed ontology, developers can specify the entity types they want to detect, dramatically expanding what can be extracted without retraining.</p>
+<p>That's a huge step forward. But it still doesn't solve entity detection.</p>
+<p>Even when a detector knows what it's looking for, entity detection is still hard. Explicit identifiers are missed. False positives happen. Labels are ambiguous. The challenge shifts from <em>"Can this detector recognize this kind of entity?"</em> to <em>"Did this detector make the right decision in this document?"</em></p>
+<p>Our first instinct was the obvious one:</p>
 <blockquote>
-<p>The result: one warm Anonymizer call processed 250 compact legal records in under 9 minutes. No managed remote model API was in the loop.</p>
+<p><strong>Why not let an LLM do all the work?</strong></p>
 </blockquote>
-
-    
-      <nav class="md-post__action">
-        <a href="../../running-nemo-anonymizer-fully-self-hosted-on-one-b300/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://avatars.githubusercontent.com/u/256168822?v=4" alt="Amy Steier">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-05-19 00:00:00+00:00">May 19, 2026</time></li>
-        
-        
-          
-          <li class="md-meta__item">
-            
-              12 min read
-            
-          </li>
-        
-        
-      </ul>
-      
-    </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era"><a class="toclink" href="../../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/"><strong>Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era</strong></a></h2>
-<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-<p>Picture this: you ship a year of customer support transcripts to a vendor for model fine-tuning. Names, emails, phone numbers, account IDs — every identifier you can think of — stripped. A week later, the vendor's eval team flags a transcript and identifies the account: the customer who escalated repeatedly after a regional outage last spring, then quietly churned a month later.</p>
-<p>You didn't leak a name.</p>
+<p>Because we weren't trying to replace a good detector.</p>
+<p>We were trying to make a good one even better.</p>
+<p>Dedicated entity detectors excel at structured extraction. Given a set of entity types, they're fast, consistent, and remarkably good at finding explicit identifiers. LLMs bring a different strength: contextual reasoning. They're good at judging ambiguous cases, correcting mistakes, and recognizing entities that structured extraction can still overlook.</p>
+<p>Rather than asking one model to solve every problem, we split entity detection into three specialized tasks.</p>
+<p>One stage proposes candidate entities.</p>
+<p>One stage reviews them and decides only three things: <strong>keep</strong>, <strong>drop</strong>, or <strong>reclassify</strong>.</p>
+<p>One stage rereads the original document and asks a completely different question:</p>
 <blockquote>
-<p>You leaked a <em>fingerprint</em>.</p>
+<p><strong>What explicit entities did we miss?</strong></p>
 </blockquote>
-<p>The escalation pattern, the region, the churn timing — combined, they point to one account. This is the privacy problem that text anonymization actually has to solve in 2026, and it's the problem <strong>NeMo Anonymizer</strong> — <strong>Anonymizer</strong>, for short — is built for.</p>
+<p>Each stage has one job.</p>
+<p>Together, they consistently outperform any stage operating alone.</p>
+<h2 id="one-problem-three-specialized-tasks">One Problem. Three Specialized Tasks<a class="headerlink" href="#one-problem-three-specialized-tasks" title="Permanent link">&para;</a></h2>
+<p>The obvious way to build an entity detection pipeline is to ask one model a single question:</p>
+<blockquote>
+<p><strong>Find every entity that should be protected.</strong></p>
+</blockquote>
+<p>It sounds simple. In practice, that question hides several different problems.</p>
+<p>Some entities need to be found. Some need to be discarded. Others have the wrong boundaries or the wrong label. And even after all of that, some entities were never detected in the first place.</p>
+<p>Those aren't variations of the same task — they're different kinds of reasoning. So instead of asking one model to do everything, we split entity detection into three specialized stages.</p>
+<p>Although Anonymizer supports both Replace and Rewrite workflows, both begin with the same explicit entity detection pipeline described here. Rewrite builds on this foundation with additional stages for contextual reasoning beyond explicit entities, which will be explored in a future developer note.</p>
+<div style="text-align: center;">
+<p><img alt="A four-stage flow diagram: an original document flows into candidate entity detection (GLiNER2-PII), which flows into validation (LLM reasoning, keep/drop/reclassify), which flows into augmentation (LLM reasoning, rereading the document for missed entities), producing the final entity set." loading="lazy" src="../assets/hybrid-entity-detection-pipeline.png" /></p>
+</div>
+<h3 id="candidate-detection">Candidate Detection<a class="headerlink" href="#candidate-detection" title="Permanent link">&para;</a></h3>
+<p>The first stage asks only one question:</p>
+<blockquote>
+<p><strong>What might be an entity?</strong></p>
+</blockquote>
+<p>Its job is to cast a wide net.</p>
+<p>In our implementation, we use GLiNER2-PII<sup id="fnref:2"><a class="footnote-ref" href="#fn:2">2</a></sup> because it combines strong extraction performance with a flexible ontology. However, the architecture isn't tied to GLiNER. Any detector capable of proposing candidate entities could fill this role.</p>
+<h3 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h3>
+<p>Once candidate entities exist, the problem changes. The question is no longer:</p>
+<blockquote>
+<p><strong>What entities are present?</strong></p>
+</blockquote>
+<p>It's now:</p>
+<blockquote>
+<p><strong>Was this candidate the right decision?</strong></p>
+</blockquote>
+<p>Validation never searches for new entities. It simply reviews each candidate produced by the first stage and decides whether to keep, drop, or reclassify it. That's fundamentally a reasoning task, making it a natural fit for an LLM.</p>
+<p>Augmentation runs after validation, so entities it recovers are added directly to the final set rather than being sent back through another validation pass. Validating GLiNER's candidates makes sense because GLiNER trades some precision for recall; validating the augmenter's own suggestions would mean asking an LLM to second-guess itself, and augmented entities are already high precision.</p>
+<h3 id="augmentation">Augmentation<a class="headerlink" href="#augmentation" title="Permanent link">&para;</a></h3>
+<p>After validation, we deliberately start over.</p>
+<p>Instead of continuing from the validated entities, the final stage rereads the original document and asks a different question:</p>
+<blockquote>
+<p><strong>What explicit entities haven't been identified yet?</strong></p>
+</blockquote>
+<p>This stage isn't correcting earlier decisions. It's looking for entities that were never proposed as candidates.</p>
+<p>Because that requires open-ended reasoning over the document, we also implement this stage with an LLM.</p>
+<h3 id="design-rationale">Design Rationale<a class="headerlink" href="#design-rationale" title="Permanent link">&para;</a></h3>
+<p>Each stage is solving a different problem. The detector is optimized for structured extraction. The validator is optimized for contextual judgment. The augmenter is optimized for recovering missed entities.</p>
+<p>No stage is trying to solve entity detection by itself. Instead, each stage focuses on a single, well-defined responsibility.</p>
+<p>Validation primarily improves precision by removing incorrect candidates and correcting labels. Augmentation improves recall by recovering entities that never entered the pipeline. More importantly, it contributes a different style of reasoning than candidate detection. The two stages make different kinds of mistakes, allowing them to complement rather than replace each other.</p>
+<p>The result isn't a competition between NER detection and an LLM. It's a collaboration between structured extraction and contextual reasoning.</p>
+<p><strong>One problem. Three specialized reasoning tasks.</strong></p>
+<p>As the next section shows, each stage contributes measurable improvements, and together they achieve the highest recall while maintaining strong precision.</p>
+<h2 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h2>
+<h3 id="overall-benchmark-performance">Overall Benchmark Performance<a class="headerlink" href="#overall-benchmark-performance" title="Permanent link">&para;</a></h3>
+<p>The systems evaluated represent a range of anonymization approaches, including traditional NER services (Azure AI Language<sup id="fnref:3"><a class="footnote-ref" href="#fn:3">3</a></sup>), configurable entity detection (GLiNER2-PII), LLM-based anonymization (Rescriber<sup id="fnref:4"><a class="footnote-ref" href="#fn:4">4</a></sup>), hybrid detection (Anonymizer), and pipeline-based anonymization (Privacy Filter<sup id="fnref:5"><a class="footnote-ref" href="#fn:5">5</a></sup>). Azure AI Language, Privacy Filter, and Rescriber operate with predefined entity ontologies, whereas GLiNER2-PII supports configurable entity types. Anonymizer builds on configurable detection while adding validation and augmentation stages that reason over context.</p>
+<p>Because these systems support different entity ontologies, recall differences may reflect either unsupported entity types or failures to detect supported entities. We return to this distinction when interpreting the results.</p>
+<p>We evaluated each system on two benchmarks: Ai4Privacy's OpenPII<sup id="fnref:6"><a class="footnote-ref" href="#fn:6">6</a></sup> and Nemotron PII<sup id="fnref:7"><a class="footnote-ref" href="#fn:7">7</a></sup> (1,000 records from each dataset). OpenPII contains a broad range of real-world PII, including personal identifiers, contact information, organizations, locations, financial identifiers, and other common entity types. Nemotron PII contains a broader and more diverse collection of entity types, including additional quasi-identifiers and contextual attributes representative of modern LLM privacy challenges.</p>
+<p>The two systems that use an LLM, Rescriber and Anonymizer, used gpt-oss-120b.</p>
+<div style="text-align: center;">
+<p><img alt="Precision vs. recall scatter plot on OpenPII showing Anonymizer with the strongest balance between precision and recall, ahead of Privacy Filter, Rescriber, GLiNER2-PII, and Azure." loading="lazy" src="../assets/hybrid-entity-detection-openpii-pr.png" /></p>
+<p><img alt="Precision vs. recall scatter plot on Nemotron PII showing Anonymizer with the strongest balance between precision and recall, ahead of Privacy Filter, Rescriber, GLiNER2-PII, and Azure." loading="lazy" src="../assets/hybrid-entity-detection-nemotron-pr.png" /></p>
+</div>
+<p><em>Note: We excluded NVIDIA GLiNER and the latest Privacy Filter model from these comparisons because both were fine-tuned on Nemotron PII. Since Nemotron PII is one of our evaluation benchmarks, including systems trained directly on that dataset would not provide a fair comparison.</em></p>
+<p>The obvious question is whether decomposing entity detection into specialized reasoning stages actually improves performance.</p>
+<p>The results suggest that it does. Across both OpenPII and Nemotron PII, Anonymizer achieved the strongest overall balance between precision and recall, outperforming Azure, Privacy Filter, Rescriber, and GLiNER2-PII.</p>
+<p>One result was particularly noteworthy. GLiNER2-PII was already an exceptionally strong candidate detector. Rather than replacing it, the hybrid pipeline consistently improved upon its performance by combining structured extraction with specialized reasoning. This reinforced one of the central design goals of the architecture: use each component for the task it performs best, rather than asking a single model to solve every aspect of entity detection.</p>
+<h3 id="interpreting-the-results-fairly">Interpreting the Results Fairly<a class="headerlink" href="#interpreting-the-results-fairly" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>System</th>
+<th>Ontology Coverage</th>
+<th>Original Recall</th>
+<th>Supported Recall</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Azure</td>
+<td>89.7%</td>
+<td>42.6%</td>
+<td>44.0%</td>
+</tr>
+<tr>
+<td>Privacy Filter</td>
+<td>78.8%</td>
+<td>50.6%</td>
+<td>57.6%</td>
+</tr>
+<tr>
+<td>Rescriber</td>
+<td>100.0%</td>
+<td>51.9%</td>
+<td>51.9%</td>
+</tr>
+<tr>
+<td>Anonymizer</td>
+<td>100.0%</td>
+<td>80.9%</td>
+<td>80.9%</td>
+</tr>
+<tr>
+<td>GLiNER2-PII</td>
+<td>100.0%</td>
+<td>68.5%</td>
+<td>68.5%</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 1. Ontology-aware evaluation on OpenPII.</em></p>
+<table>
+<thead>
+<tr>
+<th>System</th>
+<th>Ontology Coverage</th>
+<th>Original Recall</th>
+<th>Supported Recall</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Azure</td>
+<td>73.6%</td>
+<td>54.0%</td>
+<td>62.9%</td>
+</tr>
+<tr>
+<td>Privacy Filter</td>
+<td>74.8%</td>
+<td>46.9%</td>
+<td>56.9%</td>
+</tr>
+<tr>
+<td>Rescriber</td>
+<td>100.0%</td>
+<td>52.0%</td>
+<td>52.0%</td>
+</tr>
+<tr>
+<td>Anonymizer</td>
+<td>100.0%</td>
+<td>93.1%</td>
+<td>93.1%</td>
+</tr>
+<tr>
+<td>GLiNER2-PII</td>
+<td>100.0%</td>
+<td>87.9%</td>
+<td>87.9%</td>
+</tr>
+</tbody>
+</table>
+<p><em>Table 2. Ontology-aware evaluation on Nemotron PII.</em></p>
+<p><em>Table Note: Ontology coverage is the proportion of benchmark entities whose types fall within a system's supported label set. Supported recall is recalculated using only those entities. Rescriber's predefined ontology covers the complete benchmark ontology, while GLiNER2-PII and Anonymizer were configured with the complete ontology; therefore, their original and supported recall values are identical.</em></p>
+<p>Those results raise a second question: are we comparing these systems fairly?</p>
+<p>Raw recall does not tell the entire story because a missed entity can reflect two different limitations:</p>
+<ul>
+<li>the system supports the entity type but failed to detect the entity, or</li>
+<li>the entity type falls outside the system's supported ontology.</li>
+</ul>
+<p>To distinguish these cases, we measured ontology coverage: the percentage of benchmark entities whose types the system could theoretically detect based on its supported labels. We then calculated supported recall using only entities whose types fall within that ontology. Supported recall is therefore recomputed on the supported subset; it is not obtained by simply dividing original recall by ontology coverage.</p>
+<p>The results show that ontology coverage explains part — but not all — of the performance gap. Azure AI Language and Privacy Filter cover only a subset of the entity types represented in OpenPII and Nemotron PII. Their original recall therefore reflects both detection failures and entities they were not designed to recognize. Restricting the evaluation to supported entity types improves their recall, particularly on Nemotron PII, but their supported recall remains well below their theoretical ceiling. Many of their misses are therefore supported entities that the systems nevertheless failed to detect.</p>
+<p>Rescriber covers all entity types represented in both benchmarks despite operating with a predefined ontology. GLiNER2-PII and Anonymizer achieve full coverage by accepting a configurable set of entity types and were evaluated using the complete benchmark ontology. For these three systems, original recall and supported recall are identical because no benchmark entities are excluded by the coverage adjustment. Their remaining misses reflect detection performance rather than ontology limitations.</p>
+<p>Separating ontology coverage from supported detection performance makes the source of each system's errors more visible. It prevents systems from being penalized without explanation for entity types outside their scope, while also showing that broader ontology coverage alone does not guarantee stronger recall.</p>
+<h3 id="where-the-gains-come-from">Where the Gains Come From<a class="headerlink" href="#where-the-gains-come-from" title="Permanent link">&para;</a></h3>
+<div style="text-align: center;">
+<p><img alt="Ablation study on OpenPII comparing GLiNER-only, GLiNER + LLM validation, LLM augmentation only, and the complete Anonymizer pipeline across precision and recall, with F1 scores annotated for each configuration." loading="lazy" src="../assets/hybrid-entity-detection-ablation-openpii.png" /></p>
+<p><img alt="Ablation study on Nemotron PII comparing GLiNER-only, GLiNER + LLM validation, LLM augmentation only, and the complete Anonymizer pipeline across precision and recall, with F1 scores annotated for each configuration." loading="lazy" src="../assets/hybrid-entity-detection-ablation-nemotron.png" /></p>
+</div>
+<p>If the complete pipeline performs better, which stages are responsible for the improvement?</p>
+<p>The ablation study helps answer that question. These configurations are evaluation variants used to isolate each stage's contribution; Anonymizer itself runs the complete three-stage pipeline.</p>
+<p>GLiNER2-PII provides strong candidate generation. Validation then improves precision by removing incorrect candidates and correcting entity classifications. Augmentation contributes a different capability: it rereads the original document to recover explicit entities that candidate detection missed.</p>
+<p>The complete pipeline achieves the highest recall on both benchmarks while maintaining strong precision. On Nemotron PII, it also produces the highest overall F1 score. On OpenPII, augmentation alone achieves a slightly higher F1 score, reflecting its exceptionally high precision, but it finds fewer entities than the complete pipeline. Because missed sensitive entities are generally more consequential than additional candidates that can be validated, Anonymizer uses all three stages together.</p>
+<p>These aggregate results span a broad and challenging range of entity types, including identifiers that are ambiguous or depend heavily on context. They are intended to compare system behavior across difficult benchmarks, not to represent a production recall guarantee for every entity category or deployment.</p>
+<p>The gain therefore does not come from any single stage operating alone. It comes from combining complementary forms of detection and reasoning: structured candidate generation for coverage, validation for precision, and augmentation for recovery of missed entities.</p>
+<h2 id="discussion">Discussion<a class="headerlink" href="#discussion" title="Permanent link">&para;</a></h2>
+<p>One lesson from this work is that stronger AI systems don't always come from larger models or longer prompts. Sometimes they come from decomposing a difficult task into simpler reasoning problems.</p>
+<p>Entity detection illustrates this well.</p>
+<p>Candidate generation, validation, and augmentation each require different kinds of reasoning. Asking a single model to perform all three simultaneously forces it to optimize competing objectives. Separating them allows each stage to focus on one well-defined question before passing its output to the next.</p>
+<p>This decomposition also makes the pipeline easier to understand and evolve. Candidate detection can be improved independently of validation. Validation can adopt new reasoning models without changing augmentation. Better candidate detectors can be incorporated without redesigning the overall architecture.</p>
+<p>While this article focused on entity detection, the same principle applies more broadly. Many AI pipelines combine retrieval, classification, verification, planning, or generation into a single prompt. Breaking those responsibilities into specialized stages may produce systems that are not only more accurate, but also easier to evaluate and improve.</p>
+<p>We began this project thinking we needed a better entity detector.
+Instead, we discovered we already had an excellent detector. What it needed wasn't replacement — it needed teammates.</p>
+<p>GLiNER excels at structured extraction, while LLMs excel at contextual reasoning. By allowing each to do what it does best, the hybrid pipeline consistently outperformed either approach alone.</p>
+<p>Sometimes the hardest AI problems aren't solved by asking one model to reason harder.
+They're solved by asking several models simpler questions.</p>
+<p><strong>We didn't replace the detector. We gave it teammates.</strong></p>
+<p><em>One problem. Three specialized reasoning tasks.</em></p>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:1">
+<p>GLiNER: <a href="https://arxiv.org/abs/2311.08526">Paper</a>; <a href="https://huggingface.co/urchade/gliner_large-v2.1">Hugging Face model</a>&#160;<a class="footnote-backref" href="#fnref:1" title="Jump back to footnote 1 in the text">&#8617;</a></p>
+</li>
+<li id="fn:2">
+<p>GLiNER2-PII: <a href="https://arxiv.org/abs/2605.09973">Paper</a>; <a href="https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi">Hugging Face model</a>&#160;<a class="footnote-backref" href="#fnref:2" title="Jump back to footnote 2 in the text">&#8617;</a></p>
+</li>
+<li id="fn:3">
+<p>Azure AI Language PII Detection: <a href="https://learn.microsoft.com/en-us/azure/ai-services/language-service/personally-identifiable-information/overview">Documentation</a>&#160;<a class="footnote-backref" href="#fnref:3" title="Jump back to footnote 3 in the text">&#8617;</a></p>
+</li>
+<li id="fn:4">
+<p>Rescriber: <a href="https://github.com/PEACH-Research-Lab/Rescriber">GitHub</a>&#160;<a class="footnote-backref" href="#fnref:4" title="Jump back to footnote 4 in the text">&#8617;</a></p>
+</li>
+<li id="fn:5">
+<p>Privacy Filter: <a href="https://huggingface.co/openai/privacy-filter">Hugging Face model</a>; <a href="https://openai.com/index/introducing-openai-privacy-filter/">OpenAI Introduction</a>&#160;<a class="footnote-backref" href="#fnref:5" title="Jump back to footnote 5 in the text">&#8617;</a></p>
+</li>
+<li id="fn:6">
+<p>OpenPII Benchmark: <a href="https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1.5m">Hugging Face dataset</a>&#160;<a class="footnote-backref" href="#fnref:6" title="Jump back to footnote 6 in the text">&#8617;</a></p>
+</li>
+<li id="fn:7">
+<p>Nemotron PII Benchmark: <a href="https://huggingface.co/datasets/nvidia/Nemotron-PII">Hugging Face dataset</a>&#160;<a class="footnote-backref" href="#fnref:7" title="Jump back to footnote 7 in the text">&#8617;</a></p>
+</li>
+</ol>
+</div>
 
-    
-      <nav class="md-post__action">
-        <a href="../../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-      
-        
-          
 
 
 
-<nav class="md-pagination">
+
+
+
   
-</nav>
-        
+  
+
+
+
+
+  
+
+
+
       
-    </div>
+    </article>
   </div>
 
           
@@ -3062,10 +3108,12 @@
   
     
       
+        
+      
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../../introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era">
+          <a href="../after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-footer__link md-footer__link--prev" aria-label="Previous: After Anonymization — Part II: Evaluating Rewrite Mode">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -3075,27 +3123,11 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Introducing NeMo Anonymizer: Text Anonymization for the Reasoning Era
+                After Anonymization — Part II: Evaluating Rewrite Mode
               </div>
             </div>
           </a>
         
-        
-          
-          <a href="../../running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-footer__link md-footer__link--next" aria-label="Next: Running NeMo Anonymizer Fully Self-Hosted on One B300">
-            <div class="md-footer__title">
-              <span class="md-footer__direction">
-                Next
-              </span>
-              <div class="md-ellipsis">
-                Running NeMo Anonymizer Fully Self-Hosted on One B300
-              </div>
-            </div>
-            <div class="md-footer__button md-icon">
-              
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
-            </div>
-          </a>
         
       </nav>
     
@@ -3125,16 +3157,16 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../../js/mathjax.js"></script>
+        <script src="../../js/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
-        <script src="../../../js/toc-toggle.js"></script>
+        <script src="../../js/toc-toggle.js"></script>
       
     
   </body>
