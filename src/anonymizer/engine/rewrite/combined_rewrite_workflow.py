@@ -49,6 +49,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _get_replacement_mapping_prompt,
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
+from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -392,6 +393,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         columns.extend(
             DomainClassificationWorkflow().columns(selected_models=selected_models, data_summary=data_summary)
         )
+        columns.extend(EntityClassificationWorkflow().columns(selected_models=selected_models))
         columns.extend(
             SensitivityDispositionWorkflow().columns(
                 selected_models=selected_models,

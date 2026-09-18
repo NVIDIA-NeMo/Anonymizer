@@ -12,6 +12,7 @@ from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT_PRIVACY,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
@@ -90,6 +91,14 @@ Entities detected and validated from the text:
 <<FINAL_ENTITIES>>
 </input_detected_entities>
 
+<input_entity_classifications>
+Each entity label below has already been classified as a direct identifier or a
+quasi-identifier. Do NOT reclassify — use these values exactly as given for the
+"category" field of every source="tagged" entity in your output.
+
+<<ENTITY_CLASSIFICATIONS>>
+</input_entity_classifications>
+
 <input_latent_entities>
 Latent entities are NOT explicitly stated but can be inferred by an adversary from context.
 Each has: label, value, confidence, evidence, rationale.
@@ -115,24 +124,22 @@ Re-identification is successful if the adversary can reasonably narrow identity 
 
 <<STRICT_PROTECTION_BLOCK>>
 <entity_categories>
+category is already decided for you — see <input_entity_classifications> for every
+source="tagged" entity, and use "latent_identifier" for every source="latent" entity.
+This section explains what each category implies for sensitivity and protection;
+it does not ask you to classify anything.
+
 Assign sensitivity based on re-identification risk only — not on the nature of the content itself.
 Attributes like religion, political views, or sexual orientation may require protection,
 but their sensitivity level is set by re-identification risk alone.
 
 DIRECT IDENTIFIERS — sensitivity: always high
   Uniquely identify an individual on their own.
-  Examples: full name, email, phone number, SSN, exact address, full date of birth,
-  account number, medical record number, national ID, tax ID.
-  Note: full date of birth (month + day + year) qualifies. A year-only or decade
-  reference is a quasi-identifier, not a direct identifier.
-
   Default protection: replace with a plausible synthetic alternative.
   Use generalization or removal only if replacement distorts meaning.
 
 QUASI-IDENTIFIERS — sensitivity: high, medium, or low
   Not identifying alone, but narrowing in combination with other known facts.
-  Examples: age, city, occupation, employer, gender, nationality, education,
-  marital status, religion, political view, sexual orientation.
 
   Sensitivity assignment:
   Assign high when the entity value is itself so rare or distinctive that it
@@ -212,7 +219,10 @@ CONSISTENCY RULES:
 - If combined_risk_level='high' → protection_method_suggestion MUST NOT be "leave_as_is".
 - For latent entities, "replace" is rarely appropriate (value not in text).
 - For source="tagged": entity_value MUST match tag exactly.
-- For source="latent": entity_label/value MUST match the provided latent entity.
+- For source="tagged": category MUST match the value given in <input_entity_classifications>
+  exactly — do not reclassify.
+- For source="latent": entity_label/value MUST match the provided latent entity, and
+  category MUST be "latent_identifier".
 
 COVERAGE REQUIREMENTS:
 - Include ONE entry for EVERY unique listed entity
@@ -246,6 +256,7 @@ QUALITY REQUIREMENTS:
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),
             "<<FINAL_ENTITIES>>": _jinja(COL_ENTITIES_BY_VALUE),
+            "<<ENTITY_CLASSIFICATIONS>>": _jinja(COL_ENTITY_CLASSIFICATION),
             "<<LATENT_ENTITIES>>": _jinja(COL_LATENT_ENTITIES),
             "<<STRICT_PROTECTION_BLOCK>>": strict_protection_block,
         },
