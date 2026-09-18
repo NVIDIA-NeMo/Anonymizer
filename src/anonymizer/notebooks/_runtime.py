@@ -20,17 +20,21 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 
 import httpx
 from data_designer.config.models import ModelProvider
+from data_designer.config.run_config import RunConfig
 
 from anonymizer.interface.anonymizer import Anonymizer
-from anonymizer.notebooks._model_config import (
-    LOCAL_TOKEN_ENV,
-    build_notebook_model_configuration,
-    validate_notebook_model_inputs,
+from anonymizer.interface.factory import (
+    GlinerEndpoint,
+    NativeGliner,
+    _build_gliner_model_configuration,
+    _new_anonymizer,
+    _validate_gliner_model_inputs,
 )
+from anonymizer.notebooks._model_config import LOCAL_TOKEN_ENV
 from anonymizer.notebooks.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
 
 logger = logging.getLogger(__name__)
@@ -71,20 +75,44 @@ def create_anonymizer(
     *,
     model_configs: str | Path | None = None,
     model_providers: list[ModelProvider] | str | Path | None = None,
-    gliner_device: str = "auto",
+    gliner_device: Literal["auto", "cpu", "cuda", "mps"] = "auto",
 ) -> Anonymizer:
-    """Return an Anonymizer backed by an owned notebook-local GLiNER2 process."""
+    """Compatibility wrapper for the public native GLiNER factory path."""
+    from anonymizer.interface.factory import create_anonymizer as create_public_anonymizer
+
+    return create_public_anonymizer(
+        gliner=NativeGliner(device=gliner_device),
+        model_configs=model_configs,
+        model_providers=model_providers,
+    )
+
+
+def _create_native_anonymizer(
+    *,
+    request: NativeGliner,
+    model_configs: str | Path | None,
+    model_providers: list[ModelProvider] | str | Path | None,
+    artifact_path: str | Path | None,
+    data_designer_run_config: RunConfig | None,
+) -> Anonymizer:
+    """Construct through the owned singleton runtime for the public factory."""
     with _runtime_lock:
-        validate_notebook_model_inputs(model_configs=model_configs, model_providers=model_providers)
-        runtime = _ensure_runtime(gliner_device)
-        configuration = build_notebook_model_configuration(
+        _validate_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
+        runtime = _ensure_runtime(request.device)
+        configuration = _build_gliner_model_configuration(
             model_configs=model_configs,
             model_providers=model_providers,
-            endpoint=runtime.endpoint,
+            endpoint=GlinerEndpoint(
+                url=runtime.endpoint,
+                model=MODEL_ID,
+                api_key_env=LOCAL_TOKEN_ENV,
+            ),
         )
-        return Anonymizer(
+        return _new_anonymizer(
             model_configs=configuration.model_configs,
             model_providers=configuration.model_providers,
+            artifact_path=artifact_path,
+            data_designer_run_config=data_designer_run_config,
         )
 
 
