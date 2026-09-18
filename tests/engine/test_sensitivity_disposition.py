@@ -10,6 +10,7 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DOMAIN_SUPPLEMENT_PRIVACY,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_LATENT_ENTITIES,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAGGED_TEXT,
@@ -61,6 +62,13 @@ def test_prompt_references_required_columns() -> None:
     prompt = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
     assert _jinja(COL_TAGGED_TEXT) in prompt
     assert _jinja(COL_ENTITIES_BY_VALUE) in prompt
+    assert _jinja(COL_ENTITY_CLASSIFICATION) in prompt
     assert _jinja(COL_LATENT_ENTITIES) in prompt
     assert _jinja(COL_DOMAIN_SUPPLEMENT_PRIVACY) in prompt
     assert _jinja("_domain", key="domain") in prompt
+
+
+def test_prompt_instructs_llm_not_to_reclassify_tagged_entities() -> None:
+    prompt = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
+    assert "Do NOT reclassify" in prompt
+    assert "category MUST match the value given in <input_entity_classifications>" in prompt

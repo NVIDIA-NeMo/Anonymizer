@@ -84,6 +84,7 @@ class RewriteModelSelection(BaseModel):
     """Model aliases for the rewrite pipeline."""
 
     domain_classifier: str
+    entity_classifier: str
     disposition_analyzer: str
     meaning_extractor: str
     qa_generator: str

@@ -118,3 +118,17 @@ def parse_sensitivity_disposition(raw: Any) -> SensitivityDispositionSchema:
     if isinstance(raw, dict):
         return SensitivityDispositionSchema.model_validate(raw)
     raise ValueError(f"Cannot parse sensitivity disposition from {type(raw)}")
+
+
+def parse_entity_classification(raw: Any) -> dict[str, str]:
+    """Parse COL_ENTITY_CLASSIFICATION into a label -> category dict.
+
+    Returns an empty dict for missing/empty input rather than raising, since
+    a document with no non-latent entities needing classification is valid.
+    """
+    raw = normalize_payload(raw)
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    raise ValueError(f"Cannot parse entity classification from {type(raw)}")

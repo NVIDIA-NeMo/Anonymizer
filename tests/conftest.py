@@ -125,6 +125,7 @@ def stub_slim_model_selection() -> ModelSelection:
         replace=ReplaceModelSelection(replacement_generator="known"),
         rewrite=RewriteModelSelection(
             domain_classifier="known",
+            entity_classifier="known",
             disposition_analyzer="known",
             meaning_extractor="known",
             qa_generator="known",

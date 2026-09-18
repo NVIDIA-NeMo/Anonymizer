@@ -35,6 +35,7 @@ from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
+from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -241,15 +242,16 @@ class RewriteResult:
 class RewriteWorkflow:
     """Top-level orchestrator for the rewrite pipeline.
 
-    Chains all sub-workflows in order: domain classification,
-    sensitivity disposition, QA generation, rewrite generation,
-    and the evaluate-repair loop. The final judge runs separately
-    via evaluate().
+    Chains all sub-workflows in order: domain classification, entity
+    classification, sensitivity disposition, QA generation, rewrite
+    generation, and the evaluate-repair loop. The final judge runs
+    separately via evaluate().
     """
 
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
         self._domain_wf = DomainClassificationWorkflow()
+        self._entity_classification_wf = EntityClassificationWorkflow()
         self._disposition_wf = SensitivityDispositionWorkflow()
         self._qa_wf = QAGenerationWorkflow()
         self._rewrite_gen_wf = RewriteGenerationWorkflow()
@@ -301,9 +303,10 @@ class RewriteWorkflow:
             entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
             all_failed.extend(replace_result.failed_records)
 
-            # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
+            # --- Step 2: domain, entity classification, disposition, QA, rewrite (single adapter call) ---
             pipeline_columns = [
                 *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
+                *self._entity_classification_wf.columns(selected_models=selected_models),
                 *self._disposition_wf.columns(
                     selected_models=selected_models,
                     privacy_goal=privacy_goal,

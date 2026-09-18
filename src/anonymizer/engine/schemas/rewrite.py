@@ -8,6 +8,9 @@ Each schema group corresponds to one pipeline step:
     Step 1 — Domain classification
         DomainClassificationSchema
 
+    Step 1b — Entity classification (direct vs. quasi-identifier, non-latent entities)
+        EntityLabelClassificationSchema, EntityLabelClassificationsSchema
+
     Step 2 — Sensitivity disposition (per-entity protection plan)
         EntityDispositionSchema, SensitivityDispositionSchema
 
@@ -40,6 +43,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -86,6 +90,33 @@ class DomainClassificationSchema(BaseModel):
 
     domain: Domain
     domain_confidence: float = Field(ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Entity Classification (direct vs. quasi-identifier, non-latent entities only)
+# ---------------------------------------------------------------------------
+
+
+class EntityLabelClassificationSchema(BaseModel):
+    """LLM classification of one entity label not covered by DEFAULT_ENTITY_LABEL_CATEGORY.
+
+    Restricted to direct/quasi — this step never runs on latent entities, so
+    ``latent_identifier`` (the third EntityCategory value) is not a valid output here.
+    """
+
+    label: str = Field(min_length=1)
+    category: Literal["direct_identifier", "quasi_identifier"]
+
+
+class EntityLabelClassificationsSchema(BaseModel):
+    """LLM output schema for the entity classification step.
+
+    One call per row/document: the prompt lists every unmapped label present
+    in that row, and this returns one entry per label. Empty when every label
+    in the document is already covered by DEFAULT_ENTITY_LABEL_CATEGORY.
+    """
+
+    classifications: list[EntityLabelClassificationSchema] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

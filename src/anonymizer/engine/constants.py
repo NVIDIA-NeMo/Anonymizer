@@ -100,6 +100,10 @@ COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES = "attribute_fidelity_invalid_entities" 
 COL_DOMAIN = "_domain"
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_DOMAIN_SUPPLEMENT_PRIVACY = "_domain_supplement_privacy"
+COL_ENTITY_CLASSIFICATION_LOCAL = "_entity_classification_local"  # label -> category, from the default table
+COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS = "_entity_classification_unmapped_labels"  # labels not in default table
+COL_ENTITY_CLASSIFICATION_LLM = "_entity_classification_llm"  # raw LLM output for unmapped labels only
+COL_ENTITY_CLASSIFICATION = "_entity_classification"  # merged map, consumed by sensitivity disposition
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
 COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
@@ -222,6 +226,99 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
 }
 
 DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
+
+
+# ---------------------------------------------------------------------------
+# Entity label -> category mapping (rewrite mode only)
+#
+# Direct/quasi-identifier taxonomy for the default entity labels above.
+# Used by EntityClassificationWorkflow (engine/rewrite/entity_classification.py)
+# to resolve category locally, without an LLM call, for labels covered here.
+# Only labels outside this table (custom user-supplied entity_labels) go
+# through the LLM classification fallback.
+#
+# Values match anonymizer.engine.schemas.EntityCategory ("direct_identifier" /
+# "quasi_identifier"); kept as plain strings here to avoid importing the
+# schemas package into this zero-dependency constants module.
+# ---------------------------------------------------------------------------
+
+DEFAULT_ENTITY_LABEL_CATEGORY: dict[str, str] = {
+    # Direct identifiers: uniquely identify an individual (or their account/device) on their own.
+    "first_name": "direct_identifier",
+    "last_name": "direct_identifier",
+    "ssn": "direct_identifier",
+    "date_of_birth": "direct_identifier",
+    "email": "direct_identifier",
+    "phone_number": "direct_identifier",
+    "fax_number": "direct_identifier",
+    "national_id": "direct_identifier",
+    "tax_id": "direct_identifier",
+    "account_number": "direct_identifier",
+    "medical_record_number": "direct_identifier",
+    "certificate_license_number": "direct_identifier",
+    "unique_id": "direct_identifier",
+    "password": "direct_identifier",
+    "api_key": "direct_identifier",
+    "biometric_identifier": "direct_identifier",
+    "credit_debit_card": "direct_identifier",
+    "cvv": "direct_identifier",
+    "pin": "direct_identifier",
+    "device_identifier": "direct_identifier",
+    "mac_address": "direct_identifier",
+    "http_cookie": "direct_identifier",
+    "vehicle_identifier": "direct_identifier",
+    "license_plate": "direct_identifier",
+    "health_plan_beneficiary_number": "direct_identifier",
+    "employee_id": "direct_identifier",
+    "customer_id": "direct_identifier",
+    "street_address": "direct_identifier",
+    "ipv4": "direct_identifier",
+    "ipv6": "direct_identifier",
+    "user_name": "direct_identifier",
+    "coordinate": "direct_identifier",
+    # Quasi-identifiers: narrow identity only in combination with other facts.
+    "occupation": "quasi_identifier",
+    "swift_bic": "quasi_identifier",
+    "company_name": "quasi_identifier",
+    "country": "quasi_identifier",
+    "state": "quasi_identifier",
+    "date_time": "quasi_identifier",
+    "city": "quasi_identifier",
+    "postcode": "quasi_identifier",
+    "bank_routing_number": "quasi_identifier",
+    "url": "quasi_identifier",
+    "date": "quasi_identifier",
+    "time": "quasi_identifier",
+    "age": "quasi_identifier",
+    "county": "quasi_identifier",
+    "gender": "quasi_identifier",
+    "sexuality": "quasi_identifier",
+    "political_view": "quasi_identifier",
+    "race_ethnicity": "quasi_identifier",
+    "religious_belief": "quasi_identifier",
+    "language": "quasi_identifier",
+    "blood_type": "quasi_identifier",
+    "employment_status": "quasi_identifier",
+    "education_level": "quasi_identifier",
+    "university": "quasi_identifier",
+    "court_name": "quasi_identifier",
+    "prison_detention_facility": "quasi_identifier",
+    "nationality": "quasi_identifier",
+    "degree": "quasi_identifier",
+    "field_of_study": "quasi_identifier",
+    "place_name": "quasi_identifier",
+    "landmark": "quasi_identifier",
+    "organization_name": "quasi_identifier",
+    "monetary_amount": "quasi_identifier",
+}
+
+if DEFAULT_ENTITY_LABEL_CATEGORY.keys() != set(DEFAULT_ENTITY_LABELS):
+    _missing = set(DEFAULT_ENTITY_LABELS) - DEFAULT_ENTITY_LABEL_CATEGORY.keys()
+    _extra = DEFAULT_ENTITY_LABEL_CATEGORY.keys() - set(DEFAULT_ENTITY_LABELS)
+    raise ValueError(
+        "DEFAULT_ENTITY_LABEL_CATEGORY is out of sync with ENTITY_LABEL_EXAMPLES: "
+        f"missing={sorted(_missing)}, extra={sorted(_extra)}"
+    )
 
 
 # ---------------------------------------------------------------------------
