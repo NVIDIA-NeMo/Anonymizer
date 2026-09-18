@@ -10,7 +10,7 @@ The Anonymizer tutorial series covers everything from basic replace workflows to
 ### Local Setup Best Practices
 
 First, download the tutorial `anonymizer_tutorial.zip` from the
-[Anonymizer release assets](https://github.com/NVIDIA-NeMo/Anonymizer/releases) page. 
+[Anonymizer release assets](https://github.com/NVIDIA-NeMo/Anonymizer/releases) page.
 <!-- TODO: update with direct link after cutting a release -->
 
 ```bash
@@ -33,7 +33,7 @@ We recommend using a virtual environment to manage dependencies.
     python -m ipykernel install --user --name anonymizer-venv
 
     # Set API key before launching Jupyter
-    export NVIDIA_API_KEY="your-nvidia-api-key"
+    export OPENROUTER_API_KEY="your-openrouter-api-key"
 
     # Launch Jupyter
     uv run jupyter notebook
@@ -53,13 +53,13 @@ We recommend using a virtual environment to manage dependencies.
     python -m ipykernel install --user --name anonymizer-venv
 
     # Set API key before launching Jupyter
-    export NVIDIA_API_KEY="your-nvidia-api-key"
+    export OPENROUTER_API_KEY="your-openrouter-api-key"
 
     # Launch Jupyter
     jupyter notebook
     ```
 
-Set your `NVIDIA_API_KEY` in the same shell where you launch Jupyter. If `NVIDIA_API_KEY` appears to be missing in a notebook:
+Set your `OPENROUTER_API_KEY` in the same shell where you launch Jupyter. If `OPENROUTER_API_KEY` appears to be missing in a notebook:
 
 1. Launch Jupyter from the same shell where you exported it.
 2. Confirm the selected kernel is your intended environment.

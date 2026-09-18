@@ -34,7 +34,7 @@ def test_build_notebook_model_configuration_overrides_only_detector() -> None:
     local = next(config for config in parsed.model_configs if config.alias == LOCAL_ALIAS)
     assert local.model == MODEL_ID
     assert local.provider == LOCAL_PROVIDER
-    assert any(provider.name == "nvidia" for provider in configuration.model_providers)
+    assert any(provider.name == "openrouter" for provider in configuration.model_providers)
     injected = next(provider for provider in configuration.model_providers if provider.name == LOCAL_PROVIDER)
     assert injected.endpoint == "http://127.0.0.1:43210/v1"
 

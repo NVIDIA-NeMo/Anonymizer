@@ -7,7 +7,7 @@ providers:
     provider_type: openai
     api_key: EMPTY
 
-  - name: nvidia
-    endpoint: https://integrate.api.nvidia.com/v1
+  - name: openrouter
+    endpoint: https://openrouter.ai/api/v1
     provider_type: openai
-    api_key: NVIDIA_API_KEY
+    api_key: OPENROUTER_API_KEY

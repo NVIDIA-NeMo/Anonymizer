@@ -7,7 +7,7 @@ Iterative design with the user. Do not disengage from the loop until the user sa
 
 1. **Verify environment**
    - **Install**: run `python -c "import anonymizer; print(anonymizer.__version__)"`. If the import fails, STOP and follow the Troubleshooting section in `SKILL.md`.
-   - **Model providers**: plain `Anonymizer()` loads bundled providers from `src/anonymizer/config/default_model_configs/providers.yaml`. Before going further, confirm the API key for those defaults is set (`NVIDIA_API_KEY` for build.nvidia.com). Only ask for a custom `providers.yaml` when the user targets a non-default endpoint. If the key is missing, STOP and walk the user through [`docs/concepts/models.md`](../../../docs/concepts/models.md) or the [published models guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/).
+   - **Model providers**: plain `Anonymizer()` loads bundled providers from `src/anonymizer/config/default_model_configs/providers.yaml`. Before going further, confirm the API key for those defaults is set (`OPENROUTER_API_KEY` for OpenRouter). Only ask for a custom `providers.yaml` when the user targets a non-default endpoint. If the key is missing, STOP and walk the user through [`docs/concepts/models.md`](../../../docs/concepts/models.md) or the [published models guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/).
 
 2. **Inspect the data** — Read the first few rows of the source file with pandas. You need to know:
    - Path, format, encoding.
@@ -24,7 +24,7 @@ Iterative design with the user. Do not disengage from the loop until the user sa
    - **For Rewrite**: what must be protected? what must be preserved? how strict (`risk_tolerance`)? Read sections 5–6 of [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md), or the [published strategy guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/), with the user's answers in mind.
    - **Domain-specific entity labels** the defaults won't cover (e.g. `"clinical_facility"`, `"case_number"`, `"internal_project_codename"`). If yes, read section 2 of [`docs/concepts/choosing-a-strategy.md`](../../../docs/concepts/choosing-a-strategy.md) or the [published strategy guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/).
    - **Cross-record consistency requirement** (does the same person/ID need the same replacement everywhere)? If yes, use `Hash`; do not promise this with `Substitute`.
-   - **Model providers**: use shipped defaults (`Anonymizer()` — calls `build.nvidia.com` via `NVIDIA_API_KEY`) or a custom `providers.yaml`? Defaults are right for most cases; only ask for a path if the user has a non-NVIDIA endpoint or a specific deployment to target. If custom, capture the path now so the script can pass it via `Anonymizer(model_providers="path/to/providers.yaml")`.
+   - **Model providers**: use shipped defaults (`Anonymizer()` — calls OpenRouter via `OPENROUTER_API_KEY`) or a custom `providers.yaml`? Defaults are right for most cases; only ask for a path if the user has a non-OpenRouter endpoint or a specific deployment to target. If custom, capture the path now so the script can pass it via `Anonymizer(model_providers="path/to/providers.yaml")`.
 
 4. **Plan** — Briefly state the config you intend to write (mode, strategy, key fields, any non-default detection knobs). Confirm with the user before writing the script.
 
