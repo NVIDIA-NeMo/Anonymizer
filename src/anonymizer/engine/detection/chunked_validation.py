@@ -55,7 +55,9 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
-    build_tagged_text,
+    ValidationOverlapGroup,
+    build_validation_overlap_groups,
+    build_validation_tagged_text,
 )
 from anonymizer.engine.schemas import (
     EntitiesSchema,
@@ -184,6 +186,7 @@ def build_chunk_excerpt(
     all_spans: list[EntitySpan],
     window_chars: int,
     notation: TagNotation,
+    overlap_groups: list[ValidationOverlapGroup] | None = None,
 ) -> str:
     """Build a tagged text excerpt wide enough to give the LLM context around ``chunk_spans``.
 
@@ -196,10 +199,16 @@ def build_chunk_excerpt(
     """
     if not chunk_spans:
         return ""
+    groups = overlap_groups or []
+    chunk_ids = {span.entity_id for span in chunk_spans}
+    relevant_groups = [group for group in groups if chunk_ids.intersection(group.candidate_ids)]
     chunk_start = min(span.start_position for span in chunk_spans)
     chunk_end = max(span.end_position for span in chunk_spans)
     excerpt_start = max(0, chunk_start - window_chars)
     excerpt_end = min(len(text), chunk_end + window_chars)
+    if relevant_groups:
+        excerpt_start = min(excerpt_start, *(group.start_position for group in relevant_groups))
+        excerpt_end = max(excerpt_end, *(group.end_position for group in relevant_groups))
     excerpt_raw = text[excerpt_start:excerpt_end]
     in_window = [
         EntitySpan(
@@ -214,15 +223,44 @@ def build_chunk_excerpt(
         for span in all_spans
         if span.start_position >= excerpt_start and span.end_position <= excerpt_end
     ]
-    return build_tagged_text(excerpt_raw, in_window, notation=notation)
+    shifted_groups = [
+        ValidationOverlapGroup(
+            group_id=group.group_id,
+            start_position=group.start_position - excerpt_start,
+            end_position=group.end_position - excerpt_start,
+            candidate_ids=group.candidate_ids,
+        )
+        for group in relevant_groups
+    ]
+    return build_validation_tagged_text(
+        excerpt_raw,
+        in_window,
+        shifted_groups,
+        notation=notation,
+    )
 
 
-def build_chunk_skeleton(chunk_candidates_: list[Any]) -> dict[str, Any]:
-    """Build the validation skeleton (``ValidationSkeletonSchema``) for a chunk."""
+def build_chunk_skeleton(
+    chunk_candidates_: list[Any],
+    overlap_groups: list[ValidationOverlapGroup] | None = None,
+) -> dict[str, Any]:
+    """Build the response skeleton and compact overlap-group references for a chunk."""
     skeleton = ValidationSkeletonSchema(
         decisions=[ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in chunk_candidates_]
     )
-    return skeleton.model_dump(mode="json")
+    payload = skeleton.model_dump(mode="json")
+    chunk_ids = {candidate.id for candidate in chunk_candidates_}
+    group_payloads = [
+        {
+            "id": group.group_id,
+            "candidate_ids": [candidate_id for candidate_id in group.candidate_ids if candidate_id in chunk_ids],
+        }
+        for group in overlap_groups or []
+        if chunk_ids.intersection(group.candidate_ids)
+    ]
+    if group_payloads:
+        payload["overlap_groups"] = group_payloads
+    return payload
 
 
 def render_chunk_prompt(
@@ -482,6 +520,10 @@ def _build_dispatch_kwargs_per_chunk(
     ]
 
     ordered = order_candidates_by_position(candidates, all_spans)
+    overlap_groups = build_validation_overlap_groups(
+        all_spans,
+        {candidate.id for candidate in candidates.candidates},
+    )
     chunks = chunk_candidates(ordered, params.max_entities_per_call)
 
     if len(chunks) == 1:
@@ -508,7 +550,7 @@ def _build_dispatch_kwargs_per_chunk(
     # would silently narrow the context the validator sees. Computed once
     # here because ``len(chunks) == 1`` is loop-invariant.
     single_chunk_tagged_text = (
-        build_tagged_text(text, all_spans, notation=notation)
+        build_validation_tagged_text(text, all_spans, overlap_groups, notation=notation)
         if len(chunks) == 1 and params.single_chunk_full_text
         else None
     )
@@ -526,9 +568,10 @@ def _build_dispatch_kwargs_per_chunk(
                 all_spans=all_spans,
                 window_chars=params.excerpt_window_chars,
                 notation=notation,
+                overlap_groups=overlap_groups,
             )
         )
-        skeleton = build_chunk_skeleton(chunk_candidates_)
+        skeleton = build_chunk_skeleton(chunk_candidates_, overlap_groups)
         prompt = render_chunk_prompt(
             template=params.prompt_template,
             excerpt=excerpt,

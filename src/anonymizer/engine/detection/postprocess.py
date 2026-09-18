@@ -7,13 +7,14 @@ import json
 import logging
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import SupportsFloat, SupportsIndex, SupportsInt
 
 logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
+_SOURCE_ORIGIN_SEPARATOR = "|"
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,16 @@ class EntitySpan:
             "score": self.score,
             "source": self.source,
         }
+
+
+@dataclass(frozen=True)
+class ValidationOverlapGroup:
+    """Connected overlapping region referenced by validation candidate IDs."""
+
+    group_id: str
+    start_position: int
+    end_position: int
+    candidate_ids: tuple[str, ...]
 
 
 def normalize_label(label: str) -> str:
@@ -104,7 +115,54 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
                 source="detector",
             )
         )
-    return resolve_overlaps(parsed, prefer_highest_score=True)
+    return coalesce_exact_entity_candidates(parsed, prefer_highest_score=True)
+
+
+def coalesce_exact_entity_candidates(
+    *sources: list[EntitySpan],
+    prefer_highest_score: bool = False,
+) -> list[EntitySpan]:
+    """Coalesce exact label/span duplicates while preserving overlapping alternatives.
+
+    Source argument order defines provenance priority for an exact duplicate.
+    All distinct origins are retained in a deterministic source chain. Partial
+    overlaps and same-span candidates with different labels remain independent
+    so contextual validation can decide which candidates survive.
+    """
+    grouped: dict[tuple[str, int, int], list[tuple[int, EntitySpan]]] = {}
+    for priority, entities in enumerate(sources):
+        for entity in entities:
+            identity = (entity.label, entity.start_position, entity.end_position)
+            grouped.setdefault(identity, []).append((priority, entity))
+
+    coalesced: list[EntitySpan] = []
+    for candidates in grouped.values():
+        ranked = sorted(
+            candidates,
+            key=lambda item: (
+                item[0],
+                -item[1].score if prefer_highest_score else 0.0,
+                item[1].source,
+                item[1].entity_id,
+            ),
+        )
+        winner = ranked[0][1]
+        origins: list[str] = []
+        for _, candidate in ranked:
+            for origin in candidate.source.split(_SOURCE_ORIGIN_SEPARATOR):
+                if origin and origin not in origins:
+                    origins.append(origin)
+        coalesced.append(replace(winner, source=_SOURCE_ORIGIN_SEPARATOR.join(origins)))
+
+    return sorted(
+        coalesced,
+        key=lambda entity: (entity.start_position, entity.end_position, entity.label, entity.entity_id),
+    )
+
+
+def entity_has_source_prefix(entity: EntitySpan, prefix: str) -> bool:
+    """Return whether any origin in an entity's provenance chain has ``prefix``."""
+    return any(origin.startswith(prefix) for origin in entity.source.split(_SOURCE_ORIGIN_SEPARATOR))
 
 
 def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[dict[str, str]]:
@@ -287,6 +345,40 @@ def resolve_overlaps(entities: list[EntitySpan], *, prefer_highest_score: bool =
     return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
 
 
+def merge_entity_sources(*sources: list[EntitySpan]) -> list[EntitySpan]:
+    """Merge detection sources with deterministic provenance-aware tie breaking.
+
+    Source order is priority order. Longer spans still win genuine overlap
+    conflicts; source priority decides otherwise-identical spans.
+    """
+    ranked: list[tuple[int, EntitySpan]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for priority, entities in enumerate(sources):
+        for entity in entities:
+            identity = (entity.label, entity.start_position, entity.end_position)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            ranked.append((priority, entity))
+
+    ordered = sorted(
+        ranked,
+        key=lambda item: (
+            -(item[1].end_position - item[1].start_position),
+            item[1].start_position,
+            item[1].end_position,
+            item[0],
+            item[1].label,
+        ),
+    )
+    accepted: list[EntitySpan] = []
+    for _, candidate in ordered:
+        if any(_spans_overlap(candidate, existing) for existing in accepted):
+            continue
+        accepted.append(candidate)
+    return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
+
+
 def build_tagged_text(
     text: str,
     entities: list[EntitySpan],
@@ -329,22 +421,111 @@ def build_tagged_text(
     return "".join(parts)
 
 
+def build_validation_overlap_groups(
+    entities: list[EntitySpan],
+    candidate_ids: set[str],
+) -> list[ValidationOverlapGroup]:
+    """Group connected overlaps that contain at least one validation candidate."""
+    if not entities or not candidate_ids:
+        return []
+
+    ordered = sorted(entities, key=lambda item: (item.start_position, item.end_position, item.entity_id))
+    components: list[list[EntitySpan]] = []
+    component: list[EntitySpan] = []
+    component_end = -1
+    for entity in ordered:
+        if component and entity.start_position >= component_end:
+            components.append(component)
+            component = []
+            component_end = -1
+        component.append(entity)
+        component_end = max(component_end, entity.end_position)
+    if component:
+        components.append(component)
+
+    groups: list[ValidationOverlapGroup] = []
+    for members in components:
+        if len(members) < 2:
+            continue
+        member_candidate_ids = tuple(
+            sorted({member.entity_id for member in members if member.entity_id in candidate_ids})
+        )
+        if not member_candidate_ids:
+            continue
+        start = min(member.start_position for member in members)
+        end = max(member.end_position for member in members)
+        groups.append(
+            ValidationOverlapGroup(
+                group_id=f"overlap_{start}_{end}",
+                start_position=start,
+                end_position=end,
+                candidate_ids=member_candidate_ids,
+            )
+        )
+    return groups
+
+
+def build_validation_tagged_text(
+    text: str,
+    entities: list[EntitySpan],
+    overlap_groups: list[ValidationOverlapGroup],
+    *,
+    notation: TagNotation | str | None = None,
+) -> str:
+    """Render ordinary tags plus one neutral tag per overlapping region."""
+    if not overlap_groups:
+        return build_tagged_text(text=text, entities=entities, notation=notation)
+    if notation is None:
+        resolved_notation = _choose_tag_notation(text)
+    elif isinstance(notation, TagNotation):
+        resolved_notation = notation
+    else:
+        resolved_notation = TagNotation(notation)
+
+    visible_entities = [
+        entity
+        for entity in entities
+        if not any(
+            entity.start_position < group.end_position and group.start_position < entity.end_position
+            for group in overlap_groups
+        )
+    ]
+    render_items: list[tuple[int, int, EntitySpan | ValidationOverlapGroup]] = [
+        (entity.start_position, entity.end_position, entity) for entity in visible_entities
+    ]
+    render_items.extend((group.start_position, group.end_position, group) for group in overlap_groups)
+
+    cursor = 0
+    parts: list[str] = []
+    for start, end, item in sorted(render_items, key=lambda value: (value[0], value[1])):
+        if start < cursor:
+            continue
+        parts.append(text[cursor:start])
+        value = text[start:end]
+        if isinstance(item, ValidationOverlapGroup):
+            parts.append(_format_overlap_group_tag(value=value, group_id=item.group_id, notation=resolved_notation))
+        else:
+            parts.append(_format_entity_tag(value=value, label=item.label, notation=resolved_notation))
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def get_tag_notation(text: str) -> str:
     """Return the tag notation name chosen for *text* (xml, bracket, paren, sentinel)."""
     return _choose_tag_notation(text).value
 
 
 def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Expand each validated entity to ALL its occurrences in the text.
+    """Expand validated non-regex entities to all occurrences in the text.
 
-    After validation, entities only have the positions where the detector
-    originally found them. This function finds every word-boundary-matched
-    occurrence of each unique entity value in the text, creating new spans
-    for positions not already covered. Overlaps are resolved by preferring
-    longer spans.
+    Regex spans are not propagated because their pattern or validator may
+    intentionally accept only some occurrences. Other detected values are
+    expanded as before, and overlaps prefer longer spans.
     """
     entity_map: dict[str, str] = {}
-    for entity in entities:
+    propagatable_entities = [entity for entity in entities if not entity_has_source_prefix(entity, "regex_")]
+    for entity in propagatable_entities:
         key = entity.value.lower()
         if key not in entity_map:
             entity_map[key] = entity.label
@@ -352,7 +533,7 @@ def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[Ent
     original_positions: set[tuple[int, int]] = {(e.start_position, e.end_position) for e in entities}
     expanded: list[EntitySpan] = []
     for idx, (key, label) in enumerate(entity_map.items()):
-        original_value = next(e.value for e in entities if e.value.lower() == key)
+        original_value = next(e.value for e in propagatable_entities if e.value.lower() == key)
         for start, end in _find_all_occurrences(text=text, needle=original_value):
             if (start, end) in original_positions:
                 continue  # already covered by a detector span; skip to preserve its provenance
@@ -465,3 +646,13 @@ def _format_entity_tag(*, value: str, label: str, notation: TagNotation) -> str:
     if notation == TagNotation.paren:
         return f"((SENSITIVE:{label}|{value}))"
     return f"<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
+
+
+def _format_overlap_group_tag(*, value: str, group_id: str, notation: TagNotation) -> str:
+    if notation == TagNotation.xml:
+        return f'<candidate_group id="{group_id}">{value}</candidate_group>'
+    if notation == TagNotation.bracket:
+        return f"[[{value}|CANDIDATE_GROUP:{group_id}]]"
+    if notation == TagNotation.paren:
+        return f"((CANDIDATE_GROUP:{group_id}|{value}))"
+    return f"<<CANDIDATE_GROUP:{group_id}>>{value}<</CANDIDATE_GROUP:{group_id}>>"

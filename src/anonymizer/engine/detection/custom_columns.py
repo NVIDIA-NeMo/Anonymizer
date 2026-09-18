@@ -23,6 +23,8 @@ from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
@@ -41,9 +43,14 @@ from anonymizer.engine.detection.postprocess import (
     apply_validation_decisions,
     build_tagged_text,
     build_validation_candidates,
+    build_validation_overlap_groups,
+    build_validation_tagged_text,
+    coalesce_exact_entity_candidates,
+    entity_has_source_prefix,
     expand_entity_occurrences,
     filter_excluded_entity_spans,
     get_tag_notation,
+    merge_entity_sources,
     parse_raw_entities,
 )
 from anonymizer.engine.schemas import (
@@ -56,16 +63,18 @@ from anonymizer.engine.schemas import (
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_RAW_DETECTED],
+    required_columns=[COL_TEXT, COL_RAW_DETECTED, COL_REGEX_ENTITIES],
     side_effect_columns=[COL_TAG_NOTATION],
 )
 def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
     """Parse detector payload and produce seed entities."""
     text = str(row.get(COL_TEXT, ""))
-    entities = parse_raw_entities(
+    detector_entities = parse_raw_entities(
         raw_response=str(row.get(COL_RAW_DETECTED, "")),
         text=text,
     )
+    regex_entities = _parse_entity_spans(row.get(COL_REGEX_ENTITIES, {}))
+    entities = coalesce_exact_entity_candidates(regex_entities, detector_entities)
     seed_entities = [entity.as_dict() for entity in entities]
     row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_TAG_NOTATION] = get_tag_notation(text=text)
@@ -105,7 +114,7 @@ def merge_and_build_candidates(
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
 )
 def apply_validation_to_seed_entities(
@@ -116,10 +125,12 @@ def apply_validation_to_seed_entities(
     """Apply validation decisions to detector entities before augmentation."""
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
-    validated_seed = apply_validation_decisions(
+    llm_validated_seed = apply_validation_decisions(
         entities=seed_spans,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
+    accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    validated_seed = _merge_detection_routes(accepted_regex, llm_validated_seed)
     validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
@@ -129,16 +140,31 @@ def apply_validation_to_seed_entities(
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_ENTITIES],
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_SEED_TAGGED_TEXT],
 )
 def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
-    """Build validation prompt inputs from detector entities only (pre-augmentation)."""
+    """Build prompt inputs for seed candidates that still require LLM validation."""
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
-    row[COL_SEED_TAGGED_TEXT] = build_tagged_text(text=text, entities=seed_spans)
+    accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    accepted_identities = {(entity.label, entity.start_position, entity.end_position) for entity in accepted_regex}
+    validation_spans = [
+        entity
+        for entity in seed_spans
+        if (entity.label, entity.start_position, entity.end_position) not in accepted_identities
+    ]
+    overlap_groups = build_validation_overlap_groups(
+        seed_spans,
+        {entity.entity_id for entity in validation_spans},
+    )
+    row[COL_SEED_TAGGED_TEXT] = build_validation_tagged_text(
+        text=text,
+        entities=seed_spans,
+        overlap_groups=overlap_groups,
+    )
     row[COL_SEED_VALIDATION_CANDIDATES] = ValidationCandidatesSchema(
-        candidates=build_validation_candidates(text=text, entities=seed_spans)
+        candidates=build_validation_candidates(text=text, entities=validation_spans)
     ).model_dump(mode="json")
     return row
 
@@ -172,7 +198,7 @@ def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
+    required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
     side_effect_columns=[COL_TAGGED_TEXT],
 )
 def apply_validation_and_finalize(
@@ -187,8 +213,10 @@ def apply_validation_and_finalize(
         entities=merged,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
-    validated = filter_excluded_entity_spans(validated, excluded_entity_labels)
-    expanded = expand_entity_occurrences(text=text, entities=validated)
+    accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    protected = _merge_detection_routes(accepted_regex, validated)
+    protected = filter_excluded_entity_spans(protected, excluded_entity_labels)
+    expanded = expand_entity_occurrences(text=text, entities=protected)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
         mode="json"
     )
@@ -210,3 +238,30 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
         )
         for e in parsed.entities
     ]
+
+
+def _merge_detection_routes(*routes: list[EntitySpan]) -> list[EntitySpan]:
+    """Merge validation routes without allowing route order to change source precedence."""
+    entities = [entity for route in routes for entity in route]
+    source_groups = _partition_by_source_precedence(entities)
+    coalesced = coalesce_exact_entity_candidates(*source_groups)
+    return merge_entity_sources(*_partition_by_source_precedence(coalesced))
+
+
+def _partition_by_source_precedence(
+    entities: list[EntitySpan],
+) -> tuple[list[EntitySpan], list[EntitySpan], list[EntitySpan]]:
+    """Partition entities into user-regex, built-in-regex, and other precedence groups."""
+    user_regex = [entity for entity in entities if entity_has_source_prefix(entity, "regex_user:")]
+    builtin_regex = [
+        entity
+        for entity in entities
+        if not entity_has_source_prefix(entity, "regex_user:") and entity_has_source_prefix(entity, "regex_builtin:")
+    ]
+    other_sources = [
+        entity
+        for entity in entities
+        if not entity_has_source_prefix(entity, "regex_user:")
+        and not entity_has_source_prefix(entity, "regex_builtin:")
+    ]
+    return user_regex, builtin_regex, other_sources

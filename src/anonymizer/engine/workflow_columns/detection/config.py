@@ -15,6 +15,8 @@ from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
@@ -27,6 +29,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
 )
+from anonymizer.engine.detection.regex_detection import ResolvedRegexRule
 
 
 class DetectionTransformOperation(str, Enum):
@@ -44,8 +47,16 @@ class DetectionTransformConfig(SingleColumnConfig):
     excluded_entity_labels: list[str] = Field(default_factory=list)
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
-        DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TEXT, COL_RAW_DETECTED],
-        DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
+        DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
+            COL_TEXT,
+            COL_RAW_DETECTED,
+            COL_REGEX_ENTITIES,
+        ],
+        DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [
+            COL_TEXT,
+            COL_SEED_ENTITIES,
+            COL_REGEX_ACCEPTED_ENTITIES,
+        ],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [
             COL_VALIDATION_DECISIONS,
             COL_SEED_VALIDATION_CANDIDATES,
@@ -54,6 +65,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_TEXT,
             COL_SEED_ENTITIES,
             COL_VALIDATED_ENTITIES,
+            COL_REGEX_ACCEPTED_ENTITIES,
         ],
         DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: [
             COL_TEXT,
@@ -64,6 +76,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_TEXT,
             COL_MERGED_ENTITIES,
             COL_VALIDATED_ENTITIES,
+            COL_REGEX_ACCEPTED_ENTITIES,
         ],
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
@@ -124,3 +137,24 @@ class ChunkedValidationConfig(SingleColumnConfig):
 
     def get_model_aliases(self) -> list[str]:
         return list(self.pool)
+
+
+class RegexDetectionConfig(SingleColumnConfig):
+    """Serializable local regex-detection column configuration."""
+
+    column_type: Literal["anonymizer-regex-detection"] = "anonymizer-regex-detection"
+    rules: list[ResolvedRegexRule]
+    timeout_seconds: float = Field(gt=0)
+    max_matches_per_rule: int = Field(gt=0)
+
+    @staticmethod
+    def get_column_emoji() -> str:
+        return "A"
+
+    @property
+    def required_columns(self) -> list[str]:
+        return [COL_TEXT]
+
+    @property
+    def side_effect_columns(self) -> list[str]:
+        return [COL_REGEX_ACCEPTED_ENTITIES]
