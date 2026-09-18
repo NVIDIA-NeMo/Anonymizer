@@ -422,6 +422,63 @@ def test_resolve_overlaps_default_uses_label_not_score() -> None:
     assert resolved[0].label == "aaa_label"
 
 
+def test_resolve_overlaps_detector_beats_augmenter_even_with_earlier_label() -> None:
+    """Regression: augmenter must not displace a validated detector span, even when its
+    label sorts alphabetically before the detector's label."""
+    detector = EntitySpan("city_0_7", "Seattle", "city", 0, 7, 0.9, "detector")
+    augmenter = EntitySpan("address_0_7", "Seattle", "address", 0, 7, 1.0, "augmenter")
+    resolved = resolve_overlaps([detector, augmenter])
+    assert len(resolved) == 1
+    assert resolved[0].label == "city"
+    assert resolved[0].source == "detector"
+
+
+def test_apply_augmented_entities_preserves_validated_span_over_augmenter_reclass() -> None:
+    """Regression: an augmenter suggestion for an already-validated span must not
+    overwrite the validated detector label during merge."""
+    text = "She lives in Seattle."
+    result = apply_augmented_entities(
+        text,
+        [EntitySpan("city_13_20", "Seattle", "city", 13, 20, 0.9, "detector")],
+        {"entities": [{"value": "Seattle", "label": "address"}]},
+    )
+    at_span = [e for e in result if e.start_position == 13 and e.end_position == 20]
+    assert len(at_span) == 1
+    assert at_span[0].label == "city"
+    assert at_span[0].source == "detector"
+
+
+def test_resolve_overlaps_detector_beats_longer_overlapping_augmenter_span() -> None:
+    """Regression: a longer augmenter span that merely overlaps (not matches) a
+    validated detector span must not displace it, even though length is normally
+    the primary tiebreak."""
+    text = "She lives near downtown Seattle today."
+    city = EntitySpan("city_24_31", "Seattle", "city", 24, 31, 0.9, "detector")
+    address = EntitySpan("address_10_31", "near downtown Seattle", "address", 10, 31, 1.0, "augmenter")
+    resolved = resolve_overlaps([city, address])
+    assert len(resolved) == 1
+    assert resolved[0].label == "city"
+    assert resolved[0].source == "detector"
+    assert text[resolved[0].start_position : resolved[0].end_position] == "Seattle"
+
+
+def test_apply_augmented_entities_preserves_validated_span_from_overlapping_augmenter_span() -> None:
+    """Regression: an augmenter span that overlaps (but doesn't match) a validated
+    span must not swallow and relabel it during merge, even if the augmenter span
+    is longer."""
+    text = "She lives near downtown Seattle today."
+    result = apply_augmented_entities(
+        text,
+        [EntitySpan("city_24_31", "Seattle", "city", 24, 31, 0.9, "detector")],
+        {"entities": [{"value": "near downtown Seattle", "label": "address"}]},
+    )
+    at_span = [e for e in result if e.start_position == 24 and e.end_position == 31]
+    assert len(at_span) == 1
+    assert at_span[0].label == "city"
+    assert at_span[0].source == "detector"
+    assert not any(e.label == "address" for e in result)
+
+
 def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
     """Regression: relationship (0.941) should beat last_name (0.719) on same span."""
     text = "She called Mum every day."

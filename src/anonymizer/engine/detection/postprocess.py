@@ -268,9 +268,23 @@ def resolve_overlaps(entities: list[EntitySpan], *, prefer_highest_score: bool =
     provenance (e.g. raw GLiNER detections in ``parse_raw_entities``).
     Mixed-source callers must leave it False so synthetic score-1.0 values
     from augmenters or propagation cannot displace validated detector spans.
+
+    Any entity sourced from ``"augmenter"`` that overlaps (not just shares
+    identical bounds with) an entity from any other provenance (detector,
+    validation reclass, name_split, propagation) is dropped before span
+    length is even considered. Those other provenances have already been
+    through the detector + LLM validation pass, while raw augmenter output
+    has not, so a longer or differently-labeled augmenter span must never
+    displace a validated one — e.g. an augmenter's ``address`` span must
+    not swallow and relabel a validated ``city`` span it overlaps.
     """
+    non_augmenter = [item for item in entities if item.source != "augmenter"]
+    augmenter = [item for item in entities if item.source == "augmenter"]
+    kept_augmenter = [item for item in augmenter if not any(_spans_overlap(item, other) for other in non_augmenter)]
+    candidates = non_augmenter + kept_augmenter
+
     sorted_entities = sorted(
-        entities,
+        candidates,
         key=lambda item: (
             -(item.end_position - item.start_position),
             item.start_position,

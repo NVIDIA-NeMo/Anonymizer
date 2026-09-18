@@ -24,7 +24,6 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
-    COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
@@ -713,17 +712,8 @@ def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_l
         )
         example_block = """\
 Example (allowed labels: first_name, last_name, city — note that employment_status is NOT in the allowed list):
-{%- if <<TAG_NOTATION>> == "xml" -%}
-Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
-{%- elif <<TAG_NOTATION>> == "bracket" -%}
-Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
-{%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
-{%- else -%}
-Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
-{%- endif -%}
-Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
-Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}]}"""
+Input text: Jane Doe lives in Santa Clara. She works full-time.
+Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "Santa Clara", "label": "city", "reason": "city"}]}"""
 
     else:
         label_block = (
@@ -733,17 +723,8 @@ Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first 
         )
         example_block = """\
 Example:
-{%- if <<TAG_NOTATION>> == "xml" -%}
-Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
-{%- elif <<TAG_NOTATION>> == "bracket" -%}
-Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
-{%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
-{%- else -%}
-Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
-{%- endif -%}
-Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
-Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
+Input text: Jane Doe lives in Santa Clara. She works full-time.
+Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "Santa Clara", "label": "city", "reason": "city"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
 
     disguised_hints_block = (
         "- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,\n"
@@ -756,7 +737,7 @@ Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first 
         '    "J-O-H-N", "M, A, R, Y"\n'
     )
 
-    prompt = f"""Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
+    prompt = f"""Task: Find sensitive entities in text. Focus on:
 - Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
 - Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
@@ -767,7 +748,6 @@ We have the following type of data: <<DATA_SUMMARY>>
 
 Rules:
 - Tag actual values, not placeholders
-- Do not repeat already-tagged entities
 - In structured formats, distinguish between:
   - Syntax/metadata: field names, column headers, function names, keywords
   - Data: assigned values, cell contents, literals, user input
@@ -791,8 +771,7 @@ Additional extraction requirements:
 <<EXAMPLE_BLOCK>>
 
 ---
-Input text: <<TAGGED_TEXT>>
-Already-detected entities: <<SEED_ENTITIES>>
+Input text: <<INPUT_TEXT>>
 """
     # Pre-substitute nested placeholders inside the block strings before
     # passing them into the single-pass substitution of the main prompt.
@@ -804,8 +783,7 @@ Already-detected entities: <<SEED_ENTITIES>>
         {
             "<<LABEL_BLOCK>>": label_block,
             "<<EXAMPLE_BLOCK>>": example_block,
-            "<<TAGGED_TEXT>>": _jinja(COL_INITIAL_TAGGED_TEXT),
-            "<<SEED_ENTITIES>>": _jinja(COL_SEED_ENTITIES_JSON),
+            "<<INPUT_TEXT>>": _jinja(COL_TEXT),
             "<<DATA_SUMMARY>>": context_section,
         },
     )
