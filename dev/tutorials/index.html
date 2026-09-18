@@ -2771,7 +2771,7 @@
 <h2 id="setting-up-your-environment">🚀 Setting Up Your Environment<a class="headerlink" href="#setting-up-your-environment" title="Permanent link">&para;</a></h2>
 <h3 id="local-setup-best-practices">Local Setup Best Practices<a class="headerlink" href="#local-setup-best-practices" title="Permanent link">&para;</a></h3>
 <p>First, download the tutorial <code>anonymizer_tutorial.zip</code> from the
-<a href="https://github.com/NVIDIA-NeMo/Anonymizer/releases">Anonymizer release assets</a> page. </p>
+<a href="https://github.com/NVIDIA-NeMo/Anonymizer/releases">Anonymizer release assets</a> page.</p>
 <!-- TODO: update with direct link after cutting a release -->
 
 <p><pre class="highlight"><code class="language-bash"># Extract tutorial notebooks
@@ -2792,7 +2792,7 @@ uv pip install nemo-anonymizer jupyter ipykernel
 python -m ipykernel install --user --name anonymizer-venv
 
 # Set API key before launching Jupyter
-export NVIDIA_API_KEY="your-nvidia-api-key"
+export OPENROUTER_API_KEY="your-openrouter-api-key"
 
 # Launch Jupyter
 uv run jupyter notebook</code></pre>
@@ -2809,14 +2809,14 @@ pip install nemo-anonymizer jupyter ipykernel
 python -m ipykernel install --user --name anonymizer-venv
 
 # Set API key before launching Jupyter
-export NVIDIA_API_KEY="your-nvidia-api-key"
+export OPENROUTER_API_KEY="your-openrouter-api-key"
 
 # Launch Jupyter
 jupyter notebook</code></pre>
 </div>
 </div>
 </div>
-<p>Set your <code>NVIDIA_API_KEY</code> in the same shell where you launch Jupyter. If <code>NVIDIA_API_KEY</code> appears to be missing in a notebook:</p>
+<p>Set your <code>OPENROUTER_API_KEY</code> in the same shell where you launch Jupyter. If <code>OPENROUTER_API_KEY</code> appears to be missing in a notebook:</p>
 <ol>
 <li>Launch Jupyter from the same shell where you exported it.</li>
 <li>Confirm the selected kernel is your intended environment.</li>

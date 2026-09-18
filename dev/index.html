@@ -2656,17 +2656,18 @@
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <pre class="highlight"><code class="language-bash">pip install nemo-anonymizer</code></pre>
 <h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
-<p><pre class="highlight"><code class="language-bash"># Get an API key from build.nvidia.com
-export NVIDIA_API_KEY="your-nvidia-api-key"</code></pre>
-By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based anonymization. You can also <a href="concepts/models/">bring your own models</a>.</p>
+<p><pre class="highlight"><code class="language-bash"># Get an API key from OpenRouter
+export OPENROUTER_API_KEY="your-openrouter-api-key"</code></pre>
+By default, Anonymizer runs GLiNER2 detection locally and uses OpenRouter for LLM-based anonymization. You can also <a href="concepts/models/">bring your own models</a>.</p>
 <div class="admonition warning">
-<p class="admonition-title">Default hosted models are best for experimentation</p>
-<p>The default <code>build.nvidia.com</code> (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.</p>
-<p>Request and token rate limits on <code>build.nvidia.com</code> vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with <code>preview()</code> on a small sample, then move to your own endpoint for production data and usage.</p>
+<p class="admonition-title">Review the default provider's data policies</p>
+<p>OpenRouter's terms of service and privacy practices apply independently of the NeMo Framework
+library. Review those terms and the data policies of the models you select before sending
+sensitive data to the default endpoint.</p>
 </div>
 <div class="admonition info">
 <p class="admonition-title">Record length</p>
-<p>Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs. </p>
+<p>Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs.</p>
 </div>
 <h2 id="anonymize">Anonymize<a class="headerlink" href="#anonymize" title="Permanent link">&para;</a></h2>
 <div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Python</label><label for="__tabbed_2_2">CLI</label></div>
@@ -2750,7 +2751,7 @@ Access the full pipeline trace with all internal columns.
 <pre class="highlight"><code class="language-bash">uv run anonymizer run --source data.csv --text-column text --replace redact --no-emit-telemetry</code></pre>
 <p>To disable telemetry for the current shell, set <code>NEMO_TELEMETRY_ENABLED=false</code> (other accepted disabling values: <code>0</code>, <code>no</code>) in your environment before running:</p>
 <pre class="highlight"><code class="language-bash">export NEMO_TELEMETRY_ENABLED=false</code></pre>
-<p><strong>Use of third-party endpoints, including NVIDIA Build:</strong> Anonymizer can be configured to use various inference endpoints, including <a href="https://build.nvidia.com">build.nvidia.com</a>, <a href="https://openrouter.ai">OpenRouter</a>, or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.</p>
+<p><strong>Use of third-party endpoints, including OpenRouter and NVIDIA Build:</strong> Anonymizer can be configured to use various inference endpoints, including <a href="https://openrouter.ai">OpenRouter</a>, <a href="https://build.nvidia.com">build.nvidia.com</a>, or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.</p>
 <hr />
 <h2 id="next-up">Next up<a class="headerlink" href="#next-up" title="Permanent link">&para;</a></h2>
 <div class="grid cards">
