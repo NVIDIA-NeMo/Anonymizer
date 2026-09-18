@@ -1,0 +1,39 @@
+/* mkdocstrings tweaks */
+
+/* Indent docstring sections slightly */
+.doc-contents > .doc-md-description {
+    margin-left: 0.5rem;
+}
+
+/* Tighter spacing for parameter tables */
+.doc-contents table td,
+.doc-contents table th {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+}
+
+/* Symbol type badges */
+.doc-symbol-toc::after,
+.doc-symbol-heading::after {
+    font-size: 0.75rem;
+    font-weight: 700;
+    border-radius: 0.2rem;
+    padding: 0.1rem 0.3rem;
+}
+
+/* griffe-pydantic badges */
+.doc-label-pydantic-model {
+    background-color: var(--md-code-hl-special-color, #db1457);
+}
+.doc-label-pydantic-field {
+    background-color: var(--md-code-hl-name-color, #0ea5e9);
+}
+.doc-label-pydantic-validator {
+    background-color: var(--md-code-hl-function-color, #a855f7);
+}
+
+/* Source code toggle */
+details.quote > summary {
+    font-size: 0.85rem;
+    color: var(--md-default-fg-color--light);
+}
