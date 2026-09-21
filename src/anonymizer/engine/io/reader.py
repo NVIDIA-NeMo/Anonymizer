@@ -202,7 +202,7 @@ def _read_parquet_partial(source: str, *, nrows: int | None = None) -> pd.DataFr
 
 
 def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) -> pd.DataFrame:
-    source_str = input_data.source
+    source_str = str(input_data.source)
     suffix = infer_input_source_suffix(source_str)
     if suffix not in SUPPORTED_IO_FORMATS:
         supported_formats = " or ".join(SUPPORTED_IO_FORMATS)

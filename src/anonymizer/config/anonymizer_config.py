@@ -42,7 +42,7 @@ def infer_input_source_suffix(value: str) -> str:
 
 
 class AnonymizerInput(BaseModel):
-    """File input definition for the anonymizer pipeline.
+    """Input source definition for the anonymizer pipeline.
 
     Format is inferred from the file extension of a local path or HTTP(S) URL.
     """

@@ -74,7 +74,9 @@ class AnonymizerResult(_DisplayMixin):
         excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
             not penalise the output for not anonymizing excluded labels.
-        id_column: Record identifier column retained in ``dataframe`` when configured.
+        id_column: Record identifier column retained in ``dataframe`` for
+            in-memory record input. File-backed input currently leaves this as
+            ``None``.
     """
 
     dataframe: pd.DataFrame
@@ -130,7 +132,9 @@ class PreviewResult(_DisplayMixin):
         excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
             not penalise the output for not anonymizing excluded labels.
-        id_column: Record identifier column retained in ``dataframe`` when configured.
+        id_column: Record identifier column retained in ``dataframe`` for
+            in-memory record input. File-backed input currently leaves this as
+            ``None``.
     """
 
     dataframe: pd.DataFrame
