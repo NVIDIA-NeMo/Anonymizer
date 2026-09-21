@@ -44,7 +44,7 @@ def test_parse_raw_entities_parses_valid_spans() -> None:
     assert entities[0].label == "phone_number"
 
 
-def test_parse_raw_entities_canonicalizes_value_from_standoff_offsets() -> None:
+def test_parse_raw_entities_uses_source_slice_when_detector_text_differs() -> None:
     text = "Alice joined Acme"
     raw = json.dumps(
         {
