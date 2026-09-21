@@ -83,15 +83,20 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
     for idx, raw_entity in enumerate(raw_entities):
         if not isinstance(raw_entity, dict):
             continue
-        value = str(raw_entity.get("text", "")).strip()
+        detector_value = str(raw_entity.get("text", "")).strip()
         label = str(raw_entity.get("label", "")).strip()
         start = _coerce_int(raw_entity.get("start"))
         end = _coerce_int(raw_entity.get("end"))
         score = _coerce_float(raw_entity.get("score"), default=0.0)
-        if not value or not label:
+        if not detector_value or not label:
             continue
         if start is None or end is None or start < 0 or end <= start or end > len(text):
             continue
+        # Offsets are the canonical standoff contract. Some detector servers
+        # normalize or trim their echoed text, which can make it disagree with
+        # otherwise-valid offsets. Derive the public value from the caller's
+        # exact source so downstream consumers never have to guess.
+        value = text[start:end]
         entity_id = _build_entity_id(label=label, start=start, end=end)
         parsed.append(
             EntitySpan(

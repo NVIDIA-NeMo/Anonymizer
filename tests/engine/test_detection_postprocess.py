@@ -44,6 +44,27 @@ def test_parse_raw_entities_parses_valid_spans() -> None:
     assert entities[0].label == "phone_number"
 
 
+def test_parse_raw_entities_canonicalizes_value_from_standoff_offsets() -> None:
+    text = "Alice joined Acme"
+    raw = json.dumps(
+        {
+            "entities": [
+                {
+                    "text": "normalized-or-stale-value",
+                    "label": "first_name",
+                    "start": 0,
+                    "end": 5,
+                    "score": 0.9,
+                }
+            ]
+        }
+    )
+
+    entities = parse_raw_entities(raw_response=raw, text=text)
+
+    assert entities[0].value == "Alice"
+
+
 def test_overlap_resolution_prefers_longer_span() -> None:
     short = EntitySpan("a", "John", "first_name", 0, 4, 1.0, "detector")
     long = EntitySpan("b", "John Doe", "full_name", 0, 8, 1.0, "detector")
