@@ -18,6 +18,8 @@ from anonymizer.config.anonymizer_config import (
     EvaluateConfig,
     Rewrite,
     RiskTolerance,
+    TextRecord,
+    TextRecordsInput,
 )
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
@@ -67,5 +69,7 @@ __all__ = [
     "RiskTolerance",
     "RunConfig",
     "Substitute",
+    "TextRecord",
+    "TextRecordsInput",
     "configure_logging",
 ]

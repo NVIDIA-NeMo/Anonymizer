@@ -33,7 +33,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction, _join_new_columns
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -47,6 +47,27 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 
 _EVALUATION = EvaluationCriteria()
+
+
+def test_join_new_columns_preserves_surviving_target_order() -> None:
+    target = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["turn-2", "dropped", "turn-1"],
+            "existing": [2, 0, 1],
+        }
+    )
+    source = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["turn-1", "turn-2"],
+            "new": [10, 20],
+        }
+    )
+
+    result = _join_new_columns(target, source)
+
+    assert result[RECORD_ID_COLUMN].tolist() == ["turn-2", "turn-1"]
+    assert result["existing"].tolist() == [2, 1]
+    assert result["new"].tolist() == [20, 10]
 
 
 @pytest.fixture
