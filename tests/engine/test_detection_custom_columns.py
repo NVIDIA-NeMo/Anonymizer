@@ -236,6 +236,42 @@ def test_finalize_filters_reclassification_to_excluded_label() -> None:
     assert result[COL_TAGGED_TEXT] == "San Diego"
 
 
+def test_finalize_filters_reclassification_outside_explicit_allowlist() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "San Diego",
+        COL_MERGED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "country_0_9",
+                    "value": "San Diego",
+                    "label": "country",
+                    "start_position": 0,
+                    "end_position": 9,
+                    "score": 0.95,
+                    "source": "augmenter",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "country_0_9",
+                    "value": "San Diego",
+                    "label": "country",
+                    "decision": "reclass",
+                    "proposed_label": "city",
+                    "reason": "San Diego is a city",
+                }
+            ]
+        },
+    }
+
+    result = apply_validation_and_finalize(row, allowed_entity_labels=["country"])
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == []
+    assert result[COL_TAGGED_TEXT] == "San Diego"
+
+
 def test_enrich_validation_decisions_adds_value_from_candidates() -> None:
     row = {
         COL_VALIDATION_DECISIONS: {

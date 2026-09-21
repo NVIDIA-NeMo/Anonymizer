@@ -69,6 +69,8 @@ The judge is scoped and contextualized by the same signals used during anonymiza
 - **`excluded_entity_labels`** — labels explicitly excluded from detection; the judge ignores entities of these types so excluded labels are never penalised in the coverage score.
 - **`data_summary`** — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.
 
+`Detect.entity_label_examples` is detection-only guidance and is not persisted on result objects or passed to evaluation judges. If custom examples automatically activated labels while `entity_labels=None`, post-hoc entity coverage remains permissive rather than reconstructing a strict effective allowlist.
+
 | Output column | Type | Description |
 |---|---|---|
 | `entity_coverage` | `float \| None` | `n_covered / (n_covered + n_missed)` — fraction of the judge's unique candidate values that the anonymizer detected. `1.0` means no missed entities; `None` if the judge was unavailable. |

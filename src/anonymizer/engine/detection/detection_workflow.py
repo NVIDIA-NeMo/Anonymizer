@@ -38,10 +38,10 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
-    DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
+from anonymizer.engine.detection.entity_label_examples import ResolvedEntityOntology, resolve_entity_ontology
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     group_entities_by_value,
@@ -101,8 +101,10 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
+        _resolved_ontology: ResolvedEntityOntology | None = None,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
 
@@ -121,7 +123,9 @@ class EntityDetectionWorkflow:
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
             data_summary=data_summary,
+            _resolved_ontology=_resolved_ontology,
         )
         detection_result = self._adapter.run_workflow(
             dataframe,
@@ -144,7 +148,9 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
+        _resolved_ontology: ResolvedEntityOntology | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
         """Build the (model_configs, columns) for the core detection workflow.
 
@@ -152,10 +158,12 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
-        labels = _resolve_detection_labels(
-            entity_labels,
-            set(excluded_entity_labels) if excluded_entity_labels else None,
+        ontology = _resolved_ontology or resolve_entity_ontology(
+            entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
         )
+        labels = ontology.labels
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -209,7 +217,12 @@ class EntityDetectionWorkflow:
                     max_entities_per_call=validation_max_entities_per_call,
                     excerpt_window_chars=validation_excerpt_window_chars,
                     single_chunk_full_text=validation_single_chunk_full_text,
-                    prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
+                    prompt_template=_get_validation_prompt(
+                        data_summary=data_summary,
+                        labels=labels,
+                        examples_by_label=ontology.validator_examples,
+                        configured_examples=ontology.augmenter_examples,
+                    ),
                     drop=True,
                 ),
                 DetectionTransformConfig(
@@ -224,7 +237,10 @@ class EntityDetectionWorkflow:
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
                     prompt=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                        data_summary=data_summary,
+                        labels=labels,
+                        strict_labels=ontology.strict_labels,
+                        configured_examples=ontology.augmenter_examples,
                     ),
                     model_alias=augmenter_alias,
                     output_format=AugmentedEntitiesSchema,
@@ -238,6 +254,7 @@ class EntityDetectionWorkflow:
                     name=COL_DETECTED_ENTITIES,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
                     excluded_entity_labels=list(excluded_entity_labels or []),
+                    allowed_entity_labels=labels if ontology.strict_labels else None,
                 ),
             ],
         )
@@ -256,6 +273,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
@@ -272,6 +290,7 @@ class EntityDetectionWorkflow:
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
             data_summary=data_summary,
         )
         return self._adapter.build_config(
@@ -293,6 +312,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
@@ -314,6 +334,7 @@ class EntityDetectionWorkflow:
             validation_single_chunk_full_text=validation_single_chunk_full_text,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
             data_summary=data_summary,
         )
         return self._adapter.build_config_for_seed(
@@ -333,19 +354,23 @@ class EntityDetectionWorkflow:
         gliner_detection_threshold: float,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         privacy_goal: PrivacyGoal | None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
+        _resolved_ontology: ResolvedEntityOntology | None = None,
     ) -> EntityDetectionResult:
         """Detect latent/inferred entities that could enable re-identification.
 
         Runs after ``detect_and_validate_entities`` when rewrite mode is
         enabled. Uses an LLM to identify entities inferable from context.
         """
-        labels = _resolve_detection_labels(
-            entity_labels,
-            set(excluded_entity_labels) if excluded_entity_labels else None,
+        ontology = _resolved_ontology or resolve_entity_ontology(
+            entity_labels=entity_labels,
+            excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
         )
+        labels = ontology.labels
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -390,6 +415,7 @@ class EntityDetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        entity_label_examples: dict[str, list[str]] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -411,6 +437,11 @@ class EntityDetectionWorkflow:
                 raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
 
             compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
+            ontology = resolve_entity_ontology(
+                entity_labels=entity_labels,
+                excluded_entity_labels=excluded_entity_labels,
+                entity_label_examples=entity_label_examples,
+            )
             detected_result = self.detect_and_validate_entities(
                 dataframe,
                 model_configs=model_configs,
@@ -421,8 +452,10 @@ class EntityDetectionWorkflow:
                 validation_single_chunk_full_text=validation_single_chunk_full_text,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
+                entity_label_examples=entity_label_examples,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
+                _resolved_ontology=ontology,
             )
 
             if tag_latent_entities:
@@ -433,9 +466,11 @@ class EntityDetectionWorkflow:
                     gliner_detection_threshold=gliner_detection_threshold,
                     entity_labels=entity_labels,
                     excluded_entity_labels=excluded_entity_labels,
+                    entity_label_examples=entity_label_examples,
                     privacy_goal=privacy_goal,
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
+                    _resolved_ontology=ontology,
                 )
                 final_df = latent_result.dataframe.copy()
                 final_failures = [*detected_result.failed_records, *latent_result.failed_records]
@@ -448,7 +483,7 @@ class EntityDetectionWorkflow:
             # entity_labels=None is the only way to get permissive augmentation.
             # TODO(docs): document this None-vs-explicit contract in user-facing docs.
             if COL_DETECTED_ENTITIES in final_df.columns:
-                allowed = set(entity_labels) if entity_labels is not None else None
+                allowed = set(ontology.labels) if ontology.strict_labels else None
                 excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
                 final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
                     lambda raw: _materialize_final_entities(
@@ -490,21 +525,6 @@ class EntityDetectionWorkflow:
             config.inference_parameters.extra_body["flat_ner"] = False
             break
         return resolved
-
-
-def _resolve_detection_labels(
-    entity_labels: list[str] | None,
-    excluded_entity_labels: set[str] | None = None,
-) -> list[str]:
-    labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
-    if excluded_entity_labels:
-        excluded = normalize_labels(excluded_entity_labels)
-        labels = [label for label in labels if normalize_label(label) not in excluded]
-    if not labels:
-        logger.warning(
-            "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
-        )
-    return labels
 
 
 def _materialize_final_entities(
@@ -584,23 +604,53 @@ def _build_entities_by_value(final_entities_raw: object) -> dict:
     return EntitiesByValueSchema(entities_by_value=group_entities_by_value(entities=spans)).model_dump(mode="json")
 
 
-def _format_label_examples(labels: list[str]) -> str:
+def _prompt_safe_configured_value(value: str) -> str:
+    """Render configured prompt data without exposing template delimiters.
+
+    Uses JSON string escaping for control characters, quotes, and backslashes
+    (so a configured value can't break out of the single-line label/example
+    format), then strips the surrounding quotes JSON adds so configured values
+    render the same as the built-in examples they sit alongside.
+    """
+    escaped = json.dumps(value, ensure_ascii=False)[1:-1]
+    return escaped.replace("{", r"\u007b").replace("}", r"\u007d")
+
+
+def _format_label_examples(
+    labels: list[str],
+    examples_by_label: dict[str, list[str]] | None = None,
+    configured_examples: dict[str, list[str]] | None = None,
+) -> str:
     """Build a formatted list of entity classes with examples.
 
     Labels present in ENTITY_LABEL_EXAMPLES get their examples; custom labels
     added by the user appear without examples so the LLM still knows they're valid.
     """
+    examples_by_label = ENTITY_LABEL_EXAMPLES if examples_by_label is None else examples_by_label
+    configured_examples = configured_examples or {}
     lines: list[str] = []
     for label in labels:
-        examples = ENTITY_LABEL_EXAMPLES.get(label)
+        examples = examples_by_label.get(label)
+        rendered_label = _prompt_safe_configured_value(label) if label in configured_examples else label
         if examples:
-            lines.append(f"- {label}: {', '.join(examples)}")
+            configured_for_label = set(configured_examples.get(label, []))
+            rendered = [
+                _prompt_safe_configured_value(example) if example in configured_for_label else example
+                for example in examples
+            ]
+            lines.append(f"- {rendered_label}: {', '.join(rendered)}")
         else:
-            lines.append(f"- {label}")
+            lines.append(f"- {rendered_label}")
     return "\n".join(lines)
 
 
-def _get_validation_prompt(*, data_summary: str | None, labels: list[str]) -> str:
+def _get_validation_prompt(
+    *,
+    data_summary: str | None,
+    labels: list[str],
+    examples_by_label: dict[str, list[str]] | None = None,
+    configured_examples: dict[str, list[str]] | None = None,
+) -> str:
     prompt = """Validate entity tags for privacy-sensitive information. For each entity in the template below, fill in the "decision" and "reason" fields. Fill in "proposed_label" only when decision is "reclass".
 <<DATA_SUMMARY>>
 
@@ -698,13 +748,23 @@ Template: <<VALIDATION_SKELETON>>
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(COL_SEED_TAGGED_TEXT),
             "<<VALIDATION_SKELETON>>": _jinja(COL_VALIDATION_SKELETON),
-            "<<LABEL_EXAMPLES>>": _format_label_examples(labels),
+            "<<LABEL_EXAMPLES>>": _format_label_examples(
+                labels,
+                examples_by_label=examples_by_label,
+                configured_examples=configured_examples,
+            ),
             "<<DATA_SUMMARY>>": context_section,
         },
     )
 
 
-def _get_augment_prompt(*, data_summary: str | None, labels: list[str], strict_labels: bool = False) -> str:
+def _get_augment_prompt(
+    *,
+    data_summary: str | None,
+    labels: list[str],
+    strict_labels: bool = False,
+    configured_examples: dict[str, list[str]] | None = None,
+) -> str:
     if strict_labels:
         label_block = (
             "Here are the allowed entity classes. Use ONLY labels from this list:\n"
@@ -796,7 +856,25 @@ Already-detected entities: <<SEED_ENTITIES>>
 """
     # Pre-substitute nested placeholders inside the block strings before
     # passing them into the single-pass substitution of the main prompt.
-    label_block = label_block.replace("<<VALID_CLASSES>>", ", ".join(labels))
+    configured_examples = configured_examples or {}
+    rendered_labels = [
+        _prompt_safe_configured_value(label) if label in configured_examples else label for label in labels
+    ]
+    label_block = label_block.replace("<<VALID_CLASSES>>", ", ".join(rendered_labels))
+    active_configured_examples = {
+        label: list(examples) for label, examples in configured_examples.items() if label in labels and examples
+    }
+    if active_configured_examples:
+        configured_lines = [
+            f"- {_prompt_safe_configured_value(label)}: "
+            + ", ".join(_prompt_safe_configured_value(example) for example in examples)
+            for label, examples in active_configured_examples.items()
+        ]
+        label_block += (
+            "\n\nUser-configured positive examples for finding missed entities:\n"
+            + "\n".join(configured_lines)
+            + "\nThese examples are guidance, not an exhaustive format allowlist."
+        )
     example_block = example_block.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
     context_section = data_summary if data_summary else "Not provided"
     return substitute_placeholders(

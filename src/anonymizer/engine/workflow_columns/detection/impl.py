@@ -114,6 +114,7 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
             return apply_validation_and_finalize(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
+                allowed_entity_labels=self.config.allowed_entity_labels,
             )
         return _TRANSFORMS[operation](data)
 

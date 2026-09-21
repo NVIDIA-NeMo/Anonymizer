@@ -12,6 +12,7 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
+from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.seed import PartitionBlock, SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
@@ -19,7 +20,7 @@ from data_designer.engine.testing.utils import assert_valid_plugin
 from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
-from anonymizer.engine.constants import COL_TEXT, COL_VALIDATION_DECISIONS
+from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_TEXT, COL_VALIDATION_DECISIONS
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
@@ -54,6 +55,10 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         validation_excerpt_window_chars=321,
         entity_labels=["first_name", "email"],
         excluded_entity_labels=["email"],
+        entity_label_examples={
+            "first_name": ["Alicia"],
+            "email": ["configured@example.test"],
+        },
         data_summary="Customer support messages",
         job_index=1,
         num_jobs=3,
@@ -97,6 +102,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert seed_validation_transform.excluded_entity_labels == ["email"]
     assert merge_transform.excluded_entity_labels == ["email"]
     assert finalize_transform.excluded_entity_labels == ["email"]
+    assert finalize_transform.allowed_entity_labels == ["first_name"]
 
     validation = next(column for column in columns if column.name == COL_VALIDATION_DECISIONS)
     assert isinstance(validation, ChunkedValidationConfig)
@@ -104,6 +110,14 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert validation.excerpt_window_chars == 321
     assert validation.pool == parsed_models.selected_models.detection.entity_validator
     assert "Customer support messages" in validation.prompt_template
+    assert "Alicia" in validation.prompt_template
+    assert "configured@example.test" not in validation.prompt_template
+
+    augmenter = next(column for column in columns if column.name == COL_AUGMENTED_ENTITIES)
+    assert isinstance(augmenter, LLMStructuredColumnConfig)
+    assert "first_name: Alicia" in augmenter.prompt
+    assert "Michael, Isabella, Carlos, Wei" not in augmenter.prompt
+    assert "configured@example.test" not in augmenter.prompt
 
     serialized = json.loads(payload)
     serialized_text = json.dumps(serialized)
@@ -164,6 +178,38 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
     assert "email" not in labels
     assert "first_name" in labels
     assert "city" in labels
+
+
+def test_exported_builder_auto_activates_custom_example_label(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    pd.DataFrame({COL_TEXT: ["Credential acme_live_abc123"]}).to_parquet(seed_path, index=False)
+
+    parsed_models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    builder = workflow.build_detection_builder_for_seed(
+        seed_path=seed_path,
+        model_configs=parsed_models.model_configs,
+        selected_models=parsed_models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+    )
+
+    assert "vendor_api_key" in _get_gliner_labels_from_builder(builder)
+    columns = builder.get_column_configs()
+    validation = next(column for column in columns if column.name == COL_VALIDATION_DECISIONS)
+    augmenter = next(column for column in columns if column.name == COL_AUGMENTED_ENTITIES)
+    assert isinstance(validation, ChunkedValidationConfig)
+    assert isinstance(augmenter, LLMStructuredColumnConfig)
+    finalize = next(
+        column
+        for column in columns
+        if isinstance(column, DetectionTransformConfig)
+        and column.operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE
+    )
+    assert "- vendor_api_key: acme_live_abc123" in validation.prompt_template
+    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt
+    assert "Strongly prefer labels from this list" in augmenter.prompt
+    assert finalize.allowed_entity_labels is None
 
 
 def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Path) -> None:

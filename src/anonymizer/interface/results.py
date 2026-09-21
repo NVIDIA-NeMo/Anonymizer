@@ -66,8 +66,9 @@ class AnonymizerResult(_DisplayMixin):
             with ``replace_method``.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
-            its evaluation to the same label set. ``None`` means all default
-            labels were in scope.
+            its evaluation to the same label set. ``None`` means detection was
+            permissive; defaults and any custom example keys may have been active,
+            but configured examples are intentionally not persisted for evaluation.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
@@ -120,8 +121,9 @@ class PreviewResult(_DisplayMixin):
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
-            its evaluation to the same label set. ``None`` means all default
-            labels were in scope.
+            its evaluation to the same label set. ``None`` means detection was
+            permissive; defaults and any custom example keys may have been active,
+            but configured examples are intentionally not persisted for evaluation.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.

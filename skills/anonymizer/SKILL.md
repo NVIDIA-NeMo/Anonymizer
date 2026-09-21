@@ -42,8 +42,9 @@ regulatory and business context.
 
 # Usage Tips and Common Pitfalls
 
-- **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected. To add domain labels, *extend* the default, don't replace it: `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", ...]` (`DEFAULT_ENTITY_LABELS` is a tuple, so unpack it into a list). Match the snake_case convention of `DEFAULT_ENTITY_LABELS`.
-- **`Detect.excluded_entity_labels`** excludes specific label types from detection entirely — excluded labels are removed before GLiNER runs and are never detected, augmented, or penalised in evaluation scores. Use it when a label type is systematically noisy for your data or should never be anonymized (e.g. `Detect(excluded_entity_labels=["occupation", "gender"])`). Exclusions take precedence over `entity_labels` — a label in both is never detected. If `excluded_entity_labels` entirely overlaps the effective allowlist (`entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`), `Detect` raises a `ValueError` at config time instead of silently building a config that detects nothing.
+- **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected.
+- **`Detect.entity_label_examples` provides positive detection guidance.** Built-in keys append examples to the bundled ontology. With `entity_labels=None`, custom keys automatically activate alongside the defaults while augmentation remains permissive: `Detect(entity_label_examples={"clinical_facility": ["North Valley Oncology Center"]})`. With an explicit `entity_labels`, every non-excluded example key must be listed. Examples do not constrain formats, guide substitution, or flow into evaluation. Use short synthetic examples because prompts, exported builders, provider requests, and explicitly enabled raw message traces contain them.
+- **`Detect.excluded_entity_labels`** excludes specific label types from detection entirely — excluded labels are removed before GLiNER runs and are never detected, augmented, or penalised in evaluation scores. Use it when a label type is systematically noisy for your data or should never be anonymized (e.g. `Detect(excluded_entity_labels=["occupation", "gender"])`). Exclusions take precedence over labels and examples; excluded examples are ignored with a warning. If exclusions empty the effective explicit or defaults-plus-custom set, `Detect` raises a `ValueError`.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
@@ -103,7 +104,6 @@ from anonymizer import (
     Anonymizer,
     AnonymizerConfig,
     AnonymizerInput,
-    DEFAULT_ENTITY_LABELS,
     Detect,
     # Pick what you need:
     # Replace mode:
@@ -122,8 +122,12 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
     )
 
     detect = Detect(
-        # Add domain labels by *extending* the default, not replacing it.
-        # entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code"],
+        # Add positive examples. Custom keys automatically extend the defaults.
+        # entity_label_examples={
+        #     "clinical_facility": ["North Valley Oncology Center"],
+        #     "diagnosis_code": ["C50.919"],
+        # },
+        # Use entity_labels=[...] only when strict/custom-only detection is intended.
         gliner_threshold=0.3,  # default; lower (0.2) for recall, raise (0.5) for cost savings
     )
 

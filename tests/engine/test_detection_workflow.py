@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-import logging
+from typing import cast
 from unittest.mock import Mock
 
 import pandas as pd
@@ -17,6 +17,7 @@ from data_designer.plugins.registry import PluginRegistry
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
@@ -31,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
+    ENTITY_LABEL_EXAMPLES,
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
@@ -40,8 +42,8 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_latent_prompt,
     _get_validation_prompt,
     _materialize_final_entities,
-    _resolve_detection_labels,
 )
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_ontology
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
@@ -407,20 +409,54 @@ def test_resolve_model_aliases_wraps_scalar_roles() -> None:
     assert resolve_model_aliases("entity_detector", selection) == [selection.entity_detector]
 
 
-def test_resolve_detection_labels_none_uses_defaults() -> None:
-    merged = _resolve_detection_labels(None)
-    assert merged == DEFAULT_ENTITY_LABELS
+def test_resolve_entity_ontology_none_uses_defaults() -> None:
+    ontology = resolve_entity_ontology(entity_labels=None)
+    assert ontology.labels == list(DEFAULT_ENTITY_LABELS)
 
 
-def test_resolve_detection_labels_does_not_append_defaults_when_custom_labels_provided() -> None:
-    merged = _resolve_detection_labels(["custom_label"])
-    assert merged == ["custom_label"]
+def test_resolve_entity_ontology_does_not_append_defaults_when_custom_labels_provided() -> None:
+    ontology = resolve_entity_ontology(entity_labels=["custom_label"])
+    assert ontology.labels == ["custom_label"]
 
 
-def test_resolve_detection_labels_preserves_provided_labels_as_is() -> None:
-    # cleaning of whitespace and case normalization occur during config validation
-    labels = ["FIRST_NAME", " email "]
-    assert _resolve_detection_labels(labels) == labels
+def test_resolve_entity_ontology_normalizes_provided_labels() -> None:
+    ontology = resolve_entity_ontology(entity_labels=["FIRST_NAME", " email "])
+    assert ontology.labels == ["first_name", "email"]
+
+
+def test_resolve_entity_ontology_merges_built_in_examples_without_global_mutation() -> None:
+    original = list(ENTITY_LABEL_EXAMPLES["api_key"])
+
+    ontology = resolve_entity_ontology(
+        entity_labels=None,
+        entity_label_examples={"api_key": ["sk-ant-api03-abc123", original[0]]},
+    )
+
+    assert ontology.validator_examples["api_key"] == [*original, "sk-ant-api03-abc123"]
+    assert ontology.augmenter_examples == {"api_key": ["sk-ant-api03-abc123", original[0]]}
+    assert ENTITY_LABEL_EXAMPLES["api_key"] == original
+
+
+def test_resolve_entity_ontology_auto_activates_custom_labels_but_remains_permissive() -> None:
+    ontology = resolve_entity_ontology(
+        entity_labels=None,
+        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+    )
+
+    assert ontology.labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
+    assert ontology.validator_examples["vendor_api_key"] == ["acme_live_abc123"]
+    assert ontology.augmenter_examples["vendor_api_key"] == ["acme_live_abc123"]
+    assert ontology.strict_labels is False
+
+
+def test_resolve_entity_ontology_explicit_custom_only_is_strict() -> None:
+    ontology = resolve_entity_ontology(
+        entity_labels=["vendor_api_key"],
+        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+    )
+
+    assert ontology.labels == ["vendor_api_key"]
+    assert ontology.strict_labels is True
 
 
 def test_latent_prompt_uses_not_provided_defaults() -> None:
@@ -466,6 +502,27 @@ def test_validation_prompt_includes_data_summary() -> None:
     assert "Data context: Medical records" in prompt
 
 
+def test_validation_prompt_adds_configured_examples_to_full_ontology() -> None:
+    ontology = resolve_entity_ontology(
+        entity_labels=None,
+        entity_label_examples={
+            "api_key": ["sk-ant-api03-abc123"],
+            "vendor_api_key": ["acme_live_abc123"],
+        },
+    )
+
+    prompt = _get_validation_prompt(
+        data_summary=None,
+        labels=ontology.labels,
+        examples_by_label=ontology.validator_examples,
+        configured_examples=ontology.augmenter_examples,
+    )
+
+    assert "sk-abc123def456" in prompt
+    assert "sk-ant-api03-abc123" in prompt
+    assert "- vendor_api_key: acme_live_abc123" in prompt
+
+
 def test_augment_prompt_permissive_when_using_defaults() -> None:
     """In practice strict_labels=False only fires with DEFAULT_ENTITY_LABELS (entity_labels=None).
     We pass a small list here to verify the permissive prompt text in isolation."""
@@ -485,6 +542,78 @@ def test_augment_prompt_strict_when_custom_labels_provided() -> None:
     assert "create a concise snake_case label" not in prompt
     assert "employment_status is NOT in the allowed list" in prompt
     assert "employment_status" not in prompt.split("Output:")[1]
+
+
+def test_augment_prompt_receives_only_configured_examples() -> None:
+    prompt = _get_augment_prompt(
+        data_summary=None,
+        labels=["email", "vendor_api_key"],
+        strict_labels=False,
+        configured_examples={"vendor_api_key": ["acme_live_abc123"]},
+    )
+
+    assert "User-configured positive examples" in prompt
+    assert "vendor_api_key: acme_live_abc123" in prompt
+    assert "derez_lester94@icloud.com" not in prompt
+
+
+def test_configured_examples_are_encoded_as_prompt_data() -> None:
+    configured_value = '{{ dangerous }}\n{% include "secret" %}'
+    configured_label = "custom_{{ label_template }}"
+    prompt = _get_augment_prompt(
+        data_summary=None,
+        labels=[configured_label],
+        strict_labels=False,
+        configured_examples={configured_label: [configured_value]},
+    )
+
+    assert "{{ dangerous }}" not in prompt
+    assert "{{ label_template }}" not in prompt
+    assert '{% include "secret" %}' not in prompt
+    assert r"\u007b\u007b dangerous \u007d\u007d" in prompt
+    assert r"\n" in prompt
+
+
+def test_no_configured_examples_preserves_existing_prompt_text() -> None:
+    original_validation = _get_validation_prompt(data_summary=None, labels=["email", "city"])
+    resolved_validation = _get_validation_prompt(
+        data_summary=None,
+        labels=["email", "city"],
+        examples_by_label={label: list(ENTITY_LABEL_EXAMPLES[label]) for label in ["email", "city"]},
+        configured_examples={},
+    )
+    original_augmenter = _get_augment_prompt(
+        data_summary=None,
+        labels=["email", "city"],
+        strict_labels=False,
+    )
+    resolved_augmenter = _get_augment_prompt(
+        data_summary=None,
+        labels=["email", "city"],
+        strict_labels=False,
+        configured_examples={},
+    )
+
+    assert resolved_validation == original_validation
+    assert resolved_augmenter == original_augmenter
+
+
+def test_augmenter_prompt_growth_uses_configured_examples_not_full_defaults() -> None:
+    base = _get_augment_prompt(
+        data_summary=None,
+        labels=DEFAULT_ENTITY_LABELS,
+        strict_labels=False,
+    )
+    configured = _get_augment_prompt(
+        data_summary=None,
+        labels=DEFAULT_ENTITY_LABELS,
+        strict_labels=False,
+        configured_examples={"api_key": ["sk-ant-api03-abc123"]},
+    )
+
+    configured_growth = len(configured) - len(base)
+    full_default_example_size = len(_format_label_examples(DEFAULT_ENTITY_LABELS))
+    assert 0 < configured_growth < full_default_example_size
 
 
 @pytest.mark.parametrize(
@@ -555,38 +684,63 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     assert "ipv4" in final_labels
 
 
+def test_auto_activated_custom_examples_preserve_permissive_augmentation(
+    _detection_with_novel_augmented_label: tuple[
+        EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
+    ],
+) -> None:
+    workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
+    result = workflow.run(
+        input_df,
+        model_configs=model_configs,
+        selected_models=selected_models,
+        gliner_detection_threshold=0.5,
+        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        tag_latent_entities=False,
+    )
+
+    final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
+    assert "server_name" in {entity.label for entity in final.entities}
+
+    adapter = cast(Mock, workflow._adapter)
+    call = adapter.run_workflow.call_args
+    detector_config = next(config for config in call.kwargs["model_configs"] if config.alias == "gliner-pii-detector")
+    assert "vendor_api_key" in detector_config.inference_parameters.extra_body["labels"]
+    augmenter = next(column for column in call.kwargs["columns"] if column.name == COL_AUGMENTED_ENTITIES)
+    assert "Strongly prefer labels from this list" in augmenter.prompt
+    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt
+
+
 # ── excluded_entity_labels ────────────────────────────────────────────────────
 
 
-def test_resolve_detection_labels_exclusions_remove_labels() -> None:
-    labels = _resolve_detection_labels(["first_name", "email", "city"], excluded_entity_labels={"email"})
-    assert "email" not in labels
-    assert "first_name" in labels
-    assert "city" in labels
+def test_resolve_entity_ontology_exclusions_remove_labels() -> None:
+    ontology = resolve_entity_ontology(entity_labels=["first_name", "email", "city"], excluded_entity_labels={"email"})
+    assert "email" not in ontology.labels
+    assert "first_name" in ontology.labels
+    assert "city" in ontology.labels
 
 
-def test_resolve_detection_labels_exclusions_normalize_configured_labels() -> None:
-    labels = _resolve_detection_labels(["first_name", " Email "], excluded_entity_labels={" EMAIL "})
-    assert labels == ["first_name"]
+def test_resolve_entity_ontology_exclusions_normalize_configured_labels() -> None:
+    ontology = resolve_entity_ontology(entity_labels=["first_name", " Email "], excluded_entity_labels={" EMAIL "})
+    assert ontology.labels == ["first_name"]
 
 
-def test_resolve_detection_labels_exclusions_apply_to_defaults() -> None:
-    labels = _resolve_detection_labels(None, excluded_entity_labels={"ssn", "first_name"})
-    assert "ssn" not in labels
-    assert "first_name" not in labels
-    assert "email" in labels
+def test_resolve_entity_ontology_exclusions_apply_to_defaults() -> None:
+    ontology = resolve_entity_ontology(entity_labels=None, excluded_entity_labels={"ssn", "first_name"})
+    assert "ssn" not in ontology.labels
+    assert "first_name" not in ontology.labels
+    assert "email" in ontology.labels
 
 
-def test_resolve_detection_labels_none_exclusions_is_noop() -> None:
-    labels = _resolve_detection_labels(["email", "city"], excluded_entity_labels=None)
-    assert labels == ["email", "city"]
+def test_resolve_entity_ontology_none_exclusions_is_noop() -> None:
+    ontology = resolve_entity_ontology(entity_labels=["email", "city"], excluded_entity_labels=None)
+    assert ontology.labels == ["email", "city"]
 
 
-def test_resolve_detection_labels_empty_result_warns(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="anonymizer.detection"):
-        labels = _resolve_detection_labels(["email"], excluded_entity_labels={"email"})
-    assert labels == []
-    assert "No entities will be detected" in caplog.text
+def test_resolve_entity_ontology_empty_result_raises() -> None:
+    with pytest.raises(ValueError, match="effective detection label set is empty"):
+        resolve_entity_ontology(entity_labels=["email"], excluded_entity_labels={"email"})
 
 
 def test_materialize_final_entities_normalizes_configured_labels() -> None:

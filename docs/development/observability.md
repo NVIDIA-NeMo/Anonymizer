@@ -211,7 +211,9 @@ model call. `all_messages` stores the full message list.
 
 Message traces are separate from measurement records. They may contain raw input
 text, prompts, generated output, entity values, replacement values, secrets, and
-PII. Do not share them unless they have been reviewed or redacted.
+PII. This includes `Detect.entity_label_examples`, which are embedded in rendered
+validator and augmenter prompts. Do not share traces unless they have been reviewed
+or redacted.
 
 Anonymizer requests standard LLM-column traces through DataDesigner native LLM
 column trace side effects. That covers `LLMTextColumnConfig` and

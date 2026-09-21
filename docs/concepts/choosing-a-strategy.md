@@ -57,7 +57,7 @@ What to leave out:
 
 ## 2. (Detection) Detection knobs
 
-For most datasets the [detection](detection.md) defaults work. The main reason to adjust `entity_labels` is when your data has **domain-specific entities that can be described in plain English** — GLiNER is zero-shot, so any concept you can name (e.g. `"clinical_facility"`, `"internal_project_codename"`) becomes an entity it can find. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. If the entities you care about aren't in the default list, write them down and add them. Adjust `gliner_threshold` only when you see a specific recall or precision problem in preview.
+For most datasets the [detection](detection.md) defaults work. Use `entity_label_examples` when representative positive values help explain a built-in or domain-specific concept. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. Adjust `gliner_threshold` only when you see a specific recall or precision problem in preview.
 
 ### `entity_labels`
 
@@ -66,7 +66,7 @@ For most datasets the [detection](detection.md) defaults work. The main reason t
 | `None` (default) | Detect all `DEFAULT_ENTITY_LABELS`; the augmenter LLM can also infer new labels not in the default set | General-purpose — almost always the right starting point |
 | Explicit list | **Strict mode** — only the labels you list are detected, augmenter cannot invent new ones | You have a domain-specific entity that the defaults don't cover, or you want to *narrow* detection to a known short list |
 
-Common ways to extend the default list:
+Common custom labels include:
 
 - Healthcare: `clinical_facility`, `diagnosis_code`, `medication_name`, `lab_test_code`
 - Legal: `case_number`, `docket_number`, `statute_citation`, `judge_name`
@@ -74,10 +74,27 @@ Common ways to extend the default list:
 - Internal: `cost_center`, `internal_project_codename`, `experiment_id`
 
 ```python
-from anonymizer import DEFAULT_ENTITY_LABELS, Detect
+from anonymizer import Detect
 
-detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])
+# Defaults plus these custom labels; examples activate custom keys automatically.
+detect = Detect(
+    entity_label_examples={
+        "clinical_facility": ["North Valley Oncology Center"],
+        "diagnosis_code": ["C50.919"],
+    }
+)
+
+# Strict custom-only detection uses an explicit allowlist.
+strict_detect = Detect(
+    entity_labels=["clinical_facility", "diagnosis_code"],
+    entity_label_examples={
+        "clinical_facility": ["North Valley Oncology Center"],
+        "diagnosis_code": ["C50.919"],
+    },
+)
 ```
+
+For a built-in label, configured examples are additive rather than replacements. Examples are positive guidance, not format allowlists: an `api_key` in a different format may still be detected. Keep the list short because the full validator ontology repeats per validation chunk, and use synthetic values because configured examples are sent to model providers.
 
 ### `excluded_entity_labels`
 
@@ -92,7 +109,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 ```
 
 !!! warning
-    `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A total overlap raises a `ValueError` at config time instead of silently detecting nothing. A partial overlap logs a warning only when `entity_labels` is explicit; against the default label set, it's silent.
+    Exclusions take precedence over labels and examples. Examples for an excluded key are ignored with a warning. A total overlap with the effective defaults-plus-custom or explicit set raises a `ValueError` instead of silently detecting nothing.
 
 ### `gliner_threshold`
 

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    Detect,
     Rewrite,
     infer_input_source_suffix,
 )
@@ -120,6 +121,115 @@ def test_entity_labels_empty_list_raises() -> None:
 def test_entity_labels_whitespace_only_raises() -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         AnonymizerConfig(detect={"entity_labels": ["  ", ""]}, replace=Redact())
+
+
+def test_entity_label_examples_default_is_isolated() -> None:
+    first = Detect()
+    second = Detect()
+
+    first.entity_label_examples["custom_id"] = ["ABC-123"]
+
+    assert second.entity_label_examples == {}
+
+
+def test_entity_label_examples_normalizes_merges_and_stable_deduplicates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        detect = Detect(
+            entity_label_examples={
+                " Email ": [" alice@example.test ", "CaseSensitive"],
+                "email": ["alice@example.test", "casesensitive", "bob@example.test"],
+            }
+        )
+
+    assert detect.entity_label_examples == {
+        "email": ["alice@example.test", "CaseSensitive", "casesensitive", "bob@example.test"]
+    }
+    assert "normalize to the same label" in caplog.text
+    assert "duplicate examples" in caplog.text
+    assert "alice@example.test" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "examples",
+    [
+        None,
+        ["email"],
+        {"email": ("alice@example.test",)},
+        {"email": []},
+        {"email": [""]},
+        {"email": [123]},
+        {" ": ["alice@example.test"]},
+        {1: ["alice@example.test"]},
+    ],
+)
+def test_entity_label_examples_rejects_invalid_shapes(examples: object) -> None:
+    with pytest.raises(ValidationError):
+        Detect(entity_label_examples=examples)  # type: ignore[arg-type]
+
+
+def test_entity_label_examples_explicit_allowlist_is_strict() -> None:
+    with pytest.raises(ValidationError, match="outside the explicit entity_labels allowlist"):
+        Detect(
+            entity_labels=["email"],
+            entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        )
+
+
+def test_entity_label_examples_exclusion_wins_over_explicit_mismatch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        detect = Detect(
+            entity_labels=["email"],
+            excluded_entity_labels=["vendor_api_key"],
+            entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        )
+
+    assert detect.entity_labels == ["email"]
+    assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
+    assert "vendor_api_key" in caplog.text
+    assert "acme_live_abc123" not in caplog.text
+
+
+def test_entity_label_examples_custom_key_survives_all_default_exclusions() -> None:
+    detect = Detect(
+        excluded_entity_labels=list(DEFAULT_ENTITY_LABELS),
+        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+    )
+
+    assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
+
+
+def test_entity_label_examples_excluding_all_defaults_and_custom_key_raises() -> None:
+    with pytest.raises(ValidationError, match="empty effective detection set"):
+        Detect(
+            excluded_entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
+            entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        )
+
+
+def test_entity_label_examples_copies_caller_owned_lists_and_round_trips() -> None:
+    caller_examples = ["acme_live_abc123"]
+    detect = Detect(entity_label_examples={"vendor_api_key": caller_examples})
+    caller_examples.append("mutated")
+
+    restored = Detect.model_validate_json(detect.model_dump_json())
+
+    assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
+    assert restored.entity_label_examples == detect.entity_label_examples
+
+
+def test_entity_label_examples_validation_error_hides_example_values() -> None:
+    secret = "real-production-secret"
+    with pytest.raises(ValidationError) as exc_info:
+        AnonymizerConfig(
+            detect={"entity_label_examples": {"api_key": [secret, ""]}},
+            replace=Redact(),
+        )
+
+    assert secret not in str(exc_info.value)
 
 
 def test_both_modes_set_exits() -> None:

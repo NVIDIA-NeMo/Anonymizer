@@ -500,6 +500,16 @@ def test_detect_config_metadata_exclusions_none_when_not_set() -> None:
     assert metadata["excluded_entity_labels"] is None
 
 
+def test_detect_config_metadata_omits_entity_label_example_values() -> None:
+    from anonymizer.measurement.records.run import _detect_config_metadata
+
+    secret_example = "real-production-secret"
+    metadata = _detect_config_metadata(Detect(entity_label_examples={"vendor_api_key": [secret_example]}))
+
+    assert secret_example not in json.dumps(metadata)
+    assert "entity_label_examples" not in metadata
+
+
 def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:
     input_csv = tmp_path / "input.csv"
     output_jsonl = tmp_path / "measurements.jsonl"
