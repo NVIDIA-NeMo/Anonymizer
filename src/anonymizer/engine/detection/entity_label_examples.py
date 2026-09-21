@@ -81,17 +81,12 @@ def resolve_entity_ontology(
             normalized_labels.append(label)
             seen_labels.add(label)
 
-    active_configured = {
-        label: list(examples)
-        for label, examples in configured.items()
-        if label not in excluded
-    }
+    active_configured = {label: list(examples) for label, examples in configured.items() if label not in excluded}
     if strict_labels:
         unknown = sorted(set(active_configured) - seen_labels)
         if unknown:
             raise ValueError(
-                "entity_label_examples contains labels outside the explicit entity_labels allowlist: "
-                f"{unknown}"
+                f"entity_label_examples contains labels outside the explicit entity_labels allowlist: {unknown}"
             )
     else:
         for label in active_configured:
@@ -114,9 +109,7 @@ def resolve_entity_ontology(
         labels=normalized_labels,
         validator_examples=validator_examples,
         augmenter_examples={
-            label: list(active_configured[label])
-            for label in normalized_labels
-            if label in active_configured
+            label: list(active_configured[label]) for label in normalized_labels if label in active_configured
         },
         strict_labels=strict_labels,
     )
