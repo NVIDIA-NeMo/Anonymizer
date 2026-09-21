@@ -50,7 +50,7 @@ def _wandb_metadata_spec(tool: ModuleType) -> Any:
 def _hash_config(tool: ModuleType) -> Any:
     return tool.ConfigSpec(
         id="hash-a",
-        detect={"entity_labels": ["person", "api_key"], "gliner_threshold": 0.4},
+        detect={"entity_labels": ["person", "api_key"], "gliner_only": True, "gliner_threshold": 0.4},
         replace=tool.ReplaceSpec(strategy=tool.ReplaceKind.hash, digest_length=12, instructions="raw secret"),
         evaluate=True,
     )
@@ -95,6 +95,7 @@ def _assert_wandb_metadata(metadata: dict[str, Any]) -> None:
         "digest_length": 12,
         "has_instructions": True,
     }
+    assert metadata["configs"][0]["detect"]["gliner_only"] is True
     assert metadata["configs"][1]["rewrite"] == {
         "risk_tolerance": "minimal",
         "max_repair_iterations": 1,
@@ -716,6 +717,20 @@ def test_wandb_outbound_models_structurally_exclude_sensitive_fields(wandb_setup
             id="sweep",
             arm_id="arm",
             params={"configs_all_detect_gliner_threshold": -0.1},
+        )
+    assert (
+        models.SweepMetadata(
+            id="sweep",
+            arm_id="arm",
+            params={"configs_all_detect_gliner_only": True},
+        ).params["configs_all_detect_gliner_only"]
+        is True
+    )
+    with pytest.raises(ValidationError):
+        models.SweepMetadata(
+            id="sweep",
+            arm_id="arm",
+            params={"configs_all_detect_gliner_only": 1},
         )
 
 

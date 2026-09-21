@@ -1382,7 +1382,12 @@ def _detect_metadata(detect: dict[str, Any]) -> dict[str, Any]:
     }
     if isinstance(entity_labels, list):
         metadata["entity_label_set_hash"] = _stable_hash(",".join(sorted(map(str, entity_labels))))
-    for key in ("gliner_threshold", "validation_max_entities_per_call", "validation_excerpt_window_chars"):
+    for key in (
+        "gliner_only",
+        "gliner_threshold",
+        "validation_max_entities_per_call",
+        "validation_excerpt_window_chars",
+    ):
         if key in detect:
             metadata[key] = detect[key]
     return metadata

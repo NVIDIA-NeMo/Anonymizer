@@ -37,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
+    COL_SEED_ENTITIES,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TEXT,
     COL_UTILITY_SCORE,
@@ -486,10 +487,11 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
 def test_detect_config_metadata_includes_excluded_entity_labels() -> None:
     from anonymizer.measurement.records.run import _detect_config_metadata
 
-    detect = Detect(entity_labels=["first_name", "email"], excluded_entity_labels=["email"])
+    detect = Detect(entity_labels=["first_name", "email"], excluded_entity_labels=["email"], gliner_only=True)
     metadata = _detect_config_metadata(detect)
     assert metadata["excluded_entity_labels"] == ["email"]
     assert metadata["entity_labels"] == ["email", "first_name"]
+    assert metadata["gliner_only"] is True
 
 
 def test_detect_config_metadata_exclusions_none_when_not_set() -> None:
@@ -608,6 +610,49 @@ def test_measurement_config_record_level_false_skips_record_rows(tmp_path: Path)
     assert [record["record_type"] for record in records] == ["stage"]
     assert records[0]["run_id"] == "stage-only"
     assert records[0]["input_rows_per_sec"] >= 0
+
+
+def test_gliner_only_record_metrics_report_one_detector_call() -> None:
+    entities = {
+        "entities": [
+            {
+                "id": "first_name:0:6",
+                "value": "Sample",
+                "label": "first_name",
+                "start_position": 0,
+                "end_position": 6,
+                "score": 0.9,
+                "source": "detector",
+            }
+        ]
+    }
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Sample text"],
+            COL_SEED_ENTITIES: [entities],
+            COL_FINAL_ENTITIES: [entities],
+        }
+    )
+    collector = MeasurementCollector(record_hash_key="test-key")
+
+    with measurement_session(collector):
+        record_record_metrics(
+            dataframe,
+            mode="replace",
+            strategy="Redact",
+            text_column=COL_TEXT,
+            validation_max_entities_per_call=100,
+            gliner_only=True,
+        )
+
+    record = collector.records[0]
+    assert record["detected_candidate_count"] == 1
+    assert record["validation_chunk_count"] == 0
+    assert record["llm_calls_estimated_by_stage"] == {
+        "entity_detection": 1,
+        "replace_map_generation": 0,
+    }
+    assert record["llm_calls_estimated_total"] == 1
 
 
 def test_measurement_config_from_env_returns_none_without_output_path(

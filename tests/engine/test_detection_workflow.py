@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -814,6 +815,46 @@ def test_detection_workflow_uses_plugin_transform_columns(
         assert DetectionTransformOperation(column.operation) == operation
     assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == ["email"]
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
+
+
+def test_gliner_only_workflow_skips_llm_refinement(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice"],
+                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+            }
+        ),
+        failed_records=[],
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    result = workflow.run(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        gliner_only=True,
+        excluded_entity_labels=["email"],
+        tag_latent_entities=False,
+    )
+
+    call = adapter.run_workflow.call_args
+    assert [config.alias for config in call.kwargs["model_configs"]] == [stub_detection_model_selection.entity_detector]
+    assert [column.name for column in call.kwargs["columns"]] == [
+        COL_RAW_DETECTED,
+        COL_SEED_ENTITIES,
+        COL_DETECTED_ENTITIES,
+    ]
+    finalizer = call.kwargs["columns"][-1]
+    assert isinstance(finalizer, DetectionTransformConfig)
+    assert finalizer.operation == DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES
+    assert finalizer.excluded_entity_labels == ["email"]
+    assert COL_FINAL_ENTITIES in result.dataframe.columns
 
 
 def test_detection_workflow_columns_are_json_serializable(

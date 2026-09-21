@@ -117,6 +117,7 @@ def record_record_metrics(
     strategy: str,
     text_column: str,
     validation_max_entities_per_call: int,
+    gliner_only: bool = False,
 ) -> None:
     """Record per-row count, length, and nominal-call metrics from a trace DataFrame."""
     collector = current_collector()
@@ -148,6 +149,7 @@ def record_record_metrics(
                 strategy=strategy,
                 final_entity_count=len(final_entities),
                 validation_max_entities_per_call=validation_max_entities_per_call,
+                gliner_only=gliner_only,
             ),
         )
 
@@ -272,13 +274,18 @@ def _llm_record_fields(
     strategy: str,
     final_entity_count: int,
     validation_max_entities_per_call: int,
+    gliner_only: bool,
 ) -> dict[str, Any]:
     from anonymizer.engine.constants import COL_REPAIR_ITERATIONS
 
-    detected_candidate_count = _detected_candidate_count(row, columns=columns)
-    validation_chunk_count = _validation_chunk_count(
-        detected_candidate_count,
-        validation_max_entities_per_call=validation_max_entities_per_call,
+    detected_candidate_count = _detected_candidate_count(row, columns=columns, gliner_only=gliner_only)
+    validation_chunk_count = (
+        0
+        if gliner_only
+        else _validation_chunk_count(
+            detected_candidate_count,
+            validation_max_entities_per_call=validation_max_entities_per_call,
+        )
     )
     grouped_entity_count = _grouped_entity_count(row, columns=columns, final_entity_count=final_entity_count)
     repair_iterations = _coerce_int(row.get(COL_REPAIR_ITERATIONS, 0), default=0)
@@ -290,6 +297,7 @@ def _llm_record_fields(
         validation_chunk_count=validation_chunk_count,
         repair_iterations=repair_iterations,
         replace_map_generation_uses_llm=replace_map_generation_uses_llm,
+        gliner_only=gliner_only,
     )
     known_call_counts = [value for value in calls_by_stage.values() if value is not None]
     total_estimated = sum(known_call_counts) if len(known_call_counts) == len(calls_by_stage) else None
@@ -307,8 +315,13 @@ def _replace_map_generation_uses_llm(row: Any, *, columns: set[str]) -> bool:
     return True
 
 
-def _detected_candidate_count(row: Any, *, columns: set[str]) -> int | None:
-    from anonymizer.engine.constants import COL_SEED_VALIDATION_CANDIDATES
+def _detected_candidate_count(row: Any, *, columns: set[str], gliner_only: bool) -> int | None:
+    from anonymizer.engine.constants import COL_SEED_ENTITIES, COL_SEED_VALIDATION_CANDIDATES
+
+    if gliner_only:
+        if COL_SEED_ENTITIES not in columns:
+            return None
+        return _count_items(row.get(COL_SEED_ENTITIES), primary_key="entities")
 
     if COL_SEED_VALIDATION_CANDIDATES not in columns:
         return None

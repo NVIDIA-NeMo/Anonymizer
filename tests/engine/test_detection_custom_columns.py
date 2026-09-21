@@ -36,6 +36,7 @@ from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
     enrich_validation_decisions,
+    finalize_detector_entities,
     merge_and_build_candidates,
     parse_detected_entities,
 )
@@ -76,6 +77,39 @@ def test_parse_produces_seed_entities_and_notation() -> None:
     assert len(result[COL_SEED_ENTITIES]["entities"]) == 1
     assert result[COL_SEED_ENTITIES]["entities"][0]["value"] == "(555) 123-4567"
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
+
+
+def test_finalize_detector_entities_preserves_only_detector_spans() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "Alice met Alice in Seattle",
+        COL_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "first_name_0_5",
+                    "value": "Alice",
+                    "label": "first_name",
+                    "start_position": 0,
+                    "end_position": 5,
+                    "score": 0.95,
+                    "source": "detector",
+                },
+                {
+                    "id": "city_19_26",
+                    "value": "Seattle",
+                    "label": "city",
+                    "start_position": 19,
+                    "end_position": 26,
+                    "score": 0.93,
+                    "source": "detector",
+                },
+            ]
+        },
+    }
+
+    result = finalize_detector_entities(row, excluded_entity_labels=["city"])
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == [row[COL_SEED_ENTITIES]["entities"][0]]
+    assert result[COL_TAGGED_TEXT] == "<first_name>Alice</first_name> met Alice in Seattle"
 
 
 def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:

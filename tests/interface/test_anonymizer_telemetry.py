@@ -242,6 +242,22 @@ class TestOptOut:
 
 
 class TestFieldPopulation:
+    def test_gliner_only_marks_refinement_models_not_applicable(
+        self,
+        captured_events: list[AnonymizerEvent],
+        stub_input: AnonymizerInput,
+    ) -> None:
+        anonymizer, *_ = _make_anonymizer()
+        anonymizer.run(
+            config=AnonymizerConfig(detect={"gliner_only": True}, replace=Redact()),
+            data=stub_input,
+        )
+
+        event = captured_events[0]
+        assert event.entity_detector_model != NOT_APPLICABLE
+        assert event.entity_validator_model == NOT_APPLICABLE
+        assert event.entity_augmenter_model == NOT_APPLICABLE
+
     def test_substitute_populates_replacement_generator(
         self,
         captured_events: list[AnonymizerEvent],

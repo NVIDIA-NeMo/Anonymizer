@@ -19,7 +19,13 @@ from data_designer.engine.testing.utils import assert_valid_plugin
 from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
-from anonymizer.engine.constants import COL_TEXT, COL_VALIDATION_DECISIONS
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_RAW_DETECTED,
+    COL_SEED_ENTITIES,
+    COL_TEXT,
+    COL_VALIDATION_DECISIONS,
+)
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
@@ -77,7 +83,9 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert all(column.column_type != "custom" for column in columns)
 
     transforms = [column for column in columns if isinstance(column, DetectionTransformConfig)]
-    assert {DetectionTransformOperation(column.operation) for column in transforms} == set(DetectionTransformOperation)
+    assert {DetectionTransformOperation(column.operation) for column in transforms} == set(
+        DetectionTransformOperation
+    ) - {DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES}
     merge_transform = next(
         column
         for column in transforms
@@ -111,6 +119,46 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert "anonymizer-chunked-validation" in serialized_text
     assert "generator_function" not in serialized_text
     assert "generator_params" not in serialized_text
+
+
+def test_gliner_only_builder_serializes_without_refinement_models(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    pd.DataFrame({COL_TEXT: ["Alice"]}).to_parquet(seed_path, index=False)
+    parsed_models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+
+    builder = workflow.build_detection_builder_for_seed(
+        seed_path=seed_path,
+        model_configs=parsed_models.model_configs,
+        selected_models=parsed_models.selected_models.detection,
+        gliner_detection_threshold=0.42,
+        gliner_only=True,
+    )
+
+    payload = builder.get_builder_config().to_json()
+    assert payload is not None
+    restored = DataDesignerConfigBuilder.from_config(payload)
+    assert restored.get_builder_config().to_dict() == builder.get_builder_config().to_dict()
+
+    columns = restored.get_column_configs()
+    assert [column.name for column in columns] == [
+        COL_RAW_DETECTED,
+        COL_SEED_ENTITIES,
+        COL_DETECTED_ENTITIES,
+    ]
+    operations = [
+        DetectionTransformOperation(column.operation)
+        for column in columns
+        if isinstance(column, DetectionTransformConfig)
+    ]
+    assert operations == [
+        DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
+        DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES,
+    ]
+
+    serialized = json.loads(payload)
+    model_configs = serialized["data_designer"]["model_configs"]
+    assert [config["alias"] for config in model_configs] == [parsed_models.selected_models.detection.entity_detector]
 
 
 def _get_gliner_labels_from_builder(builder: DataDesignerConfigBuilder) -> list[str]:

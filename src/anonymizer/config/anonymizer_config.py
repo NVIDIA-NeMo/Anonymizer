@@ -93,6 +93,13 @@ class Detect(BaseModel):
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )
+    gliner_only: bool = Field(
+        default=False,
+        description=(
+            "Use raw GLiNER candidates without LLM validation or augmentation. "
+            "This reduces latency but also reduces precision and recall."
+        ),
+    )
     validation_max_entities_per_call: int = Field(
         default=100,
         gt=0,

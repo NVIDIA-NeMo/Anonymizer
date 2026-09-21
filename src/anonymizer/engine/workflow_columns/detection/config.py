@@ -31,6 +31,7 @@ from anonymizer.engine.constants import (
 
 class DetectionTransformOperation(str, Enum):
     PARSE_DETECTED_ENTITIES = "parse_detected_entities"
+    FINALIZE_DETECTOR_ENTITIES = "finalize_detector_entities"
     PREPARE_VALIDATION_INPUTS = "prepare_validation_inputs"
     ENRICH_VALIDATION_DECISIONS = "enrich_validation_decisions"
     APPLY_VALIDATION_TO_SEED_ENTITIES = "apply_validation_to_seed_entities"
@@ -45,6 +46,7 @@ class DetectionTransformConfig(SingleColumnConfig):
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TEXT, COL_RAW_DETECTED],
+        DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES: [COL_TEXT, COL_SEED_ENTITIES],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [
             COL_VALIDATION_DECISIONS,
@@ -68,6 +70,7 @@ class DetectionTransformConfig(SingleColumnConfig):
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TAG_NOTATION],
+        DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES: [COL_TAGGED_TEXT],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_SEED_TAGGED_TEXT],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
