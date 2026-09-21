@@ -10,8 +10,8 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerInput
-from anonymizer.engine.constants import COL_TEXT
+from anonymizer.config.anonymizer_config import AnonymizerInput, TextRecord, TextRecordsInput
+from anonymizer.engine.constants import COL_TEXT, RECORD_ID_COLUMN
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.io.writer import write_output
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
@@ -67,6 +67,33 @@ def test_read_input_from_file(suffix: str, writer: Any, tmp_path: Path) -> None:
     inp = AnonymizerInput(source=str(file_path))
     result = read_input(inp)
     assert COL_TEXT in result.dataframe.columns
+
+
+def test_read_input_from_memory_preserves_ids_text_and_order() -> None:
+    result = read_input(
+        TextRecordsInput(
+            records=[
+                TextRecord(id="turn-2", text="Bob's email is bob@example.com"),
+                TextRecord(id="turn-1", text="Alice's email is alice@example.com"),
+            ]
+        )
+    )
+
+    assert result.dataframe["id"].tolist() == ["turn-2", "turn-1"]
+    assert result.dataframe[RECORD_ID_COLUMN].tolist() == ["turn-2", "turn-1"]
+    assert result.dataframe[COL_TEXT].tolist() == [
+        "Bob's email is bob@example.com",
+        "Alice's email is alice@example.com",
+    ]
+
+
+def test_read_input_from_memory_honors_preview_limit() -> None:
+    result = read_input(
+        TextRecordsInput(records=[TextRecord(id=str(index), text=f"record {index}") for index in range(3)]),
+        nrows=2,
+    )
+
+    assert result.dataframe["id"].tolist() == ["0", "1"]
 
 
 def test_read_input_from_remote_csv_url(monkeypatch: pytest.MonkeyPatch) -> None:

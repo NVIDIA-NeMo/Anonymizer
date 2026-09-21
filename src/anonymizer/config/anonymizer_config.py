@@ -42,7 +42,7 @@ def infer_input_source_suffix(value: str) -> str:
 
 
 class AnonymizerInput(BaseModel):
-    """Input source definition for the anonymizer pipeline.
+    """File input definition for the anonymizer pipeline.
 
     Format is inferred from the file extension of a local path or HTTP(S) URL.
     """
@@ -68,6 +68,29 @@ class AnonymizerInput(BaseModel):
         if not source.is_file():
             raise ValueError(f"Input path is not a file: {source}")
         return value
+
+
+class TextRecord(BaseModel):
+    """One in-memory text record to anonymize."""
+
+    id: str = Field(min_length=1, description="Caller-defined record identifier.")
+    text: str = Field(description="Text to anonymize.")
+
+
+class TextRecordsInput(BaseModel):
+    """Ordered in-memory text records and their dataset context."""
+
+    records: list[TextRecord] = Field(min_length=1, description="Text records to anonymize in order.")
+    data_summary: str | None = Field(
+        default=None, description="Short description of the data. Improves LLM detection accuracy."
+    )
+
+    @model_validator(mode="after")
+    def validate_record_ids(self) -> TextRecordsInput:
+        record_ids = [record.id for record in self.records]
+        if len(record_ids) != len(set(record_ids)):
+            raise ValueError("In-memory record IDs must be unique.")
+        return self
 
 
 class Detect(BaseModel):
