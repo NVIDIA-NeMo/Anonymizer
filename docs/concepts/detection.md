@@ -48,8 +48,35 @@ config = AnonymizerConfig(
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
 | `excluded_entity_labels` | `None` | List of labels to **never** detect, even if present in `entity_labels` or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
+| `gliner_only` | `False` | Skip LLM validation and augmentation and use GLiNER candidates directly. See [GLiNER-only fast path](#gliner-only-fast-path). |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
+
+---
+
+## GLiNER-only fast path
+
+For latency-sensitive applications that can accept lower detection quality,
+`Detect(gliner_only=True)` stops after the configured GLiNER detector. It does
+not call the entity validator or augmenter:
+
+```python
+config = AnonymizerConfig(
+    detect=Detect(gliner_only=True, gliner_threshold=0.3),
+    replace=Redact(),
+)
+```
+
+The result contract is unchanged: `result.dataframe` still contains transformed
+text and `final_entities`. The entities are raw GLiNER candidates, however.
+They have not been contextually validated, reclassified, or supplemented when
+GLiNER misses a span. Expect more false positives and false negatives than the
+default hybrid path.
+
+`gliner_only` describes pipeline behavior, not network placement. To keep the
+detection stage local, configure `entity_detector` to use a local GLiNER
+endpoint. Use a local replacement strategy such as `Redact`, `Hash`, or
+`Annotate`; `Substitute`, rewrite mode, and `evaluate()` still use LLMs.
 
 ---
 

@@ -290,6 +290,7 @@ def validate_model_alias_references(
     model_configs: list[ModelConfig],
     selected_models: ModelSelection,
     *,
+    check_detection_refinement: bool = True,
     check_substitute: bool = False,
     check_rewrite: bool = False,
     check_evaluate: bool = False,
@@ -312,7 +313,10 @@ def validate_model_alias_references(
     detection_roles = selected_models.detection.model_dump()
 
     roles_to_check: dict[str, str] = {}
-    for role in ("entity_detector", "entity_validator", "entity_augmenter"):
+    detection_roles_to_check = ["entity_detector"]
+    if check_detection_refinement:
+        detection_roles_to_check.extend(("entity_validator", "entity_augmenter"))
+    for role in detection_roles_to_check:
         _collect_role(roles_to_check, f"detection.{role}", detection_roles[role])
     if check_rewrite:
         _collect_role(roles_to_check, "detection.latent_detector", detection_roles["latent_detector"])

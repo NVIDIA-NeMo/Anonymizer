@@ -370,6 +370,28 @@ def test_validate_model_alias_references_raises_on_unknown_detection_alias(
         )
 
 
+def test_validate_model_alias_references_skips_refinement_aliases_for_gliner_only(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "detection": stub_slim_model_selection.detection.model_copy(
+                update={
+                    "entity_validator": ["missing-validator"],
+                    "entity_augmenter": "missing-augmenter",
+                }
+            )
+        }
+    )
+
+    validate_model_alias_references(
+        stub_known_model_configs,
+        selected_models,
+        check_detection_refinement=False,
+    )
+
+
 def test_validate_model_alias_references_skips_latent_detector_when_not_rewrite(
     stub_known_model_configs: list[ModelConfig],
     stub_slim_model_selection: ModelSelection,

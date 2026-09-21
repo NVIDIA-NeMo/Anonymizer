@@ -101,6 +101,11 @@ For custom model endpoints, pass a providers YAML:
 anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 ```
 
+Latency-sensitive applications can set `Detect(gliner_only=True)` to use raw
+GLiNER candidates without LLM validation or augmentation. This keeps the same
+result columns but lowers detection quality. The detector is local only when
+its configured endpoint is local; see the [detection guide](https://nvidia-nemo.github.io/Anonymizer/latest/concepts/detection/).
+
 ## Language And Regional Coverage
 
 Anonymizer has been tested most extensively on English-language data. Multilingual quality has not yet been evaluated systematically across languages, domains, and models.

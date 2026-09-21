@@ -14,9 +14,10 @@ def estimate_llm_calls_by_stage(
     validation_chunk_count: int | None,
     repair_iterations: int = 0,
     replace_map_generation_uses_llm: bool = True,
+    gliner_only: bool = False,
 ) -> dict[str, int | None]:
     """Estimate nominal model calls for one record, split by workflow stage."""
-    detection_calls = None if validation_chunk_count is None else 2 + validation_chunk_count
+    detection_calls = 1 if gliner_only else None if validation_chunk_count is None else 2 + validation_chunk_count
     replace_map_generation = 0
     if replace_map_generation_uses_llm and has_grouped_entities and (mode == "rewrite" or strategy == "Substitute"):
         replace_map_generation = 1

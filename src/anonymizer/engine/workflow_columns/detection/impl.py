@@ -23,6 +23,7 @@ from anonymizer.engine.detection.custom_columns import (
     apply_validation_and_finalize,
     apply_validation_to_seed_entities,
     enrich_validation_decisions,
+    finalize_detector_entities,
     merge_and_build_candidates,
     parse_detected_entities,
     prepare_validation_inputs,
@@ -35,6 +36,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
     DetectionTransformOperation.PARSE_DETECTED_ENTITIES: parse_detected_entities,
+    DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES: finalize_detector_entities,
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
     DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
     DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
@@ -100,6 +102,11 @@ class _AsyncBridgedModelFacade:
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
+        if operation == DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES:
+            return finalize_detector_entities(
+                data,
+                excluded_entity_labels=self.config.excluded_entity_labels,
+            )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
             return apply_validation_to_seed_entities(
                 data,

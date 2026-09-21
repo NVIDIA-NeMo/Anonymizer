@@ -285,7 +285,9 @@ class Anonymizer:
         on-SLURM DataDesigner orchestrator) instead of running it in-process. Reads
         ``data``, resolves the same detection model configs/selections as :meth:`run`,
         writes the seed dataset to ``seed_path``, and returns the
-        ``DataDesignerConfigBuilder`` for the GLiNER + LLM-validate/augment workflow.
+        ``DataDesignerConfigBuilder`` for the configured detection workflow. By
+        default that is GLiNER plus LLM validation and augmentation;
+        ``detect.gliner_only`` exports the detector-only workflow instead.
         The external runtime supplies the model providers (e.g. served vLLM endpoints);
         its per-record output carries the finalized entity columns to score.
 
@@ -302,6 +304,7 @@ class Anonymizer:
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
             gliner_detection_threshold=config.detect.gliner_threshold,
+            gliner_only=config.detect.gliner_only,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
@@ -335,6 +338,7 @@ class Anonymizer:
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
             gliner_detection_threshold=config.detect.gliner_threshold,
+            gliner_only=config.detect.gliner_only,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
@@ -719,6 +723,7 @@ class Anonymizer:
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
             gliner_detection_threshold=config.detect.gliner_threshold,
+            gliner_only=config.detect.gliner_only,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
@@ -809,6 +814,7 @@ class Anonymizer:
             strategy=type(config.replace).__name__ if config.replace is not None else "Rewrite",
             text_column=COL_TEXT,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+            gliner_only=config.detect.gliner_only,
         )
         return AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
@@ -830,6 +836,7 @@ class Anonymizer:
             validate_model_alias_references(
                 self._model_configs,
                 self._selected_models,
+                check_detection_refinement=not config.detect.gliner_only,
                 check_substitute=isinstance(config.replace, Substitute) or config.rewrite is not None,
                 check_rewrite=config.rewrite is not None,
             )
@@ -908,6 +915,7 @@ class Anonymizer:
 
         models = _collect_step_models(
             selected=self._selected_models,
+            gliner_only=config.detect.gliner_only,
             has_substitute=substitute is not None,
             has_rewrite=rewrite is not None,
         )
@@ -1151,6 +1159,7 @@ def _custom_privacy_goal_provided(rewrite: Rewrite | None) -> bool:
 def _collect_step_models(
     *,
     selected,  # ModelSelection
+    gliner_only: bool,
     has_substitute: bool,
     has_rewrite: bool,
 ) -> dict[str, str]:
@@ -1160,8 +1169,8 @@ def _collect_step_models(
     replace = selected.replace
     return {
         "entity_detector": det.entity_detector or NOT_APPLICABLE,
-        "entity_validator": sort_join_aliases(det.entity_validator or []),
-        "entity_augmenter": det.entity_augmenter or NOT_APPLICABLE,
+        "entity_validator": NOT_APPLICABLE if gliner_only else sort_join_aliases(det.entity_validator or []),
+        "entity_augmenter": NOT_APPLICABLE if gliner_only else det.entity_augmenter or NOT_APPLICABLE,
         # latent_detector only runs in rewrite mode
         "latent_detector": (det.latent_detector or NOT_APPLICABLE) if has_rewrite else NOT_APPLICABLE,
         # replacement_generator only runs in Substitute mode

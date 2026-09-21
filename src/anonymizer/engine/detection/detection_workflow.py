@@ -96,6 +96,7 @@ class EntityDetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
+        gliner_only: bool = False,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
@@ -104,18 +105,20 @@ class EntityDetectionWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
-        """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
+        """Run GLiNER detection with optional LLM validation and augmentation.
 
         This is the primary detection workflow. It detects entities via GLiNER,
         validates/reclassifies them with an LLM (chunked across a pool of
         validator aliases), augments with additional entities the detector may
         have missed, and produces final standoff entity spans with overlap
-        resolution.
+        resolution. ``gliner_only=True`` returns unvalidated detector spans and
+        skips both LLM refinement stages.
         """
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
+            gliner_only=gliner_only,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
@@ -139,6 +142,7 @@ class EntityDetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
+        gliner_only: bool = False,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
@@ -164,6 +168,30 @@ class EntityDetectionWorkflow:
         )
 
         detection_alias = resolve_model_alias("entity_detector", selected_models)
+        if gliner_only:
+            logger.info("GLiNER-only detection enabled; skipping LLM validation and augmentation")
+            detector_configs = [config for config in workflow_model_configs if config.alias == detection_alias]
+            columns = cast(
+                list[ColumnConfigT],
+                [
+                    LLMTextColumnConfig(
+                        name=COL_RAW_DETECTED,
+                        prompt=_jinja(COL_TEXT),
+                        model_alias=detection_alias,
+                    ),
+                    DetectionTransformConfig(
+                        name=COL_SEED_ENTITIES,
+                        operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
+                    ),
+                    DetectionTransformConfig(
+                        name=COL_DETECTED_ENTITIES,
+                        operation=DetectionTransformOperation.FINALIZE_DETECTOR_ENTITIES,
+                        excluded_entity_labels=list(excluded_entity_labels or []),
+                    ),
+                ],
+            )
+            return detector_configs, columns
+
         validator_aliases = resolve_model_aliases("entity_validator", selected_models)
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
         logger.debug(
@@ -251,6 +279,7 @@ class EntityDetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
+        gliner_only: bool = False,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
@@ -267,6 +296,7 @@ class EntityDetectionWorkflow:
             model_configs=model_configs,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
+            gliner_only=gliner_only,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
@@ -288,6 +318,7 @@ class EntityDetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
+        gliner_only: bool = False,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
@@ -309,6 +340,7 @@ class EntityDetectionWorkflow:
             model_configs=model_configs,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
+            gliner_only=gliner_only,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
@@ -385,6 +417,7 @@ class EntityDetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: DetectionModelSelection,
         gliner_detection_threshold: float,
+        gliner_only: bool = False,
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
@@ -416,6 +449,7 @@ class EntityDetectionWorkflow:
                 model_configs=model_configs,
                 selected_models=selected_models,
                 gliner_detection_threshold=gliner_detection_threshold,
+                gliner_only=gliner_only,
                 validation_max_entities_per_call=validation_max_entities_per_call,
                 validation_excerpt_window_chars=validation_excerpt_window_chars,
                 validation_single_chunk_full_text=validation_single_chunk_full_text,

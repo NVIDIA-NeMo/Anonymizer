@@ -23,6 +23,7 @@ def _detect_config_metadata(detect: Any | None) -> dict[str, Any]:
     excluded_entity_labels = getattr(detect, "excluded_entity_labels", None)
     return {
         "gliner_threshold": getattr(detect, "gliner_threshold", None),
+        "gliner_only": bool(getattr(detect, "gliner_only", False)),
         "entity_label_source": "custom" if entity_labels is not None else "default",
         "entity_label_count": entity_label_count,
         "entity_labels": list(entity_labels) if entity_labels is not None else None,

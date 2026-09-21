@@ -73,6 +73,28 @@ def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES],
+    side_effect_columns=[COL_TAGGED_TEXT],
+)
+def finalize_detector_entities(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """Finalize raw detector spans without LLM validation or augmentation."""
+    text = str(row.get(COL_TEXT, ""))
+    entities = filter_excluded_entity_spans(
+        _parse_entity_spans(row.get(COL_SEED_ENTITIES, {})),
+        excluded_entity_labels,
+    )
+    row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in entities]).model_dump(
+        mode="json"
+    )
+    row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=entities)
+    return row
+
+
+@custom_column_generator(
     required_columns=[COL_TEXT, COL_VALIDATED_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
     side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
 )

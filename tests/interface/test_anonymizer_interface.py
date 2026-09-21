@@ -134,6 +134,15 @@ def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: Anony
     assert detection_wf.run.call_args.kwargs["entity_labels"] == ["server_name"]
 
 
+def test_run_passes_gliner_only_to_detection_workflow(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(detect={"gliner_only": True}, replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+
+    anonymizer.run(config=config, data=stub_input)
+
+    assert detection_wf.run.call_args.kwargs["gliner_only"] is True
+
+
 def test_run_propagates_excluded_entity_labels(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(detect={"excluded_entity_labels": ["email"]}, replace=Redact())
     anonymizer, detection_wf, _, _ = _make_anonymizer()
@@ -572,6 +581,26 @@ def test_validate_config_raises_on_unknown_detection_alias(
 
     with pytest.raises(InvalidConfigError, match="bad-detection-alias"):
         anonymizer.validate_config(stub_anonymizer_config)
+
+
+def test_validate_config_gliner_only_does_not_require_refinement_aliases(
+    stub_known_model_configs: list[ModelConfig],
+    stub_slim_model_selection: ModelSelection,
+) -> None:
+    anonymizer, _, _, _ = _make_anonymizer()
+    anonymizer._model_configs = stub_known_model_configs
+    anonymizer._selected_models = stub_slim_model_selection.model_copy(
+        update={
+            "detection": stub_slim_model_selection.detection.model_copy(
+                update={
+                    "entity_validator": ["missing-validator"],
+                    "entity_augmenter": "missing-augmenter",
+                }
+            )
+        }
+    )
+
+    anonymizer.validate_config(AnonymizerConfig(detect={"gliner_only": True}, replace=Redact()))
 
 
 def test_validate_config_raises_on_unknown_replace_alias_for_substitute(

@@ -94,6 +94,11 @@ def test_entity_labels_defaults_to_none() -> None:
     assert config.detect.entity_labels is None
 
 
+def test_gliner_only_is_explicit_opt_in() -> None:
+    assert AnonymizerConfig(replace=Redact()).detect.gliner_only is False
+    assert AnonymizerConfig(detect={"gliner_only": True}, replace=Redact()).detect.gliner_only is True
+
+
 def test_entity_labels_accepts_list() -> None:
     config = AnonymizerConfig(detect={"entity_labels": ["FIRST_NAME", "email"]}, replace=Redact())
     assert config.detect.entity_labels is not None

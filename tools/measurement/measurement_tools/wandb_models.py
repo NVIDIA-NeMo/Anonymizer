@@ -240,7 +240,13 @@ _NUMERIC_SWEEP_PARAMETER_TAILS = frozenset(
     }
 )
 _BOOLEAN_SWEEP_PARAMETER_TAILS = frozenset(
-    {"emit_telemetry", "evaluate", "replace_normalize_label", "rewrite_strict_entity_protection"}
+    {
+        "detect_gliner_only",
+        "emit_telemetry",
+        "evaluate",
+        "replace_normalize_label",
+        "rewrite_strict_entity_protection",
+    }
 )
 _ENUM_SWEEP_PARAMETER_VALUES = {
     "replace_algorithm": frozenset({"md5", "sha1", "sha256"}),
@@ -375,6 +381,7 @@ class DetectMetadata(StrictFrozenModel):
     entity_label_source: Literal["custom", "default"] | None = None
     entity_label_count: NonNegativeInt | None = None
     entity_label_set_hash: StrictStr | None = None
+    gliner_only: StrictBool | None = None
     gliner_threshold: Probability | None = None
     validation_max_entities_per_call: NonNegativeInt | None = None
     validation_excerpt_window_chars: NonNegativeInt | None = None
@@ -1043,6 +1050,7 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "entity_label_source",
         "entity_label_count",
         "entity_label_set_hash",
+        "gliner_only",
         "gliner_threshold",
         "validation_max_entities_per_call",
         "validation_excerpt_window_chars",
